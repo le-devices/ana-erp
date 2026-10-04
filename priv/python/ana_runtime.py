@@ -1,0 +1,988 @@
+"""ANA program runtime (specs 002 and 004).
+
+Isolated process started by the Erlang core as a {packet, 4} port. It speaks
+only the protocol described in specs/002-python-runtime/plan.md: JSON frames
+with a 4-byte big-endian length prefix on stdin/stdout. It holds no database
+credentials: every data access is requested from the core.
+
+Each process serves a single execution (or inspection) and exits.
+"""
+
+import bdb
+import builtins
+import datetime
+import decimal
+import importlib.abc
+import importlib.machinery
+import io
+import json
+import linecache
+import os
+import signal
+import struct
+import sys
+import traceback
+import types
+
+REPR_MAX = 200          # RF-004-02
+MAX_VARIABLES = 100     # RF-004-02
+FILE_PREFIX = "<ana:"
+
+
+# ---------------------------------------------------------------------------
+# Isolation (RNF-002-01)
+# ---------------------------------------------------------------------------
+
+def apply_limits(memory_mb, cpu_s):
+    try:
+        import resource
+    except ImportError:  # pragma: no cover - platforms without resource
+        return
+    limits = [
+        (getattr(resource, "RLIMIT_AS", None), memory_mb * 1024 * 1024),
+        (getattr(resource, "RLIMIT_CPU", None), cpu_s),
+        (getattr(resource, "RLIMIT_NOFILE", None), 64),
+        (getattr(resource, "RLIMIT_FSIZE", None), 16 * 1024 * 1024),
+        (getattr(resource, "RLIMIT_CORE", None), 0),
+    ]
+    for res, value in limits:
+        if res is None or value < 0:
+            continue
+        try:
+            _, hard = resource.getrlimit(res)
+            if hard != resource.RLIM_INFINITY:
+                value = min(value, hard)
+            resource.setrlimit(res, (value, hard))
+        except (ValueError, OSError):
+            pass
+    # Forbid fork/exec from programs (does not apply to root).
+    nproc = getattr(resource, "RLIMIT_NPROC", None)
+    if nproc is not None and os.getuid() != 0:
+        try:
+            resource.setrlimit(nproc, (0, resource.getrlimit(nproc)[1]))
+        except (ValueError, OSError):
+            pass
+
+
+class CpuLimitExceeded(BaseException):
+    """Raised when the execution exhausts its CPU budget (RF-012-06).
+
+    BaseException on purpose: user code catching `Exception` cannot swallow it.
+    """
+
+
+def _cpu_seconds():
+    import resource
+    u = resource.getrusage(resource.RUSAGE_SELF)
+    return u.ru_utime + u.ru_stime
+
+
+def _on_cpu_limit(signum, frame):
+    raise CpuLimitExceeded()
+
+
+def apply_execution_limits(limits):
+    """Per-execution limits (spec 012, RNF-012-01), applied by the OS.
+
+    CPU: precise budget with ITIMER_PROF (process CPU time) plus RLIMIT_CPU as
+    a hard backstop. Memory: RLIMIT_AS. Returns the CPU baseline for usage.
+    """
+    baseline = _cpu_seconds()
+    try:
+        import resource
+    except ImportError:  # pragma: no cover
+        return baseline
+    cpu_ms = limits.get("cpu_ms")
+    if cpu_ms:
+        signal.signal(signal.SIGPROF, _on_cpu_limit)
+        signal.signal(signal.SIGXCPU, _on_cpu_limit)
+        signal.setitimer(signal.ITIMER_PROF, cpu_ms / 1000.0)
+        try:
+            _, hard = resource.getrlimit(resource.RLIMIT_CPU)
+            soft = int(baseline + cpu_ms / 1000.0) + 2
+            if hard != resource.RLIM_INFINITY:
+                soft = min(soft, hard)
+            resource.setrlimit(resource.RLIMIT_CPU, (soft, hard))
+        except (ValueError, OSError):
+            pass
+    memory_mb = limits.get("memory_mb")
+    if memory_mb:
+        try:
+            _, hard = resource.getrlimit(resource.RLIMIT_AS)
+            value = memory_mb * 1024 * 1024
+            if hard != resource.RLIM_INFINITY:
+                value = min(value, hard)
+            resource.setrlimit(resource.RLIMIT_AS, (value, hard))
+        except (ValueError, OSError):
+            pass
+    return baseline
+
+
+def usage(baseline):
+    try:
+        import resource
+        u = resource.getrusage(resource.RUSAGE_SELF)
+        return {"cpu_ms": int((u.ru_utime + u.ru_stime - baseline) * 1000), "max_rss_kb": int(u.ru_maxrss)}
+    except Exception:  # noqa: BLE001
+        return {"cpu_ms": 0, "max_rss_kb": 0}
+
+
+# ---------------------------------------------------------------------------
+# Protocol
+# ---------------------------------------------------------------------------
+
+class ChannelClosed(Exception):
+    pass
+
+
+def _json_default(obj):
+    if isinstance(obj, decimal.Decimal):
+        # Always text: exact precision and a stable type for JSON consumers;
+        # the core converts it back to numeric.
+        return str(obj)
+    if isinstance(obj, (datetime.datetime, datetime.date, datetime.time)):
+        return obj.isoformat()
+    if isinstance(obj, (set, frozenset, tuple)):
+        return list(obj)
+    if isinstance(obj, bytes):
+        return obj.decode("utf-8", "replace")
+    raise TypeError(f"type {type(obj).__name__} is not JSON serializable")
+
+
+def to_json(obj):
+    return json.dumps(obj, default=_json_default, ensure_ascii=False, separators=(",", ":"))
+
+
+class Channel:
+    def __init__(self, stream_in, stream_out):
+        self._in = stream_in
+        self._out = stream_out
+        self._seq = 0
+        self.usage_baseline = None
+
+    def send(self, msg):
+        if msg.get("type") == "end" and self.usage_baseline is not None:
+            signal.setitimer(signal.ITIMER_PROF, 0)
+            msg = dict(msg, usage=usage(self.usage_baseline))
+        data = to_json(msg).encode("utf-8")
+        self._out.write(struct.pack(">I", len(data)) + data)
+        self._out.flush()
+
+    def _read(self, n):
+        parts = []
+        while n:
+            chunk = self._in.read(n)
+            if not chunk:
+                raise ChannelClosed()
+            parts.append(chunk)
+            n -= len(chunk)
+        return b"".join(parts)
+
+    def receive(self):
+        (size,) = struct.unpack(">I", self._read(4))
+        return json.loads(self._read(size).decode("utf-8"))
+
+    def request(self, op, args):
+        """Synchronous request to the core; returns the value or raises Error."""
+        self._seq += 1
+        my_id = self._seq
+        self.send({"type": "request", "id": my_id, "op": op, "args": args})
+        while True:
+            msg = self.receive()
+            kind = msg.get("type")
+            if kind == "response" and msg.get("id") == my_id:
+                if msg.get("ok"):
+                    return msg.get("value")
+                raise error_from_map(msg.get("error") or {})
+            if kind == "cancel":
+                raise SystemExit(1)
+            # Any other message at this point is discarded.
+
+
+# ---------------------------------------------------------------------------
+# Errors
+# ---------------------------------------------------------------------------
+
+class Error(Exception):
+    """Business error: rolls back the execution transaction (RF-002-05)."""
+
+    def __init__(self, code, message="", data=None):
+        super().__init__(f"{code}: {message}" if message else code)
+        self.code = str(code)
+        self.message = str(message)
+        self.data = data
+
+    def as_map(self):
+        m = {"code": self.code, "message": self.message}
+        if self.data is not None:
+            m["data"] = self.data
+        return m
+
+
+class SqlError(Error):
+    def __init__(self, message, sqlstate=None, detail=None):
+        super().__init__("SQL", message, {"sqlstate": sqlstate, "detail": detail})
+        self.sqlstate = sqlstate
+
+
+class ParamError(Error):
+    def __init__(self, message):
+        super().__init__("INVALID_PARAMETER", message)
+
+
+def error_from_map(m):
+    code = m.get("code", "ERROR")
+    if code == "SQL":
+        return SqlError(m.get("message", ""), m.get("sqlstate"), m.get("detail"))
+    return Error(code, m.get("message", ""), m.get("data"))
+
+
+# ---------------------------------------------------------------------------
+# SQL result conversion
+# ---------------------------------------------------------------------------
+
+def _to_date(v):
+    return datetime.date.fromisoformat(v)
+
+
+def _to_timestamp(v):
+    if v.endswith("Z"):
+        v = v[:-1] + "+00:00"
+    return datetime.datetime.fromisoformat(v)
+
+
+def _to_time(v):
+    return datetime.time.fromisoformat(v)
+
+
+CONVERTERS = {
+    "numeric": decimal.Decimal,
+    "date": _to_date,
+    "timestamp": _to_timestamp,
+    "timestamptz": _to_timestamp,
+    "time": _to_time,
+}
+
+
+def build_rows(result):
+    """Turn compact {columns, rows} into a list of typed dicts."""
+    columns = result.get("columns") or []
+    names = [c["name"] for c in columns]
+    conv = [CONVERTERS.get(c.get("type")) for c in columns]
+    out = []
+    for row in result.get("rows") or []:
+        rec = {}
+        for name, f, v in zip(names, conv, row):
+            rec[name] = f(v) if (f is not None and v is not None) else v
+        out.append(rec)
+    return out
+
+
+# ---------------------------------------------------------------------------
+# Output (RF-002-06, RNF-002-06)
+# ---------------------------------------------------------------------------
+
+class Output(io.TextIOBase):
+    def __init__(self, channel, limit):
+        self._channel = channel
+        self._buf = []
+        self._buf_size = 0
+        self._remaining = limit
+        self._truncated = False
+
+    def writable(self):
+        return True
+
+    def write(self, text):
+        if not isinstance(text, str):
+            text = str(text)
+        self._buf.append(text)
+        self._buf_size += len(text)
+        if "\n" in text or self._buf_size > 8192:
+            self.flush()
+        return len(text)
+
+    def flush(self):
+        if not self._buf:
+            return
+        text = "".join(self._buf)
+        self._buf, self._buf_size = [], 0
+        self.emit("text", text)
+
+    def emit(self, kind, data):
+        if self._truncated:
+            return
+        size = len(data) if isinstance(data, str) else len(to_json(data))
+        if size > self._remaining:
+            self._truncated = True
+            self._channel.send({"type": "output", "kind": "log",
+                                "data": {"level": "warning",
+                                         "message": "saída truncada: limite atingido"}})
+            return
+        self._remaining -= size
+        self._channel.send({"type": "output", "kind": kind, "data": data})
+
+
+# ---------------------------------------------------------------------------
+# The `ana` module (RF-002-05)
+# ---------------------------------------------------------------------------
+
+class Context:
+    def __init__(self, d):
+        self.user = d.get("user")
+        self.role = d.get("role")
+        self.execution_id = d.get("execution_id")
+        self.program = d.get("program")
+        self.version = d.get("version")
+        self.origin = d.get("origin")
+        self.depth = d.get("depth", 0)
+
+    def __repr__(self):
+        return (f"Context(user={self.user!r}, program={self.program!r}, "
+                f"version={self.version!r}, origin={self.origin!r})")
+
+
+class Part:
+    """Handle of a parallel part (spec 022)."""
+    __slots__ = ("handle", "program")
+
+    def __init__(self, handle, program):
+        self.handle = handle
+        self.program = program
+
+    def __repr__(self):
+        return f"Part({self.handle}, {self.program!r})"
+
+
+class _Savepoint:
+    def __init__(self, channel):
+        self._channel = channel
+
+    def __enter__(self):
+        self._name = self._channel.request("savepoint", {"action": "create"})
+        return self
+
+    def __exit__(self, exc_type, exc, tb):
+        action = "release" if exc_type is None else "rollback"
+        self._channel.request("savepoint", {"action": action, "name": self._name})
+        return False
+
+
+def make_ana_module(channel, output, context):
+    m = types.ModuleType("ana", "ANA ERP API for programs.")
+
+    def sql(query, *params):
+        """Run SQL and return a list of dicts. Parameters: $1, $2, ..."""
+        return build_rows(channel.request("sql", {"sql": query, "params": list(params)}))
+
+    def sql_one(query, *params):
+        rows = sql(query, *params)
+        return rows[0] if rows else None
+
+    def sql_value(query, *params):
+        rows = sql(query, *params)
+        if not rows:
+            return None
+        return next(iter(rows[0].values()), None)
+
+    def sql_exec(query, *params):
+        return channel.request("sql", {"sql": query, "params": list(params)}).get("affected", 0)
+
+    def sql_batch(query, rows):
+        """Run the same statement for each parameter list (P12)."""
+        batch = [list(p) for p in rows]
+        if not batch:
+            return 0
+        return channel.request("sql_batch", {"sql": query, "batch": batch}).get("affected", 0)
+
+    def call(program, **params):
+        """Run another program in the same execution transaction (RF-002-08)."""
+        return channel.request("call", {"program": program, "params": params})
+
+    def remote(system, function, **params):
+        """Call an exposed program on a registered remote system (RF-003-08)."""
+        return channel.request("remote", {"system": system, "function": function, "params": params})
+
+    def log(message, level="info"):
+        output.flush()
+        output.emit("log", {"level": str(level), "message": str(message)})
+
+    def table(rows, title=None):
+        """Rows are dicts; the optional key `_actions` holds per-row actions."""
+        output.flush()
+        rows = list(rows)
+        columns = []
+        for rec in rows:
+            for k in rec.keys():
+                if k not in columns and k != "_actions":
+                    columns.append(k)
+        data = {
+            "title": title,
+            "columns": columns,
+            "rows": [[rec.get(c) for c in columns] for rec in rows],
+        }
+        if any(rec.get("_actions") for rec in rows):
+            data["row_actions"] = [_actions(rec.get("_actions") or []) for rec in rows]
+        output.emit("table", data)
+
+    # Rich views (spec 021): rendered by the UI for any program.
+    def _actions(items):
+        out = []
+        for a in items:
+            if not isinstance(a, dict) or not a.get("label") or not a.get("program"):
+                raise ParamError("ação exige label e program")
+            out.append({k: a[k] for k in ("label", "program", "params", "ask", "open", "style", "confirm")
+                        if k in a})
+        return out
+
+    def metrics(items, title=None):
+        """KPI cards: [{"label", "value", "hint"?, "status"?: ok|warn|bad}]."""
+        output.flush()
+        output.emit("metrics", {"title": title, "items": list(items)})
+
+    def board(columns, cards, title=None):
+        """Kanban: columns [{"key", "label"}]; cards [{"column", "title", "subtitle"?,
+        "badges"?, "actions"?}]."""
+        output.flush()
+        output.emit("board", {"title": title, "columns": list(columns),
+                              "cards": [{**c, "actions": _actions(c.get("actions") or [])} for c in cards]})
+
+    def gantt(items, title=None, today=None):
+        """Timeline: [{"code", "name", "start", "finish", "level"?, "critical"?, "progress"?,
+        "baseline_start"?, "baseline_finish"?, "kind"?}]."""
+        output.flush()
+        output.emit("gantt", {"title": title, "today": today, "items": list(items)})
+
+    def tabs(items, current=None):
+        """Tab bar; each item is an action with `open`: the routine reruns in place."""
+        output.flush()
+        output.emit("tabs", {"current": current, "items": _actions(items)})
+
+    def actions(items, title=None):
+        """Buttons: next steps (RF-020-10) or operations with an inline form (`ask`)."""
+        output.flush()
+        output.emit("actions", {"title": title, "items": _actions(items)})
+
+    def savepoint():
+        """`with ana.savepoint():` — a failure inside rolls back only the block."""
+        return _Savepoint(channel)
+
+    # Parallel parts (spec 022). Each part is an execution of its own (process,
+    # transaction, limits, audit) with the same user; results come back in order.
+    groups = iter(range(1, 1 << 30))
+
+    def _spawn(program, params, group, max_workers, mode, snapshot, timeout_ms):
+        if mode not in ("independent", "atomic"):
+            raise ParamError("mode deve ser 'independent' ou 'atomic'")
+        if params is not None and not isinstance(params, dict):
+            raise ParamError("params de cada parte deve ser um dicionário")
+        h = channel.request("spawn", {"program": str(program), "params": params or {}, "group": group,
+                                      "max_workers": max_workers, "mode": mode, "snapshot": bool(snapshot),
+                                      "timeout_ms": timeout_ms})
+        return Part(h, program)
+
+    def spawn(program, params=None, *, mode="independent", snapshot=False, timeout_ms=None):
+        """Starts one part now and returns a `Part`; collect it later with `ana.gather`."""
+        return _spawn(program, params, next(groups), 1, mode, snapshot, timeout_ms)
+
+    def gather(*parts, fail_fast=False, timeout_ms=None):
+        """Waits for the parts; returns [{"ok": True, "result": …} | {"ok": False, "error": {…}}] in order."""
+        if len(parts) == 1 and isinstance(parts[0], (list, tuple)):
+            parts = tuple(parts[0])
+        if not all(isinstance(x, Part) for x in parts):
+            raise ParamError("gather recebe partes criadas por ana.spawn")
+        if not parts:
+            return []
+        return channel.request("gather", {"handles": [x.handle for x in parts], "fail_fast": bool(fail_fast),
+                                          "timeout_ms": timeout_ms})
+
+    def parallel(calls, max_workers=None, mode="independent", snapshot=False, timeout_ms=None, fail_fast=False):
+        """Runs [(program, params), ...] in parallel (at most `max_workers` at a time) and joins them."""
+        group = next(groups)
+        parts = [_spawn(c[0], c[1] if len(c) > 1 else None, group, max_workers, mode, snapshot, timeout_ms)
+                 for c in calls]
+        return gather(*parts, fail_fast=fail_fast)
+
+    def map_(program, params_list, max_workers=None, mode="independent", snapshot=False, timeout_ms=None,
+             fail_fast=False):
+        """Applies one program to each params dict, in parallel; results in input order."""
+        return parallel([(program, p) for p in params_list], max_workers=max_workers, mode=mode,
+                        snapshot=snapshot, timeout_ms=timeout_ms, fail_fast=fail_fast)
+
+    def cancel(*parts):
+        channel.request("cancel", {"handles": [x.handle for x in parts]})
+
+    m.sql = sql
+    m.sql_one = sql_one
+    m.sql_value = sql_value
+    m.sql_exec = sql_exec
+    m.sql_batch = sql_batch
+    m.call = call
+    m.remote = remote
+    m.log = log
+    m.table = table
+    m.metrics = metrics
+    m.board = board
+    m.gantt = gantt
+    m.tabs = tabs
+    m.actions = actions
+    m.savepoint = savepoint
+    m.spawn = spawn
+    m.gather = gather
+    m.parallel = parallel
+    m.map = map_
+    m.cancel = cancel
+    m.Part = Part
+    m.context = context
+    m.Error = Error
+    m.SqlError = SqlError
+    m.ParamError = ParamError
+    return m
+
+
+# ---------------------------------------------------------------------------
+# Library importer `ana_lib.*` (RF-002-07)
+# ---------------------------------------------------------------------------
+
+class LibraryImporter(importlib.abc.MetaPathFinder, importlib.abc.Loader):
+    ROOT = "ana_lib"
+
+    def __init__(self, channel, ana_mod):
+        self._channel = channel
+        self._ana = ana_mod
+        self._sources = {}
+
+    def find_spec(self, name, path=None, target=None):
+        if name != self.ROOT and not name.startswith(self.ROOT + "."):
+            return None
+        if name == self.ROOT:
+            return importlib.machinery.ModuleSpec(name, self, is_package=True)
+        prog = name[len(self.ROOT) + 1:]
+        r = self._channel.request("library_source", {"name": prog})
+        if r.get("source") is not None:
+            self._sources[name] = r
+            return importlib.machinery.ModuleSpec(name, self, is_package=False,
+                                                  origin=FILE_PREFIX + prog + ">")
+        if r.get("package"):
+            return importlib.machinery.ModuleSpec(name, self, is_package=True)
+        return None
+
+    def create_module(self, spec):
+        return None
+
+    def exec_module(self, module):
+        name = module.__name__
+        if name not in self._sources:
+            module.__path__ = []
+            return
+        info = self._sources.pop(name)
+        prog = name[len(self.ROOT) + 1:]
+        filename = FILE_PREFIX + prog + ">"
+        register_source(filename, info["source"])
+        module.__file__ = filename
+        module.ana = self._ana
+        exec(compile(info["source"], filename, "exec"), module.__dict__)
+
+
+def register_source(filename, source):
+    linecache.cache[filename] = (len(source), None, source.splitlines(True), filename)
+
+
+# ---------------------------------------------------------------------------
+# Parameters (RF-002-04)
+# ---------------------------------------------------------------------------
+
+def _to_int(v):
+    if isinstance(v, bool):
+        raise ValueError
+    if isinstance(v, float) and not v.is_integer():
+        raise ValueError
+    return int(v)
+
+
+def _to_bool(v):
+    if isinstance(v, bool):
+        return v
+    if isinstance(v, str) and v.lower() in ("true", "yes", "1"):
+        return True
+    if isinstance(v, str) and v.lower() in ("false", "no", "0"):
+        return False
+    if v in (0, 1):
+        return bool(v)
+    raise ValueError
+
+
+def _to_list(v):
+    if not isinstance(v, list):
+        raise ValueError
+    return v
+
+
+def _to_dict(v):
+    if not isinstance(v, dict):
+        raise ValueError
+    return v
+
+
+def _to_str(v):
+    if isinstance(v, (dict, list)):
+        raise ValueError
+    return str(v)
+
+
+PARAM_TYPES = {
+    "int": _to_int,
+    "float": float,
+    "decimal": lambda v: decimal.Decimal(str(v)),
+    "str": _to_str,
+    "bool": _to_bool,
+    "date": lambda v: v if isinstance(v, datetime.date) else datetime.date.fromisoformat(v),
+    "list": _to_list,
+    "dict": _to_dict,
+}
+
+
+def validate_params(declaration, received):
+    if declaration is None:
+        return dict(received)
+    if not isinstance(declaration, dict):
+        raise ParamError("PARAMS deve ser um dicionário")
+    unknown = set(received) - set(declaration)
+    if unknown:
+        raise ParamError("parâmetros desconhecidos: " + ", ".join(sorted(unknown)))
+    out = {}
+    for name, spec in declaration.items():
+        spec = spec or {}
+        kind = spec.get("type", "str")
+        if name not in received or received[name] is None:
+            if spec.get("required"):
+                raise ParamError(f"parâmetro obrigatório ausente: {name}")
+            if "default" in spec:
+                out[name] = spec["default"]
+            continue
+        conv = PARAM_TYPES.get(kind)
+        if conv is None:
+            raise ParamError(f"tipo desconhecido para {name}: {kind}")
+        try:
+            out[name] = conv(received[name])
+        except (ValueError, TypeError, decimal.InvalidOperation):
+            raise ParamError(f"parâmetro {name} não é do tipo {kind}") from None
+    return out
+
+
+# ---------------------------------------------------------------------------
+# Debugger (spec 004)
+# ---------------------------------------------------------------------------
+
+def _short_repr(v):
+    try:
+        r = repr(v)
+    except Exception as e:  # a user object's repr may fail
+        r = f"<repr failed: {e!r}>"
+    if len(r) > REPR_MAX:
+        r = r[:REPR_MAX - 1] + "…"
+    return r
+
+
+def collect_variables(frame):
+    variables = []
+    for name, value in list(frame.f_locals.items()):
+        if name.startswith("__") or isinstance(value, types.ModuleType):
+            continue
+        if frame.f_code.co_name == "<module>" and isinstance(value, (types.FunctionType, type)):
+            continue
+        variables.append({"name": name, "type": type(value).__name__, "value": _short_repr(value)})
+        if len(variables) >= MAX_VARIABLES:
+            break
+    return variables
+
+
+class AnaDebugger(bdb.Bdb):
+    def __init__(self, channel, filename, breakpoints):
+        super().__init__()
+        self.channel = channel
+        self.filename = filename
+        self.set_breakpoints(breakpoints)
+
+    def set_breakpoints(self, lines):
+        self.clear_all_file_breaks(self.filename)
+        accepted = []
+        for line in lines or []:
+            try:
+                line = int(line)
+            except (TypeError, ValueError):
+                continue
+            if self.set_break(self.filename, line) is None:
+                accepted.append(line)
+        return accepted
+
+    def run_debugged(self, func, stop_on_entry=False):
+        """Run `func` under the debugger.
+
+        Without `stop_on_entry` it starts in "continue" mode: only breakpoints
+        stop, and frames without breakpoints are not traced (RNF-004-05).
+        """
+        self.reset()
+        if not stop_on_entry:
+            self._set_stopinfo(sys._getframe(), None, -1)
+        self.quitting = False
+        sys.settrace(self.trace_dispatch)
+        try:
+            return func()
+        finally:
+            self.quitting = True
+            sys.settrace(None)
+
+    def _stack(self, frame):
+        stack = []
+        f = frame
+        while f is not None:
+            if f.f_code.co_filename == self.filename:
+                stack.append({"function": f.f_code.co_name, "line": f.f_lineno})
+            f = f.f_back
+        return stack
+
+    def user_call(self, frame, argument_list):
+        pass
+
+    def user_return(self, frame, return_value):
+        pass
+
+    def user_exception(self, frame, exc_info):
+        pass
+
+    def user_line(self, frame):
+        # RF-004-07: stop only on lines of the debugged program.
+        if frame.f_code.co_filename != self.filename:
+            return
+        reason = "breakpoint" if self.break_here(frame) else "step"
+        sys.stdout.flush()
+        self.channel.send({
+            "type": "pause",
+            "reason": reason,
+            "line": frame.f_lineno,
+            "function": frame.f_code.co_name,
+            "stack": self._stack(frame),
+            "variables": collect_variables(frame),
+        })
+        self.wait_command(frame)
+
+    def wait_command(self, frame):
+        while True:
+            msg = self.channel.receive()
+            if msg.get("type") == "cancel":
+                raise SystemExit(1)
+            if msg.get("type") != "debug":
+                continue
+            action = msg.get("action")
+            if action == "continue":
+                self.set_continue()
+                return
+            if action == "over":
+                self.set_next(frame)
+                return
+            if action == "into":
+                self.set_step()
+                return
+            if action == "out":
+                self.set_return(frame)
+                return
+            if action == "stop":
+                self.set_quit()
+                return
+            if action == "eval":
+                self.channel.send(self.evaluate(frame, msg.get("expression", "")))
+            elif action == "breakpoints":
+                accepted = self.set_breakpoints(msg.get("lines"))
+                self.channel.send({"type": "breakpoints", "lines": accepted})
+
+    def evaluate(self, frame, expression):
+        resp = {"type": "eval", "expression": expression}
+        try:
+            try:
+                code = compile(expression, "<eval>", "eval")
+                is_eval = True
+            except SyntaxError:
+                code = compile(expression, "<eval>", "exec")
+                is_eval = False
+            # Tracing is suspended while evaluating.
+            trace = sys.gettrace()
+            sys.settrace(None)
+            try:
+                if is_eval:
+                    value = eval(code, frame.f_globals, frame.f_locals)
+                else:
+                    exec(code, frame.f_globals, frame.f_locals)
+                    value = None
+            finally:
+                sys.settrace(trace)
+            resp.update(ok=True, value=_short_repr(value))
+        except Exception as e:
+            resp.update(ok=False, value=f"{type(e).__name__}: {e}")
+        resp["variables"] = collect_variables(frame)
+        return resp
+
+
+# ---------------------------------------------------------------------------
+# Execution
+# ---------------------------------------------------------------------------
+
+def _program_trace(exc):
+    """Traceback with ANA program frames only (hides the runtime)."""
+    tb = traceback.extract_tb(exc.__traceback__)
+    frames = [f for f in tb if f.filename.startswith(FILE_PREFIX)]
+    lines = [f'  {f.filename} line {f.lineno}, in {f.name}\n    {f.line or ""}' for f in frames]
+    lines.append(f"{type(exc).__name__}: {exc}")
+    return "\n".join(lines)
+
+
+def _error_line(exc, filename):
+    tb = traceback.extract_tb(exc.__traceback__)
+    for f in reversed(tb):
+        if f.filename == filename:
+            return f.lineno
+    if isinstance(exc, SyntaxError) and exc.filename == filename:
+        return exc.lineno
+    return None
+
+
+def run(channel, msg, output_limit):
+    program = msg["program"]
+    source = msg["source"]
+    filename = FILE_PREFIX + program + ">"
+    ctx = dict(msg.get("context") or {})
+    ctx.setdefault("program", program)
+    ctx.setdefault("version", msg.get("version"))
+    context = Context(ctx)
+
+    limits = msg.get("limits") or {}
+    if limits.get("output_kb"):
+        output_limit = int(limits["output_kb"]) * 1024
+    output = Output(channel, output_limit)
+    sys.stdout = output
+    ana_mod = make_ana_module(channel, output, context)
+    sys.modules["ana"] = ana_mod
+    sys.meta_path.insert(0, LibraryImporter(channel, ana_mod))
+    register_source(filename, source)
+
+    debugger = None
+    if msg.get("debug"):
+        debugger = AnaDebugger(channel, filename, msg.get("breakpoints") or [])
+
+    module_globals = {"__name__": "__ana__", "__file__": filename,
+                      "__builtins__": builtins, "ana": ana_mod}
+    channel.usage_baseline = apply_execution_limits(limits)
+    try:
+        code = compile(source, filename, "exec")
+        if debugger:
+            debugger.run_debugged(lambda: exec(code, module_globals))
+        else:
+            exec(code, module_globals)
+        main = module_globals.get("main")
+        if not callable(main):
+            raise Error("NO_MAIN", "o programa não define main(**params)")
+        params = validate_params(module_globals.get("PARAMS"), msg.get("params") or {})
+        if debugger:
+            result = debugger.run_debugged(lambda: main(**params), bool(msg.get("stop_on_entry")))
+        else:
+            result = main(**params)
+        output.flush()
+        try:
+            to_json(result)
+        except (TypeError, ValueError) as e:
+            raise Error("INVALID_RESULT", str(e)) from None
+        channel.send({"type": "end", "ok": True, "result": result})
+    except CpuLimitExceeded:
+        signal.setitimer(signal.ITIMER_PROF, 0)
+        output.flush()
+        channel.send({"type": "end", "ok": False, "error": {
+            "code": "CPU_LIMIT", "message": f"limite de CPU ({limits.get('cpu_ms')} ms) excedido"}})
+    except bdb.BdbQuit:
+        output.flush()
+        channel.send({"type": "end", "ok": False,
+                      "error": {"code": "ABORTED", "message": "execução parada no depurador"}})
+    except Error as e:
+        output.flush()
+        error = e.as_map()
+        error["line"] = _error_line(e, filename)
+        error["trace"] = _program_trace(e)
+        channel.send({"type": "end", "ok": False, "error": error})
+    except ChannelClosed:
+        raise
+    except SyntaxError as e:
+        output.flush()
+        channel.send({"type": "end", "ok": False, "error": {
+            "code": "SYNTAX", "message": f"{e.msg}", "line": e.lineno,
+            "trace": f"{e.filename} line {e.lineno}: {e.msg}"}})
+    except MemoryError:
+        channel.send({"type": "end", "ok": False,
+                      "error": {"code": "MEMORY", "message": "limite de memória excedido"}})
+    except BaseException as e:  # noqa: BLE001 - everything becomes a structured error
+        output.flush()
+        channel.send({"type": "end", "ok": False, "error": {
+            "code": "EXCEPTION",
+            "message": f"{type(e).__name__}: {e}",
+            "line": _error_line(e, filename),
+            "trace": _program_trace(e)}})
+
+
+def inspect(channel, msg):
+    """Check syntax and extract PARAMS/docs without running (RF-005-08)."""
+    import ast
+    source = msg.get("source", "")
+    resp = {"type": "inspection", "ok": True, "params": None,
+            "docs": None, "error": None, "has_main": False}
+    try:
+        tree = ast.parse(source)
+    except SyntaxError as e:
+        resp.update(ok=False, error={"line": e.lineno, "message": e.msg})
+        channel.send(resp)
+        return
+    resp["docs"] = ast.get_docstring(tree)
+    for node in tree.body:
+        if isinstance(node, ast.FunctionDef) and node.name == "main":
+            resp["has_main"] = True
+            if not resp["docs"]:
+                resp["docs"] = ast.get_docstring(node)
+        if isinstance(node, ast.Assign) and any(
+                isinstance(t, ast.Name) and t.id == "PARAMS" for t in node.targets):
+            try:
+                resp["params"] = ast.literal_eval(node.value)
+            except ValueError:
+                resp["error"] = {"line": node.lineno, "message": "PARAMS deve ser um literal"}
+    channel.send(resp)
+
+
+def entry_point():
+    memory = int(os.environ.get("ANA_PY_MEMORY_MB", "512"))
+    cpu = int(os.environ.get("ANA_PY_CPU_S", "3600"))
+    output_limit = int(os.environ.get("ANA_OUTPUT_MAX_KB", "512")) * 1024
+
+    # The protocol uses copies of fds 0/1; the originals are neutralized so that
+    # accidental writes to fd 1 (e.g. C extensions) cannot corrupt frames.
+    stream_in = os.fdopen(os.dup(0), "rb", buffering=0)
+    stream_out = os.fdopen(os.dup(1), "wb", buffering=0)
+    null = os.open(os.devnull, os.O_RDWR)
+    os.dup2(null, 0)
+    os.dup2(2, 1)
+    sys.stdin = open(os.devnull, "r")
+
+    apply_limits(memory, cpu)
+    channel = Channel(stream_in, stream_out)
+    try:
+        channel.send({"type": "ready", "pid": os.getpid()})
+        msg = channel.receive()
+        kind = msg.get("type")
+        if kind == "run":
+            run(channel, msg, output_limit)
+        elif kind == "inspect":
+            inspect(channel, msg)
+    except ChannelClosed:
+        pass
+    finally:
+        sys.stdout = sys.__stdout__
+        os._exit(0)
+
+
+if __name__ == "__main__":
+    entry_point()
