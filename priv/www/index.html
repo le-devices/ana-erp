@@ -1,0 +1,244 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ANA</title>
+<link rel="stylesheet" href="studio/studio.css">
+<script src="studio/highlight.js" defer></script>
+<script src="studio/editor.js" defer></script>
+<script src="studio/api.js" defer></script>
+<script src="studio/ui.js" defer></script>
+<script src="studio/runner.js" defer></script>
+<script src="studio/scheduler.js" defer></script>
+<script src="studio/ops.js" defer></script>
+<script src="studio/dev.js" defer></script>
+<script src="studio/admin.js" defer></script>
+<script src="studio/studio.js" defer></script>
+</head>
+<body>
+
+<!-- Login -->
+<section id="login-screen" class="screen" hidden>
+  <form id="login-form" class="login-card" autocomplete="on">
+    <div class="brand big">ANA<span>ERP</span></div>
+    <label>Login <input name="username" autocomplete="username" required></label>
+    <label>Senha <input name="password" type="password" autocomplete="current-password" required></label>
+    <button type="submit" class="primary">Entrar</button>
+    <p id="login-error" class="error" role="alert"></p>
+  </form>
+</section>
+
+<!-- Password change (RF-011-03) -->
+<section id="password-screen" class="screen" hidden>
+  <form id="password-form" class="login-card">
+    <div class="brand">ANA<span>ERP</span></div>
+    <h2 id="password-title">Troque sua senha</h2>
+    <p id="password-hint" class="muted">Sua senha foi definida por um administrador. Escolha uma nova para continuar.</p>
+    <label>Senha atual <input name="current" type="password" autocomplete="current-password" required></label>
+    <label>Nova senha <input name="new" type="password" autocomplete="new-password" required></label>
+    <label>Confirme a nova senha <input name="confirm" type="password" autocomplete="new-password" required></label>
+    <div class="row-buttons">
+      <button type="submit" class="primary">Salvar senha</button>
+      <button type="button" id="password-cancel" class="quiet">Cancelar</button>
+    </div>
+    <p id="password-error" class="error" role="alert"></p>
+  </form>
+</section>
+
+<!-- Application -->
+<section id="app-screen" class="screen" hidden>
+  <header class="topbar">
+    <div class="brand">ANA<span id="brand-company"></span></div>
+    <nav class="area-switch" aria-label="Áreas">
+      <button class="area" data-area="home">Início</button>
+      <button class="area" data-area="ops">Operação</button>
+      <button class="area" data-area="dev" data-min-role="developer">Desenvolvimento</button>
+      <button class="area" data-area="admin" data-min-role="admin">Administração</button>
+    </nav>
+    <form id="command-form" class="command" role="search">
+      <input id="command" list="command-list" placeholder="Ir para… (rotina, comando, programa, tabela ou seção)"
+             autocomplete="off" spellcheck="false" aria-label="Ir para">
+      <datalist id="command-list"></datalist>
+    </form>
+    <div class="user-box">
+      <span id="user-name"></span>
+      <button id="change-password" class="quiet">Trocar senha</button>
+      <button id="logout" class="quiet">Sair</button>
+    </div>
+  </header>
+
+  <!-- Home (RF-020-02) -->
+  <main id="area-home" class="area-page home" hidden></main>
+
+  <!-- Operation (RF-020-03) -->
+  <div id="area-ops" class="area-page two-col" hidden>
+    <nav id="ops-nav" class="side-nav" aria-label="Módulos"></nav>
+    <main id="ops-main" class="page-main"></main>
+  </div>
+
+  <!-- Development (RF-020-04, RF-020-05) -->
+  <div id="area-dev" class="area-page dev-layout" hidden>
+    <aside class="sidebar">
+      <nav class="tabs" role="tablist">
+        <button class="tab active" data-side="programs">Programas</button>
+        <button class="tab" data-side="data">Dados</button>
+      </nav>
+      <div id="side-programs" class="side-content">
+        <div class="side-toolbar">
+          <input id="filter" placeholder="Filtrar…" spellcheck="false" aria-label="Filtrar programas">
+          <button id="new-program" title="Novo programa">+ Novo</button>
+        </div>
+        <label class="check side-check"><input id="show-inactive" type="checkbox"> mostrar inativos</label>
+        <ul id="tree" class="tree"></ul>
+      </div>
+      <div id="side-data" class="side-content" hidden>
+        <ul id="catalog-tree" class="tree"></ul>
+      </div>
+    </aside>
+
+    <!-- Program workspace -->
+    <section id="program-view" class="program-view">
+      <div class="program-header">
+        <div class="program-title">
+          <strong id="program-name">Nenhum programa aberto</strong>
+          <span id="program-version" class="badge"></span>
+          <span id="dirty" class="badge warn" hidden>não salvo</span>
+          <span id="program-desc" class="muted"></span>
+        </div>
+        <div class="buttons">
+          <input id="comment" placeholder="comentário da versão" aria-label="Comentário da versão">
+          <button id="save" title="Salvar (Ctrl+S)">Salvar</button>
+          <button id="run" class="primary" title="Executar (F5)">▶ Executar</button>
+          <button id="debug" title="Depurar (Ctrl+F5)">Depurar</button>
+          <button id="purge" class="danger quiet admin-only" title="Excluir definitivamente (admin)">Excluir</button>
+        </div>
+      </div>
+      <nav class="tabs program-tabs" role="tablist">
+        <button class="tab active" data-ptab="code">Código</button>
+        <button class="tab" data-ptab="props">Propriedades e limites</button>
+        <button class="tab" data-ptab="versions">Versões</button>
+        <button class="tab" data-ptab="executions">Execuções</button>
+        <button class="tab" data-ptab="schedules">Agendamentos</button>
+        <span class="run-state" id="run-state"></span>
+      </nav>
+      <div id="notice" class="notice" hidden></div>
+
+      <!-- Code: editor + run/debug side panel + output -->
+      <div id="ptab-code" class="ptab code-layout">
+        <div class="code-main">
+          <div class="debug-bar">
+            <button id="dbg-continue" class="dbg" title="Continuar (F8)" disabled>Continuar</button>
+            <button id="dbg-over" class="dbg" title="Passo (F10)" disabled>Passo</button>
+            <button id="dbg-into" class="dbg" title="Entrar (F11)" disabled>Entrar</button>
+            <button id="dbg-out" class="dbg" title="Sair da função (Shift+F11)" disabled>Sair</button>
+            <button id="dbg-stop" class="dbg danger" title="Parar" disabled>■ Parar</button>
+            <span class="muted small-text">Clique na margem (ou F9) para marcar pontos de parada.</span>
+          </div>
+          <div id="editor" class="editor"></div>
+          <section class="panel">
+            <nav class="tabs" role="tablist">
+              <button class="tab active" data-panel="output">Saída</button>
+              <button class="tab" data-panel="result">Resultado</button>
+            </nav>
+            <div id="panel-output" class="panel-content output"></div>
+            <div id="panel-result" class="panel-content" hidden><pre id="result" class="json"></pre></div>
+          </section>
+        </div>
+        <aside class="code-side">
+          <section>
+            <h3>Parâmetros <button id="toggle-json" class="quiet small" title="Alternar formulário/JSON">{ }</button></h3>
+            <form id="params-form" class="params-form"></form>
+            <textarea id="params-json" class="params-json" rows="6" spellcheck="false" hidden>{}</textarea>
+            <label class="check small-text" title="A depuração desfaz tudo ao final, a menos que marcado"><input id="p-commit" type="checkbox"> confirmar gravações ao depurar</label>
+          </section>
+          <section>
+            <h3>Variáveis</h3>
+            <table id="variables" class="variables"><tbody></tbody></table>
+          </section>
+          <section>
+            <h3>Pilha</h3>
+            <ol id="stack" class="stack"></ol>
+          </section>
+          <section>
+            <h3>Console</h3>
+            <div id="console-history" class="console-history"></div>
+            <form id="console-form" class="inline-form">
+              <input id="console-input" placeholder="expressão (pausado)" spellcheck="false" autocomplete="off">
+            </form>
+          </section>
+        </aside>
+      </div>
+
+      <!-- Properties and limits -->
+      <div id="ptab-props" class="ptab page-pad" hidden>
+        <div class="form-grid">
+          <label>Descrição <input id="p-description" maxlength="500"></label>
+          <label>Tipo <select id="p-kind"><option value="program">programa</option><option value="library">biblioteca</option></select></label>
+          <label>Papel mínimo <select id="p-role"><option value="user">usuário</option><option value="developer">desenvolvedor</option><option value="admin">administrador</option></select></label>
+          <label class="check"><input id="p-exposed" type="checkbox"> Exposto (chamada remota)</label>
+          <label class="check" title="Só membros de grupos que cobrem este programa"><input id="p-restricted" type="checkbox"> Restrito a grupos</label>
+          <label class="check"><input id="p-active" type="checkbox" checked> Ativo</label>
+        </div>
+        <h3>Comandos</h3>
+        <div id="program-commands"></div>
+        <h3>Limites de execução <span class="muted small-text">vazio = padrão; nunca acima do teto</span></h3>
+        <div id="limits-box" class="limits-grid"></div>
+        <p class="muted small-text">As alterações valem após Salvar.</p>
+      </div>
+
+      <!-- Versions -->
+      <div id="ptab-versions" class="ptab split page-pad" hidden>
+        <ul id="version-list" class="list"></ul>
+        <pre id="version-preview" class="preview"></pre>
+      </div>
+
+      <!-- Schedules of this program (spec 018) -->
+      <div id="ptab-schedules" class="ptab page-pad" hidden></div>
+
+      <!-- Executions of this program -->
+      <div id="ptab-executions" class="ptab split page-pad" hidden>
+        <ul id="execution-list" class="list"></ul>
+        <pre id="execution-detail" class="preview json"></pre>
+      </div>
+    </section>
+
+    <!-- Data workspace -->
+    <section id="data-view" class="data-view page-pad" hidden>
+      <div id="table-detail"><p class="muted">Escolha uma tabela no catálogo à esquerda.</p></div>
+      <h3>Console SQL <span class="muted small-text">somente leitura, até 1000 linhas</span></h3>
+      <form id="sql-form" class="inline-form">
+        <textarea id="sql-input" rows="4" spellcheck="false" placeholder="SELECT * FROM base.product"></textarea>
+        <button type="submit">Executar SQL</button>
+      </form>
+      <div id="sql-result"></div>
+    </section>
+  </div>
+
+  <!-- Administration (RF-020-06) -->
+  <div id="area-admin" class="area-page two-col" hidden>
+    <nav class="side-nav" aria-label="Administração">
+      <div class="nav-group">Pessoas e acesso</div>
+      <button class="nav-link" data-section="users">Usuários</button>
+      <button class="nav-link" data-section="groups">Grupos de acesso</button>
+      <button class="nav-link" data-section="limits">Limites e cotas</button>
+      <div class="nav-group">Sistema</div>
+      <button class="nav-link" data-section="company">Empresa</button>
+      <button class="nav-link" data-section="settings">Parâmetros</button>
+      <button class="nav-link" data-section="accounts">Contas padrão</button>
+      <button class="nav-link" data-section="commands">Comandos</button>
+      <button class="nav-link" data-section="remote">Sistemas remotos</button>
+      <div class="nav-group">Operação do sistema</div>
+      <button class="nav-link" data-section="scheduler">Agendamento</button>
+      <button class="nav-link" data-section="monitor">Monitor</button>
+      <button class="nav-link" data-section="consumption">Consumo</button>
+      <button class="nav-link" data-section="audit">Auditoria</button>
+      <button class="nav-link" data-section="retention">Retenção</button>
+    </nav>
+    <main id="admin-main" class="page-main"></main>
+  </div>
+</section>
+
+<div id="toast" class="toast" role="status" hidden></div>
+</body>
+</html>
