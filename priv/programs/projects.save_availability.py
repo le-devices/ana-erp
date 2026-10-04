@@ -7,11 +7,11 @@ from ana_lib.projects import access
 from ana_lib.projects import views as V
 
 PARAMS = {
-    "employee": {"type": "int", "label": "colaborador (vazio = eu)"},
+    "employee": {"type": "int", "label": "pessoa (vazio = eu)", "lookup": {"program": "projects.lookup", "params": {"kind": "employees"}}},
     "weekly_hours": {"type": "decimal", "label": "jornada semanal (h)"},
     "absence_from": {"type": "date", "label": "ausência de"},
     "absence_to": {"type": "date", "label": "ausência até"},
-    "kind": {"type": "str", "default": "vacation", "label": "vacation, leave, training, other"},
+    "kind": {"type": "str", "default": "vacation", "label": "tipo de ausência", "choices": [["vacation", "Férias"], ["leave", "Licença"], ["training", "Treinamento"], ["other", "Outra"]]},
     "remove_absence": {"type": "int", "label": "remover ausência (id)"},
 }
 

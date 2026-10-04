@@ -9,7 +9,7 @@ PARAMS = {
     "project": {"type": "str", "required": True},
     "id": {"type": "int"},
     "description": {"type": "str"},
-    "kind": {"type": "str", "default": "other"},
+    "kind": {"type": "str", "default": "other", "label": "tipo", "choices": [["component", "Componentes"], ["pcb", "Placas"], ["supplies", "Insumos"], ["subcontract", "Terceiros"], ["travel", "Viagens"], ["software", "Software"], ["other", "Outros"]]},
     "amount": {"type": "decimal"},
     "monthly": {"type": "bool", "default": False},
     "expected_date": {"type": "date"},

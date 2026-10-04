@@ -667,6 +667,11 @@ def validate_params(declaration, received):
             out[name] = conv(received[name])
         except (ValueError, TypeError, decimal.InvalidOperation):
             raise ParamError(f"parâmetro {name} não é do tipo {kind}") from None
+        choices = spec.get("choices")
+        if choices:
+            allowed = [c[0] if isinstance(c, (list, tuple)) else c for c in choices]
+            if out[name] not in allowed:
+                raise ParamError(f"parâmetro {name}: valor fora das opções ({', '.join(map(str, allowed))})")
     return out
 
 
@@ -926,6 +931,13 @@ def run(channel, msg, output_limit):
             "trace": _program_trace(e)}})
 
 
+def with_order(params):
+    """The declared order survives storage (JSON objects have no order): "order" per parameter."""
+    if not isinstance(params, dict):
+        return params
+    return {k: ({**v, "order": i} if isinstance(v, dict) else v) for i, (k, v) in enumerate(params.items())}
+
+
 def inspect(channel, msg):
     """Check syntax and extract PARAMS/docs without running (RF-005-08)."""
     import ast
@@ -947,7 +959,7 @@ def inspect(channel, msg):
         if isinstance(node, ast.Assign) and any(
                 isinstance(t, ast.Name) and t.id == "PARAMS" for t in node.targets):
             try:
-                resp["params"] = ast.literal_eval(node.value)
+                resp["params"] = with_order(ast.literal_eval(node.value))
             except ValueError:
                 resp["error"] = {"line": node.lineno, "message": "PARAMS deve ser um literal"}
     channel.send(resp)

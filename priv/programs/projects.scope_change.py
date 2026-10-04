@@ -13,8 +13,8 @@ from ana_lib.projects import finance as F
 from ana_lib.projects import views as V
 
 PARAMS = {
-    "project": {"type": "str", "required": True},
-    "action": {"type": "str", "required": True, "label": "request, estimate, approve_internal, approve_customer, reject"},
+    "project": {"type": "str", "required": True, "label": "projeto", "lookup": {"program": "projects.lookup", "params": {"kind": "projects"}}},
+    "action": {"type": "str", "required": True, "label": "ação", "choices": [["request", "Pedir"], ["estimate", "Estimar"], ["approve_internal", "Aprovar internamente"], ["approve_customer", "Registrar aprovação do cliente"], ["reject", "Recusar"]]},
     "number": {"type": "int", "label": "nº da mudança"},
     "title": {"type": "str"},
     "description": {"type": "str"},

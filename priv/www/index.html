@@ -49,6 +49,7 @@
 <!-- Application -->
 <section id="app-screen" class="screen" hidden>
   <header class="topbar">
+    <button id="back" class="back" type="button" title="Voltar à tela anterior (F3)" hidden>◀ Voltar</button>
     <div class="brand">ANA<span id="brand-company"></span></div>
     <nav class="area-switch" aria-label="Áreas">
       <button class="area" data-area="home">Início</button>
@@ -177,6 +178,7 @@
           <label>Tipo <select id="p-kind"><option value="program">programa</option><option value="library">biblioteca</option></select></label>
           <label>Papel mínimo <select id="p-role"><option value="user">usuário</option><option value="developer">desenvolvedor</option><option value="admin">administrador</option></select></label>
           <label class="check"><input id="p-exposed" type="checkbox"> Exposto (chamada remota)</label>
+          <label class="check"><input id="p-menu" type="checkbox"> Aparece no menu de Operação</label>
           <label class="check" title="Só membros de grupos que cobrem este programa"><input id="p-restricted" type="checkbox"> Restrito a grupos</label>
           <label class="check"><input id="p-active" type="checkbox" checked> Ativo</label>
         </div>

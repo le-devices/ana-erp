@@ -19,14 +19,14 @@ from ana_lib.projects import consulting as C
 from ana_lib.projects import views as V
 
 PARAMS = {
-    "project": {"type": "str", "required": True, "label": "projeto"},
-    "activity": {"type": "str", "required": True, "label": "atividade"},
-    "employee": {"type": "int", "label": "colaborador"},
-    "profile": {"type": "str", "label": "perfil (quando ainda não há pessoa)"},
+    "project": {"type": "str", "required": True, "label": "projeto", "lookup": {"program": "projects.lookup", "params": {"kind": "projects"}}},
+    "activity": {"type": "str", "required": True, "label": "atividade", "lookup": {"program": "projects.lookup", "params": {"kind": "activities"}, "depends": ["project"]}},
+    "employee": {"type": "int", "label": "pessoa", "lookup": {"program": "projects.lookup", "params": {"kind": "employees"}}},
+    "profile": {"type": "str", "label": "perfil (quando ainda não há pessoa)", "lookup": {"program": "projects.lookup", "params": {"kind": "profiles"}}},
     "hours": {"type": "decimal", "label": "horas"},
     "week": {"type": "date", "label": "semana (qualquer dia)"},
     "distribute": {"type": "bool", "label": "distribuir o total no período da atividade"},
-    "replace_profile": {"type": "str", "label": "trocar alocação deste perfil pela pessoa"},
+    "replace_profile": {"type": "str", "label": "trocar alocação deste perfil pela pessoa", "lookup": {"program": "projects.lookup", "params": {"kind": "profiles"}}},
 }
 
 

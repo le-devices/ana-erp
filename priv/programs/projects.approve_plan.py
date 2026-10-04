@@ -10,7 +10,7 @@ from ana_lib.projects import consulting as C
 from ana_lib.projects import finance as F
 
 PARAMS = {
-    "project": {"type": "str", "required": True, "label": "projeto"},
+    "project": {"type": "str", "required": True, "label": "projeto", "lookup": {"program": "projects.lookup", "params": {"kind": "projects"}}},
     "reason": {"type": "str", "default": "", "label": "observação"},
     "low_margin_justification": {"type": "str", "label": "justificativa (margem abaixo da mínima)"},
 }

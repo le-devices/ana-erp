@@ -12,8 +12,8 @@ from ana_lib.projects import views as V
 PARAMS = {
     "start": {"type": "date", "label": "a partir de"},
     "weeks": {"type": "int", "default": 8, "label": "semanas"},
-    "profile": {"type": "str", "label": "perfil"},
-    "project": {"type": "str", "label": "só a equipe deste projeto"},
+    "profile": {"type": "str", "label": "perfil", "lookup": {"program": "projects.lookup", "params": {"kind": "profiles"}}},
+    "project": {"type": "str", "label": "só a equipe deste projeto", "lookup": {"program": "projects.lookup", "params": {"kind": "projects"}}},
 }
 
 

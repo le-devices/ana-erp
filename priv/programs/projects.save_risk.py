@@ -6,16 +6,16 @@ from ana_lib.projects import access
 from ana_lib.projects import views as V
 
 PARAMS = {
-    "project": {"type": "str", "required": True},
+    "project": {"type": "str", "required": True, "label": "projeto", "lookup": {"program": "projects.lookup", "params": {"kind": "projects"}}},
     "id": {"type": "int"},
-    "kind": {"type": "str", "label": "risk ou issue"},
+    "kind": {"type": "str", "label": "tipo", "choices": [["risk", "Risco"], ["issue", "Pendência"]]},
     "title": {"type": "str"},
     "probability": {"type": "int"},
     "impact": {"type": "int"},
     "owner": {"type": "str"},
     "action_plan": {"type": "str"},
     "due_date": {"type": "date"},
-    "status": {"type": "str", "label": "open, mitigating, closed"},
+    "status": {"type": "str", "label": "situação", "choices": [["open", "Aberto"], ["mitigating", "Em tratamento"], ["closed", "Fechado"]]},
     "client_visible": {"type": "bool"},
 }
 
