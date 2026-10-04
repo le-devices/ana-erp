@@ -24,5 +24,5 @@ USER ana
 ENV HOME=/home/ana ANA_PY_DIR=/tmp LANG=C.UTF-8
 EXPOSE 8080
 HEALTHCHECK --interval=10s --timeout=3s --start-period=20s --retries=3 \
-  CMD python3 -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/saude', timeout=2)"
+  CMD python3 -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/health/live', timeout=2)"
 ENTRYPOINT ["/usr/bin/tini", "--", "/opt/ana/bin/ana-start"]
