@@ -1,0 +1,12 @@
+# 021 — Tarefas: Consultoria (projetos de clientes)
+
+- [x] T-021-01 Plano técnico (`plan.md`) e migração: fases/atividades, dependências, entregáveis, modelos, alocação, linhas de base, mudanças, riscos (RF-021-01..08)
+- [x] T-021-02 Modelos de projeto e criação a partir de modelo (RF-021-02, CA-021-01)
+- [x] T-021-03 Alocação de pessoal às tarefas: por semana ou distribuída, troca de perfil por pessoa, quadro pessoas × semanas, capacidade e sobrealocação (RF-021-03, 03a, CA-021-02, 02a)
+- [x] T-021-04 Quadro, Gantt e caminho crítico (RF-021-04, CA-021-03)
+- [x] T-021-05 Andamento, valor agregado e linhas de base (RF-021-05, 06, CA-021-04)
+- [x] T-021-06 Mudanças de escopo e riscos (RF-021-07, 08, CA-021-05)
+- [x] T-021-07 Relatório de status agendado, guardado sem custos e marcado visível ao cliente (RF-021-09, CA-021-07). Exibição no portal e aprovação pelo cliente: dependem da spec 016
+- [x] T-021-08 Telas: Minha semana, Projeto (abas), Portfólio, fluxo guiado (RF-021-10, 11, CA-021-06)
+- [x] T-021-10 Lucro a partir da alocação, projeção de viabilidade, cenários e política de margem (RF-021-12..15, CA-021-08..10)
+- [x] T-021-09 Testes CA-021-01..10 (+02a) e RNF-021-01 (2 mil atividades)
