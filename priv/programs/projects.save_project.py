@@ -29,18 +29,21 @@ PARAMS = {
     "service_tax_rate": {"type": "decimal"},
     "service_tax_withheld": {"type": "bool"},
     "description": {"type": "str"},
+    "cost_center": {"type": "str", "label": "centro de custo", "lookup": {"program": "finance.lookup", "params": {"kind": "cost_centers"}}},
     "tasks": {"type": "list", "default": []},
     "team": {"type": "list", "default": []},
     "rates": {"type": "dict", "default": {}},
 }
 
 COLUMNS = ["name", "customer_id", "manager", "billing", "status", "start_date", "due_date",
-           "budget_hours", "budget_amount", "service_tax_rate", "service_tax_withheld", "description"]
+           "budget_hours", "budget_amount", "service_tax_rate", "service_tax_withheld", "description", "cost_center"]
 
 
 def main(code, tasks=(), team=(), rates=None, customer=None, **fields):
     code = code.strip().upper()
     fields["customer_id"] = customer
+    if fields.get("cost_center"):
+        fields["cost_center"] = fields["cost_center"].strip().upper()
     current = ana.sql_one("SELECT * FROM projects.project WHERE code = $1 FOR UPDATE", code)
     if current is None:
         access.require_admin()
@@ -49,9 +52,9 @@ def main(code, tasks=(), team=(), rates=None, customer=None, **fields):
             raise ana.Error("INVALID_PARAMETER", "projeto novo exige: " + ", ".join(missing))
         project_id = ana.sql_value(
             "INSERT INTO projects.project (code, name, customer_id, manager, billing, status, start_date, "
-            "  due_date, budget_hours, budget_amount, service_tax_rate, service_tax_withheld, description) "
+            "  due_date, budget_hours, budget_amount, service_tax_rate, service_tax_withheld, description, cost_center) "
             "VALUES ($1, $2, $3, $4, COALESCE($5, 'hourly'), COALESCE($6, 'proposal'), $7, $8, $9, $10, "
-            "        COALESCE($11::numeric, 0), COALESCE($12::boolean, false), $13) RETURNING id",
+            "        COALESCE($11::numeric, 0), COALESCE($12::boolean, false), $13, $14) RETURNING id",
             code, *[fields.get(c) for c in COLUMNS])
         created = True
     else:

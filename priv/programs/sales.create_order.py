@@ -16,15 +16,16 @@ PARAMS = {
     "items": {"type": "list", "required": True},
     "warehouse": {"type": "str", "default": "CENTRAL"},
     "notes": {"type": "str"},
+    "cost_center": {"type": "str", "label": "centro de custo (vazio = o do depósito)", "lookup": {"program": "finance.lookup", "params": {"kind": "cost_centers"}}},
 }
 
 
-def main(customer, items, warehouse="CENTRAL", notes=None):
+def main(customer, items, warehouse="CENTRAL", notes=None, cost_center=None):
     v.require(0 < len(items) <= 500, "INVALID_ITEMS", "o pedido deve ter de 1 a 500 itens")
     c = ana.sql_one("SELECT id, name FROM base.party "
                     "WHERE id = $1 AND active AND kind IN ('customer', 'both')", customer)
     v.require(c, "CUSTOMER_NOT_FOUND", f"cliente {customer} não encontrado")
-    w = ana.sql_one("SELECT id FROM inventory.warehouse WHERE code = $1", warehouse.upper())
+    w = ana.sql_one("SELECT id, cost_center FROM inventory.warehouse WHERE code = $1", warehouse.upper())
     v.require(w, "WAREHOUSE_NOT_FOUND", f"depósito {warehouse} não encontrado")
 
     codes = sorted({str(i.get("product", "")).upper() for i in items})
@@ -34,8 +35,9 @@ def main(customer, items, warehouse="CENTRAL", notes=None):
     v.require(not missing, "PRODUCT_NOT_FOUND", f"itens inexistentes: {', '.join(missing)}")
 
     order = ana.sql_one(
-        "INSERT INTO sales.sales_order (customer_id, warehouse_id, notes, created_by) "
-        "VALUES ($1, $2, $3, $4) RETURNING id, number", customer, w["id"], notes, ana.context.user)
+        "INSERT INTO sales.sales_order (customer_id, warehouse_id, notes, created_by, cost_center) "
+        "VALUES ($1, $2, $3, $4, $5) RETURNING id, number", customer, w["id"], notes, ana.context.user,
+        cost_center.upper() if cost_center else w["cost_center"])   # spec 027: where the sale is accounted
 
     batch = []
     for n, item in enumerate(items, start=1):
