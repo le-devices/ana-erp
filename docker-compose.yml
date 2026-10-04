@@ -47,6 +47,8 @@ services:
                -c pg_prewarm.autoprewarm_interval=0
     volumes:
       - data:/var/lib/postgresql/data
+      # RF-023-06: WAL archive and base backups (scripts/backup.sh); empty until enabled.
+      - wal_archive:/var/lib/postgresql/archive
       - ./docker/initdb.sql:/docker-entrypoint-initdb.d/01-ana.sql:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U postgres -d ana"]
@@ -72,6 +74,9 @@ services:
     cap_drop: [ALL]
     restart: unless-stopped
     logging: *logging
+    # RF-023-02: time to drain (not ready → running executions finish → stop).
+    stop_grace_period: 40s
 
 volumes:
   data:
+  wal_archive:

@@ -9,6 +9,8 @@ start() ->
         {"/", ana_http_static, <<"index.html">>},
         {"/studio/:file", ana_http_static, undefined},
         {"/health", ana_http_api, health},
+        {"/health/live", ana_http_api, live},
+        {"/health/ready", ana_http_api, ready},
         {"/api/admin/[...]", ana_http_admin, admin},
         {"/api/scheduler/[...]", ana_http_scheduler, scheduler},
         {"/api/[...]", ana_http_api, api},

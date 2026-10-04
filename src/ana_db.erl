@@ -9,7 +9,7 @@
 
 -include_lib("epgsql/include/epgsql.hrl").
 
--export([start_link/3, wait_for_database/0]).
+-export([start_link/3, wait_for_database/0, connect/1, connect/2, hosts/1]).
 -export([with_connection/1, with_connection/3, checkout/2, checkin/2, transaction/1,
          query/3, batch/3, squery/2, query_limited/3,
          rows/2, one/2, exec/2, status/1, sql_error/1]).
@@ -45,7 +45,7 @@ wait_for_database() ->
     wait_for_database(500, erlang:monotonic_time(millisecond) + 60000).
 
 wait_for_database(Wait, Deadline) ->
-    case epgsql:connect(ana_config:db()) of
+    case connect(ana_config:db()) of
         {ok, C} ->
             ok = epgsql:close(C);
         {error, Reason} ->
@@ -56,6 +56,49 @@ wait_for_database(Wait, Deadline) ->
                     timer:sleep(Wait),
                     wait_for_database(min(Wait * 2, 8000), Deadline)
             end
+    end.
+
+%% RF-023-05: ANA_DB_HOST may list several addresses ("pg1,pg2"). With more
+%% than one, only the primary is accepted (pg_is_in_recovery() = false), so a
+%% promoted replica is found after a failover; the last address that worked
+%% is tried first. Mode `any` accepts replicas (read-only use).
+-spec connect(map()) -> {ok, pid()} | {error, term()}.
+connect(Config) -> connect(Config, primary).
+
+-spec connect(map(), primary | any) -> {ok, pid()} | {error, term()}.
+connect(Config = #{host := Host}, Mode) ->
+    case hosts(Host) of
+        [Single] -> epgsql:connect(Config#{host => Single});
+        Hosts -> try_hosts(prefer(Hosts), Config, Mode, no_hosts)
+    end.
+
+-spec hosts(string()) -> [string()].
+hosts(Host) ->
+    [H || H0 <- string:split(Host, ",", all), H <- [string:trim(H0)], H =/= ""].
+
+prefer(Hosts) ->
+    Last = persistent_term:get({?MODULE, last_primary}, undefined),
+    case lists:member(Last, Hosts) of
+        true -> [Last | lists:delete(Last, Hosts)];
+        false -> Hosts
+    end.
+
+try_hosts([], _, _, Last) -> {error, Last};
+try_hosts([H | Rest], Config, Mode, _) ->
+    case epgsql:connect(Config#{host => H}) of
+        {ok, C} when Mode =:= any ->
+            {ok, C};
+        {ok, C} ->
+            case epgsql:squery(C, "SELECT pg_is_in_recovery()") of
+                {ok, _, [{<<"f">>}]} ->
+                    persistent_term:put({?MODULE, last_primary}, H),
+                    {ok, C};
+                _ ->
+                    catch epgsql:close(C),
+                    try_hosts(Rest, Config, Mode, {not_primary, H})
+            end;
+        {error, Reason} ->
+            try_hosts(Rest, Config, Mode, {H, Reason})
     end.
 
 %% Runs Fun(Conn) with a connection borrowed from the pool.
@@ -215,6 +258,10 @@ init({Name, Config, Size}) ->
 
 handle_call({checkout, Client, Ref}, _From, St = #st{free = [C | Rest]}) ->
     {reply, {ok, C}, lend(C, Client, Ref, St#st{free = Rest})};
+handle_call({checkout, _, _}, _From, St = #st{free = [], open = 0, refill = T}) when T =/= undefined ->
+    %% CA-023-02: database down and no connection left — fail fast, don't queue.
+    {reply, {error, #{code => <<"DB_UNAVAILABLE">>,
+                      message => <<"banco de dados indisponível; tente novamente em instantes"/utf8>>}}, St};
 handle_call({checkout, Client, Ref}, From, St = #st{queue = Q}) ->
     {noreply, open_up_to(St#st{queue = queue:in({From, Client, Ref}, Q)})};
 handle_call(status, _From, St) ->
@@ -323,7 +370,7 @@ discard(C) ->
 
 open_up_to(St = #st{open = O, size = S}) when O >= S -> St#st{backoff = 500};
 open_up_to(St = #st{open = O, config = Config, name = Name}) ->
-    case epgsql:connect(Config()) of
+    case connect(Config()) of
         {ok, C} ->
             open_up_to(release(C, St#st{open = O + 1}));
         {error, Reason} ->
@@ -332,9 +379,10 @@ open_up_to(St = #st{open = O, config = Config, name = Name}) ->
             schedule_refill(St)
     end.
 
-%% A single pending timer, exponential backoff up to 30 s.
+%% A single pending timer, exponential backoff up to 5 s (RNF-023-02: the core
+%% is back within seconds after the database returns).
 schedule_refill(St = #st{refill = undefined, backoff = B}) ->
-    St#st{refill = erlang:send_after(B, self(), refill), backoff = min(B * 2, 30000)};
+    St#st{refill = erlang:send_after(B, self(), refill), backoff = min(B * 2, 5000)};
 schedule_refill(St) ->
     St.
 

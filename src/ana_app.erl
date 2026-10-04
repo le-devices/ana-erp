@@ -1,7 +1,7 @@
 %% ANA ERP startup (spec 001).
 -module(ana_app).
 -behaviour(application).
--export([start/2, stop/1, configure_roles/0]).
+-export([start/2, prep_stop/1, stop/1, configure_roles/0]).
 
 start(_Type, _Args) ->
     ok = case ana_db:wait_for_database() of            % RNF-001-07
@@ -16,8 +16,14 @@ start(_Type, _Args) ->
     ok = ana_security:ensure_admin(),                  % RF-001-04
     ok = ana_seeds:apply(),                            % RF-006-08
     _ = ana_parallel:recover(startup),                 % RF-022-04: orphan prepared transactions
+    _ = ana_ha:interrupted(startup),                   % RF-023-04: executions of a previous run
     ok = ana_http:start(),
     {ok, Sup}.
+
+%% RF-023-02: SIGTERM → drain (not ready, no new executions, wait the running ones).
+prep_stop(State) ->
+    _ = (catch ana_ha:drain()),
+    State.
 
 stop(_) ->
     _ = (catch cowboy:stop_listener(ana_http)),
@@ -26,7 +32,7 @@ stop(_) ->
 %% P10: restricted roles get a login with a password known only to the core,
 %% plus session limits enforced by the database itself (defense in depth).
 configure_roles() ->
-    {ok, C} = epgsql:connect(ana_config:db()),
+    {ok, C} = ana_db:connect(ana_config:db()),
     try
         {ok, _, [{_}]} = epgsql:equery(C, "SELECT now() AT TIME ZONE $1", [list_to_binary(ana_config:timezone())]),
         SqlT = ana_config:integer("ANA_SQL_TIMEOUT_MS", 30000),

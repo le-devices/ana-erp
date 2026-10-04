@@ -1,5 +1,5 @@
 # ANA ERP — atalhos de desenvolvimento
-.PHONY: subir parar logs compilar eunit dialyzer teste-runtime teste-integracao teste-estudio teste-cluster testes limpar
+.PHONY: subir parar logs compilar eunit dialyzer teste-runtime teste-integracao teste-estudio teste-cluster teste-caos testes limpar
 
 subir:            ## sobe banco + núcleo
 	docker compose up -d --build
@@ -32,7 +32,10 @@ teste-estudio:    ## DOM real (jsdom) contra o Estúdio; requer `make subir`
 teste-cluster:    ## dois nós (sobe e remove o segundo nó)
 	tests/cluster/run.sh
 
-testes: eunit teste-runtime teste-integracao teste-estudio teste-cluster
+teste-caos:       ## dois nós + balanceador: falhas, queda de nó, rolling, banco, restauração
+	tests/chaos/run.sh
+
+testes: eunit teste-runtime teste-integracao teste-estudio teste-cluster teste-caos
 
 limpar:           ## apaga containers E dados
 	docker compose down -v
