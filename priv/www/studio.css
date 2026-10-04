@@ -394,3 +394,9 @@ button.link:hover strong { color: var(--accent); }
 .s6.fill, .chart-svg .s6.dot { fill: var(--series-6); } .s6.line { stroke: var(--series-6); } .chart-svg .s6.area { fill: var(--series-6); fill-opacity: .1; stroke: none; }
 .s7.fill, .chart-svg .s7.dot { fill: var(--series-7); } .s7.line { stroke: var(--series-7); } .chart-svg .s7.area { fill: var(--series-7); fill-opacity: .1; stroke: none; }
 .s8.fill, .chart-svg .s8.dot { fill: var(--series-8); } .s8.line { stroke: var(--series-8); } .chart-svg .s8.area { fill: var(--series-8); fill-opacity: .1; stroke: none; }
+
+/* Observability (spec 019) */
+.advice-card { border: 1px solid var(--border); border-radius: 8px; padding: 10px 12px; margin: 8px 0; background: var(--surface); }
+.advice-head { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.advice-suggestion { display: flex; gap: 8px; align-items: flex-start; margin-top: 6px; }
+.advice-suggestion code { flex: 1 1 auto; white-space: pre-wrap; background: var(--surface-2); padding: 6px 8px; border-radius: 6px; font-size: 12px; }

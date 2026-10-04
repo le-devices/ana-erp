@@ -11,6 +11,7 @@
     users: "Usuários", groups: "Grupos de acesso", limits: "Limites e cotas", company: "Empresa",
     settings: "Parâmetros", accounts: "Contas padrão", commands: "Comandos", remote: "Sistemas remotos",
     scheduler: "Agendamento", monitor: "Monitor", consumption: "Consumo", audit: "Auditoria", retention: "Retenção",
+    health: "Saúde", sqlperf: "Desempenho do SQL", advice: "Dicas de otimização",
   };
   const state = { user: null, targets: new Map(), trail: [] };
 

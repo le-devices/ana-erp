@@ -1846,5 +1846,138 @@ class TestCharts(Base):
         self.assertIn("Resultado acumulado", titles)
 
 
+
+# ---------------------------------------------------------------- spec 019
+class TestObservability(Base):
+    def advice(self, status="open"):
+        return http("GET", f"/api/admin/observability/advice?status={status}", token=self.token)[1]
+
+    def setting(self, key, value):
+        old = [x["value"] for x in http("GET", "/api/admin/settings", token=self.token)[1] if x["key"] == key][0]
+        self.assertEqual(http("PUT", f"/api/admin/settings/{key}", {"value": value}, self.token)[0], 200)
+        return old
+
+    def test_rf_019_01_health_components(self):
+        s, h, _ = http("POST", "/api/admin/observability/health/check", {}, self.token)
+        self.assertEqual(s, 200, h)
+        states = {c["component"]: c["state"] for c in h["components"]}
+        for c in ("database", "pool_core", "pool_programs", "python", "scheduler"):
+            self.assertEqual(states.get(c), "green", (c, h["components"]))
+
+    def test_ca_019_02_error_frames_and_locals_for_developers_only(self):
+        name = f"test.obs_err_{SUFFIX}"
+        self.save(name, "def helper(total, password):\n    ratio = total / 0\n    return ratio\n\n"
+                        "def main(total=10):\n    return helper(total, 'segredo')\n", exposed=True)
+        s, c, _ = self.run_program(name)
+        e = c["error"]
+        self.assertEqual([f["function"] for f in e["frames"]], ["main", "helper"])
+        self.assertEqual(e["frames"][-1]["line"], 2)
+        self.assertEqual(e["locals"]["total"], "10")
+        self.assertEqual(e["locals"]["password"], "***")                 # sensitive names masked
+        _, user_token = new_user("user")
+        s, c, _ = self.run_program(name, token=user_token)
+        self.assertNotIn("frames", c["error"])
+        self.assertNotIn("trace", c["error"])
+        s, c, _ = http("POST", "/rpc", {"jsonrpc": "2.0", "method": name, "params": {}, "id": 1}, self.token)
+        self.assertNotIn("frames", json.dumps(c))
+
+    def test_ca_019_03_n_plus_one_advice(self):
+        name = f"test.obs_n1_{SUFFIX}"
+        self.save(name, "def main():\n    for i in range(60):\n        ana.sql_one('SELECT $1::int AS v', i)\n    return 1\n")
+        s, c, _ = self.run_program(name)
+        self.assertEqual(s, 200, c)
+        end, found = time.time() + 10, []
+        while time.time() < end and not found:
+            found = [a for a in self.advice() if a["rule"] == "n_plus_one" and a["evidence"].get("program") == name]
+            time.sleep(0.5)
+        self.assertTrue(found, "dica N+1 não gerada")
+        self.assertEqual((found[0]["evidence"]["calls"], found[0]["evidence"]["line"]), (60, 3))
+        self.assertIn("ANY($1)", found[0]["suggestion"])
+
+    def test_ca_019_04_07_09_slow_scan_index_and_growth(self):
+        if not psql_available():
+            self.skipTest("psql no contêiner indisponível")
+        tag = f"obs{SUFFIX}"
+        psql(f"INSERT INTO base.party (kind, name, city) SELECT 'customer', '{tag}-' || g, '{tag}-city-' || (g % 300) "
+             f"FROM generate_series(1, 30000) g; ANALYZE base.party")
+        name = f"test.obs_slow_{SUFFIX}"
+        self.save(name, f"def main():\n    return len(ana.sql('SELECT id FROM base.party WHERE city = $1', '{tag}-city-7'))\n")
+        old = self.setting("slow_sql_ms", 1)
+        try:
+            for _ in range(3):
+                self.assertEqual(self.run_program(name)[0], 200)
+            http("POST", "/api/admin/observability/sql/flush", {}, self.token)
+            end, stat = time.time() + 15, None
+            while time.time() < end:
+                rows = http("GET", f"/api/admin/observability/sql?program={name}", token=self.token)[1]
+                stat = next((r for r in rows if "city = $1" in r["sql"]), None)
+                if stat and stat["plan_summary"]:
+                    break
+                time.sleep(1)
+            # CA-019-07: measured, aggregated, with the plan summary
+            self.assertGreaterEqual(stat["calls"], 3)
+            scan = stat["plan_summary"]["seq_scans"][0]
+            self.assertEqual((scan["table"], scan["columns"]), ("base.party", ["city"]))
+            s, r, _ = http("POST", "/api/admin/observability/advice/run", {}, self.token)
+            self.assertEqual(s, 200, r)
+            slow = [a for a in self.advice() if a["rule"] == "slow_seq_scan" and a["target"].startswith(stat["hash"])]
+            self.assertTrue(slow, "dica de índice não gerada")
+            self.assertIn("CREATE INDEX CONCURRENTLY party_city_idx ON base.party (city)", slow[0]["suggestion"])  # CA-019-04
+            # CA-019-09: a statement fast today on a table that grows gets a preventive tip.
+            mean, peak = float(stat["mean_ms"]), float(stat["max_ms"])
+            # Not slow today (above the mean and the peak rule), but the table grew 10× in two days.
+            self.setting("slow_sql_ms", max(2, int(max(mean * 3, peak / 5)) + 1))
+            psql("DELETE FROM ana_system.table_growth WHERE table_name = 'base.party'; "
+                 "INSERT INTO ana_system.table_growth (day, table_name, rows, bytes) "
+                 "SELECT current_date - 2, 'base.party', (reltuples / 10)::bigint, 0 FROM pg_class WHERE oid = 'base.party'::regclass")
+            http("POST", "/api/admin/observability/advice/run", {}, self.token)
+            growth = [a for a in self.advice() if a["rule"] == "growth_risk" and a["target"].startswith(stat["hash"])]
+            self.assertTrue(growth, "dica preventiva de crescimento não gerada")
+            self.assertGreater(growth[0]["evidence"]["projected_rows_180d"], growth[0]["evidence"]["table_rows"])
+        finally:
+            self.setting("slow_sql_ms", old)
+            psql(f"DELETE FROM base.party WHERE name LIKE '{tag}-%'; ANALYZE base.party; "
+                 "DELETE FROM ana_system.table_growth WHERE table_name = 'base.party' AND day = current_date - 2")
+
+    def test_ca_019_05_profile_shows_costliest_function(self):
+        name = f"test.obs_prof_{SUFFIX}"
+        self.save(name, "def heavy():\n    return sum(i * i for i in range(400000))\n\n"
+                        "def light():\n    return 1\n\ndef main():\n    light()\n    return heavy()\n")
+        s, c, _ = self.run_program(name, profile=True)
+        self.assertEqual(s, 200, c)
+        s, x, _ = http("GET", f"/api/admin/audit/executions/{c['id']}", token=self.token)
+        funcs = {f["function"]: f for f in x["trace"]["profile"]["functions"]}
+        self.assertGreater(funcs["heavy"]["total_ms"], funcs["light"]["total_ms"] * 10)
+        self.assertEqual(x["trace"]["reason"], "profile")
+
+    def test_ca_019_06_metrics_require_auth(self):
+        req = urllib.request.Request(URL + "/metrics")
+        try:
+            urllib.request.urlopen(req, timeout=10)
+            self.fail("/metrics sem autenticação")
+        except urllib.error.HTTPError as e:
+            self.assertEqual(e.code, 401)
+        req = urllib.request.Request(URL + "/metrics", headers={"Authorization": "Bearer " + self.token})
+        with urllib.request.urlopen(req, timeout=10) as r:
+            body = r.read().decode()
+        self.assertIn("ana_executions_total{", body)
+        self.assertIn("ana_execution_duration_ms_bucket{", body)
+
+    def test_ca_019_08_static_sql_findings(self):
+        name = f"test.obs_lint_{SUFFIX}"
+        self.save(name, "def main(ids, city):\n"
+                        "    a = ana.sql('SELECT * FROM base.party WHERE id = $1', 1)\n"
+                        "    b = ana.sql(\"SELECT id FROM base.party WHERE name LIKE '%x'\")\n"
+                        "    c = ana.sql(f\"SELECT id FROM base.party WHERE city = '{city}'\")\n"
+                        "    for i in ids:\n"
+                        "        ana.sql_exec('UPDATE base.party SET city = $2 WHERE id = $1', i, city)\n"
+                        "    return 1\n")
+        s, p, _ = http("GET", f"/api/programs/{name}/performance", token=self.token)
+        self.assertEqual(s, 200, p)
+        got = {(f["line"], f["rule"]) for f in p["lint"]}
+        self.assertTrue({(2, "select_star"), (3, "leading_wildcard"), (4, "dynamic_sql"), (6, "sql_in_loop")} <= got, got)
+        self.assertEqual([f["severity"] for f in p["lint"] if f["rule"] == "dynamic_sql"], ["serious"])
+
+
 if __name__ == "__main__":
     unittest.main()

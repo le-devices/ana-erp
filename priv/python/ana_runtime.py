@@ -18,9 +18,11 @@ import io
 import json
 import linecache
 import os
+import re
 import signal
 import struct
 import sys
+import time
 import traceback
 import types
 
@@ -159,6 +161,7 @@ class Channel:
         self._out = stream_out
         self._seq = 0
         self.usage_baseline = None
+        self.sql_seconds = 0.0          # time waiting for SQL answers (profile, spec 019)
 
     def send(self, msg):
         if msg.get("type") == "end" and self.usage_baseline is not None:
@@ -186,6 +189,14 @@ class Channel:
         """Synchronous request to the core; returns the value or raises Error."""
         self._seq += 1
         my_id = self._seq
+        t0 = time.perf_counter() if op in ("sql", "sql_batch") else None
+        try:
+            return self._request(my_id, op, args)
+        finally:
+            if t0 is not None:
+                self.sql_seconds += time.perf_counter() - t0
+
+    def _request(self, my_id, op, args):
         self.send({"type": "request", "id": my_id, "op": op, "args": args})
         while True:
             msg = self.receive()
@@ -371,9 +382,19 @@ class _Savepoint:
 def make_ana_module(channel, output, context):
     m = types.ModuleType("ana", "ANA ERP API for programs.")
 
+    def where():
+        """Program and line that issued the SQL (spec 019: SQL measured per call site)."""
+        f = sys._getframe(2)
+        while f is not None:
+            name = f.f_code.co_filename
+            if name.startswith(FILE_PREFIX):
+                return [name[len(FILE_PREFIX):-1], f.f_lineno]
+            f = f.f_back
+        return None
+
     def sql(query, *params):
         """Run SQL and return a list of dicts. Parameters: $1, $2, ..."""
-        return build_rows(channel.request("sql", {"sql": query, "params": list(params)}))
+        return build_rows(channel.request("sql", {"sql": query, "params": list(params), "at": where()}))
 
     def sql_one(query, *params):
         rows = sql(query, *params)
@@ -386,14 +407,14 @@ def make_ana_module(channel, output, context):
         return next(iter(rows[0].values()), None)
 
     def sql_exec(query, *params):
-        return channel.request("sql", {"sql": query, "params": list(params)}).get("affected", 0)
+        return channel.request("sql", {"sql": query, "params": list(params), "at": where()}).get("affected", 0)
 
     def sql_batch(query, rows):
         """Run the same statement for each parameter list (P12)."""
         batch = [list(p) for p in rows]
         if not batch:
             return 0
-        return channel.request("sql_batch", {"sql": query, "batch": batch}).get("affected", 0)
+        return channel.request("sql_batch", {"sql": query, "batch": batch, "at": where()}).get("affected", 0)
 
     def call(program, **params):
         """Run another program in the same execution transaction (RF-002-08)."""
@@ -896,6 +917,31 @@ def _program_trace(exc):
     return "\n".join(lines)
 
 
+SENSITIVE = re.compile(r"pass(word|wd)?|senha|secret|token|key|cpf|cnpj|card|cartao", re.I)
+
+
+def _error_frames(exc):
+    """RF-019-04: program/library frames (where, line, function, code) and the locals of
+    the frame where the error happened — sensitive names masked, reprs truncated."""
+    frames, last = [], None
+    tb = exc.__traceback__
+    while tb is not None:
+        f = tb.tb_frame
+        name = f.f_code.co_filename
+        if name.startswith(FILE_PREFIX):
+            frames.append({"where": name[len(FILE_PREFIX):-1], "line": tb.tb_lineno, "function": f.f_code.co_name,
+                           "code": (linecache.getline(name, tb.tb_lineno) or "").strip()})
+            last = f
+        tb = tb.tb_next
+    local_vars = {}
+    if last is not None:
+        for k, v in list(last.f_locals.items())[:MAX_VARIABLES]:
+            if k.startswith("__") or isinstance(v, types.ModuleType) or callable(v) and not isinstance(v, (int, float, str)):
+                continue
+            local_vars[k] = "***" if SENSITIVE.search(k) else _short_repr(v)
+    return frames, local_vars
+
+
 def _error_line(exc, filename):
     tb = traceback.extract_tb(exc.__traceback__)
     for f in reversed(tb):
@@ -929,6 +975,7 @@ def run(channel, msg, output_limit):
     if msg.get("debug"):
         debugger = AnaDebugger(channel, filename, msg.get("breakpoints") or [])
 
+    profiler = None
     module_globals = {"__name__": "__ana__", "__file__": filename,
                       "__builtins__": builtins, "ana": ana_mod}
     channel.usage_baseline = apply_execution_limits(limits)
@@ -945,13 +992,21 @@ def run(channel, msg, output_limit):
         if debugger:
             result = debugger.run_debugged(lambda: main(**params), bool(msg.get("stop_on_entry")))
         else:
-            result = main(**params)
+            if msg.get("profile"):
+                import cProfile
+                profiler = cProfile.Profile()
+                profiler.enable()
+            try:
+                result = main(**params)
+            finally:
+                if profiler:
+                    profiler.disable()
         output.flush()
         try:
             to_json(result)
         except (TypeError, ValueError) as e:
             raise Error("INVALID_RESULT", str(e)) from None
-        channel.send({"type": "end", "ok": True, "result": result})
+        channel.send({"type": "end", "ok": True, "result": result, "profile": profile_of(profiler, channel)})
     except CpuLimitExceeded:
         signal.setitimer(signal.ITIMER_PROF, 0)
         output.flush()
@@ -966,7 +1021,8 @@ def run(channel, msg, output_limit):
         error = e.as_map()
         error["line"] = _error_line(e, filename)
         error["trace"] = _program_trace(e)
-        channel.send({"type": "end", "ok": False, "error": error})
+        error["frames"], error["locals"] = _error_frames(e)
+        channel.send({"type": "end", "ok": False, "error": error, "profile": profile_of(profiler, channel)})
     except ChannelClosed:
         raise
     except SyntaxError as e:
@@ -979,11 +1035,29 @@ def run(channel, msg, output_limit):
                       "error": {"code": "MEMORY", "message": "limite de memória excedido"}})
     except BaseException as e:  # noqa: BLE001 - everything becomes a structured error
         output.flush()
+        frames, local_vars = _error_frames(e)
         channel.send({"type": "end", "ok": False, "error": {
             "code": "EXCEPTION",
             "message": f"{type(e).__name__}: {e}",
             "line": _error_line(e, filename),
-            "trace": _program_trace(e)}})
+            "trace": _program_trace(e),
+            "frames": frames, "locals": local_vars}, "profile": profile_of(profiler, channel)})
+
+
+def profile_of(profiler, channel):
+    """RF-019-05: where the time went — program/library functions (calls, own and total ms)
+    and the time spent waiting for SQL answers."""
+    if profiler is None:
+        return None
+    import pstats
+    stats = pstats.Stats(profiler).stats
+    rows = []
+    for (filename, line, func), (_cc, ncalls, tottime, cumtime, _callers) in stats.items():
+        if filename.startswith(FILE_PREFIX):
+            rows.append({"where": filename[len(FILE_PREFIX):-1], "line": line, "function": func, "calls": ncalls,
+                         "self_ms": round(tottime * 1000, 3), "total_ms": round(cumtime * 1000, 3)})
+    rows.sort(key=lambda r: -r["total_ms"])
+    return {"functions": rows[:30], "sql_wait_ms": round(channel.sql_seconds * 1000, 3)}
 
 
 def with_order(params):
@@ -1017,7 +1091,156 @@ def inspect(channel, msg):
                 resp["params"] = with_order(ast.literal_eval(node.value))
             except ValueError:
                 resp["error"] = {"line": node.lineno, "message": "PARAMS deve ser um literal"}
+    resp["lint"] = lint_sql(tree)
     channel.send(resp)
+
+
+# ---------------------------------------------------------------------------
+# Static analysis of the program's SQL (spec 019, RF-019-07b)
+# ---------------------------------------------------------------------------
+
+SQL_CALLS = {"sql", "sql_one", "sql_value", "sql_exec", "sql_batch"}
+TABLE_RE = re.compile(r"\b(?:FROM|JOIN|UPDATE|INTO)\s+([a-z_][a-z0-9_]*\.[a-z_][a-z0-9_]*)", re.I)
+SQL_RULES = [
+    ("select_star", "info", re.compile(r"\bSELECT\s+(DISTINCT\s+)?([A-Z_][A-Z0-9_]*\.)?\*", re.I),
+     "SELECT * traz colunas que o programa não usa e quebra quando a tabela muda.",
+     "Liste só as colunas usadas."),
+    ("leading_wildcard", "warning", re.compile(r"\bI?LIKE\s+'%", re.I),
+     "LIKE '%…' (curinga no início) não usa índice: lê a tabela inteira.",
+     "Use índice trigram (CREATE EXTENSION pg_trgm; CREATE INDEX … USING gin (coluna gin_trgm_ops)) ou busca textual."),
+    ("not_in_subquery", "warning", re.compile(r"\bNOT\s+IN\s*\(\s*SELECT\b", re.I),
+     "NOT IN (SELECT …) costuma ser lento e não encontra nada se a subconsulta tiver NULL.",
+     "Use NOT EXISTS (SELECT 1 FROM … WHERE …)."),
+    ("order_random", "warning", re.compile(r"\bORDER\s+BY\s+RANDOM\s*\(\s*\)", re.I),
+     "ORDER BY random() ordena a tabela inteira a cada chamada.",
+     "Para amostras use TABLESAMPLE SYSTEM (n) ou sorteie pela chave."),
+    ("offset_pagination", "info", re.compile(r"\bOFFSET\b", re.I),
+     "Paginação por OFFSET lê e descarta todas as linhas anteriores: cada página fica mais lenta que a outra.",
+     "Pagine pela chave: WHERE id > $1 ORDER BY id LIMIT n."),
+]
+WHERE_FUNC_RE = re.compile(r"\b(LOWER|UPPER|DATE_TRUNC|DATE|TO_CHAR|COALESCE|TRIM|SUBSTRING|EXTRACT|CAST)\s*\(\s*[A-Z_][A-Z0-9_.]*", re.I)
+CLAUSE_END_RE = re.compile(r"\b(GROUP\s+BY|ORDER\s+BY|LIMIT|RETURNING|HAVING|UNION)\b", re.I)
+
+
+def _where_clause(sql):
+    m = re.search(r"\bWHERE\b", sql, re.I)
+    if not m:
+        return None
+    rest = sql[m.end():]
+    end = CLAUSE_END_RE.search(rest)
+    return rest[:end.start()] if end else rest
+
+
+def _check_sql(text):
+    out = []
+    for rule, severity, rx, message, suggestion in SQL_RULES:
+        if rx.search(text):
+            out.append((rule, severity, message, suggestion))
+    head = text.lstrip().split(None, 1)[0].upper() if text.strip() else ""
+    where = _where_clause(text)
+    if head in ("UPDATE", "DELETE") and where is None:
+        out.append(("no_where", "critical", f"{head} sem WHERE altera a tabela inteira.",
+                    "Confirme que é isso mesmo; senão, filtre com WHERE."))
+    if where is not None and WHERE_FUNC_RE.search(where):
+        out.append(("function_on_column", "info",
+                    "Função sobre coluna no filtro impede o índice comum dessa coluna.",
+                    "Crie um índice de expressão (ex.: CREATE INDEX … ON t (lower(col))) ou compare com o valor já transformado."))
+    if head == "SELECT" and where is None and re.search(r"\bFROM\s+[a-z_]", text, re.I) \
+            and not re.search(r"\bLIMIT\b", text, re.I):
+        out.append(("unbounded_select", "info",
+                    "Consulta sem filtro nem LIMIT: o tempo cresce junto com a tabela.",
+                    "Filtre (WHERE), pagine (LIMIT) ou leia de uma visão resumida."))
+    return out
+
+
+def lint_sql(tree):
+    """Findings: [{line, rule, severity, message, suggestion, sql, tables}]."""
+    import ast
+    findings = []
+    loops = (ast.For, ast.AsyncFor, ast.While)
+    comps = (ast.ListComp, ast.SetComp, ast.DictComp, ast.GeneratorExp)
+
+    def add(node, rule, severity, message, suggestion, text=""):
+        findings.append({"line": node.lineno, "rule": rule, "severity": severity, "message": message,
+                         "suggestion": suggestion, "sql": " ".join(text.split())[:200],
+                         "tables": sorted({t.lower() for t in TABLE_RE.findall(text)})})
+
+    def visit(node, in_loop, params=frozenset()):
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda)):
+            a = node.args
+            params = frozenset(x.arg for x in a.posonlyargs + a.args + a.kwonlyargs) \
+                | ({a.vararg.arg} if a.vararg else set()) | ({a.kwarg.arg} if a.kwarg else set())
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute) and node.func.attr in SQL_CALLS \
+                and isinstance(node.func.value, ast.Name) and node.func.value.id == "ana" and node.args:
+            arg = node.args[0]
+            text = ""
+            if isinstance(arg, ast.Constant) and isinstance(arg.value, str):
+                text = arg.value
+            elif isinstance(arg, ast.JoinedStr) and any(isinstance(v, ast.FormattedValue) for v in arg.values) \
+                    or isinstance(arg, ast.BinOp) and isinstance(arg.op, (ast.Add, ast.Mod)) and not _all_literal(arg) \
+                    or isinstance(arg, ast.Call) and isinstance(arg.func, ast.Attribute) and arg.func.attr == "format":
+                text = _literal_parts(arg)
+                used = {n.id for n in ast.walk(arg) if isinstance(n, ast.Name)}
+                if used & params:
+                    add(node, "dynamic_sql", "serious",
+                        "Valor recebido pela função entra no texto do SQL: risco de injeção de SQL e o plano não é reaproveitado.",
+                        "Passe os valores como parâmetros ($1, $2…); para nomes de colunas, escolha de uma lista fixa.", text)
+                else:
+                    add(node, "dynamic_sql", "warning",
+                        "SQL montado a partir de valores do próprio código (ex.: lista de colunas): seguro só se nada vier do usuário.",
+                        "Confirme a origem dos valores; quando der, prefira texto fixo com parâmetros ($1, $2…).", text)
+            elif isinstance(arg, ast.BinOp):
+                text = _literal_parts(arg)
+            if in_loop and node.func.attr != "sql_batch":
+                add(node, "sql_in_loop", "warning",
+                    "Consulta dentro de laço: uma ida ao banco por item (N+1) — fica lenta com volume.",
+                    "Use ana.sql_batch para gravar em lote, ou leia tudo de uma vez com WHERE id = ANY($1) / JOIN.", text)
+            for rule, severity, message, suggestion in _check_sql(text) if text else []:
+                add(node, rule, severity, message, suggestion, text)
+        if isinstance(node, loops):
+            for field, value in ast.iter_fields(node):
+                inner = in_loop or field in ("body", "orelse", "test") and not (isinstance(node, (ast.For, ast.AsyncFor)) and field == "orelse")
+                for child in (value if isinstance(value, list) else [value]):
+                    if isinstance(child, ast.AST):
+                        visit(child, inner, params)
+            return
+        if isinstance(node, comps):
+            for child in ast.iter_child_nodes(node):
+                visit(child, True, params)
+            return
+        for child in ast.iter_child_nodes(node):
+            visit(child, in_loop, params)
+
+    visit(tree, False)
+    return sorted(findings, key=lambda f: (f["line"], f["rule"]))
+
+
+def _all_literal(node):
+    """Text built only from fixed pieces ("a" + "b", "x" if flag else "") is still fixed text."""
+    import ast
+    if isinstance(node, ast.Constant):
+        return True
+    if isinstance(node, ast.BinOp) and isinstance(node.op, ast.Add):
+        return _all_literal(node.left) and _all_literal(node.right)
+    if isinstance(node, ast.IfExp):
+        return _all_literal(node.body) and _all_literal(node.orelse)
+    return False
+
+
+def _literal_parts(node):
+    """The literal text of a SQL built from pieces (enough to apply the text rules)."""
+    import ast
+    if isinstance(node, ast.Constant) and isinstance(node.value, str):
+        return node.value
+    if isinstance(node, ast.JoinedStr):
+        return "".join(v.value if isinstance(v, ast.Constant) else " ? " for v in node.values)
+    if isinstance(node, ast.BinOp):
+        return _literal_parts(node.left) + " " + _literal_parts(node.right)
+    if isinstance(node, ast.IfExp):
+        return _literal_parts(node.body)
+    if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute):
+        return _literal_parts(node.func.value)
+    return " ? "
 
 
 def entry_point():

@@ -13,6 +13,13 @@ init(Req, health) ->
 %% RF-023-01
 init(Req, live) ->
     {ok, ana_http:json(200, ana_ha:live(), Req), live};
+%% RF-019-02, CA-019-06: Prometheus text; admin/developer session or a robot key.
+init(Req, metrics) ->
+    Req2 = ana_http:require(Req, ?DEV, fun(_) ->
+        cowboy_req:reply(200, #{<<"content-type">> => <<"text/plain; version=0.0.4; charset=utf-8">>},
+                         ana_metrics:prometheus(), Req)
+    end),
+    {ok, Req2, metrics};
 init(Req, ready) ->
     {Ok, Body} = ana_ha:ready(),
     {ok, ana_http:json(case Ok of true -> 200; false -> 503 end, Body, Req), ready};
@@ -126,6 +133,13 @@ route(<<"DELETE">>, [<<"me">>, <<"favorites">>, Program], Req) ->
 route(<<"GET">>, [<<"programs">>], Req) ->
     ana_http:require(Req, ?DEV, fun(_) ->
         ok_json(ana_program:list(ana_http:qs_int(<<"inactive">>, Req, 0) =:= 1), Req)
+    end);
+route(<<"GET">>, [<<"programs">>, Name, <<"performance">>], Req) ->
+    ana_http:require(Req, ?DEV, fun(_) ->
+        case ana_observability:program_performance(Name) of
+            {ok, R} -> ana_http:json(200, R, Req);
+            {error, not_found} -> ana_http:reply_error(404, <<"NOT_FOUND">>, <<"programa não encontrado"/utf8>>, Req)
+        end
     end);
 route(<<"GET">>, [<<"programs">>, Name], Req) ->
     ana_http:require(Req, ?DEV, fun(_) -> one_json(ana_program:get(Name), Req) end);
@@ -258,8 +272,9 @@ run(Name, U, Req) ->
                             breakpoints => as_list(maps:get(<<"breakpoints">>, B, [])),
                             stop_on_entry => maps:get(<<"stop_on_entry">>, B, false) =:= true,
                             commit => maps:get(<<"commit">>, B, false) =:= true,
-                            timeout_ms => maps:get(<<"timeout_ms">>, B, undefined)},
-                case ana_execution:run(Name, Params, U, Options) of
+                            timeout_ms => maps:get(<<"timeout_ms">>, B, undefined),
+                            profile => maps:get(<<"profile">>, B, false) =:= true},
+                case developer_view(U, ana_execution:run(Name, Params, U, Options)) of
                     {ok, Res} -> ana_http:json(200, Res, R);
                     {error, #{<<"code">> := C} = E} when C =:= <<"OVERLOAD">>; C =:= <<"DRAINING">>;
                                                          C =:= <<"DB_UNAVAILABLE">> ->
@@ -364,6 +379,26 @@ sql_console(Sql, Req) ->
 %% ==========================================================================
 %% Helpers
 %% ==========================================================================
+
+%% RF-019-04: frames and local variables of an error are for developers only.
+developer_view(U, R) ->
+    case ana_security:has_role(U, ?DEV) of
+        true -> R;
+        false -> strip(R)
+    end.
+
+strip({error, E}) when is_map(E) ->
+    E2 = maps:without([<<"frames">>, <<"locals">>, <<"trace">>], E),
+    {error, case maps:find(<<"events">>, E2) of
+        {ok, Evs} when is_list(Evs) -> E2#{<<"events">> => [strip_event(Ev) || Ev <- Evs]};
+        _ -> E2
+    end};
+strip({ok, #{events := Evs} = Res}) when is_list(Evs) -> {ok, Res#{events => [strip_event(Ev) || Ev <- Evs]}};
+strip(R) -> R.
+
+strip_event(#{<<"error">> := E} = Ev) when is_map(E) ->
+    Ev#{<<"error">> => maps:without([<<"frames">>, <<"locals">>, <<"trace">>], E)};
+strip_event(Ev) -> Ev.
 
 validate_program(F) ->
     Checks = [

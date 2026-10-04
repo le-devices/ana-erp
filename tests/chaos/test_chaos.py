@@ -288,6 +288,28 @@ class TestChaos(unittest.TestCase):
         self.assertEqual(before, after, "o núcleo não pode ter sido reiniciado")
         self.assertEqual(http(NODE1, "GET", "/health/ready")[0], 200)
 
+    # ------------------------------------------------------------------ CA-019-01
+    def test_g_database_down_opens_and_closes_an_incident(self):
+        compose("stop", "db")
+        try:
+            time.sleep(15)                      # > one health check interval (10 s)
+        finally:
+            compose("start", "db")
+        wait_ready(NODE1)
+        token = login(NODE1)
+        end, closed = time.time() + 60, []
+        while time.time() < end and not closed:
+            s, h = http(NODE1, "GET", "/api/admin/observability/health", token=token)
+            if s == 200:
+                closed = [i for i in h["incidents"] if i["component"] == "database" and i["closed_at"]
+                          and i["seconds"] >= 5]
+                states = {c["component"]: c["state"] for c in h["components"]}
+            time.sleep(2)
+        self.assertTrue(closed, "o banco fora deveria abrir um incidente e a volta, fechá-lo")
+        events = [e for e in h["events"] if e["component"] == "database"]
+        self.assertEqual({e["state"] for e in events[:2]}, {"red", "green"}, events[:4])
+        self.assertEqual(states.get("database"), "green")
+
     # ------------------------------------------------------------------ RF-023-06
     def test_z_point_in_time_restore(self):
         def psql(sql):

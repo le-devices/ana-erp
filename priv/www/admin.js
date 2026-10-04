@@ -593,10 +593,43 @@
         ], x.parts, { onRow: (p) => showExecution(p.id, target) })) : null,
       block("Erro", x.error && { code: x.error.code, message: x.error.message, line: x.error.line }),
       block("Stack trace", x.error && x.error.trace),
+      x.error && x.error.frames && x.error.frames.length ? el("div", {}, el("h4", { text: "Quadros (do mais externo ao do erro)" }),
+        table([{ label: "Programa", value: (f) => f.where }, { label: "Linha", value: (f) => f.line, class: "num" },
+               { label: "Função", value: (f) => f.function }, { label: "Código", value: (f) => el("code", { text: f.code }) }], x.error.frames)) : null,
+      x.error && x.error.locals && Object.keys(x.error.locals).length ? el("div", {}, el("h4", { text: "Variáveis no ponto do erro" }),
+        table([{ label: "Nome", value: (v) => v[0] }, { label: "Valor", value: (v) => el("code", { text: v[1] }) }], Object.entries(x.error.locals))) : null,
+      traceView(x.trace),
       block("Trace interno do núcleo", x.internal_trace),
       block("Limites aplicados", x.limits), block("Parâmetros", x.params),
       block("Resultado", x.result), block("Saída", x.output)));
     target.scrollIntoView?.({ block: "nearest" });
+  }
+
+  // RF-019-03/05: SQL timeline (where the time went) and profile of a traced execution.
+  function traceView(t) {
+    if (!t) return el("p", { class: "muted small", text: "Sem rastro detalhado (execuções rápidas e sem erro são amostradas)." });
+    const evs = t.events || [];
+    const byHash = {};
+    for (const e of evs) { const k = e.hash; byHash[k] = byHash[k] || { sql: e.sql, ms: 0, n: 0 }; byHash[k].ms += e.ms; byHash[k].n += 1; }
+    const top = Object.values(byHash).sort((a, b) => b.ms - a.ms).slice(0, 8);
+    const prof = t.profile && t.profile.functions ? t.profile : null;
+    return el("div", {},
+      el("h4", { text: `Rastro (${({ error: "erro", slow: "execução lenta", sample: "amostra", profile: "perfil" })[t.reason] || t.reason}) · ${evs.length} comando(s) SQL · ${Number(t.sql_ms).toLocaleString("pt-BR")} ms em SQL` }),
+      top.length > 1 ? window.AnaCharts.render({ type: "bar", title: "Tempo por comando nesta execução", format: "number", unit: "ms",
+        x: top.map((h) => `${h.sql.slice(0, 50)}${h.sql.length > 50 ? "…" : ""} (${h.n}×)`), series: [{ name: "Tempo", values: top.map((h) => h.ms) }] }) : null,
+      evs.length ? table([
+        { label: "Aos (ms)", value: (e) => e.t_ms, class: "num" },
+        { label: "Duração (ms)", value: (e) => Number(e.ms).toLocaleString("pt-BR", { maximumFractionDigits: 2 }), class: "num" },
+        { label: "Linhas", value: (e) => e.rows, class: "num" },
+        { label: "Onde", value: (e) => e.at ? `${e.at[0]}:${e.at[1]}` : "" },
+        { label: "Comando", value: (e) => el("code", { class: e.error ? "status-error" : "", text: e.sql.length > 120 ? e.sql.slice(0, 120) + "…" : e.sql, title: e.sql }) },
+      ], evs.slice(0, 500)) : null,
+      prof ? el("div", {}, el("h4", { text: `Perfil · ${Number(prof.sql_wait_ms).toLocaleString("pt-BR")} ms esperando SQL` }),
+        window.AnaCharts.render({ type: "bar", title: "Funções com mais tempo (total)", format: "number", unit: "ms",
+          x: prof.functions.slice(0, 10).map((f) => `${f.function} (${f.where}:${f.line})`), series: [{ name: "Tempo total", values: prof.functions.slice(0, 10).map((f) => f.total_ms) }] }),
+        table([{ label: "Função", value: (f) => f.function }, { label: "Onde", value: (f) => `${f.where}:${f.line}` },
+               { label: "Chamadas", value: (f) => f.calls, class: "num" }, { label: "Próprio (ms)", value: (f) => f.self_ms, class: "num" },
+               { label: "Total (ms)", value: (f) => f.total_ms, class: "num" }], prof.functions)) : null);
   }
 
   // ------------------------------------------------------------------ retention (RF-024-08..10)
@@ -649,6 +682,144 @@
       out);
   }
 
+  // ------------------------------------------------------------------ observability (spec 019)
+  const STATE = { green: ["●", "normal", "ok"], yellow: ["▲", "atenção", "warn"], red: ["■", "falha", "off"] };
+  const SEVERITY = { info: ["ℹ", "informação", ""], warning: ["▲", "atenção", "warn"], serious: ["◆", "sério", "off"], critical: ["■", "crítico", "off"] };
+  const COMPONENT = { database: "Banco de dados", pool_core: "Conexões do núcleo", pool_programs: "Conexões dos programas",
+    python: "Processos Python", scheduler: "Agendamento", access_log: "Registro de acessos", remote_systems: "Sistemas remotos" };
+  const stateChip = (s) => { const [icon, label, cls] = STATE[s] || ["?", s, ""]; return pill(`${icon} ${label}`, cls); };
+  const sevChip = (s) => { const [icon, label, cls] = SEVERITY[s] || ["", s, ""]; return pill(`${icon} ${label}`, cls); };
+  const n2 = (v) => (v === null || v === undefined ? "—" : Number(v).toLocaleString("pt-BR", { maximumFractionDigits: 1 }));
+
+  async function health() {
+    const [h, samples] = await Promise.all([API.admin.obsHealth(), API.admin.obsSamples(24).catch(() => [])]);
+    const stat = (c) => el("div", { class: "stat" }, el("div", { class: "label", text: COMPONENT[c.component] || c.component }),
+      el("div", { class: "value" }, stateChip(c.state)), el("div", { class: "sub", text: `${c.message} · ${n2(c.latency_ms)} ms` }));
+    // Executions per 5 min from the cumulative samples (one node at a time keeps it simple: sum by sample time).
+    const byAt = new Map();
+    for (const smp of samples) {
+      const m = smp.metrics || {};
+      const t = smp.at.slice(0, 16);
+      const prev = byAt.get(t) || { ok: 0, bad: 0, mem: 0 };
+      const ex = m.executions || {};
+      prev.ok += ex.success || 0;
+      prev.bad += (ex.error || 0) + (ex.timeout || 0) + (ex.aborted || 0);
+      prev.mem += m.memory_mb || 0;
+      byAt.set(t, prev);
+    }
+    const ats = [...byAt.keys()];
+    const deltas = ats.slice(1).map((t, i) => {
+      const a = byAt.get(ats[i]), b = byAt.get(t);
+      return { t, ok: Math.max(0, b.ok - a.ok), bad: Math.max(0, b.bad - a.bad), mem: b.mem };
+    });
+    main().replaceChildren(
+      ...header("Saúde", "Estado de cada componente (verificado a cada 10 s), incidentes e o que mudou. Só as mudanças ficam gravadas."),
+      el("div", { class: "row-buttons" }, el("button", { text: "Verificar agora", onclick: () => guard(async () => { await API.admin.obsCheck(); health(); }) })),
+      el("div", { class: "stat-grid" }, h.components.map(stat)),
+      deltas.length >= 2 ? window.AnaCharts.render({ type: "stacked", title: "Execuções a cada 5 minutos", subtitle: "últimas 24 h",
+        x: deltas.map((d) => d.t.replace("T", " ")), series: [{ name: "Concluídas", values: deltas.map((d) => d.ok) },
+                                                               { name: "Com falha", values: deltas.map((d) => d.bad) }] }) : null,
+      deltas.length >= 2 ? window.AnaCharts.render({ type: "line", title: "Memória do núcleo", format: "number", unit: "MB",
+        x: deltas.map((d) => d.t.replace("T", " ")), series: [{ name: "Memória", values: deltas.map((d) => d.mem) }] }) : null,
+      el("h3", { text: "Incidentes" }),
+      table([
+        { label: "Componente", value: (i) => COMPONENT[i.component] || i.component },
+        { label: "Nó", value: (i) => i.node },
+        { label: "Início", value: (i) => fmtDate(i.opened_at) },
+        { label: "Fim", value: (i) => i.closed_at ? fmtDate(i.closed_at) : pill("■ aberto", "off") },
+        { label: "Duração", value: (i) => `${Math.round(i.seconds / 60)} min`, class: "num" },
+        { label: "Mensagem", value: (i) => i.message },
+      ], h.incidents, { empty: "Nenhum incidente." }),
+      el("h3", { text: "Mudanças de estado (72 h)" }),
+      table([
+        { label: "Quando", value: (e) => fmtDate(e.at) },
+        { label: "Componente", value: (e) => COMPONENT[e.component] || e.component },
+        { label: "Estado", value: (e) => stateChip(e.state) },
+        { label: "Mensagem", value: (e) => e.message },
+        { label: "Nó", value: (e) => e.node },
+      ], h.events, { empty: "Nenhuma mudança." }));
+  }
+
+  async function sqlperf(filters = { order: "total" }) {
+    const rows = await API.admin.obsSql(filters);
+    const detail = el("div");
+    const program = el("input", { placeholder: "Programa (opcional)", value: filters.program || "" });
+    const order = el("select", {}, [["total", "Tempo total"], ["mean", "Tempo médio"], ["max", "Tempo máximo"], ["calls", "Chamadas"]]
+      .map(([v, l]) => el("option", { value: v, text: "Ordenar por " + l.toLowerCase() })));
+    order.value = filters.order || "total";
+    const apply = () => sqlperf({ program: program.value.trim(), order: order.value });
+    const short = (q) => q.length > 90 ? q.slice(0, 90) + "…" : q;
+    const top = rows.slice(0, 10);
+    main().replaceChildren(
+      ...header("Desempenho do SQL", "Cada comando SQL dos programas, medido e agregado. Os lentos ganham plano de execução e sugestão; veja também as Dicas."),
+      el("div", { class: "admin-toolbar" }, program, order, el("button", { text: "Filtrar", onclick: apply }),
+        el("button", { class: "quiet", text: "Atualizar agora", title: "Grava as medições do último minuto", onclick: () => guard(async () => { await API.admin.obsFlush(); apply(); }) })),
+      top.length ? window.AnaCharts.render({ type: "bar", title: "Comandos com mais tempo total", format: "number", unit: "ms",
+        x: top.map((r) => short(r.sql).slice(0, 48)), series: [{ name: "Tempo total", values: top.map((r) => Number(r.total_ms)) }] }) : null,
+      table([
+        { label: "Comando", value: (r) => el("code", { text: short(r.sql), title: r.sql }) },
+        { label: "Chamadas", value: (r) => n2(r.calls), class: "num" },
+        { label: "Total (ms)", value: (r) => n2(r.total_ms), class: "num" },
+        { label: "Médio (ms)", value: (r) => n2(r.mean_ms), class: "num" },
+        { label: "Máx. (ms)", value: (r) => n2(r.max_ms), class: "num" },
+        { label: "Lentas", value: (r) => r.slow_calls ? pill(`▲ ${r.slow_calls}`, "warn") : "0", class: "num" },
+        { label: "Varredura completa", value: (r) => (r.plan_summary && r.plan_summary.seq_scans && r.plan_summary.seq_scans.length)
+            ? r.plan_summary.seq_scans.map((s) => `${s.table} (${n2(s.table_rows)} linhas)`).join(", ") : "" },
+        { label: "Programas", value: (r) => (r.programs || []).join(", ") },
+      ], rows, { empty: "Ainda sem medições — execute programas e clique em Atualizar agora.", onRow: (r) => sqlDetail(r.hash, detail) }),
+      detail);
+  }
+
+  async function sqlDetail(hash, target) {
+    const r = await API.admin.obsSqlDetail(hash);
+    const scans = (r.plan_summary && r.plan_summary.seq_scans) || [];
+    target.replaceChildren(el("div", { class: "form-card" },
+      el("h3", { text: "Comando SQL" }), el("pre", { class: "code-view", text: r.sql }),
+      el("div", { class: "stat-grid" },
+        ...[["Chamadas", n2(r.calls)], ["Tempo total", n2(r.total_ms) + " ms"], ["Médio", n2(r.total_ms / Math.max(r.calls, 1)) + " ms"],
+            ["Máximo", n2(r.max_ms) + " ms"], ["Linhas", n2(r.rows)], ["Custo estimado", r.plan_summary ? n2(r.plan_summary.cost) : "—"]]
+          .map(([l, v]) => el("div", { class: "stat" }, el("div", { class: "label", text: l }), el("div", { class: "value", text: v })))),
+      scans.length ? el("div", {}, el("h4", { text: "Varreduras completas no plano" }),
+        table([{ label: "Tabela", value: (s) => s.table }, { label: "Linhas na tabela", value: (s) => n2(s.table_rows), class: "num" },
+               { label: "Filtro", value: (s) => el("code", { text: s.filter || "—" }) }, { label: "Colunas do filtro", value: (s) => (s.columns || []).join(", ") }], scans)) : null,
+      (r.advice || []).length ? el("div", {}, el("h4", { text: "Dicas" }), r.advice.map(adviceCard)) : null,
+      r.plan ? el("details", {}, el("summary", { text: "Plano completo (EXPLAIN, sem executar)" }), el("pre", { class: "code-view", text: JSON.stringify(r.plan, null, 2) })) : null));
+    target.scrollIntoView?.({ block: "nearest" });
+  }
+
+  function adviceCard(a) {
+    const copy = el("button", { type: "button", class: "quiet small", text: "Copiar", onclick: () => {
+      try { navigator.clipboard.writeText(a.suggestion); toast("Sugestão copiada."); } catch (_) { toast("Não foi possível copiar.", true); }
+    } });
+    return el("div", { class: "advice-card" },
+      el("div", { class: "advice-head" }, sevChip(a.severity), el("strong", { text: a.title })),
+      a.detail ? el("p", { class: "muted", text: a.detail }) : null,
+      a.suggestion ? el("div", { class: "advice-suggestion" }, el("code", { text: a.suggestion }), copy) : null);
+  }
+
+  async function advice(status = "open") {
+    const rows = await API.admin.advice(status);
+    const counts = rows.reduce((acc, a) => ({ ...acc, [a.severity]: (acc[a.severity] || 0) + 1 }), {});
+    main().replaceChildren(
+      ...header("Dicas de otimização", "Problemas atuais e futuros encontrados no SQL, nos programas e no banco, com a correção sugerida. Analisadas a cada 15 minutos."),
+      el("div", { class: "sub-tabs" }, [["open", "Abertas"], ["dismissed", "Dispensadas"], ["resolved", "Resolvidas"]].map(([k, l]) =>
+        el("button", { class: k === status ? "active" : "", text: l, onclick: () => advice(k) }))),
+      el("div", { class: "row-buttons" }, el("button", { text: "Analisar agora", onclick: () => guard(async () => {
+        const r = await API.admin.adviceRun(); toast(`${r.found} dica(s) encontrada(s), ${r.resolved} resolvida(s).`); advice(status);
+      }) })),
+      status === "open" ? el("div", { class: "stat-grid" }, ["critical", "serious", "warning", "info"].map((s) =>
+        el("div", { class: "stat" }, el("div", { class: "label" }, sevChip(s)), el("div", { class: "value", text: String(counts[s] || 0) })))) : null,
+      rows.length ? el("div", {}, rows.map((a) => {
+        const card = adviceCard(a);
+        if (status === "open") card.append(el("div", { class: "row-buttons" },
+          el("button", { type: "button", class: "quiet small", text: "Dispensar por 30 dias", onclick: () => guard(async () => { await API.admin.adviceDismiss(a.id, 30); advice(status); }) }),
+          el("button", { type: "button", class: "quiet small", text: "Dispensar sempre", onclick: () => guard(async () => { await API.admin.adviceDismiss(a.id, 0); advice(status); }) })));
+        card.append(el("details", {}, el("summary", { text: "evidência" }), el("pre", { class: "code-view", text: JSON.stringify(a.evidence, null, 2) })),
+          el("div", { class: "muted small", text: `${a.rule} · visto pela primeira vez ${fmtDate(a.first_seen)} · última ${fmtDate(a.last_seen)}` }));
+        return card;
+      })) : el("p", { class: "muted", text: status === "open" ? "Nenhuma dica aberta. Bom sinal." : "Nada aqui." }));
+  }
+
   // ------------------------------------------------------------------ navigation
   // ------------------------------------------------------------------ scheduler (spec 018)
   async function scheduler() {
@@ -662,7 +833,7 @@
                        window.AnaScheduler.holidays(hol)]);
   }
 
-  const SECTIONS = { users, groups, settings, company, commands, remote, accounts, limits, consumption, scheduler, monitor, audit, retention };
+  const SECTIONS = { users, groups, settings, company, commands, remote, accounts, limits, consumption, scheduler, monitor, audit, retention, health, sqlperf, advice };
 
   function show(section) {
     current = section;

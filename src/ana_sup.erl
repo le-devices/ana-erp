@@ -15,6 +15,7 @@ init([]) ->
     ok = ana_access:init_cache(),
     ok = ana_limits:init_cache(),
     ok = ana_breaker:init_table(),
+    ok = ana_metrics:init_table(),
     Pool = ana_config:integer("ANA_DB_POOL", 10),
     PoolExec = ana_config:integer("ANA_DB_POOL_EXEC", 20),
     Children = [
@@ -28,7 +29,10 @@ init([]) ->
         worker(ana_access_log, []),
         worker(ana_analytics, []),
         worker(ana_scheduler, []),
-        worker(ana_retention, [])
+        worker(ana_retention, []),
+        worker(ana_sql_stats, []),
+        worker(ana_advisor, []),
+        worker(ana_health, [])
     ],
     {ok, {#{strategy => one_for_one, intensity => 10, period => 60}, Children}}.
 

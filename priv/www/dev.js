@@ -76,6 +76,7 @@ def main(name="mundo"):
     if (tab === "versions") loadVersions();
     if (tab === "executions") loadExecutions();
     if (tab === "schedules") loadSchedules();
+    if (tab === "perf") loadPerformance();
   }
 
   function notice(msg, isError = false) {
@@ -457,6 +458,59 @@ def main(name="mundo"):
     }, el("span", { class: "status-" + x.status, text: "●" }), el("span", { text: `v${x.version ?? "?"} · ${x.username}` }),
        el("span", { class: "muted", text: `${fmtDate(x.started_at)} · ${x.duration_ms ?? "…"} ms${x.error ? " · " + x.error : ""}${x.debug ? " · depuração" : ""}` }))));
     if (!rows.length) list.append(el("li", { class: "muted", text: "Nenhuma execução." }));
+  }
+
+  // Spec 019: static findings with lines, the program's statements and its last profile.
+  const SEV = { info: ["ℹ", "informação", ""], warning: ["▲", "atenção", "warn"], serious: ["◆", "sério", "off"], critical: ["■", "crítico", "off"] };
+  async function loadPerformance() {
+    const box = $("#ptab-perf");
+    if (!state.current || !state.current.version) { box.replaceChildren(el("p", { class: "muted", text: "Salve o programa para ver o desempenho." })); return; }
+    box.replaceChildren(el("p", { class: "muted", text: "Carregando…" }));
+    let p;
+    try { p = await API.programPerformance(state.current.name); } catch (e) { box.replaceChildren(el("p", { class: "error", text: errorText(e) })); return; }
+    const sevPill = (s) => { const [i, l, c] = SEV[s] || ["", s, ""]; return el("span", { class: "pill " + c, text: `${i} ${l}` }); };
+    const profileButton = el("button", { class: "primary", text: "▶ Perfilar uma execução", onclick: async () => {
+      let params;
+      try { params = readParams(); } catch (e) { notice("Parâmetros inválidos: " + e.message, true); return; }
+      profileButton.disabled = true;
+      try {
+        const r = await API.run(state.current.name, { params, profile: true });
+        toast(r.error ? `Executou com erro (${r.error.code}); o perfil foi guardado.` : "Perfil guardado.", !!r.error);
+      } catch (e) { toast(errorText(e), true); }
+      profileButton.disabled = false;
+      loadPerformance();
+    } });
+    const prof = p.profile && p.profile.profile;
+    box.replaceChildren(
+      el("h3", { text: "Análise do SQL do código" }),
+      el("p", { class: "muted", text: "Padrões que já são lentos ou vão ficar com o volume — recalculado a cada vez que o programa é salvo." }),
+      p.lint.length ? window.AnaUI.table([
+        { label: "Linha", value: (f) => el("button", { class: "link", text: String(f.line), onclick: () => { selectTab("code"); editor.markError(f.line); } }), class: "num" },
+        { label: "Severidade", value: (f) => sevPill(f.severity) },
+        { label: "O que", value: (f) => f.message },
+        { label: "Sugestão", value: (f) => f.suggestion },
+        { label: "SQL", value: (f) => el("code", { text: f.sql || "" }) },
+      ], p.lint) : el("p", { class: "ok-text", text: "✓ Nenhum apontamento no SQL deste programa." }),
+      el("h3", { text: "Comandos SQL medidos" }),
+      p.sql.length ? window.AnaCharts.render({ type: "bar", title: "Tempo total por comando", format: "number", unit: "ms",
+        x: p.sql.slice(0, 8).map((r) => r.sql.slice(0, 50) + (r.sql.length > 50 ? "…" : "")), series: [{ name: "Tempo total", values: p.sql.slice(0, 8).map((r) => Number(r.total_ms)) }] }) : null,
+      p.sql.length ? window.AnaUI.table([
+        { label: "Comando", value: (r) => el("code", { text: r.sql.length > 100 ? r.sql.slice(0, 100) + "…" : r.sql, title: r.sql }) },
+        { label: "Chamadas", value: (r) => r.calls, class: "num" },
+        { label: "Médio (ms)", value: (r) => r.mean_ms, class: "num" },
+        { label: "Máx. (ms)", value: (r) => r.max_ms, class: "num" },
+        { label: "Varredura completa", value: (r) => (r.plan_summary && r.plan_summary.seq_scans || []).map((s) => s.table).join(", ") },
+      ], p.sql) : el("p", { class: "muted", text: "Ainda sem medições (aparecem até 1 minuto depois de executar)." }),
+      el("h3", { text: "Perfil" }),
+      el("div", { class: "row-buttons" }, profileButton,
+        el("span", { class: "muted", text: "Executa com os parâmetros da aba Código e mede onde o tempo é gasto." })),
+      prof && prof.functions ? el("div", {},
+        el("p", { class: "muted", text: `Última: ${fmtDate(p.profile.started_at)} · ${prof.sql_wait_ms} ms esperando SQL` }),
+        window.AnaCharts.render({ type: "bar", title: "Funções com mais tempo", format: "number", unit: "ms",
+          x: prof.functions.slice(0, 10).map((f) => `${f.function} (linha ${f.line})`), series: [{ name: "Tempo total", values: prof.functions.slice(0, 10).map((f) => f.total_ms) }] }),
+        window.AnaUI.table([{ label: "Função", value: (f) => f.function }, { label: "Onde", value: (f) => `${f.where}:${f.line}` },
+          { label: "Chamadas", value: (f) => f.calls, class: "num" }, { label: "Próprio (ms)", value: (f) => f.self_ms, class: "num" },
+          { label: "Total (ms)", value: (f) => f.total_ms, class: "num" }], prof.functions)) : null);
   }
 
   async function loadSchedules() {
