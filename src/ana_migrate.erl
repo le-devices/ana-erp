@@ -5,13 +5,13 @@
 %% each in its own transaction, exactly once. An advisory lock prevents two
 %% nodes from migrating at the same time.
 -module(ana_migrate).
--export([run/0, files/1]).
+-export([run/0, files/1, known/0]).
 
 -define(LOCK, 7_741_001).
 
 -spec run() -> {ok, [binary()]} | {error, term()}.
 run() ->
-    {ok, C} = epgsql:connect(ana_config:db()),
+    {ok, C} = ana_db:connect(ana_config:db()),
     try
         {ok, _, _} = epgsql:squery(C, io_lib:format("SELECT pg_advisory_lock(~b)", [?LOCK])),
         prepare(C),
@@ -32,13 +32,26 @@ prepare(C) ->
         "CREATE SCHEMA IF NOT EXISTS ana_system;"
         "CREATE TABLE IF NOT EXISTS ana_system.migration ("
         "  name text PRIMARY KEY,"
-        "  applied_at timestamptz NOT NULL DEFAULT now())"),
+        "  applied_at timestamptz NOT NULL DEFAULT now());"
+        %% RF-023-03: migrations that break the previous version ("-- ana:breaking").
+        "CREATE TABLE IF NOT EXISTS ana_system.migration_flag ("
+        "  name text NOT NULL, flag text NOT NULL, PRIMARY KEY (name, flag))"),
     [] = [E || {error, E} <- lists:flatten([Rs])],
     ok.
 
 files(Dir) ->
     Path = filename:join(code:priv_dir(ana), Dir),
     lists:sort(filelib:wildcard(filename:join(Path, "*.sql"))).
+
+%% Migrations this version of the code knows (RF-023-03).
+-spec known() -> [{binary(), string()}].
+known() -> [{name(<<>>, F), F} || F <- files("migrations")].
+
+breaking(Sql) ->
+    case binary:split(Sql, <<"\n">>) of
+        [First | _] -> binary:match(First, <<"ana:breaking">>) =/= nomatch;
+        _ -> false
+    end.
 
 name(Prefix, File) -> <<Prefix/binary, (list_to_binary(filename:basename(File, ".sql")))/binary>>.
 
@@ -49,6 +62,10 @@ apply_all(C, [{Name, File} | Rest], Done) ->
     logger:info("applying migration ~s", [Name]),
     Rs = epgsql:squery(C, ["BEGIN;", Sql, ";",
                            "INSERT INTO ana_system.migration (name) VALUES ('", Name, "');",
+                           case breaking(Sql) of
+                               true -> ["INSERT INTO ana_system.migration_flag (name, flag) VALUES ('", Name, "', 'breaking');"];
+                               false -> []
+                           end,
                            "COMMIT;"]),
     case [E || {error, E} <- lists:flatten([Rs])] of
         [] ->

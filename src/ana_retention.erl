@@ -105,6 +105,7 @@ handle_info(tick, S) ->
 handle_info(partitions, S) ->
     _ = (catch ensure_partitions()),
     _ = (catch ana_parallel:recover(periodic)),         % spec 022: old orphan prepared transactions
+    _ = (catch ana_ha:interrupted(periodic)),           % spec 023: executions of nodes that did not return
     erlang:send_after(3600000, self(), partitions),
     {noreply, S};
 handle_info({purge_done, Pid, Result}, S = #{running := {Pid, Mon}, waiting := W}) ->
@@ -133,7 +134,7 @@ claim_today() ->
     H >= ana_settings:get(retention_hour) andalso
         case ana_db:one("INSERT INTO ana_system.retention_day (day, node) "
                         "VALUES ((now() AT TIME ZONE $1)::date, $2) ON CONFLICT DO NOTHING RETURNING day",
-                        [Tz, atom_to_binary(node())]) of
+                        [Tz, ana_config:node_id()]) of
             {ok, #{<<"day">> := _}} -> true;
             _ -> false
         end.

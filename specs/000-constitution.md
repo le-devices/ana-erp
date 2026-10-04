@@ -120,3 +120,11 @@ custa menos ao disco:
 - o PostgreSQL comprime o WAL e espaça checkpoints; logs têm rotação.
 Segurança dos dados vem antes: `fsync` e `full_page_writes` nunca são
 desligados.
+
+## P16. Atualizar sem parar
+O ERP é atualizado com os clientes trabalhando: vários nós atrás de um
+balanceador, desligamento gracioso e migrações compatíveis com a versão
+anterior (expandir → migrar → contrair). Remover ou renomear algo só numa
+versão seguinte, quando nenhum nó antigo roda mais; a migração que quebra a
+versão anterior se declara com `-- ana:breaking`. Toda falha prevista tem
+teste de caos versionado.
