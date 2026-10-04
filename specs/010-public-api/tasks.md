@@ -1,0 +1,16 @@
+# 010 — Tarefas: API pública
+
+- [ ] T-010-01 Tabelas `api_client`, `signing_key`, `refresh_token`, `idempotency`, `api_call_log`; colunas `program.public` e `program.cacheable_ttl_s` (RF-010-01, 11)
+- [ ] T-010-02 `ana_token`: Ed25519, `kid`, rotação, validação estrita (RNF-010-02, CA-010-02)
+- [ ] T-010-03 `ana_api_client` + cache + invalidação por NOTIFY + revogação (RF-010-01, 09, CA-010-03)
+- [ ] T-010-04 `/oauth/token` client_credentials (RF-010-02, CA-010-01)
+- [ ] T-010-05 `ana_public_gate`: TLS/proxy, CORS, escopo ∩ exposto ∩ papel (RF-010-05, 08, RNF-010-01, CA-010-04, 10)
+- [ ] T-010-06 `ana_rate_limit` + fração de capacidade pública + disjuntor (RNF-010-04, 08, 10, CA-010-07)
+- [ ] T-010-07 Requisições assinadas HMAC + nonce (RF-010-06, CA-010-06)
+- [ ] T-010-08 `ana_idempotency` (RF-010-07, RNF-010-09, CA-010-05)
+- [ ] T-010-09 Chave publicável e programas `public` (RF-010-04, CA-010-09)
+- [ ] T-010-10 PKCE + tokens de renovação rotativos + tela de consentimento (RF-010-03, CA-010-08)
+- [ ] T-010-11 TOTP (RF-010-12)
+- [ ] T-010-12 HTTP/2 + TLS nativo opcional, compressão, cache `cacheable` (RNF-010-12, 13)
+- [ ] T-010-13 Tela de clientes de API no Estúdio e consulta de auditoria (H1, H6, RF-010-11)
+- [ ] T-010-14 Teste de carga versionado (RNF-010-14, CA-010-11)
