@@ -245,6 +245,8 @@ make teste-runtime     # runtime Python, depurador e limites (sem banco)
 make teste-integracao  # testes contra o ambiente, rastreados a CA-xxx-nn
 make teste-estudio     # interface num DOM real (jsdom): áreas, rotina, depurador, administração
 make teste-cluster     # dois nós: agendamento exatamente uma vez, troca de líder, erpc
+make teste-caos        # dois nós + HAProxy: programas que falham, nó derrubado, desligamento
+                       # gracioso, atualização rolling, banco reiniciado, restauração a um instante
 ```
 
 ## Estrutura
@@ -257,6 +259,31 @@ priv/programs/      programas-semente       priv/python/    runtime isolado + de
 priv/www/           interface (HTML/CSS/JS, sem dependências)
 clients/python/     cliente JSON-RPC        tests/          runtime, integration, studio
 ```
+
+## Operação 24/7 (spec 023)
+
+- **Saúde**: `/health/live` (o processo está de pé) e `/health/ready` (banco,
+  pools, Python, esquema compatível e não drenando) — o balanceador usa a
+  prontidão; `/health` segue disponível.
+- **Vários nós** atrás de um balanceador (sessões ficam no banco). Exemplo
+  com HAProxy em `tests/chaos/`.
+- **Desligamento gracioso**: no SIGTERM o nó sai da prontidão, espera o
+  balanceador perceber (`ANA_DRAIN_DELAY_MS`), recusa novas execuções
+  (`DRAINING`, 503), espera as em curso (`ANA_DRAIN_TIMEOUT_MS`) e encerra.
+- **Atualização sem parada**: migrações expandir → migrar → contrair;
+  uma migração que quebra a versão anterior começa com `-- ana:breaking` e
+  tira da prontidão os nós antigos.
+- **Banco**: `ANA_DB_HOST=pg1,pg2` encontra o primário e segue a réplica
+  promovida sem reiniciar o núcleo; `ANA_DB_READ_HOSTS` leva o console SQL
+  às réplicas; banco fora → erro imediato (`DB_UNAVAILABLE`, 503) e volta
+  sozinho em segundos.
+- **Execuções interrompidas** pela queda de um nó ficam registradas como
+  `INTERRUPTED`; sistemas remotos com falha abrem um disjuntor
+  (`REMOTE_UNAVAILABLE`) em vez de prender execuções.
+- **Cópias de segurança**: `scripts/backup.sh enable` (arquivamento de WAL),
+  `scripts/backup.sh base` (cópia base, diária) e `scripts/restore-test.sh
+  "<instante>"` (restauração verificada num contêiner descartável). Copie o
+  volume `wal_archive` para fora da máquina.
 
 ## Fluxo de versionamento (gitflow)
 
@@ -287,6 +314,9 @@ verdes (`make testes`); `dev → qa` quando há uma versão candidata;
 | `ANA_PY_PREWARM`, `ANA_PY_SITE` | `4`, `0` | processos Python pré-aquecidos; pacotes do site |
 | `ANA_PG_SHARED_BUFFERS`, `ANA_PG_EFFECTIVE_CACHE`, `ANA_PG_WORK_MEM` | `512MB`, `1536MB`, `32MB` | memória do PostgreSQL (compose) |
 | `ANA_NODE_NAME`, `ANA_COOKIE` | — | habilitam distribuição Erlang |
+| `ANA_DB_HOST` (lista), `ANA_DB_READ_HOSTS` | `localhost`, — | primário com troca automática; réplicas de leitura |
+| `ANA_DRAIN_DELAY_MS`, `ANA_DRAIN_TIMEOUT_MS` | `2000`, `25000` | desligamento gracioso |
+| `ANA_BREAKER_OPEN_MS` | `30000` | tempo do disjuntor aberto |
 
 Prazos, limites, tetos, cotas, sessão e política de senha são **parâmetros**
 editáveis em Administração → Sistema → Parâmetros (as variáveis `ANA_*`
@@ -294,10 +324,9 @@ correspondentes são só o valor inicial).
 
 ## Situação das specs
 
-Implementadas: 001–008, 011 (com usuários robô e dono obrigatório), 012, 018, 021 (portal do cliente depende da 016), 022, 024, 025; 020 parcial (falta próxima ação
+Implementadas: 001–008, 011 (com usuários robô e dono obrigatório), 012, 018, 021 (portal do cliente depende da 016), 022, 023 (falta o teste de troca real de primário, T-023-09), 024, 025; 020 parcial (falta próxima ação
 sugerida, fluxos guiados e auditoria de acessibilidade).
 Na fila (ordem em [scripts/pending-work.prompt.md](scripts/pending-work.prompt.md)):
-023 alta disponibilidade,
 019 observabilidade, 013 suprimentos, 017 integrações, 016 repositório de
 arquivos, 014 produção, 015 logística, 010 API pública; 009 licenciamento
 aguarda decisões.

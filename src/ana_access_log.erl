@@ -123,7 +123,7 @@ write_batches(Entries) ->
         false -> {Entries, []}
     end,
     Col = fun(K) -> [v(maps:get(K, E, null)) || E <- Batch] end,
-    Node = atom_to_binary(node()),
+    Node = ana_config:node_id(),
     Insert = fun(C) ->
         {ok, [], []} = epgsql:squery(C, "SET LOCAL synchronous_commit TO off"),   % RF-025-03
         ana_db:query(C,

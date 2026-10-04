@@ -193,6 +193,12 @@ recorded_status(Id, #{username := U} = User) ->
     end.
 
 admit(Debug) ->
+    case ana_ha:refusing() of
+        true -> {error, err(<<"DRAINING">>, <<"nó em desligamento; tente novamente (outro nó atende)"/utf8>>)};
+        false -> admit2(Debug)
+    end.
+
+admit2(Debug) ->
     A = persistent_term:get({?MODULE, counters}),
     Max = ana_settings:get(exec_max),
     case atomics:add_get(A, ?I_EXEC, 1) of
@@ -1069,7 +1075,7 @@ return_connection(#st{conn = C, in_tx = InTx}) ->
 %% RF-024-04: where the call came from (IP and API key) and which node ran it.
 trace(#st{user = U}) ->
     T = maps:get(trace, U, #{}),
-    [maps:get(ip, T, null), maps:get(key_id, T, null), atom_to_binary(node())].
+    [maps:get(ip, T, null), maps:get(key_id, T, null), ana_config:node_id()].
 
 parent(#st{parent_id = undefined}) -> null;
 parent(#st{parent_id = P}) -> P.

@@ -1,5 +1,7 @@
 # 023 — Alta disponibilidade e tolerância a falhas (operação 24/7)
 
+Situação: implementada; falta o teste de troca real de primário (T-023-09)
+
 ## Problema
 Um ERP é usado o dia inteiro, todos os dias. O ANA já isola programas,
 supervisiona processos e reconecta ao banco, mas a operação 24/7 exige
@@ -28,7 +30,8 @@ auditoria fora da transação.
   sem resposta), e rotinas agendadas seguem as políticas da spec 018.
 - **RF-023-05** Banco em alta disponibilidade: suporte a endereço de
   primário com troca automática (ex.: réplica promovida), reconexão
-  transparente e opção de leitura em réplicas para relatórios/analítico.
+  transparente e opção de leitura em réplicas para o console SQL (consultas e
+  relatórios de leitura). Programas continuam no primário (mesma transação).
 - **RF-023-06** Cópias de segurança e restauração verificada: backup contínuo
   (WAL) com recuperação a um instante; teste periódico de restauração
   documentado.

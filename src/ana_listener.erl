@@ -24,7 +24,7 @@ handle_call(_, _, S) -> {reply, ok, S}.
 handle_cast(_, S) -> {noreply, S}.
 
 handle_info(connect, S) ->
-    case epgsql:connect((ana_config:db())#{async => self()}) of
+    case ana_db:connect((ana_config:db())#{async => self()}) of
         {ok, C} ->
             _ = [{ok, [], []} = epgsql:squery(C, ["LISTEN ", Ch]) || {Ch, _} <- ?CHANNELS],
             _ = [dispatch(Ch, all) || {Ch, _} <- ?CHANNELS],

@@ -14,6 +14,7 @@ init([]) ->
     ok = ana_program:init_cache(),
     ok = ana_access:init_cache(),
     ok = ana_limits:init_cache(),
+    ok = ana_breaker:init_table(),
     Pool = ana_config:integer("ANA_DB_POOL", 10),
     PoolExec = ana_config:integer("ANA_DB_POOL_EXEC", 20),
     Children = [

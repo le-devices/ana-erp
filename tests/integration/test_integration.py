@@ -1793,5 +1793,34 @@ class TestParallel(Base):
         self.assertEqual(self.parties(tag), 0, "depuração desfaz também as partes")
 
 
+
+# ---------------------------------------------------------------- spec 023
+class TestHighAvailability(Base):
+    def test_rf_023_01_live_and_ready(self):
+        s, c, _ = http("GET", "/health/live")
+        self.assertEqual((s, c["status"]), (200, "ok"))
+        s, c, _ = http("GET", "/health/ready")
+        self.assertEqual((s, c["status"]), (200, "ready"), c)
+        self.assertTrue(all(c["checks"].values()), c["checks"])
+        self.assertEqual(c["schema"]["state"], "compatible")
+
+    def test_rf_023_03_breaking_schema_makes_node_not_ready(self):
+        if not psql_available():
+            self.skipTest("psql no contêiner indisponível")
+        name = f"999_future_{SUFFIX}"
+        psql(f"INSERT INTO ana_system.migration (name) VALUES ('{name}')")
+        try:
+            s, c, _ = http("GET", "/health/ready")
+            self.assertEqual((s, c["schema"]["state"]), (200, "newer"), "migração nova compatível: segue pronto")
+            psql(f"INSERT INTO ana_system.migration_flag (name, flag) VALUES ('{name}', 'breaking')")
+            s, c, _ = http("GET", "/health/ready")
+            self.assertEqual((s, c["checks"]["schema"]), (503, False), c)
+            self.assertEqual(c["schema"]["breaking"], [name])
+        finally:
+            psql(f"DELETE FROM ana_system.migration_flag WHERE name = '{name}'")
+            psql(f"DELETE FROM ana_system.migration WHERE name = '{name}'")
+        self.assertEqual(http("GET", "/health/ready")[0], 200)
+
+
 if __name__ == "__main__":
     unittest.main()

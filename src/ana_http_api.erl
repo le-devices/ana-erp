@@ -10,6 +10,12 @@
 
 init(Req, health) ->
     {ok, health(Req), health};
+%% RF-023-01
+init(Req, live) ->
+    {ok, ana_http:json(200, ana_ha:live(), Req), live};
+init(Req, ready) ->
+    {Ok, Body} = ana_ha:ready(),
+    {ok, ana_http:json(case Ok of true -> 200; false -> 503 end, Body, Req), ready};
 init(Req, api) ->
     Method = cowboy_req:method(Req),
     Path = cowboy_req:path_info(Req),
@@ -255,7 +261,9 @@ run(Name, U, Req) ->
                             timeout_ms => maps:get(<<"timeout_ms">>, B, undefined)},
                 case ana_execution:run(Name, Params, U, Options) of
                     {ok, Res} -> ana_http:json(200, Res, R);
-                    {error, #{<<"code">> := <<"OVERLOAD">>} = E} -> ana_http:json(503, #{error => E}, R);
+                    {error, #{<<"code">> := C} = E} when C =:= <<"OVERLOAD">>; C =:= <<"DRAINING">>;
+                                                         C =:= <<"DB_UNAVAILABLE">> ->
+                        ana_http:json(503, #{error => E}, R);
                     {error, #{<<"code">> := C} = E} when C =:= <<"QUOTA_EXCEEDED">>; C =:= <<"PROGRAM_BUSY">> ->
                         ana_http:json(429, #{error => E}, R);
                     {error, #{<<"code">> := <<"PROGRAM_NOT_FOUND">>} = E} -> ana_http:json(404, #{error => E}, R);
@@ -328,7 +336,16 @@ table(Schema, Table, Req) ->
 
 %% RF-005-05: own connection as ana_read, read-only transaction.
 sql_console(Sql, Req) ->
-    case epgsql:connect(ana_config:db_role(read)) of
+    %% RF-023-05: replicas for reading when ANA_DB_READ_HOSTS is set.
+    Config = ana_config:db_role(read),
+    Conn = case ana_config:text("ANA_DB_READ_HOSTS", "") of
+        "" -> ana_db:connect(Config);
+        Replicas -> case ana_db:connect(Config#{host => Replicas}, any) of
+                        {ok, _} = Ok -> Ok;
+                        {error, _} -> ana_db:connect(Config)      % replicas down: the primary answers
+                    end
+    end,
+    case Conn of
         {ok, C} ->
             try
                 [{ok, [], []}, {ok, [], []}] =
