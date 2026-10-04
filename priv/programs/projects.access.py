@@ -1,0 +1,44 @@
+# ana:description Regras de acesso e consultas comuns do módulo de projetos
+# ana:kind library
+"""Who may manage a project (manager or admin) and shared lookups.
+
+RNF-008-02: cost and margin only for whoever manages the project.
+"""
+
+import ana
+
+
+def is_admin():
+    return ana.context.role == "admin"
+
+
+def require_admin():
+    if not is_admin():
+        raise ana.Error("FORBIDDEN", "operação restrita ao administrador")
+
+
+def project(code, lock=False):
+    p = ana.sql_one("SELECT * FROM projects.project WHERE code = $1" + (" FOR UPDATE" if lock else ""),
+                    str(code).upper())
+    if not p:
+        raise ana.Error("PROJECT_NOT_FOUND", f"projeto {code} não encontrado")
+    return p
+
+
+def can_manage(p):
+    return is_admin() or p["manager"] == ana.context.user
+
+
+def require_manager(p):
+    if not can_manage(p):
+        raise ana.Error("FORBIDDEN", f"apenas o gestor do projeto {p['code']} ou um administrador")
+
+
+def current_employee():
+    return ana.sql_one("SELECT id, name, profile FROM projects.employee WHERE username = $1 AND active",
+                       ana.context.user)
+
+
+def require_active(p):
+    if p["status"] != "active":
+        raise ana.Error("PROJECT_INACTIVE", f"projeto {p['code']} está {p['status']}")
