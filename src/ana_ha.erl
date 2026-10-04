@@ -22,7 +22,7 @@ live() -> #{status => ok, node => ana_config:node_id()}.
 -spec ready() -> {boolean(), map()}.
 ready() ->
     Checks = #{
-        draining => not draining(),
+        not_draining => not draining(),
         database => db_ok(),
         pool => pool_ok(ana_db),
         pool_programs => pool_ok(ana_db_exec),
