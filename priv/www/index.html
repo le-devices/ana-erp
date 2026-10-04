@@ -122,6 +122,7 @@
         <button class="tab" data-ptab="versions">Versões</button>
         <button class="tab" data-ptab="executions">Execuções</button>
         <button class="tab" data-ptab="schedules">Agendamentos</button>
+        <button class="tab" data-ptab="perf">Desempenho</button>
         <span class="run-state" id="run-state"></span>
       </nav>
       <div id="notice" class="notice" hidden></div>
@@ -199,6 +200,9 @@
       <!-- Schedules of this program (spec 018) -->
       <div id="ptab-schedules" class="ptab page-pad" hidden></div>
 
+      <!-- Performance of this program (spec 019) -->
+      <div id="ptab-perf" class="ptab page-pad" hidden></div>
+
       <!-- Executions of this program -->
       <div id="ptab-executions" class="ptab split page-pad" hidden>
         <ul id="execution-list" class="list"></ul>
@@ -237,6 +241,10 @@
       <button class="nav-link" data-section="consumption">Consumo</button>
       <button class="nav-link" data-section="audit">Auditoria</button>
       <button class="nav-link" data-section="retention">Retenção</button>
+      <div class="nav-group">Observabilidade</div>
+      <button class="nav-link" data-section="health">Saúde</button>
+      <button class="nav-link" data-section="sqlperf">Desempenho do SQL</button>
+      <button class="nav-link" data-section="advice">Dicas de otimização</button>
     </nav>
     <main id="admin-main" class="page-main"></main>
   </div>

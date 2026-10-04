@@ -4,6 +4,7 @@
 -export([start/2, prep_stop/1, stop/1, configure_roles/0]).
 
 start(_Type, _Args) ->
+    _ = ana_log_json:enable(),                         % RF-019-09
     ok = case ana_db:wait_for_database() of            % RNF-001-07
         ok -> ok;
         {error, Reason} -> exit({database_unavailable, Reason})

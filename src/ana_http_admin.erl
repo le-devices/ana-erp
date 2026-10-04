@@ -146,6 +146,36 @@ route(<<"GET">>, [<<"audit">>, <<"access">>], _U, Req) ->
 route(<<"GET">>, [<<"audit">>, <<"trail">>], _U, Req) ->
     reply(ana_admin:audit_trail(ana_http:qs_map(Req)), Req);
 
+%% --- Observability (spec 019) ---------------------------------------------
+route(<<"GET">>, [<<"observability">>, <<"health">>], _U, Req) ->
+    reply(ana_observability:health(), Req);
+route(<<"POST">>, [<<"observability">>, <<"health">>, <<"check">>], _U, Req) ->
+    _ = ana_health:check_now(),
+    reply(ana_observability:health(), Req);
+route(<<"GET">>, [<<"observability">>, <<"sql">>], _U, Req) ->
+    reply(ana_observability:sql_top(ana_http:qs_map(Req)), Req);
+route(<<"GET">>, [<<"observability">>, <<"sql">>, Hash], _U, Req) ->
+    reply(ana_observability:sql_detail(Hash), Req);
+route(<<"POST">>, [<<"observability">>, <<"sql">>, <<"flush">>], _U, Req) ->
+    ok = ana_sql_stats:flush(),
+    reply({ok, #{flushed => true}}, Req);
+route(<<"GET">>, [<<"observability">>, <<"samples">>], _U, Req) ->
+    reply(ana_observability:samples(ana_http:qs_int(<<"hours">>, Req, 24)), Req);
+route(<<"GET">>, [<<"observability">>, <<"advice">>], _U, Req) ->
+    Status = case ana_http:qs_map(Req) of #{<<"status">> := S} when S =/= <<>> -> S; _ -> null end,
+    reply(ana_advisor:list(#{status => Status}), Req);
+route(<<"POST">>, [<<"observability">>, <<"advice">>, <<"run">>], U = #{username := Who}, Req) ->
+    _ = U,
+    ok = ana_sql_stats:flush(),
+    R = ana_advisor:run(),
+    ana_admin:log(Who, <<"advice.run">>, <<"manual">>, null, null),
+    reply(R, Req);
+route(<<"POST">>, [<<"observability">>, <<"advice">>, Id, <<"dismiss">>], U, Req) ->
+    with_body(Req, fun(B, R) ->
+        Days = case maps:get(<<"days">>, B, 30) of D when is_integer(D), D >= 0 -> D; _ -> 30 end,
+        reply(ana_advisor:dismiss(binary_to_integer(Id), Days, U), R)
+    end);
+
 %% --- Retention (spec 024, RF-024-08..10) ----------------------------------
 route(<<"GET">>, [<<"retention">>], _U, Req) ->
     reply(ana_retention:overview(), Req);

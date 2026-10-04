@@ -261,6 +261,30 @@ priv/www/           interface (HTML/CSS/JS, sem dependências)
 clients/python/     cliente JSON-RPC        tests/          runtime, integration, studio
 ```
 
+## Observabilidade e desempenho do SQL (spec 019)
+
+- **Desempenho do SQL** (Administração → Observabilidade): cada comando de
+  cada programa é medido (tempo, linhas, linha do programa) e agregado; os
+  lentos ganham plano (`EXPLAIN`, sem executar) e sugestão concreta, como o
+  `CREATE INDEX CONCURRENTLY` com as colunas do filtro.
+- **Análise do SQL do código** (aba Desempenho do programa): `SELECT *`,
+  `LIKE '%…'`, função sobre coluna no filtro, `UPDATE`/`DELETE` sem `WHERE`,
+  paginação por `OFFSET`, `NOT IN (SELECT…)`, SQL montado com valores
+  recebidos (injeção) e SQL dentro de laço (N+1) — com a linha e a correção.
+- **Dicas de otimização**: N+1 observado, varredura completa lenta,
+  **crescimento** (a consulta rápida hoje que vai ficar lenta com a tabela
+  crescendo, com projeção de 6 meses), FK sem índice, índice nunca usado,
+  espaço morto, programa perto do limite, prazos estourados. Dispensar por
+  30 dias ou sempre; resolvidas somem sozinhas.
+- **Saúde e incidentes**: componentes verificados a cada 10 s, incidentes
+  abertos/fechados automaticamente (inclusive com o banco fora), webhook
+  opcional (`ANA_ALERT_WEBHOOK`).
+- **Execução detalhada**: linha do tempo do SQL, quadros e variáveis do erro
+  (só para desenvolvedores, nomes sensíveis mascarados) e **perfil** sob
+  demanda ("Perfilar uma execução").
+- **Métricas** em `/metrics` (Prometheus, autenticado) e logs JSON com
+  `ANA_LOG_FORMAT=json`.
+
 ## Operação 24/7 (spec 023)
 
 - **Saúde**: `/health/live` (o processo está de pé) e `/health/ready` (banco,
@@ -325,9 +349,9 @@ correspondentes são só o valor inicial).
 
 ## Situação das specs
 
-Implementadas: 001–008, 011 (com usuários robô e dono obrigatório), 012, 018, 021 (portal do cliente depende da 016), 022, 023 (falta o teste de troca real de primário, T-023-09), 024, 025, 026; 020 parcial (falta próxima ação
+Implementadas: 001–008, 011 (com usuários robô e dono obrigatório), 012, 018, 021 (portal do cliente depende da 016), 019 (faltam alertas configuráveis e OpenTelemetry), 022, 023 (falta o teste de troca real de primário, T-023-09), 024, 025, 026; 020 parcial (falta próxima ação
 sugerida, fluxos guiados e auditoria de acessibilidade).
 Na fila (ordem em [scripts/pending-work.prompt.md](scripts/pending-work.prompt.md)):
-019 observabilidade, 013 suprimentos, 017 integrações, 016 repositório de
+013 suprimentos, 017 integrações, 016 repositório de
 arquivos, 014 produção, 015 logística, 010 API pública; 009 licenciamento
 aguarda decisões.

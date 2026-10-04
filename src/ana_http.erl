@@ -11,6 +11,7 @@ start() ->
         {"/health", ana_http_api, health},
         {"/health/live", ana_http_api, live},
         {"/health/ready", ana_http_api, ready},
+        {"/metrics", ana_http_api, metrics},
         {"/api/admin/[...]", ana_http_admin, admin},
         {"/api/scheduler/[...]", ana_http_scheduler, scheduler},
         {"/api/[...]", ana_http_api, api},

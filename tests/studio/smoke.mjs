@@ -70,12 +70,15 @@ ok(true, "favorito aparece no Início (CA-020-05)");
 await go(w, "#/dev/program/demo.hello");
 await until(() => text("#program-name") === "demo.hello", "program", jsErrors);
 ok(d.querySelector("#editor textarea").value.includes("def main"), "código no editor");
-ok([...d.querySelectorAll("[data-ptab]")].map((b) => b.textContent).join("|") === "Código|Propriedades e limites|Versões|Execuções|Agendamentos", "abas do programa");
+ok([...d.querySelectorAll("[data-ptab]")].map((b) => b.textContent).join("|") === "Código|Propriedades e limites|Versões|Execuções|Agendamentos|Desempenho", "abas do programa");
 ok([...d.querySelectorAll("[data-panel]")].map((b) => b.textContent).join("|") === "Saída|Resultado", "painel inferior só com Saída e Resultado (CA-020-02)");
 d.querySelector('[data-ptab="props"]').click();
 await until(() => d.querySelectorAll("#limits-box input").length === 10, "limits", jsErrors);
 await until(() => text("#program-commands").includes("hello"), "commands", jsErrors);
 ok(text("#ptab-props").includes("Comandos") && text("#program-commands").includes("hello"), "propriedades, comandos e limites juntos");
+d.querySelector('[data-ptab="perf"]').click();
+await until(() => text("#ptab-perf").includes("Análise do SQL do código"), "perf tab", jsErrors);
+ok(true, "aba Desempenho do programa (spec 019)");
 d.querySelector('[data-ptab="versions"]').click();
 await until(() => text("#version-list").includes("v1"), "versions", jsErrors);
 ok(true, "versões na aba do programa");
@@ -166,7 +169,7 @@ ok(!d.querySelector("#ops-main .chart .chart-table").hidden, "gráfico tem visã
 // Administration grouped (RF-020-06)
 await go(w, "#/admin/users");
 await until(() => d.querySelectorAll("#admin-main tbody tr").length > 0, "users", jsErrors);
-ok([...d.querySelectorAll("#area-admin .nav-group")].map((g) => g.textContent).join("|") === "Pessoas e acesso|Sistema|Operação do sistema", "administração em três grupos (CA-020-03)");
+ok([...d.querySelectorAll("#area-admin .nav-group")].map((g) => g.textContent).join("|") === "Pessoas e acesso|Sistema|Operação do sistema|Observabilidade", "administração em grupos (CA-020-03)");
 d.querySelector("#admin-main tbody tr").click();
 await until(() => text("#admin-main .form-card").includes("Cota de execução"), "user card", jsErrors);
 ok(text("#admin-main .form-card").includes("Redefinir senha") && text("#admin-main .form-card").includes("Grupos"), "ficha do usuário reúne grupos, cota e acesso");
@@ -196,7 +199,8 @@ ok([...d.querySelectorAll("#admin-main .form-card option")].some((o) => o.value 
 for (const [section, marker] of [["groups", "Grupos de acesso"], ["limits", "Perfil de limite"], ["company", "Razão social"],
                                  ["settings", "ceiling_cpu_ms"], ["accounts", "service_revenue"], ["commands", "hello"],
                                  ["remote", "Sistemas remotos"], ["scheduler", "Feriados"], ["monitor", "Execuções ativas"], ["consumption", "CPU total"],
-                                 ["retention", "Expurgos recentes"], ["audit", "Auditoria"]]) {
+                                 ["retention", "Expurgos recentes"], ["health", "Mudanças de estado"], ["sqlperf", "Desempenho do SQL"],
+                                 ["advice", "Dicas de otimização"], ["audit", "Auditoria"]]) {
   await go(w, `#/admin/${section}`);
   await until(() => text("#admin-main").includes(marker), section, jsErrors);
 }

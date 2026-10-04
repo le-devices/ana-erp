@@ -70,6 +70,7 @@
     changePassword: (current, next) => API.request("POST", "/api/me/password", { current, new: next }),
 
     programs: (inactive) => API.request("GET", "/api/programs" + query({ inactive: inactive ? 1 : 0 })),
+    programPerformance: (name) => API.request("GET", `/api/programs/${enc(name)}/performance`),
     program: (n) => API.request("GET", `/api/programs/${enc(n)}`),
     saveProgram: (n, fields) => API.request("PUT", `/api/programs/${enc(n)}`, fields),
     purgeProgram: (n) => API.request("DELETE", `/api/programs/${enc(n)}?purge=1`),
@@ -145,6 +146,15 @@
       audit: (kind, filters) => API.request("GET", `/api/admin/audit/${kind}` + query(filters)),
       execution: (id) => API.request("GET", `/api/admin/audit/executions/${enc(id)}`),
       retention: () => API.request("GET", "/api/admin/retention"),
+      obsHealth: () => API.request("GET", "/api/admin/observability/health"),
+      obsCheck: () => API.request("POST", "/api/admin/observability/health/check", {}),
+      obsSql: (filters) => API.request("GET", "/api/admin/observability/sql" + query(filters || {})),
+      obsSqlDetail: (hash) => API.request("GET", `/api/admin/observability/sql/${enc(hash)}`),
+      obsFlush: () => API.request("POST", "/api/admin/observability/sql/flush", {}),
+      obsSamples: (hours) => API.request("GET", "/api/admin/observability/samples" + query({ hours })),
+      advice: (status) => API.request("GET", "/api/admin/observability/advice" + query(status ? { status } : {})),
+      adviceRun: () => API.request("POST", "/api/admin/observability/advice/run", {}),
+      adviceDismiss: (id, days) => API.request("POST", `/api/admin/observability/advice/${id}/dismiss`, { days }),
       purge: () => API.request("POST", "/api/admin/retention/purge", {}),
     },
   };

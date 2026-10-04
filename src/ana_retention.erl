@@ -35,7 +35,16 @@ categories() ->
      {notifications, <<"Avisos do agendamento"/utf8>>, retention_scheduler_days,
       "scheduler.notification", "created_at", "true"},
      {admin_log, <<"Alterações administrativas"/utf8>>, retention_admin_log_days,
-      "ana_system.admin_log", "at", "true"}].
+      "ana_system.admin_log", "at", "true"},
+     %% Spec 019.
+     {traces, <<"Rastros de execução e perfis"/utf8>>, retention_trace_days,
+      "ana_system.execution_trace", "started_at", "true"},
+     {health, <<"Eventos de saúde"/utf8>>, retention_observability_days,
+      "ana_system.health_event", "at", "true"},
+     {incidents, <<"Incidentes encerrados"/utf8>>, retention_observability_days,
+      "ana_system.incident", "opened_at", "closed_at IS NOT NULL"},
+     {metrics, <<"Amostras de métricas"/utf8>>, retention_observability_days,
+      "ana_system.metric_sample", "at", "true"}].
 
 %% Manual purge (RF-024-09): owned by the administrator who asked.
 -spec purge_now(map()) -> {ok, binary()} | {error, term()}.

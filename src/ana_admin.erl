@@ -454,7 +454,8 @@ audit_execution(Id) ->
                 "  error->>'code' AS error FROM ana_system.execution "
                 "WHERE parent_execution_id = $1::text::uuid ORDER BY started_at", [Id]),
             Sum = fun(K) -> lists:sum([V || #{K := V} <- [R | Parts], is_integer(V)]) end,
-            {ok, R#{<<"parts">> => Parts,
+            {ok, R#{<<"trace">> => case ana_observability:trace(Id) of undefined -> null; T -> T end,
+                    <<"parts">> => Parts,
                     <<"total">> => #{cpu_ms => Sum(<<"cpu_ms">>), sql_count => Sum(<<"sql_count">>),
                                      parts => length(Parts)}}};
         {error, _} -> {error, not_found}
