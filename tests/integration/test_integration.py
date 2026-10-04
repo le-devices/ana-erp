@@ -1979,5 +1979,119 @@ class TestObservability(Base):
         self.assertEqual([f["severity"] for f in p["lint"] if f["rule"] == "dynamic_sql"], ["serious"])
 
 
+
+# ---------------------------------------------------------------- spec 027
+class TestCostCenters(Base):
+    @classmethod
+    def setUpClass(cls):
+        super().setUpClass()
+        c = cls.client
+        cls.cc = f"T{SUFFIX}"
+        c.call("finance.save_cost_center", code=cls.cc, name="Centro de teste", kind="operational")
+        c.call("finance.save_cost_center", code=cls.cc + "-A", name="Filho A", parent=cls.cc)
+        c.call("finance.save_cost_center", code=cls.cc + "-B", name="Filho B", parent=cls.cc)
+        c.call("finance.save_cost_center", code=cls.cc + "-OFF", name="Inativo", active=False)
+        cls.customer = c.call("base.save_party", name=f"Cliente CC {SUFFIX}")["id"]
+        cls.employee = c.call("projects.save_employee", name=f"Eng CC {SUFFIX}", profile="HW", hourly_cost="80")["id"]
+
+    def lines(self, document):
+        s, c, _ = http("POST", "/api/sql", {"sql": "SELECT l.account, l.debit, l.credit, l.cost_center FROM finance.journal_line l "
+                                                  f"JOIN finance.journal_entry e ON e.id = l.entry_id WHERE e.document = '{document}' "
+                                                  "ORDER BY l.id"}, self.token)
+        self.assertEqual(s, 200, c)
+        return [dict(zip([x["name"] for x in c["columns"]], r)) for r in c["rows"]]
+
+    def err(self, function, **params):
+        with self.assertRaises(AnaRemoteError) as ctx:
+            self.client.call(function, **params)
+        return ctx.exception.code
+
+    def test_ca_027_01_policies_enforced_by_the_database(self):
+        doc = f"MAN-{SUFFIX}-1"
+        self.client.call("finance.post_entry", memo="despesa sem centro", document=doc,
+                         lines=[{"account": "5.1.1", "debit": 100}, {"account": "1.1.1", "credit": 100}])
+        got = {l["account"]: l["cost_center"] for l in self.lines(doc)}
+        self.assertEqual(got, {"5.1.1": "GERAL", "1.1.1": None})          # required → company default; asset → none
+        self.assertEqual(self.err("finance.post_entry", memo="x", lines=[{"account": "5.1.1", "debit": 1, "cost_center": self.cc},
+                                                                      {"account": "1.1.1", "credit": 1, "cost_center": self.cc}]),
+                         "COST_CENTER_NOT_ALLOWED")
+        self.assertEqual(self.err("finance.post_entry", memo="x", lines=[{"account": "5.1.1", "debit": 1, "cost_center": self.cc + "-OFF"},
+                                                                      {"account": "1.1.1", "credit": 1}]),
+                         "COST_CENTER_INACTIVE")
+        # Any program, even writing SQL directly, goes through the same rules.
+        name = f"test.cc_direct_{SUFFIX}"
+        self.save(name, "def main():\n    e = ana.sql_value(\"INSERT INTO finance.journal_entry (memo, created_by) VALUES ('x', 't') RETURNING id\")\n"
+                        "    ana.sql_exec(\"INSERT INTO finance.journal_line (entry_id, account, debit, cost_center) VALUES ($1, '1.1.1', 5, 'GERAL')\", e)\n")
+        s, c, _ = self.run_program(name)
+        self.assertIn("COST_CENTER_NOT_ALLOWED", c["error"]["message"])
+
+    def test_ca_027_06_manual_entry_must_balance(self):
+        self.assertEqual(self.err("finance.post_entry", memo="x", lines=[{"account": "5.1.1", "debit": 10},
+                                                                      {"account": "1.1.1", "credit": 9}]), "UNBALANCED")
+
+    def test_ca_027_02_documents_carry_their_cost_center(self):
+        code = f"SV{SUFFIX}CC"
+        self.client.call("base.save_product", code=code, description="Serviço CC", price="100", kind="service")
+        o = self.client.call("sales.create_order", customer=self.customer, items=[{"product": code, "quantity": 2}],
+                             cost_center=self.cc + "-A")
+        self.client.call("sales.invoice_order", number=o["number"])
+        rev = [l for l in self.lines(f"ORD-{o['number']}") if l["account"].startswith("4")]
+        self.assertEqual(rev[0]["cost_center"], self.cc + "-A")
+        p = f"CC{SUFFIX}"
+        self.client.call("projects.save_project", code=p, name="Projeto CC", customer=self.customer, manager="admin",
+                         status="active", billing="mixed", cost_center=self.cc + "-B",
+                         tasks=[{"code": "1", "name": "Trabalho"}], team=[{"employee": self.employee, "profile": "HW"}],
+                         rates={"HW": "200"})
+        m = self.client.call("projects.save_milestone", project=p, description="Entrega", amount="1000")["id"]
+        self.client.call("projects.complete_milestone", id=m)
+        inv = self.client.call("projects.invoice_project", project=p)
+        rev = [l for l in self.lines(f"INV-{inv['number']}") if l["account"].startswith("4")]
+        self.assertEqual(rev[0]["cost_center"], self.cc + "-B")
+        self.client.call("projects.cancel_invoice", number=inv["number"], reason="teste de estorno")
+        back = [l for l in self.lines(f"INV-{inv['number']}-REV") if l["account"].startswith("4")]
+        self.assertEqual((back[0]["cost_center"], back[0]["debit"]), (self.cc + "-B", rev[0]["credit"]))
+
+    def test_ca_027_03_05_report_rolls_up_and_budget(self):
+        for child, amount in (("-A", 300), ("-B", 200)):
+            self.client.call("finance.post_entry", memo="despesa", document=f"MAN-{SUFFIX}{child}",
+                             lines=[{"account": "5.1.1", "debit": amount, "cost_center": self.cc + child},
+                                    {"account": "1.1.1", "credit": amount}])
+        month = datetime.date.today().strftime("%Y-%m")
+        self.client.call("finance.save_budget", cost_center=self.cc + "-A", account="5.1.1", months=[month], amount="250")
+        s, c, _ = self.run_program("finance.cost_center_report", {"cost_center": self.cc,
+                                                                  "start": datetime.date.today().replace(day=1).isoformat()})
+        self.assertEqual(s, 200, c)
+        rows = {r["centro"].strip().split(" — ")[0]: r for r in c["result"]["centers"]}
+        parent, a = rows[self.cc], rows[self.cc + "-A"]
+        self.assertEqual(Decimal(parent["despesas"]), Decimal(a["despesas"]) + Decimal(rows[self.cc + "-B"]["despesas"]))
+        self.assertGreaterEqual(Decimal(a["despesas"]), 300)
+        self.assertEqual(Decimal(a["resultado orçado"]), Decimal(-250))
+        self.assertTrue(any(e.get("kind") == "chart" for e in c["events"]))
+        s, c, _ = self.run_program("finance.trial_balance", {"cost_center": self.cc + "-A"})
+        exp = [r for r in c["events"] if r.get("kind") == "table"][0]["data"]
+        row = [r for r in exp["rows"] if r[0] == "5.1.1"][0]
+        self.assertNotEqual(row[2], "0,00")                      # only lines of that center (and children)
+
+    def test_ca_027_04_allocation_preview_execute_once(self):
+        src, a, b = self.cc + "-SRC", self.cc + "-X", self.cc + "-Y"
+        for code in (src, a, b):
+            self.client.call("finance.save_cost_center", code=code, name=code)
+        self.client.call("finance.post_entry", memo="aluguel", document=f"MAN-{SUFFIX}-SRC",
+                         lines=[{"account": "5.1.1", "debit": "1000.01", "cost_center": src}, {"account": "1.1.1", "credit": "1000.01"}])
+        rule = f"R{SUFFIX}"
+        self.assertEqual(self.err("finance.save_allocation_rule", code=rule, name="x", source=src,
+                                  targets=[{"cost_center": a, "pct": 60}, {"cost_center": b, "pct": 30}]), "INVALID_TARGETS")
+        self.client.call("finance.save_allocation_rule", code=rule, name="Rateio teste", source=src,
+                         targets=[{"cost_center": a, "pct": 60}, {"cost_center": b, "pct": 40}])
+        today = datetime.date.today().isoformat()
+        prev = self.client.call("finance.allocate_costs", month=today, rule=rule)
+        self.assertTrue(prev["preview"])
+        self.assertEqual(self.lines(f"RATEIO-{rule}-{today[:7]}"), [])
+        done = self.client.call("finance.allocate_costs", month=today, rule=rule, execute=True)
+        got = {l["cost_center"]: (Decimal(l["debit"]) - Decimal(l["credit"])) for l in self.lines(done["entries"][0]["document"])}
+        self.assertEqual(got, {a: Decimal("600.01"), b: Decimal("400.00"), src: Decimal("-1000.01")})
+        self.assertEqual(self.err("finance.allocate_costs", month=today, rule=rule, execute=True), "ALREADY_ALLOCATED")
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -75,6 +75,8 @@ def main(project, through=None, payment_days=30):
         [[inv["id"], n, *l] for n, l in enumerate(lines, start=1)])
 
     document = f"INV-{inv['number']}"
+    # Spec 027: the project's cost center (the database falls back to the company's).
+    ana.sql("SELECT set_config('ana.cost_center', $1, true)", p.get("cost_center") or "")
     entry = ana.sql_value(
         "INSERT INTO finance.journal_entry (memo, document, created_by) VALUES ($1, $2, $3) RETURNING id",
         f"Fatura de serviços {inv['number']} — projeto {p['code']}", document, ana.context.user)

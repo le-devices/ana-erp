@@ -49,6 +49,10 @@ def main(number, payment_days=30):
         "VALUES ($1, $2, $3, 'out', $4, $5)",
         [[i["product_id"], order["warehouse_id"], -i["quantity"], document, ana.context.user] for i in goods])
 
+    # Spec 027: revenue goes to the order's cost center (or the warehouse's; the database falls back to the company's).
+    cc = ana.sql_value("SELECT COALESCE(o.cost_center, w.cost_center) FROM sales.sales_order o "
+                       "JOIN inventory.warehouse w ON w.id = o.warehouse_id WHERE o.id = $1", order["id"])
+    ana.sql("SELECT set_config('ana.cost_center', $1, true)", cc or "")
     entry = ana.sql_value(
         "INSERT INTO finance.journal_entry (memo, document, created_by) VALUES ($1, $2, $3) RETURNING id",
         f"Venda pedido {number}", document, ana.context.user)

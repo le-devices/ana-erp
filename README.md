@@ -104,6 +104,12 @@ estourado ou parada → ROLLBACK. Depuração sempre desfaz, salvo se marcado
   de estoque), marcos, fatura de serviço com imposto retido, cancelamento com
   estorno, painel orçado × realizado e extrato para o cliente.
 - **Analítico**: visões materializadas e tabela fato **colunar**.
+- **Centros de custo** (spec 027): cada lançamento de receita e despesa tem
+  centro de custo (garantido no banco para qualquer programa), vindo do
+  pedido, do depósito, do projeto ou do padrão da empresa; hierarquia com
+  consolidação, orçamento × realizado, **rateio** de custos compartilhados
+  (prévia, uma vez por mês), lançamento manual e resultado gerencial por
+  centro com gráficos (`centros`); balancete filtrável por centro.
 
 ## Consultoria: projetos de clientes (spec 021)
 
@@ -349,7 +355,7 @@ correspondentes são só o valor inicial).
 
 ## Situação das specs
 
-Implementadas: 001–008, 011 (com usuários robô e dono obrigatório), 012, 018, 021 (portal do cliente depende da 016), 019 (faltam alertas configuráveis e OpenTelemetry), 022, 023 (falta o teste de troca real de primário, T-023-09), 024, 025, 026; 020 parcial (falta próxima ação
+Implementadas: 001–008, 011 (com usuários robô e dono obrigatório), 012, 018, 021 (portal do cliente depende da 016), 019 (faltam alertas configuráveis e OpenTelemetry), 022, 023 (falta o teste de troca real de primário, T-023-09), 024, 025, 026, 027; 020 parcial (falta próxima ação
 sugerida, fluxos guiados e auditoria de acessibilidade).
 Na fila (ordem em [scripts/pending-work.prompt.md](scripts/pending-work.prompt.md)):
 013 suprimentos, 017 integrações, 016 repositório de

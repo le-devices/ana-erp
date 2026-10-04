@@ -32,8 +32,8 @@ def main(number, reason):
         "INSERT INTO finance.journal_entry (memo, document, created_by) VALUES ($1, $2, $3) RETURNING id",
         f"Estorno da fatura {number}: {reason.strip()}", f"INV-{number}-REV", ana.context.user)
     ana.sql_exec(
-        "INSERT INTO finance.journal_line (entry_id, account, debit, credit) "
-        "SELECT $1, account, credit, debit FROM finance.journal_line WHERE entry_id = $2",
+        "INSERT INTO finance.journal_line (entry_id, account, debit, credit, cost_center) "
+        "SELECT $1, account, credit, debit, cost_center FROM finance.journal_line WHERE entry_id = $2",
         reversal, inv["entry_id"])
 
     ana.sql_exec("UPDATE projects.time_entry SET status = 'approved', invoice_id = NULL WHERE invoice_id = $1",
