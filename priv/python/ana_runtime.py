@@ -453,6 +453,60 @@ def make_ana_module(channel, output, context):
         output.flush()
         output.emit("gantt", {"title": title, "today": today, "items": list(items)})
 
+    CHART_TYPES = ("line", "area", "column", "stacked", "bar", "donut")
+    CHART_FORMATS = ("number", "money", "percent", "hours")
+
+    def chart(spec=None, **kw):
+        """Chart (spec 026): {"type", "title"?, "subtitle"?, "x": [...], "series": [{"name", "values"}],
+        "format"?: number|money|percent|hours, "unit"?}. More than 8 series fold into "Outros";
+        a donut keeps at most 6 slices (the rest is "Outros")."""
+        spec = {**(spec or {}), **kw}
+        kind = spec.get("type", "line")
+        if kind not in CHART_TYPES:
+            raise ParamError(f"tipo de gráfico desconhecido: {kind} (use {', '.join(CHART_TYPES)})")
+        fmt = spec.get("format", "number")
+        if fmt not in CHART_FORMATS:
+            raise ParamError(f"formato desconhecido: {fmt}")
+        x = list(spec.get("x") or [])
+        series = []
+        for s in spec.get("series") or []:
+            if not isinstance(s, dict) or "values" not in s:
+                raise ParamError("cada série precisa de name e values")
+            vals = []
+            for v in s["values"]:
+                if v is None:
+                    vals.append(None)
+                    continue
+                try:
+                    vals.append(float(v))
+                except (TypeError, ValueError):
+                    raise ParamError(f"valor não numérico na série {s.get('name')!r}: {v!r}") from None
+            if len(vals) != len(x):
+                raise ParamError(f"a série {s.get('name')!r} tem {len(vals)} valores e o eixo x tem {len(x)}")
+            series.append({"name": str(s.get("name", f"série {len(series) + 1}")), "values": vals})
+        if not series:
+            raise ParamError("o gráfico precisa de pelo menos uma série")
+        if kind == "donut":
+            if len(series) != 1:
+                raise ParamError("a rosca usa uma série (as fatias são o eixo x)")
+            pairs = sorted(zip(x, series[0]["values"]), key=lambda p: -(p[1] or 0))
+            if len(pairs) > 6:
+                rest = sum(v or 0 for _, v in pairs[5:])
+                pairs = pairs[:5] + [("Outros", rest)]
+            x = [p[0] for p in pairs]
+            series = [{"name": series[0]["name"], "values": [p[1] for p in pairs]}]
+        elif len(series) > 8:
+            # Never a 9th color: the smallest series fold into "Outros" (by total).
+            ranked = sorted(series, key=lambda s: -sum(abs(v or 0) for v in s["values"]))
+            keep, rest = ranked[:7], ranked[7:]
+            other = [sum((s["values"][i] or 0) for s in rest) for i in range(len(x))]
+            order = {id(s): i for i, s in enumerate(series)}
+            series = sorted(keep, key=lambda s: order[id(s)]) + [{"name": "Outros", "values": other}]
+        output.flush()
+        output.emit("chart", {"type": kind, "title": spec.get("title"), "subtitle": spec.get("subtitle"),
+                              "x": [x_.isoformat() if hasattr(x_, "isoformat") else x_ for x_ in x],
+                              "series": series, "format": fmt, "unit": spec.get("unit")})
+
     def tabs(items, current=None):
         """Tab bar; each item is an action with `open`: the routine reruns in place."""
         output.flush()
@@ -522,6 +576,7 @@ def make_ana_module(channel, output, context):
     m.log = log
     m.table = table
     m.metrics = metrics
+    m.chart = chart
     m.board = board
     m.gantt = gantt
     m.tabs = tabs

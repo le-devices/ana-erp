@@ -147,6 +147,7 @@
     else if (ev.kind === "log") node = el("div", { class: "log " + ev.data.level, text: `[${ev.data.level}] ${ev.data.message}` });
     else if (ev.kind === "table") node = drawTable(ev.data, ctx);
     else if (ev.kind === "metrics") node = drawMetrics(ev.data);
+    else if (ev.kind === "chart") node = window.AnaCharts.render(ev.data);
     else if (ev.kind === "board") node = drawBoard(ev.data, ctx);
     else if (ev.kind === "gantt") node = drawGantt(ev.data);
     else if (ev.kind === "tabs") node = drawTabs(ev.data, ctx);

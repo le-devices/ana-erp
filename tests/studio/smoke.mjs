@@ -159,6 +159,9 @@ ok(d.querySelectorAll("#ops-main .gantt-bar.critical").length > 0, "linha do tem
 [...d.querySelectorAll("#ops-main .output-tabs button")].find((b) => b.textContent === "Viabilidade").click();
 await until(() => text("#ops-main").includes("pessimista"), "viability", jsErrors);
 ok(text("#ops-main").includes("otimista") && text("#ops-main").includes("Mês a mês"), "viabilidade com cenários base, otimista e pessimista");
+ok(d.querySelectorAll("#ops-main .chart svg .line").length >= 3 && d.querySelector("#ops-main .chart-legend"), "gráficos com legenda na viabilidade (spec 026)");
+d.querySelector("#ops-main .chart .chart-tools button").click();
+ok(!d.querySelector("#ops-main .chart .chart-table").hidden, "gráfico tem visão em tabela");
 
 // Administration grouped (RF-020-06)
 await go(w, "#/admin/users");

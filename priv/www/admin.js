@@ -52,7 +52,14 @@
       ...header("Usuários", "Inclua pessoas, defina papel e grupos, bloqueie acessos e redefina senhas."),
       el("div", { class: "admin-toolbar" }, searchInput,
         el("button", { text: "Buscar", onclick: () => users(searchInput.value) }),
-        el("button", { class: "primary", text: "+ Novo usuário", onclick: () => showForm(null) })),
+        el("button", { class: "primary", text: "+ Novo usuário", onclick: () => showForm(null) }),
+        el("button", { class: "quiet", text: "Desbloquear endereço IP", title: "Após muitas senhas erradas, um endereço fica bloqueado por alguns minutos",
+          onclick: () => guard(async () => {
+            const ip = prompt("Endereço IP a desbloquear (vazio = o seu):", "");
+            if (ip === null) return;
+            const r = await API.admin.unlockIp(ip.trim() || "self");
+            toast(`Endereço ${r.ip} desbloqueado.`);
+          }) })),
       el("div", { class: "admin-columns" }, el("div", {}, t), side));
     showForm(null);
   }
@@ -423,6 +430,9 @@
     main().replaceChildren(
       ...header("Consumo", "Programas que mais consomem CPU, tempo e memória no período — ponto de partida para otimizar ou ajustar limites."),
       el("div", { class: "sub-tabs" }, [1, 7, 30].map((d) => el("button", { class: d === days ? "active" : "", text: `${d} dias`, onclick: () => consumption(d) }))),
+      usage.length ? window.AnaCharts.render({ type: "bar", title: "CPU total por programa", subtitle: `últimos ${days} dia(s)`,
+        x: usage.slice(0, 12).map((r) => r.program), series: [{ name: "CPU (ms)", values: usage.slice(0, 12).map((r) => Number(r.total_cpu_ms) || 0) }],
+        format: "number", unit: "ms" }) : null,
       table([
         { label: "Programa", value: (r) => r.program },
         { label: "Execuções", value: (r) => r.runs, class: "num" },

@@ -254,6 +254,11 @@ def progress(p):
              "% horas consumidas": r["hours_consumed_pct"], "IDP": r["spi"], "IDC": r["cpi"],
              "estimativa no término (h)": r["eac_hours"], "alertas": "; ".join(r["alerts"])}
             for r in prog["phases"] + [prog["project"]]]
+    if prog["phases"]:
+        ana.chart(type="column", title="Horas por fase", format="hours", x=[r["name"] for r in prog["phases"]],
+                  series=[{"name": "Planejadas", "values": [r["bac_hours"] for r in prog["phases"]]},
+                          {"name": "Agregadas (feito)", "values": [r["ev_hours"] for r in prog["phases"]]},
+                          {"name": "Apontadas", "values": [r["ac_hours"] for r in prog["phases"]]}])
     ana.table(rows, title="Planejado × realizado" + (f" (linha de base {prog['baseline']['number']})"
                                                      if prog["baseline"] else " (sem linha de base)"))
     if access.can_manage(p):
@@ -324,6 +329,9 @@ def people(employees, ws, title):
             if a > c:
                 over.append({"employee_id": e, "pessoa": names.get(e), "week": w, "excess": a - c})
         out.append(row)
+    ana.chart(type="column", title=title, subtitle="horas por semana, todos os projetos", format="hours",
+              x=list(ws), series=[{"name": "Alocado", "values": [sum((alloc.get((e, w), Decimal(0)) for e in employees), Decimal(0)) for w in ws]},
+                                  {"name": "Capacidade", "values": [sum((cap[(e, w)] for e in employees), Decimal(0)) for w in ws]}])
     ana.table(out, title=title + " (alocado/capacidade)")
     for o in over:
         sug = C.suggest_moves(o["employee_id"], o["week"], o["excess"])
@@ -494,6 +502,23 @@ def viability(p, simulation=None):
                      [{"label": "Excluir", "program": "projects.save_scenario",
                        "params": {"project": p["code"], "name": name, "remove": True}}]})
     ana.table(rows, title="Cenários")
+    # Charts (spec 026): month by month and the cumulative result in the three scenarios.
+    months = sorted({m["month"] for _, _, _, r in results for m in r["monthly"]})
+    if months:
+        by_month = {m["month"]: m for m in base["monthly"]}
+        ana.chart(type="column", title="Faturamento × custo por mês", subtitle="cenário base", format="money",
+                  x=months, series=[{"name": "Faturamento", "values": [by_month.get(m, {}).get("revenue", 0) for m in months]},
+                                    {"name": "Custo", "values": [by_month.get(m, {}).get("cost", 0) for m in months]}])
+        lines = []
+        for key, name, _, r in results[:3] + [x for x in results[3:] if x[0] == "simulation"]:
+            cum = {m["month"]: m["cumulative"] for m in r["monthly"]}
+            last, vals = 0, []
+            for m in months:
+                last = cum.get(m, last)
+                vals.append(last)
+            lines.append({"name": name, "values": vals})
+        ana.chart(type="line", title="Resultado acumulado", subtitle="quando fica positivo, o projeto se pagou",
+                  format="money", x=months, series=lines)
     ana.table([{"mês": m["month"].strftime("%m/%Y"), "faturamento": fmt(m["revenue"]), "impostos": fmt(m["taxes"]),
                 "custo": fmt(m["cost"]), "resultado": fmt(m["result"]), "acumulado": fmt(m["cumulative"])}
                for m in base["monthly"]], title="Mês a mês (cenário base)")
