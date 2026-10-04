@@ -25,6 +25,11 @@ route(<<"POST">>, [<<"users">>, Name, <<"password">>], U, Req) ->
     reply(ana_admin:reset_password(Name, U), Req);
 route(<<"POST">>, [<<"users">>, Name, <<"sessions">>, <<"revoke">>], U, Req) ->
     reply(ana_admin:revoke_sessions(Name, U), Req);
+route(<<"POST">>, [<<"security">>, <<"unlock-ip">>], U, Req) ->
+    with_body(Req, fun(B, R) ->
+        Ip = case maps:get(<<"ip">>, B, <<"self">>) of <<"self">> -> ana_http:ip(R); V -> V end,
+        reply(ana_admin:unlock_ip(Ip, U), R)
+    end);
 route(<<"POST">>, [<<"users">>, Name, <<"unlock">>], U, Req) ->
     reply(ana_admin:unlock_user(Name, U), Req);
 

@@ -56,6 +56,7 @@ inglês, como no código (constituição, P2a).
 | 023 | [Alta disponibilidade](023-high-availability/spec.md) | Operação 24/7, drenagem, rolling, banco HA, testes de caos | implementada (falta T-023-09) |
 | 024 | [Trilha de auditoria e retenção](024-audit-trail-retention/spec.md) | Acessos, execuções, CPU e stack traces de pessoas e robôs; trilha por usuário; retenção configurável | implementada |
 | 025 | [Uso eficiente de disco](025-storage-efficiency/spec.md) | Amigo de SSD: só grava o que mudou, lotes, partições, HOT, WAL comprimido | implementada |
+| 026 | [Gráficos](026-charts/spec.md) | `ana.chart`: linha, área, colunas, empilhadas, barras, rosca; paleta validada para daltonismo, legenda, dicas e tabela | implementada |
 
 ## Glossário
 

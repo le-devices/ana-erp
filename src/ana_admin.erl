@@ -6,7 +6,7 @@
 -module(ana_admin).
 -export([log/5,
          list_users/1, get_user/1, create_user/2, update_user/3, reset_password/2,
-         revoke_sessions/2, unlock_user/2, list_keys/1, create_key/3, revoke_key/2,
+         revoke_sessions/2, unlock_user/2, unlock_ip/2, list_keys/1, create_key/3, revoke_key/2,
          list_groups/0, save_group/3, delete_group/2,
          get_company/0, save_company/2,
          list_default_accounts/0, save_default_account/3,
@@ -183,6 +183,12 @@ revoke_sessions(Username, #{username := Who}) ->
     {ok, N} = ana_security:revoke_sessions(Username),
     log(Who, <<"user.revoke_sessions">>, Username, null, #{sessions => N}),
     {ok, #{sessions => N}}.
+
+%% RF-011 (operation): unblock an address after legitimate failures (spec 001 brute-force protection).
+unlock_ip(Ip, #{username := Who}) ->
+    ok = ana_security:unlock_ip(Ip),
+    log(Who, <<"security.unlock_ip">>, Ip, null, null),
+    {ok, #{ip => Ip}}.
 
 unlock_user(Username, #{username := Who}) ->
     ok = ana_security:unlock(Username),

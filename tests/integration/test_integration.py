@@ -82,6 +82,8 @@ CREATED_USERS = []
 
 def tearDownModule():
     t = admin_token()
+    # The suite fails logins on purpose (brute force, robots): clear this address's counter.
+    http("POST", "/api/admin/security/unlock-ip", {"ip": "self"}, t)
     for name in sorted(CREATED_PROGRAMS):
         http("DELETE", f"/api/programs/{name}?purge=1", token=t)
     for u in CREATED_USERS:
@@ -659,6 +661,8 @@ class TestProjects(Base):
 
     def test_ca_008_05_expense_consumes_stock(self):
         p = self.make_project()
+        # The test brings the stock it consumes (repeated runs must not exhaust the demo balance).
+        self.client.call("inventory.stock_in", product="SENSOR-IMU", quantity=2, warehouse="LAB", document=f"TEST-{SUFFIX}")
         before = self.scalar("SELECT sum(quantity) FROM inventory.stock_movement m JOIN base.product p "
                              "ON p.id = m.product_id WHERE p.code = 'SENSOR-IMU'")
         r = self.client.call("projects.post_expense", project=p, kind="component", description="IMU",
@@ -1820,6 +1824,26 @@ class TestHighAvailability(Base):
             psql(f"DELETE FROM ana_system.migration_flag WHERE name = '{name}'")
             psql(f"DELETE FROM ana_system.migration WHERE name = '{name}'")
         self.assertEqual(http("GET", "/health/ready")[0], 200)
+
+
+
+# ---------------------------------------------------------------- spec 026
+class TestCharts(Base):
+    def test_ca_026_01_program_draws_a_chart(self):
+        name = f"test.chart_{SUFFIX}"
+        self.save(name, "def main():\n    ana.chart(type='line', title='T', x=['2026-01-01', '2026-02-01'], format='money',\n"
+                        "              series=[{'name': n, 'values': [1, 2]} for n in ('a', 'b', 'c')])\n")
+        s, c, _ = self.run_program(name)
+        self.assertEqual(s, 200, c)
+        chart = [e["data"] for e in c["events"] if e.get("kind") == "chart"][0]
+        self.assertEqual((chart["type"], chart["format"], len(chart["series"])), ("line", "money", 3))
+
+    def test_ca_026_04_viability_has_monthly_charts(self):
+        s, c, _ = self.run_program("projects.workspace", {"project": "PRJ-001", "view": "viability"})
+        self.assertEqual(s, 200, c)
+        titles = [e["data"]["title"] for e in c["events"] if e.get("kind") == "chart"]
+        self.assertIn("Faturamento × custo por mês", titles)
+        self.assertIn("Resultado acumulado", titles)
 
 
 if __name__ == "__main__":

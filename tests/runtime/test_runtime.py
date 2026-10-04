@@ -127,6 +127,25 @@ class TestExecution(unittest.TestCase):
         self.assertFalse(end["ok"])
         self.assertEqual(end["error"]["code"], "INVALID_PARAMETER")
 
+    def test_ca_026_02_03_chart_validation_and_other(self):
+        source = ("def main():\n"
+                  "    x = ['a', 'b']\n"
+                  "    ana.chart(type='line', x=x, series=[{'name': f's{i}', 'values': [i, i + 1]} for i in range(10)])\n"
+                  "    ana.chart(type='donut', x=list('abcdefgh'), series=[{'name': 'p', 'values': [8, 7, 6, 5, 4, 3, 2, 1]}])\n")
+        end, ev = run(source)
+        self.assertTrue(end["ok"], end)
+        line, donut = [e["data"] for e in ev if e.get("kind") == "chart"]
+        self.assertEqual(len(line["series"]), 8)
+        self.assertEqual(line["series"][-1]["name"], "Outros")
+        self.assertEqual(line["series"][-1]["values"], [3.0, 6.0])   # the three smallest series (0, 1, 2) summed
+        self.assertEqual(donut["x"][-1], "Outros")
+        self.assertEqual(donut["series"][0]["values"][-1], 6.0)
+        for bad in ("ana.chart(type='pie', x=[1], series=[{'name': 'a', 'values': [1]}])",
+                    "ana.chart(type='line', x=[1, 2], series=[{'name': 'a', 'values': [1]}])",
+                    "ana.chart(type='line', x=[1], series=[{'name': 'a', 'values': ['x']}])"):
+            end, _ = run("def main():\n    " + bad + "\n")
+            self.assertEqual(end["error"]["code"], "INVALID_PARAMETER", bad)
+
     def test_rf_002_05_typed_sql(self):
         def handler(op, args):
             self.assertEqual(op, "sql")

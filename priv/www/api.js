@@ -119,6 +119,7 @@
       resetPassword: (u) => API.request("POST", `/api/admin/users/${enc(u)}/password`, {}),
       revokeSessions: (u) => API.request("POST", `/api/admin/users/${enc(u)}/sessions/revoke`, {}),
       unlock: (u) => API.request("POST", `/api/admin/users/${enc(u)}/unlock`, {}),
+      unlockIp: (ip) => API.request("POST", "/api/admin/security/unlock-ip", { ip }),
       keys: (u) => API.request("GET", `/api/admin/users/${enc(u)}/keys`),
       createKey: (u, body) => API.request("POST", `/api/admin/users/${enc(u)}/keys`, body),
       revokeKey: (id) => API.request("DELETE", `/api/admin/keys/${id}`),

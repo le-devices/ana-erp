@@ -12,7 +12,7 @@
          hash_password/1, verify_password/2, check_policy/2,
          login/3, logout/1, validate/1, validate_key/2, new_api_key/0, owner/1,
          create_user/5, set_password/3, change_password/3,
-         revoke_sessions/1, unlock/1, clear_cache/0,
+         revoke_sessions/1, unlock/1, unlock_ip/1, clear_cache/0,
          level/1, has_role/2]).
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2]).
 
@@ -115,6 +115,12 @@ revoke_sessions(Username) ->
     R = ana_db:exec("DELETE FROM ana_system.session WHERE username = $1", [Username]),
     clear_cache(),
     R.
+
+%% Clears the failed-attempt counter of an address (e.g. an office behind one IP).
+-spec unlock_ip(binary()) -> ok.
+unlock_ip(Ip) ->
+    ets:delete(?ATTEMPTS, {ip, Ip}),
+    ok.
 
 unlock(Username) ->
     ets:delete(?ATTEMPTS, {login, Username}),
