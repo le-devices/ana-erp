@@ -5,7 +5,7 @@
 %% NOTIFY "ana_program" (ana_listener).
 -module(ana_program).
 -compile({no_auto_import, [get/1]}).
--export([init_cache/0, valid_name/1,
+-export([refresh_params/0, init_cache/0, valid_name/1,
          list/1, get/1, save/3, deactivate/2, purge/2, versions/1, version/2, restore/3,
          for_execution/1, library_source/1,
          commands/0, save_command/3, delete_command/1, on_notify/2]).
@@ -35,7 +35,7 @@ list(IncludeInactive) ->
 
 get(Name) ->
     ana_db:one(
-        "SELECT name, description, kind, exposed, restricted, min_role, active, version, source, "
+        "SELECT name, description, kind, exposed, restricted, min_role, active, in_menu, version, source, "
         "       params, docs, warning, limits, updated_at, updated_by "
         "FROM ana_system.program WHERE name = $1", [Name]).
 
@@ -112,8 +112,8 @@ write(C, Name, Fields, Source, Insp, Who) ->
         undefined ->
             ok = exec(C,
                 "INSERT INTO ana_system.program (name, description, kind, exposed, restricted, min_role, "
-                "  active, version, source, params, docs, warning, updated_by, limits) "
-                "VALUES ($1, $2, $3, $4, $5, $6, $7, 1, $8, $9, $10, $11, $12, $13)",
+                "  active, version, source, params, docs, warning, updated_by, limits, in_menu) "
+                "VALUES ($1, $2, $3, $4, $5, $6, $7, 1, $8, $9, $10, $11, $12, $13, $14)",
                 [Name, maps:get(<<"description">>, Fields, <<>>),
                  maps:get(<<"kind">>, Fields, <<"program">>),
                  maps:get(<<"exposed">>, Fields, false),
@@ -121,7 +121,7 @@ write(C, Name, Fields, Source, Insp, Who) ->
                  maps:get(<<"min_role">>, Fields, <<"user">>),
                  maps:get(<<"active">>, Fields, true),
                  Source, field(params, Insp), field(docs, Insp), field(warning, Insp), Who,
-                 maps:get(<<"limits">>, Fields, #{})]),
+                 maps:get(<<"limits">>, Fields, #{}), maps:get(<<"in_menu">>, Fields, true)]),
             ok = new_version(C, Name, 1, Source, Comment, Who),
             notify(C, Name),
             {ok, #{version => 1, created => true, warning => field(warning, Insp)}};
@@ -139,7 +139,8 @@ write(C, Name, Fields, Source, Insp, Who) ->
                         "  params = CASE WHEN $9 IS NULL THEN params ELSE $10 END, "
                         "  docs = CASE WHEN $9 IS NULL THEN docs ELSE $11 END, "
                         "  warning = CASE WHEN $9 IS NULL THEN warning ELSE $12 END, "
-                        "  updated_at = now(), updated_by = $13, limits = COALESCE($14, limits) "
+                        "  updated_at = now(), updated_by = $13, limits = COALESCE($14, limits), "
+                        "  in_menu = COALESCE($15, in_menu) "
                         "WHERE name = $1",
                         [Name, maps:get(<<"description">>, Fields, null),
                          maps:get(<<"kind">>, Fields, null),
@@ -148,7 +149,8 @@ write(C, Name, Fields, Source, Insp, Who) ->
                          maps:get(<<"min_role">>, Fields, null),
                          maps:get(<<"active">>, Fields, null), NV,
                          null_if_undefined(Source), field(params, Insp), field(docs, Insp),
-                         field(warning, Insp), Who, maps:get(<<"limits">>, Fields, null)]),
+                         field(warning, Insp), Who, maps:get(<<"limits">>, Fields, null),
+                         maps:get(<<"in_menu">>, Fields, null)]),
                     _ = Changed andalso (ok =:= new_version(C, Name, NV, Source, Comment, Who)),
                     notify(C, Name),
                     {ok, #{version => NV, created => false, warning => field(warning, Insp)}};
@@ -185,6 +187,22 @@ restore(Name, V, User) ->
         {ok, undefined} -> {error, not_found};
         E -> E
     end.
+
+%% Programs saved before parameters carried their declared order ("order")
+%% are inspected again, without a new version, so forms follow the source.
+-spec refresh_params() -> {ok, non_neg_integer()}.
+refresh_params() ->
+    {ok, Rows} = ana_db:rows(
+        "SELECT name, source FROM ana_system.program p WHERE kind = 'program' "
+        "AND jsonb_typeof(params) = 'object' AND params <> '{}'::jsonb "
+        "AND NOT EXISTS (SELECT 1 FROM jsonb_each(p.params) e "
+        "                WHERE jsonb_typeof(e.value) = 'object' AND e.value ? 'order')", []),
+    N = length([ok || #{<<"name">> := Name, <<"source">> := Source} <- Rows,
+                      #{params := P} <- [inspection(Source, <<"program">>)], is_map(P),
+                      {ok, _} <- [ana_db:exec("UPDATE ana_system.program SET params = $2 WHERE name = $1",
+                                              [Name, P])],
+                      _ <- [invalidate(Name)]]),
+    {ok, N}.
 
 %% RF-005-08: inspection (syntax, PARAMS, docs) without running.
 inspection(undefined, _) -> undefined;

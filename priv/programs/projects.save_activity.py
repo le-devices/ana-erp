@@ -10,23 +10,23 @@ from ana_lib.projects import consulting as C
 from ana_lib.projects import views as V
 
 PARAMS = {
-    "project": {"type": "str", "required": True, "label": "projeto"},
+    "project": {"type": "str", "required": True, "label": "projeto", "lookup": {"program": "projects.lookup", "params": {"kind": "projects"}}},
     "code": {"type": "str", "required": True, "label": "código"},
     "name": {"type": "str", "label": "nome"},
-    "kind": {"type": "str", "label": "phase ou activity"},
-    "phase": {"type": "str", "label": "fase (código)"},
-    "owner": {"type": "int", "label": "responsável (colaborador)"},
-    "profile": {"type": "str", "label": "perfil"},
+    "kind": {"type": "str", "label": "tipo", "choices": [["activity", "Atividade"], ["phase", "Fase"]]},
+    "phase": {"type": "str", "label": "fase", "lookup": {"program": "projects.lookup", "params": {"kind": "phases"}, "depends": ["project"]}},
+    "owner": {"type": "int", "label": "responsável", "lookup": {"program": "projects.lookup", "params": {"kind": "employees"}}},
+    "profile": {"type": "str", "label": "perfil", "lookup": {"program": "projects.lookup", "params": {"kind": "profiles"}}},
     "planned_hours": {"type": "decimal", "label": "horas planejadas"},
     "duration_days": {"type": "int", "label": "duração (dias úteis)"},
     "planned_start": {"type": "date", "label": "início planejado"},
     "planned_finish": {"type": "date", "label": "término planejado"},
-    "predecessors": {"type": "list", "label": "predecessoras", "default": None},
+    "predecessors": {"type": "list", "label": "predecessoras (códigos, ex.: [\"1.1\", \"1.2+3\"])", "default": None},
     "deliverable": {"type": "str", "label": "entregável"},
     "acceptance_criteria": {"type": "str", "label": "critério de aceite"},
-    "billable": {"type": "bool"},
-    "client_visible": {"type": "bool"},
-    "active": {"type": "bool"},
+    "billable": {"type": "bool", "label": "faturável"},
+    "client_visible": {"type": "bool", "label": "visível ao cliente"},
+    "active": {"type": "bool", "label": "ativa"},
 }
 
 FIELDS = ["name", "kind", "owner_employee_id", "profile", "planned_hours", "duration_days", "planned_start",

@@ -6,8 +6,8 @@ dependencies; codes that already exist in the project are kept as they are."""
 from ana_lib.projects import access
 
 PARAMS = {
-    "project": {"type": "str", "required": True, "label": "projeto"},
-    "template": {"type": "str", "required": True, "label": "modelo"},
+    "project": {"type": "str", "required": True, "label": "projeto", "lookup": {"program": "projects.lookup", "params": {"kind": "projects"}}},
+    "template": {"type": "str", "required": True, "label": "modelo", "lookup": {"program": "projects.lookup", "params": {"kind": "templates"}}},
 }
 
 
