@@ -13,18 +13,19 @@ Você trabalha no projeto ANA ERP em /home/andre/ana-erp: um ERP com núcleo Erl
 ## Ordem das pendências
 1. 021 — consultoria: projetos de clientes de ponta a ponta (`specs/021-consulting-projects`) — o caso do dono do produto
 2. 022 — execução paralela (`specs/022-parallel-execution`)
-3. 023 — alta disponibilidade e testes de caos (`specs/023-high-availability`) — implementada
+3. 023 — alta disponibilidade e testes de caos (`specs/023-high-availability`) — implementada; a tarefa pendente T-023-09 é o item 5
 4. 019 — observabilidade (`specs/019-observability`)
-5. 013 — cadeia de suprimentos (`specs/013-supply-chain`)
-6. 017 — hub de integrações (`specs/017-integration-hub`)
-7. 016 — repositório de arquivos (`specs/016-file-repository`)
-8. 014 — produção e capacidade (`specs/014-production-planning`)
-9. 015 — logística e campo (`specs/015-logistics-field-service`)
-10. 010 — API pública (`specs/010-public-api`)
-11. 009 — licenciamento (`specs/009-licensing`): é rascunho com decisões em aberto; NÃO implemente — liste as decisões necessárias no relatório e pare.
-12. 020 — tarefas restantes da arquitetura da informação: próxima ação sugerida, fluxos guiados, continuidade (T-020-09..11) e auditoria de acessibilidade (T-020-07). Itens de fluxo podem ser adiantados quando a spec em andamento precisar deles.
+5. 023 — T-023-09: troca real de primário com cluster PostgreSQL local (primário + réplica em streaming)
+6. 013 — cadeia de suprimentos (`specs/013-supply-chain`)
+7. 017 — hub de integrações (`specs/017-integration-hub`)
+8. 016 — repositório de arquivos (`specs/016-file-repository`)
+9. 014 — produção e capacidade (`specs/014-production-planning`)
+10. 015 — logística e campo (`specs/015-logistics-field-service`)
+11. 010 — API pública (`specs/010-public-api`)
+12. 009 — licenciamento (`specs/009-licensing`): é rascunho com decisões em aberto; NÃO implemente — liste as decisões necessárias no relatório e pare.
+13. 020 — tarefas restantes da arquitetura da informação: próxima ação sugerida, fluxos guiados, continuidade (T-020-09..11) e auditoria de acessibilidade (T-020-07). Itens de fluxo podem ser adiantados quando a spec em andamento precisar deles.
 
-Escolha o **primeiro item da lista cuja `tasks.md` ainda tenha tarefas `[ ]`**. Se tudo estiver `[x]`, apenas rode as suítes e relate.
+Escolha o **primeiro item da lista cuja `tasks.md` ainda tenha tarefas `[ ]`** (exceção: a T-023-09 só depois da 019, no item 5). Se tudo estiver `[x]`, apenas rode as suítes e relate.
 
 ## Passos
 1. `cd /home/andre/ana-erp && git status` — se houver alterações não commitadas que não são suas, não as descarte; trabalhe por cima e relate.
