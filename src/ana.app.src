@@ -1,0 +1,9 @@
+{application, ana, [
+    {description, "ANA ERP core"},
+    {vsn, "0.1.0"},
+    {registered, [ana_sup, ana_db, ana_db_exec, ana_py_pool, ana_analytics, ana_listener, ana_security, ana_execution_sup, ana_scheduler, ana_access_log, ana_retention]},
+    {mod, {ana_app, []}},
+    {applications, [kernel, stdlib, crypto, public_key, ssl, inets, epgsql, cowboy]},
+    {env, []},
+    {licenses, ["Apache-2.0"]}
+]}.

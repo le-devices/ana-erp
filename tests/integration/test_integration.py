@@ -1,0 +1,1797 @@
+"""Integration tests against a running ANA (docker compose up, ANA_DEMO=true).
+
+Each test cites the acceptance criterion (CA-xxx-nn) it verifies. Every program
+created here is named `test.*` and purged at the end (RF-011-11).
+Run: ANA_URL=http://localhost:8080 python3 -m unittest discover -s tests/integration -v
+"""
+
+import concurrent.futures
+import datetime
+from decimal import Decimal
+import json
+import uuid
+import os
+import sys
+import time
+import unittest
+import urllib.error
+import urllib.parse
+import urllib.request
+
+ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+sys.path.insert(0, os.path.join(ROOT, "clients", "python"))
+from ana_client import Ana, AnaRemoteError  # noqa: E402
+
+URL = os.environ.get("ANA_URL", "http://localhost:8080").rstrip("/")
+ADMIN_PASSWORD = os.environ.get("ANA_ADMIN_PASSWORD", "admin")
+SUFFIX = str(int(time.time() * 1000))[-8:]
+CREATED_PROGRAMS = set()
+
+
+def http(method, path, body=None, token=None, raw=None):
+    data = raw if raw is not None else (json.dumps(body).encode() if body is not None else None)
+    req = urllib.request.Request(URL + path, data=data, method=method)
+    req.add_header("Content-Type", "application/json")
+    if token:
+        req.add_header("Authorization", "Bearer " + token)
+    try:
+        with urllib.request.urlopen(req, timeout=90) as r:
+            text = r.read().decode()
+            return r.status, (json.loads(text) if text else None), dict(r.headers)
+    except urllib.error.HTTPError as e:
+        text = e.read().decode()
+        try:
+            parsed = json.loads(text) if text else None
+        except ValueError:
+            parsed = text
+        return e.code, parsed, dict(e.headers)
+
+
+def login(username="admin", password=ADMIN_PASSWORD):
+    s, c, _ = http("POST", "/api/session", {"username": username, "password": password})
+    assert s == 200, (s, c)
+    return c["token"]
+
+
+ADMIN_TOKEN = None
+
+
+def admin_token():
+    global ADMIN_TOKEN
+    if ADMIN_TOKEN is None:
+        ADMIN_TOKEN = login()
+    return ADMIN_TOKEN
+
+
+def new_user(role, groups=()):
+    """Creates a user and returns (username, token) after the forced password change."""
+    username = f"{role[:3]}{SUFFIX}{len(CREATED_USERS)}"
+    CREATED_USERS.append(username)
+    s, c, _ = http("POST", "/api/admin/users",
+                   {"username": username, "password": "Initial-pass-1", "role": role,
+                    "groups": list(groups)}, admin_token())
+    assert s == 200, c
+    t = login(username, "Initial-pass-1")
+    s, c, _ = http("POST", "/api/me/password", {"current": "Initial-pass-1", "new": "Changed-pass-1"}, t)
+    assert s == 200, c
+    return username, t
+
+
+CREATED_USERS = []
+
+
+def tearDownModule():
+    t = admin_token()
+    for name in sorted(CREATED_PROGRAMS):
+        http("DELETE", f"/api/programs/{name}?purge=1", token=t)
+    for u in CREATED_USERS:
+        http("PUT", f"/api/admin/users/{u}", {"active": False}, t)
+    # CA-011-09: nothing named test.* is left behind.
+    s, programs, _ = http("GET", "/api/programs?inactive=1", token=t)
+    leftovers = [p["name"] for p in programs if p["name"].startswith("test.")]
+    assert not leftovers, f"programas de teste não removidos: {leftovers}"
+
+
+class Base(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.token = admin_token()
+        cls.client = Ana(URL, token=cls.token)
+
+    def save(self, name, source, token=None, **extra):
+        CREATED_PROGRAMS.add(name)
+        s, c, _ = http("PUT", f"/api/programs/{name}", {"source": source, **extra}, token or self.token)
+        self.assertEqual(s, 200, c)
+        return c
+
+    def run_program(self, name, params=None, token=None, **extra):
+        return http("POST", f"/api/programs/{name}/run", {"params": params or {}, **extra}, token or self.token)
+
+    def count(self, table, where="true"):
+        s, c, _ = http("POST", "/api/sql", {"sql": f"SELECT count(*) AS n FROM {table} WHERE {where}"}, self.token)
+        self.assertEqual(s, 200, c)
+        return int(c["rows"][0][0])
+
+    def scalar(self, sql):
+        s, c, _ = http("POST", "/api/sql", {"sql": sql}, self.token)
+        self.assertEqual(s, 200, c)
+        return c["rows"][0][0]
+
+    def wait_event(self, id_, types, since=0, token=None):
+        end = time.time() + 30
+        while time.time() < end:
+            s, c, _ = http("GET", f"/api/executions/{id_}/events?since={since}&wait=1", token=token or self.token)
+            self.assertEqual(s, 200, c)
+            for ev in c["events"]:
+                since = max(since, ev["seq"])
+                if ev["type"] in types:
+                    return ev, since
+        self.fail(f"event {types} did not arrive")
+
+
+# ---------------------------------------------------------------- spec 001
+class TestPlatform(Base):
+    def test_ca_001_01_health(self):
+        s, c, _ = http("GET", "/health")
+        self.assertEqual(s, 200)
+        self.assertEqual((c["status"], c["database"]), ("ok", "ok"))
+
+    def test_ca_001_03_login(self):
+        self.assertTrue(login())
+        s, _, _ = http("POST", "/api/session", {"username": "admin", "password": "wrong-" + SUFFIX})
+        self.assertEqual(s, 401)
+
+    def test_ca_001_04_no_token(self):
+        s, c, _ = http("GET", "/api/programs")
+        self.assertEqual(s, 401)
+        self.assertEqual(c["error"]["code"], "NOT_AUTHENTICATED")
+
+    def test_ca_001_05_brute_force_lockout(self):
+        name = "nouser" + SUFFIX
+        statuses = [http("POST", "/api/session", {"username": name, "password": "x"})[0] for _ in range(6)]
+        self.assertEqual(statuses[:5], [401] * 5)
+        self.assertEqual(statuses[5], 429)
+
+    def test_ca_001_06_insufficient_role(self):
+        _, t = new_user("user")
+        s, _, _ = http("PUT", "/api/programs/demo.hello", {"description": "x"}, t)
+        self.assertEqual(s, 403)
+        s, c, _ = http("POST", "/api/programs/demo.hello/run", {"params": {}}, t)
+        self.assertEqual(s, 200, c)
+
+    def test_ca_001_07_body_too_large(self):
+        s, _, _ = http("PUT", "/api/programs/test.big", token=self.token,
+                       raw=b'{"source":"' + b"x" * (3 * 1024 * 1024) + b'"}')
+        self.assertEqual(s, 413)
+
+    def test_ca_001_08_security_headers(self):
+        _, _, h = http("GET", "/health")
+        h = {k.lower(): v for k, v in h.items()}
+        self.assertIn("default-src 'self'", h["content-security-policy"])
+        self.assertEqual(h["x-content-type-options"], "nosniff")
+        self.assertEqual(h["x-frame-options"], "DENY")
+        self.assertEqual(h["referrer-policy"], "no-referrer")
+
+
+# ---------------------------------------------------------------- spec 002
+class TestRuntime(Base):
+    def test_ca_002_01_sum(self):
+        name = f"test.sum_{SUFFIX}"
+        self.save(name, "def main(a, b):\n    return a + b\n")
+        s, c, _ = self.run_program(name, {"a": 2, "b": 3})
+        self.assertEqual(s, 200, c)
+        self.assertEqual(c["result"], 5)
+
+    def test_ca_002_02_versions_and_restore(self):
+        name = f"test.versions_{SUFFIX}"
+        self.assertEqual(self.save(name, "def main():\n    return 1\n")["version"], 1)
+        self.assertEqual(self.save(name, "def main():\n    return 2\n", base_version=1)["version"], 2)
+        s, c, _ = http("POST", f"/api/programs/{name}/versions/1/restore", {}, self.token)
+        self.assertEqual((s, c["version"]), (200, 3))
+        self.assertEqual(self.run_program(name)[1]["result"], 1)
+
+    def test_rf_002_02_edit_conflict(self):
+        name = f"test.conflict_{SUFFIX}"
+        self.save(name, "def main():\n    return 1\n")
+        self.save(name, "def main():\n    return 2\n", base_version=1)
+        s, c, _ = http("PUT", f"/api/programs/{name}",
+                       {"source": "def main():\n    return 3\n", "base_version": 1}, self.token)
+        self.assertEqual(s, 409)
+        self.assertEqual(c["error"]["current_version"], 2)
+
+    def test_ca_002_03_rollback_on_error(self):
+        name = f"test.rollback_{SUFFIX}"
+        code = f"RB{SUFFIX}"
+        self.save(name, (
+            "def main():\n"
+            f"    ana.sql_exec(\"INSERT INTO base.product (code, description, price) VALUES ('{code}', 'x', 1)\")\n"
+            "    raise RuntimeError('on purpose')\n"))
+        s, c, _ = self.run_program(name)
+        self.assertEqual(s, 422)
+        self.assertEqual(c["error"]["code"], "EXCEPTION")
+        self.assertEqual(self.count("base.product", f"code = '{code}'"), 0)
+        s, ex, _ = http("GET", f"/api/executions/{c['error']['execution_id']}", token=self.token)
+        self.assertEqual(ex["status"], "error")
+
+    def test_ca_002_04_required_parameter(self):
+        name = f"test.params_{SUFFIX}"
+        self.save(name, 'PARAMS = {"a": {"type": "int", "required": True}}\ndef main(a):\n    return a\n')
+        s, c, _ = self.run_program(name, {})
+        self.assertEqual(c["error"]["code"], "INVALID_PARAMETER")
+
+    def test_ca_002_05_timeout(self):
+        name = f"test.loop_{SUFFIX}"
+        self.save(name, "def main():\n    while True:\n        pass\n")
+        t0 = time.time()
+        s, c, _ = self.run_program(name, timeout_ms=2000)
+        self.assertEqual(c["error"]["code"], "TIMEOUT")
+        self.assertLess(time.time() - t0, 10)
+        self.assertEqual(http("GET", "/health")[0], 200)
+
+    def test_timeout_cancels_long_sql(self):
+        name = f"test.long_sql_{SUFFIX}"
+        self.save(name, "def main():\n    ana.sql(\"SELECT pg_sleep(20)\")\n")
+        t0 = time.time()
+        s, c, _ = self.run_program(name, timeout_ms=1500)
+        self.assertEqual(c["error"]["code"], "TIMEOUT")
+        self.assertLess(time.time() - t0, 8)
+
+    def test_ca_002_06_no_access_to_internal_schema(self):
+        name = f"test.intruder_{SUFFIX}"
+        self.save(name, (
+            "def main():\n"
+            "    r = {}\n"
+            "    for sql in ['SELECT * FROM ana_system.app_user', 'RESET ROLE', 'SET ROLE ana',\n"
+            "                'CREATE TABLE base.x (i int)']:\n"
+            "        try:\n"
+            "            ana.sql(sql)\n"
+            "            r[sql] = 'allowed'\n"
+            "        except ana.SqlError as e:\n"
+            "            r[sql] = e.sqlstate\n"
+            "        if r[sql] == 'allowed' and sql == 'RESET ROLE':\n"
+            "            try:\n"
+            "                ana.sql('SELECT * FROM ana_system.app_user')\n"
+            "                r['after_reset'] = 'allowed'\n"
+            "            except ana.SqlError as e:\n"
+            "                r['after_reset'] = e.sqlstate\n"
+            "                return r\n"
+            "    return r\n"))
+        s, c, _ = self.run_program(name)
+        r = c.get("result") or {}
+        self.assertNotEqual(r.get("SELECT * FROM ana_system.app_user"), "allowed", c)
+        self.assertNotEqual(r.get("after_reset"), "allowed", c)
+
+    def test_ca_002_07_no_credentials_in_environment(self):
+        name = f"test.environment_{SUFFIX}"
+        self.save(name, "import os\ndef main():\n    return dict(os.environ)\n")
+        s, c, _ = self.run_program(name)
+        env = c["result"]
+        self.assertFalse([k for k in env if "PASSWORD" in k or k.startswith("ANA_DB")], env)
+
+    def test_ca_002_08_nested_shares_transaction(self):
+        child = f"test.child_{SUFFIX}"
+        parent = f"test.parent_{SUFFIX}"
+        code = f"NS{SUFFIX}"
+        self.save(child, (
+            "def main(code):\n"
+            "    ana.sql_exec(\"INSERT INTO base.product (code, description, price) VALUES ($1, 'x', 1)\", code)\n"
+            "    return 'ok'\n"))
+        self.save(parent, (
+            "def main(code):\n"
+            f"    ana.call('{child}', code=code)\n"
+            "    raise ana.Error('AFTER', 'failure after nested call')\n"))
+        s, c, _ = self.run_program(parent, {"code": code})
+        self.assertEqual(c["error"]["code"], "AFTER")
+        self.assertEqual(self.count("base.product", f"code = '{code}'"), 0)
+
+    def test_rf_002_08_nested_error_catchable_with_savepoint(self):
+        child = f"test.failing_child_{SUFFIX}"
+        parent = f"test.resilient_parent_{SUFFIX}"
+        code = f"SP{SUFFIX}"
+        self.save(child, (
+            "def main(code):\n"
+            "    ana.sql_exec(\"INSERT INTO base.product (code, description, price) VALUES ($1, 'child', 1)\", code + 'C')\n"
+            "    raise ana.Error('CHILD', 'failed')\n"))
+        self.save(parent, (
+            "def main(code):\n"
+            "    try:\n"
+            f"        ana.call('{child}', code=code)\n"
+            "    except ana.Error as e:\n"
+            "        err = e.code\n"
+            "    ana.sql_exec(\"INSERT INTO base.product (code, description, price) VALUES ($1, 'parent', 1)\", code + 'P')\n"
+            "    return err\n"))
+        s, c, _ = self.run_program(parent, {"code": code})
+        self.assertEqual(c["result"], "CHILD", c)
+        self.assertEqual(self.count("base.product", f"code = '{code}C'"), 0)
+        self.assertEqual(self.count("base.product", f"code = '{code}P'"), 1)
+
+    def test_ca_002_09_library(self):
+        s, c, _ = self.run_program("inventory.balance", {"product": "CAFE-500"})
+        self.assertEqual(s, 200, c)
+        self.assertTrue([e for e in c["events"] if e.get("kind") == "table"])
+
+    def test_rf_005_08_syntax_warning(self):
+        c = self.save(f"test.syntax_{SUFFIX}", "def main(:\n    pass\n")
+        self.assertIn("linha 1", c["warning"])
+
+    def test_performance_trivial_execution(self):
+        name = f"test.fast_{SUFFIX}"
+        self.save(name, "def main():\n    return 1\n")
+        self.run_program(name)
+        durations = [self.run_program(name)[1]["duration_ms"] for _ in range(5)]
+        self.assertLess(min(durations), 50, durations)   # RNF-002-07
+
+
+# ---------------------------------------------------------------- spec 003
+class TestRemoteCalls(Base):
+    def test_ca_003_01_and_05_python_client_end_to_end(self):
+        o = self.client.call("sales.create_order", customer=1, items=[{"product": "FEIJAO-1", "quantity": 1}])
+        self.assertIn("number", o)
+        inv = self.client.call("sales.invoice_order", number=o["number"])
+        self.assertEqual(inv["number"], o["number"])
+        self.assertTrue(self.client.call("inventory.balance", product="FEIJAO-1"))
+
+    def test_ca_003_02_not_exposed(self):
+        with self.assertRaises(AnaRemoteError) as ctx:
+            self.client.call("finance.trial_balance")
+        self.assertEqual(ctx.exception.rpc_code, -32601)
+        with self.assertRaises(AnaRemoteError) as ctx:
+            self.client.call("does.not_exist")
+        self.assertEqual(ctx.exception.rpc_code, -32601)
+
+    def test_ca_003_03_no_token(self):
+        s, _, _ = http("POST", "/rpc", {"jsonrpc": "2.0", "method": "demo.hello", "id": 1})
+        self.assertEqual(s, 401)
+
+    def test_ca_003_04_business_error(self):
+        o = self.client.call("sales.create_order", customer=1, items=[{"product": "OLEO-900", "quantity": 999999}])
+        with self.assertRaises(AnaRemoteError) as ctx:
+            self.client.call("sales.invoice_order", number=o["number"])
+        self.assertEqual(ctx.exception.rpc_code, -32000)
+        self.assertEqual(ctx.exception.code, "INSUFFICIENT_STOCK")
+
+    def test_rf_003_04_internal_error_without_trace(self):
+        name = f"test.remote_crash_{SUFFIX}"
+        self.save(name, "def main():\n    return 1/0\n", exposed=True)
+        with self.assertRaises(AnaRemoteError) as ctx:
+            self.client.call(name)
+        self.assertEqual(ctx.exception.rpc_code, -32603)
+        self.assertNotIn("ZeroDivision", str(ctx.exception))
+
+    def test_rf_003_01_parallel_batch(self):
+        r = self.client.batch([("demo.hello", {"name": "a"}), ("demo.hello", {"name": "b"}), ("does.not_exist", {})])
+        self.assertEqual(r[0]["message"], "Olá, a!")
+        self.assertEqual(r[1]["message"], "Olá, b!")
+        self.assertIsInstance(r[2], AnaRemoteError)
+
+    def test_rf_003_05_functions(self):
+        names = {f["name"] for f in self.client.functions()}
+        self.assertIn("sales.create_order", names)
+        self.assertNotIn("finance.trial_balance", names)
+
+    def test_ca_003_06_remote_system(self):
+        s, c, _ = http("PUT", "/api/admin/remote-systems/local",
+                       {"url": "http://127.0.0.1:8080", "username": "admin", "password": ADMIN_PASSWORD}, self.token)
+        self.assertEqual(s, 200, c)
+        name = f"test.outbound_{SUFFIX}"
+        self.save(name, "def main():\n    return ana.remote('local', 'demo.hello', name='echo')\n")
+        s, c, _ = self.run_program(name)
+        self.assertEqual(c["result"]["message"], "Olá, echo!", c)
+
+
+# ---------------------------------------------------------------- spec 004
+DEBUG_SOURCE = ("def main():\n"      # 1
+                "    x = 10\n"       # 2
+                "    y = x + 1\n"    # 3
+                "    z = y * 2\n"    # 4
+                "    return z\n")    # 5
+
+
+class TestDebugger(Base):
+    @classmethod
+    def setUpClass(cls):
+        super().setUpClass()
+        cls.name = f"test.debug_{SUFFIX}"
+        CREATED_PROGRAMS.add(cls.name)
+        http("PUT", f"/api/programs/{cls.name}", {"source": DEBUG_SOURCE}, cls.token)
+
+    def debug(self, name=None, **extra):
+        s, c, _ = self.run_program(name or self.name, debug=True, breakpoints=[3], **extra)
+        self.assertEqual(s, 200, c)
+        return c["id"]
+
+    def cmd(self, id_, token=None, **c):
+        return http("POST", f"/api/executions/{id_}/command", c, token or self.token)
+
+    def test_ca_004_01_02_breakpoint_over_continue(self):
+        id_ = self.debug()
+        p, seq = self.wait_event(id_, {"pause"})
+        self.assertEqual(p["line"], 3)
+        self.assertEqual({v["name"]: v["value"] for v in p["variables"]}, {"x": "10"})
+        self.assertEqual(self.cmd(id_, action="over")[0], 200)
+        p, seq = self.wait_event(id_, {"pause"}, seq)
+        self.assertEqual(p["line"], 4)
+        self.cmd(id_, action="continue")
+        end, _ = self.wait_event(id_, {"end"}, seq)
+        self.assertEqual(end["result"], 22)
+
+    def test_ca_004_03_eval(self):
+        id_ = self.debug()
+        _, seq = self.wait_event(id_, {"pause"})
+        self.cmd(id_, action="eval", expression="x * 2")
+        a, seq = self.wait_event(id_, {"eval"}, seq)
+        self.assertEqual(a["value"], "20")
+        s, c, _ = http("GET", f"/api/executions/{id_}", token=self.token)
+        self.assertEqual(c["status"], "paused")
+        self.cmd(id_, action="stop")
+
+    def test_ca_004_04_05_rollback_when_debugging(self):
+        name = f"test.debug_writes_{SUFFIX}"
+        code = f"DB{SUFFIX}"
+        self.save(name, (
+            "def main():\n"
+            f"    ana.sql_exec(\"INSERT INTO base.product (code, description, price) VALUES ('{code}', 'x', 1)\")\n"
+            "    return 'written'\n"))
+        s, c, _ = self.run_program(name, debug=True, breakpoints=[])
+        end, _ = self.wait_event(c["id"], {"end"})
+        self.assertEqual((end["status"], end["rolled_back"]), ("success", True))
+        self.assertEqual(self.count("base.product", f"code = '{code}'"), 0)
+        s, c, _ = self.run_program(name, debug=True, breakpoints=[3])
+        _, seq = self.wait_event(c["id"], {"pause"})
+        self.cmd(c["id"], action="stop")
+        end, _ = self.wait_event(c["id"], {"end"}, seq)
+        self.assertEqual(end["status"], "aborted")
+        self.assertEqual(self.count("base.product", f"code = '{code}'"), 0)
+
+    def test_ca_004_06_other_user(self):
+        _, other = new_user("developer")
+        id_ = self.debug()
+        self.wait_event(id_, {"pause"})
+        s, _, _ = self.cmd(id_, token=other, action="continue")
+        self.assertEqual(s, 403)
+        s, _, _ = http("GET", f"/api/executions/{id_}/events?since=0", token=other)
+        self.assertEqual(s, 403)
+        self.cmd(id_, action="stop")
+
+
+# ---------------------------------------------------------------- spec 005
+class TestStudio(Base):
+    def test_rf_005_01_studio_served(self):
+        with urllib.request.urlopen(URL + "/") as r:
+            self.assertIn(b"ANA", r.read())
+        s, _, _ = http("GET", "/studio/../../etc/passwd")
+        self.assertIn(s, (400, 404))
+
+    def test_ca_005_03_read_only_sql(self):
+        s, c, _ = http("POST", "/api/sql", {"sql": "DELETE FROM base.product"}, self.token)
+        self.assertEqual(s, 400)
+        s, c, _ = http("POST", "/api/sql", {"sql": "SELECT * FROM ana_system.app_user"}, self.token)
+        self.assertEqual(s, 400)
+        s, c, _ = http("POST", "/api/sql", {"sql": "SELECT hourly_cost FROM projects.employee"}, self.token)
+        self.assertEqual(s, 400)   # RNF-008-02
+        s, c, _ = http("POST", "/api/sql", {"sql": "SELECT generate_series(1, 5000) AS n"}, self.token)
+        self.assertEqual((s, len(c["rows"]), c["truncated"]), (200, 1000, True))
+
+    def test_ca_005_04_commands(self):
+        s, c, _ = http("GET", "/api/commands", token=self.token)
+        self.assertEqual({x["code"]: x["program"] for x in c}["balance"], "inventory.balance")
+
+    def test_rf_005_04_catalog(self):
+        s, c, _ = http("GET", "/api/catalog/base/product", token=self.token)
+        self.assertEqual(s, 200)
+        self.assertIn("price", [col["name"] for col in c["columns"]])
+        s, _, _ = http("GET", "/api/catalog/ana_system/app_user", token=self.token)
+        self.assertEqual(s, 404)
+
+
+# ---------------------------------------------------------------- spec 006
+class TestBusiness(Base):
+    def test_ca_006_01_full_invoicing(self):
+        o = self.client.call("sales.create_order", customer=2,
+                             items=[{"product": "ACUCAR-1", "quantity": 3}, {"product": "CAFE-500", "quantity": 1}])
+        inv = self.client.call("sales.invoice_order", number=o["number"])
+        self.assertEqual(inv["total"], o["total"])
+        doc = f"'ORD-{o['number']}'"
+        self.assertEqual(self.count("inventory.stock_movement", f"document = {doc}"), 2)
+        self.assertEqual(self.count("finance.bill", f"document = {doc}"), 1)
+        self.assertEqual(self.count("sales.sales_order", f"number = {o['number']} AND status = 'INVOICED'"), 1)
+        self.assertTrue(self.run_program("finance.trial_balance")[1]["result"]["balanced"])
+
+    def test_ca_006_02_insufficient_stock_changes_nothing(self):
+        o = self.client.call("sales.create_order", customer=1,
+                             items=[{"product": "ARROZ-5", "quantity": 1}, {"product": "OLEO-900", "quantity": 999999}])
+        with self.assertRaises(AnaRemoteError):
+            self.client.call("sales.invoice_order", number=o["number"])
+        doc = f"'ORD-{o['number']}'"
+        self.assertEqual(self.count("inventory.stock_movement", f"document = {doc}"), 0)
+        self.assertEqual(self.count("finance.bill", f"document = {doc}"), 0)
+        self.assertEqual(self.count("sales.sales_order", f"number = {o['number']} AND status = 'OPEN'"), 1)
+
+    def test_ca_006_03_unbalanced_entry(self):
+        name = f"test.unbalanced_{SUFFIX}"
+        self.save(name, (
+            "def main():\n"
+            "    e = ana.sql_value(\"INSERT INTO finance.journal_entry (memo, created_by) VALUES ('x', 'test') RETURNING id\")\n"
+            "    ana.sql_exec(\"INSERT INTO finance.journal_line (entry_id, account, debit) VALUES ($1, '1.1.1', 10)\", e)\n"
+            "    return e\n"))
+        s, c, _ = self.run_program(name)
+        self.assertEqual(c["error"]["code"], "SQL")
+        self.assertIn("desbalanceado", c["error"]["message"])
+
+    def test_ca_006_04_concurrent_invoicing(self):
+        code = f"C{SUFFIX}"
+        self.client.call("base.save_product", code=code, description="concurrency", price="1.00")
+        self.client.call("inventory.stock_in", product=code, quantity=5)
+        orders = [self.client.call("sales.create_order", customer=1, items=[{"product": code, "quantity": 1}])["number"]
+                  for _ in range(10)]
+
+        def invoice(n):
+            try:
+                Ana(URL, token=self.token).call("sales.invoice_order", number=n)
+                return "ok"
+            except AnaRemoteError as e:
+                return e.code
+        with concurrent.futures.ThreadPoolExecutor(10) as ex:
+            r = list(ex.map(invoice, orders))
+        self.assertEqual(r.count("ok"), 5, r)
+        balance = self.client.call("inventory.balance", product=code)
+        self.assertEqual(sum(float(row["balance"]) for row in balance), 0.0)
+
+
+    def test_ca_006_05_list_products_and_services(self):
+        code = f"LS{SUFFIX}"
+        self.client.call("base.save_product", code=code + "S", description="Serviço novo", price="10", kind="service")
+        self.client.call("base.save_product", code=code + "G", description="Mercadoria nova", price="5")
+        rows = {r["code"]: r for r in self.client.call("base.list_products", search=code)}
+        self.assertIsNone(rows[code + "S"]["balance"])
+        self.assertEqual(rows[code + "G"]["balance"], "0")
+        services = self.client.call("base.list_products", kind="service", search=code)
+        self.assertEqual([r["code"] for r in services], [code + "S"])
+
+
+# ---------------------------------------------------------------- spec 007
+class TestAnalytics(Base):
+    def test_ca_007_01_view_reflects_sale(self):
+        o = self.client.call("sales.create_order", customer=3, items=[{"product": "CAFE-500", "quantity": 1}])
+        self.client.call("sales.invoice_order", number=o["number"])
+        for _ in range(3):
+            s, c, _ = http("POST", "/api/analytics/refresh", {}, self.token)
+            if c["result"] == "refreshed":
+                break
+            time.sleep(1)
+        self.assertGreater(self.count("analytics.daily_sales", "day = current_date"), 0)
+
+    def test_ca_007_03_columnar_fact_table(self):
+        s, c, _ = http("GET", "/health")
+        self.assertTrue(c["analytics"]["columnar"], c)
+        am = self.scalar("SELECT am.amname FROM pg_class c JOIN pg_am am ON am.oid = c.relam "
+                         "JOIN pg_namespace n ON n.oid = c.relnamespace "
+                         "WHERE n.nspname = 'analytics' AND c.relname = 'sales_fact'")
+        self.assertEqual(am, "columnar")
+
+    def test_ca_007_04_in_memory_settings(self):
+        self.assertEqual(int(self.scalar("SELECT count(*) FROM pg_extension WHERE extname = 'pg_prewarm'")), 1)
+        s, m, _ = http("GET", "/api/admin/monitor", token=self.token)
+        settings = {x["name"]: x["setting"] for x in m["database_settings"]}
+        self.assertEqual(settings["pg_prewarm.autoprewarm"], "on")
+        self.assertIn("citus", settings["shared_preload_libraries"])
+        self.assertIn("pg_prewarm", settings["shared_preload_libraries"])
+
+    def test_ca_007_02_concurrent_refresh(self):
+        with concurrent.futures.ThreadPoolExecutor(4) as ex:
+            r = list(ex.map(lambda _: http("POST", "/api/analytics/refresh", {}, self.token)[1]["result"], range(4)))
+        self.assertTrue(set(r) <= {"refreshed", "already_running"}, r)
+
+
+# ---------------------------------------------------------------- spec 008
+class TestProjects(Base):
+    """R&D case: man-hours, prototype materials and milestones."""
+
+    @classmethod
+    def setUpClass(cls):
+        super().setUpClass()
+        c = cls.client
+        cls.employee = c.call("projects.save_employee", name=f"Engenheiro {SUFFIX}", profile="HW",
+                              hourly_cost="90")["id"]
+        cls.customer = c.call("base.save_party", name=f"Cliente P&D {SUFFIX}")["id"]
+        cls.seq = 0
+
+    def make_project(self, **extra):
+        TestProjects.seq += 1
+        code = f"T{SUFFIX}{self.seq}"
+        params = {"code": code, "name": "Projeto de teste", "customer": self.customer, "manager": "admin",
+                  "status": "active", "billing": "mixed",
+                  "tasks": [{"code": "1", "name": "Hardware"}, {"code": "9", "name": "Interno", "billable": False}],
+                  "team": [{"employee": self.employee, "profile": "HW"}], "rates": {"HW": "200"}}
+        params.update(extra)
+        self.client.call("projects.save_project", **params)
+        return code
+
+    def log(self, project, hours, days_ago=None, task="1", **extra):
+        # Each project logs on its own day: the same employee never hits the 24 h limit.
+        days_ago = days_ago if days_ago is not None else 2 + self.seq
+        return self.client.call("projects.log_time", project=project, task=task, hours=hours,
+                                description="trabalho de teste", employee=self.employee,
+                                entry_date=str(datetime.date.today() - datetime.timedelta(days=days_ago)), **extra)
+
+    def err(self, function, **params):
+        with self.assertRaises(AnaRemoteError) as ctx:
+            self.client.call(function, **params)
+        return ctx.exception.code
+
+    def test_ca_008_01_service_item_skips_stock(self):
+        code = f"SV{SUFFIX}"
+        self.client.call("base.save_product", code=code, description="Consultoria", price="150", kind="service")
+        o = self.client.call("sales.create_order", customer=1, items=[{"product": code, "quantity": 4}])
+        inv = self.client.call("sales.invoice_order", number=o["number"])
+        self.assertEqual(inv["total"], "600.00")
+        self.assertEqual(self.err("inventory.stock_in", product=code, quantity=1), "NOT_STOCKABLE")
+
+    def test_ca_008_02_daily_limit(self):
+        p = self.make_project()
+        self.log(p, 9, days_ago=40)
+        self.assertEqual(self.err("projects.log_time", project=p, task="1", hours=16, employee=self.employee,
+                                  description="excesso", entry_date=str(datetime.date.today() - datetime.timedelta(days=40))),
+                         "DAILY_LIMIT")
+
+    def test_ca_008_03_validations(self):
+        p = self.make_project()
+        outsider = self.client.call("projects.save_employee", name=f"Fora {SUFFIX}", profile="TEC")["id"]
+        self.assertEqual(self.err("projects.log_time", project=p, task="1", hours=1, employee=outsider,
+                                  description="não sou da equipe"), "NOT_A_MEMBER")
+        tomorrow = self.scalar("SELECT (current_date + 1)::text")
+        self.assertEqual(self.err("projects.log_time", project=p, task="1", hours=1, employee=self.employee,
+                                  description="futuro", entry_date=tomorrow), "INVALID_DATE")
+        inactive = self.make_project(status="proposal")
+        self.assertEqual(self.err("projects.log_time", project=inactive, task="1", hours=1, employee=self.employee,
+                                  description="proposta"), "PROJECT_INACTIVE")
+
+    def test_ca_008_04_approval_freezes_rate(self):
+        p = self.make_project()
+        entry = self.log(p, 2)["id"]
+        self.client.call("projects.approve_time", project=p)
+        self.client.call("projects.save_project", code=p, rates={"HW": "999"})
+        self.assertEqual(self.scalar(f"SELECT hourly_rate FROM projects.time_entry WHERE id = {entry}"), "200.00")
+        name = f"test.tamper_{SUFFIX}"
+        self.save(name, f"def main():\n    return ana.sql_exec('UPDATE projects.time_entry SET hours = 1 WHERE id = {entry}')\n")
+        s, c, _ = self.run_program(name)
+        self.assertEqual(c["error"]["code"], "SQL")
+
+    def test_ca_008_05_expense_consumes_stock(self):
+        p = self.make_project()
+        before = self.scalar("SELECT sum(quantity) FROM inventory.stock_movement m JOIN base.product p "
+                             "ON p.id = m.product_id WHERE p.code = 'SENSOR-IMU'")
+        r = self.client.call("projects.post_expense", project=p, kind="component", description="IMU",
+                             product="SENSOR-IMU", quantity=2, unit_cost="18.5")
+        self.assertIsNotNone(r["stock_movement"])
+        after = self.scalar("SELECT sum(quantity) FROM inventory.stock_movement m JOIN base.product p "
+                            "ON p.id = m.product_id WHERE p.code = 'SENSOR-IMU'")
+        self.assertEqual(float(before) - float(after), 2.0)
+        self.assertEqual(self.err("projects.post_expense", project=p, kind="component", description="muitos",
+                                  product="SENSOR-IMU", quantity=99999, unit_cost="1"), "INSUFFICIENT_STOCK")
+
+    def bill_project(self, **extra):
+        p = self.make_project(**extra)
+        self.log(p, 10)
+        self.log(p, 1, task="9")          # non-billable
+        self.client.call("projects.approve_time", project=p)
+        self.client.call("projects.post_expense", project=p, kind="pcb", description="PCB protótipo",
+                         unit_cost="100", rebillable=True, markup_pct="20")
+        m = self.client.call("projects.save_milestone", project=p, description="Protótipo v1", amount="5000")["id"]
+        self.client.call("projects.complete_milestone", id=m)
+        return p
+
+    def test_ca_008_06_invoice(self):
+        p = self.bill_project()
+        inv = self.client.call("projects.invoice_project", project=p)
+        self.assertEqual(inv["total"], "7120.00")
+        self.assertEqual(inv["net_amount"], "7120.00")
+        doc = f"'INV-{inv['number']}'"
+        self.assertEqual(self.count("finance.bill", f"document = {doc} AND amount = 7120"), 1)
+        self.assertEqual(self.count("projects.time_entry t JOIN projects.project p ON p.id = t.project_id",
+                                    f"p.code = '{p}' AND t.status = 'invoiced'"), 1)
+        self.assertTrue(self.run_program("finance.trial_balance")[1]["result"]["balanced"])
+        self.assertEqual(self.err("projects.invoice_project", project=p), "NOTHING_TO_INVOICE")
+
+    def test_ca_008_07_service_tax_withheld(self):
+        p = self.bill_project(service_tax_rate="0.05", service_tax_withheld=True)
+        inv = self.client.call("projects.invoice_project", project=p)
+        self.assertEqual((inv["total"], inv["service_tax"], inv["net_amount"]), ("7120.00", "356.00", "6764.00"))
+
+    def test_ca_008_08_cancel_invoice(self):
+        p = self.bill_project()
+        inv = self.client.call("projects.invoice_project", project=p)
+        self.client.call("projects.cancel_invoice", number=inv["number"], reason="erro de teste")
+        self.assertEqual(self.count("projects.time_entry t JOIN projects.project p ON p.id = t.project_id",
+                                    f"p.code = '{p}' AND t.status = 'approved' AND t.billable"), 1)
+        self.assertEqual(self.count("finance.bill", f"document = 'INV-{inv['number']}' AND status = 'cancelled'"), 1)
+        again = self.client.call("projects.invoice_project", project=p)
+        self.assertEqual(again["total"], "7120.00")
+
+    def test_ca_008_09_non_manager(self):
+        username, t = new_user("developer")
+        p = self.make_project()
+        emp = self.client.call("projects.save_employee", name=f"Dev {SUFFIX}", profile="FW", username=username)["id"]
+        self.client.call("projects.save_project", code=p, team=[{"employee": emp, "profile": "FW"}])
+        dev = Ana(URL, token=t)
+        with self.assertRaises(AnaRemoteError) as ctx:
+            dev.call("projects.approve_time", project=p)
+        self.assertEqual(ctx.exception.code, "FORBIDDEN")
+        s, c, _ = self.run_program("projects.dashboard", {"project": p}, token=t)
+        self.assertEqual(s, 200, c)
+        self.assertIsNone(c["result"][0]["cost"])
+
+    def test_ca_008_10_concurrent_project_invoicing(self):
+        p = self.bill_project()
+
+        def invoice(_):
+            try:
+                return Ana(URL, token=self.token).call("projects.invoice_project", project=p)["number"]
+            except AnaRemoteError as e:
+                return e.code
+        with concurrent.futures.ThreadPoolExecutor(2) as ex:
+            r = list(ex.map(invoice, range(2)))
+        self.assertEqual(sorted(map(str, r))[-1], "NOTHING_TO_INVOICE", r)
+        self.assertEqual(len([x for x in r if isinstance(x, int)]), 1, r)
+
+
+# ---------------------------------------------------------------- spec 012
+class TestGovernance(Base):
+    def setting(self, key, value):
+        s, c, _ = http("PUT", f"/api/admin/settings/{key}", {"value": value}, self.token)
+        self.assertEqual(s, 200, c)
+
+    def test_ca_012_01_and_08_cpu_limit_and_measurement(self):
+        name = f"test.cpu_{SUFFIX}"
+        self.save(name, "def main():\n    while True:\n        pass\n")
+        self.save(name, "def main():\n    while True:\n        pass\n", limits={"cpu_ms": 400})
+        s, c, _ = self.run_program(name)
+        self.assertEqual(c["error"]["code"], "CPU_LIMIT", c)
+        s, ex, _ = http("GET", f"/api/executions/{c['error']['execution_id']}", token=self.token)
+        self.assertGreaterEqual(ex["cpu_ms"], 300)
+        self.assertEqual(ex["limits"]["cpu_ms"], 400)
+        ok = f"test.measured_{SUFFIX}"
+        self.save(ok, "def main():\n    ana.sql('SELECT 1')\n    return ana.sql_value('SELECT 2')\n")
+        s, c, _ = self.run_program(ok)
+        self.assertEqual(c["usage"]["sql_count"], 2)
+        self.assertGreater(c["usage"]["max_rss_kb"], 0)
+
+    def test_ca_012_02_memory_limit(self):
+        name = f"test.memory_{SUFFIX}"
+        self.save(name, "def main():\n    return len(bytearray(400 * 1024 * 1024))\n")
+        self.save(name, "def main():\n    return len(bytearray(400 * 1024 * 1024))\n", limits={"memory_mb": 128})
+        self.assertEqual(self.run_program(name)[1]["error"]["code"], "MEMORY")
+
+    def test_ca_012_03_row_limit(self):
+        name = f"test.rows_{SUFFIX}"
+        self.save(name, "def main():\n    return len(ana.sql('SELECT generate_series(1, 1000)'))\n")
+        self.save(name, "def main():\n    return len(ana.sql('SELECT generate_series(1, 1000)'))\n", limits={"max_rows": 10})
+        self.assertEqual(self.run_program(name)[1]["error"]["code"], "ROW_LIMIT")
+
+    def test_ca_012_04_program_busy(self):
+        name = f"test.single_{SUFFIX}"
+        self.save(name, "import time\ndef main():\n    time.sleep(10)\n")
+        self.save(name, "import time\ndef main():\n    time.sleep(10)\n", limits={"max_concurrent": 1})
+        first = self.run_program(name, **{"async": True})[1]["id"]
+        time.sleep(0.5)
+        s, c, _ = self.run_program(name)
+        self.assertEqual((s, c["error"]["code"]), (429, "PROGRAM_BUSY"))
+        http("POST", f"/api/admin/executions/{first}/stop", {}, self.token)
+
+    def test_ca_012_05_ceiling(self):
+        name = f"test.ceiling_{SUFFIX}"
+        self.save(name, "def main():\n    while True:\n        pass\n")
+        s, c, _ = http("PUT", f"/api/programs/{name}", {"limits": {"timeout_ms": 999999999}}, self.token)
+        self.assertEqual(s, 400)
+        try:
+            self.setting("ceiling_timeout_ms", 2000)
+            t0 = time.time()
+            s, c, _ = self.run_program(name)
+            self.assertEqual(c["error"]["code"], "TIMEOUT")
+            self.assertLess(time.time() - t0, 8)
+        finally:
+            self.setting("ceiling_timeout_ms", 600000)
+
+    def test_ca_012_06_user_quota(self):
+        username, t = new_user("developer")
+        http("PUT", f"/api/admin/quotas/{username}", {"max_concurrent": 1}, self.token)
+        name = f"test.quota_{SUFFIX}"
+        self.save(name, "import time\ndef main():\n    time.sleep(10)\n")
+        first = self.run_program(name, token=t, **{"async": True})[1]["id"]
+        time.sleep(0.5)
+        s, c, _ = self.run_program(name, token=t)
+        self.assertEqual((s, c["error"]["code"]), (429, "QUOTA_EXCEEDED"))
+        http("POST", f"/api/admin/executions/{first}/stop", {}, self.token)
+
+    def test_ca_012_07_group_grants_more(self):
+        name = f"test.slow_{SUFFIX}"
+        self.save(name, "import time\ndef main():\n    time.sleep(2)\n    return 'done'\n")
+        group = f"lim{SUFFIX}"
+        http("PUT", f"/api/admin/groups/{group}", {"description": "limites", "program_patterns": []}, self.token)
+        _, member = new_user("user", groups=[group])
+        _, plain = new_user("user")
+        try:
+            http("PUT", "/api/admin/limit-profiles/role/user", {"limits": {"timeout_ms": 1000}}, self.token)
+            http("PUT", f"/api/admin/limit-profiles/group/{group}", {"limits": {"timeout_ms": 8000}}, self.token)
+            self.assertEqual(self.run_program(name, token=plain)[1]["error"]["code"], "TIMEOUT")
+            self.assertEqual(self.run_program(name, token=member)[1]["result"], "done")
+        finally:
+            http("DELETE", "/api/admin/limit-profiles/role/user", token=self.token)
+            http("DELETE", f"/api/admin/limit-profiles/group/{group}", token=self.token)
+            http("DELETE", f"/api/admin/groups/{group}", token=self.token)
+
+    def test_rf_012_08_consumption_ranking(self):
+        s, rows, _ = http("GET", "/api/admin/consumption?days=1", token=self.token)
+        self.assertEqual(s, 200)
+        self.assertTrue(any(r["program"].startswith("test.") for r in rows))
+
+
+# ---------------------------------------------------------------- spec 018
+class TestScheduler(Base):
+    created_jobs = []
+
+    @classmethod
+    def tearDownClass(cls):
+        for j in cls.created_jobs:
+            http("DELETE", f"/api/scheduler/jobs/{j}", token=cls.token)
+
+    def job(self, name, program, triggers, **extra):
+        body = {"name": f"t-{name}-{SUFFIX}", "program": program, "triggers": triggers, **extra}
+        s, c, _ = http("POST", "/api/scheduler/jobs", body, self.token)
+        self.assertEqual(s, 200, c)
+        self.created_jobs.append(c["id"])
+        return c
+
+    def occurrences(self, job_id):
+        return http("GET", f"/api/scheduler/jobs/{job_id}/occurrences?limit=200", token=self.token)[1]
+
+    def wait_for(self, cond, timeout=30):
+        end = time.time() + timeout
+        while time.time() < end:
+            v = cond()
+            if v:
+                return v
+            time.sleep(0.5)
+        self.fail("condition not reached")
+
+    def iso(self, seconds_from_now):
+        return (datetime.datetime.now(datetime.timezone.utc)
+                + datetime.timedelta(seconds=seconds_from_now)).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+    def test_ca_018_02_skip_does_not_overlap(self):
+        prog = f"test.sched_slow_{SUFFIX}"
+        self.save(prog, "import time\ndef main():\n    time.sleep(3)\n    return 1\n")
+        j = self.job("skip", prog, [{"kind": "interval", "interval_s": 1}], concurrency="skip")
+        self.wait_for(lambda: len([o for o in self.occurrences(j["id"]) if o["status"] == "success"]) >= 2, 40)
+        http("POST", f"/api/scheduler/jobs/{j['id']}/pause", {}, self.token)
+        occ = self.occurrences(j["id"])
+        self.assertTrue(any(o["status"] == "skipped" and o["reason"] == "concurrent" for o in occ), occ)
+        runs = sorted((o["started_at"], o["finished_at"]) for o in occ if o["status"] == "success")
+        for (s1, f1), (s2, _) in zip(runs, runs[1:]):
+            self.assertLessEqual(f1, s2, "execuções sobrepostas")
+
+    def test_ca_018_03_retries_and_pause(self):
+        prog = f"test.sched_fail_{SUFFIX}"
+        self.save(prog, "def main():\n    raise ana.Error('BOOM', 'falha proposital')\n")
+        j = self.job("retry", prog, [{"kind": "once", "fire_at": self.iso(1)}],
+                     retries=2, retry_backoff_s=1, on_exhausted="pause")
+        self.wait_for(lambda: len([o for o in self.occurrences(j["id"]) if o["status"] == "error"]) == 3, 40)
+        attempts = sorted(o["attempt"] for o in self.occurrences(j["id"]))
+        self.assertEqual(attempts, [1, 2, 3])
+        s, job, _ = http("GET", f"/api/scheduler/jobs/{j['id']}", token=self.token)
+        self.assertFalse(job["active"])
+        s, notes, _ = http("GET", "/api/scheduler/notifications", token=self.token)
+        kinds = {n["kind"] for n in notes if n["job_id"] == j["id"]}
+        self.assertEqual(kinds, {"failure", "paused"})
+
+    def test_ca_018_04_last_business_day_preview(self):
+        day = "2026-12-31"
+        http("PUT", f"/api/scheduler/holidays/{day}", {"description": "teste"}, self.token)
+        try:
+            j = self.job("calendar", "demo.hello",
+                         [{"kind": "calendar", "rule": "last_business_day", "at_time": "18:00",
+                           "starts_at": "2026-12-01T00:00:00Z"}], active=False)
+            s, times, _ = http("GET", f"/api/scheduler/jobs/{j['id']}/preview?n=2", token=self.token)
+            # Dec 31 2026 (Thursday) is a holiday → Dec 30, 18:00 in America/Sao_Paulo = 21:00Z.
+            self.assertEqual(times[0], "2026-12-30T21:00:00Z", times)
+            self.assertEqual(times[1], "2027-01-29T21:00:00Z", times)
+        finally:
+            http("DELETE", f"/api/scheduler/holidays/{day}", token=self.token)
+
+    def test_ca_018_05_dependency_passes_result(self):
+        a_prog = f"test.sched_a_{SUFFIX}"
+        b_prog = f"test.sched_b_{SUFFIX}"
+        self.save(a_prog, "def main():\n    return {'total': 42}\n")
+        self.save(b_prog, 'PARAMS = {"upstream": {"type": "dict"}}\ndef main(upstream=None):\n    return upstream["total"] * 2\n')
+        a = self.job("dep-a", a_prog, [{"kind": "once", "fire_at": self.iso(2)}])
+        b = self.job("dep-b", b_prog, [{"kind": "after_job", "after_job": a["name"], "after_condition": "success",
+                                        "result_param": "upstream"}])
+        occ = self.wait_for(lambda: [o for o in self.occurrences(b["id"]) if o["status"] == "success"], 40)
+        self.assertEqual(occ[0]["result"], 84)
+
+    def test_ca_018_06_missed_run_once_and_run_all(self):
+        once = self.job("missed-once", "demo.hello",
+                        [{"kind": "interval", "interval_s": 60, "starts_at": self.iso(-300)}], missed="run_once")
+        all_ = self.job("missed-all", "demo.hello",
+                        [{"kind": "interval", "interval_s": 60, "starts_at": self.iso(-300)}],
+                        missed="run_all", max_catchup=3, concurrency="queue")
+        self.wait_for(lambda: len([o for o in self.occurrences(all_["id"]) if o["status"] == "success"]) == 3, 40)
+        time.sleep(2)
+        runs_once = [o for o in self.occurrences(once["id"]) if o["status"] == "success"]
+        self.assertEqual(len(runs_once), 1)
+        self.assertIn("perdida", runs_once[0]["reason"])
+        http("POST", f"/api/scheduler/jobs/{once['id']}/pause", {}, self.token)
+        http("POST", f"/api/scheduler/jobs/{all_['id']}/pause", {}, self.token)
+
+    def test_rf_018_07_run_now_skip_next_preview(self):
+        j = self.job("ops", "demo.hello", [{"kind": "cron", "cron": "0 3 * * *"}])
+        s, p1, _ = http("GET", f"/api/scheduler/jobs/{j['id']}/preview?n=3", token=self.token)
+        self.assertEqual(len(p1), 3)
+        http("POST", f"/api/scheduler/jobs/{j['id']}/skip-next", {}, self.token)
+        s, p2, _ = http("GET", f"/api/scheduler/jobs/{j['id']}/preview?n=3", token=self.token)
+        self.assertEqual(p2[0], p1[1])
+        http("POST", f"/api/scheduler/jobs/{j['id']}/run", {"params": {"name": "agora"}}, self.token)
+        occ = self.wait_for(lambda: [o for o in self.occurrences(j["id"]) if o["status"] == "success"], 20)
+        self.assertEqual(occ[0]["result"]["message"], "Olá, agora!")
+
+    def test_rf_018_09_run_as_other_user_requires_admin(self):
+        username, t = new_user("developer")
+        body = {"name": f"t-runas-{SUFFIX}", "program": "demo.hello", "run_as": "admin",
+                "triggers": [{"kind": "cron", "cron": "0 3 * * *"}]}
+        s, c, _ = http("POST", "/api/scheduler/jobs", body, t)
+        self.assertEqual(s, 403, c)
+        body["run_as"] = username
+        s, c, _ = http("POST", "/api/scheduler/jobs", body, t)
+        self.assertEqual(s, 200, c)
+        self.created_jobs.append(c["id"])
+
+    def test_invalid_cron_rejected(self):
+        s, c, _ = http("POST", "/api/scheduler/jobs", {"name": f"t-bad-{SUFFIX}", "program": "demo.hello",
+                                                       "triggers": [{"kind": "cron", "cron": "61 * * * *"}]}, self.token)
+        self.assertEqual(s, 400)
+
+
+# ---------------------------------------------------------------- spec 011
+class TestAdministration(Base):
+    def test_ca_011_01_create_user_forced_password_change(self):
+        username = f"new{SUFFIX}"
+        CREATED_USERS.append(username)
+        s, c, _ = http("POST", "/api/admin/users", {"username": username, "role": "user"}, self.token)
+        self.assertEqual(s, 200, c)
+        generated = c["password"]
+        t = login(username, generated)
+        s, c, _ = http("GET", "/api/commands", token=t)
+        self.assertEqual((s, c["error"]["code"]), (403, "PASSWORD_CHANGE_REQUIRED"))
+        s, c, _ = http("POST", "/api/me/password", {"current": generated, "new": "short"}, t)
+        self.assertEqual(s, 400)
+        s, c, _ = http("POST", "/api/me/password", {"current": generated, "new": "A-much-better-pass"}, t)
+        self.assertEqual(s, 200, c)
+        self.assertEqual(http("GET", "/api/commands", token=t)[0], 200)
+
+    def test_ca_011_02_last_admin(self):
+        s, users, _ = http("GET", "/api/admin/users", token=self.token)
+        admins = [u for u in users if u["role"] == "admin" and u["active"]]
+        if len(admins) != 1:
+            self.skipTest("há mais de um admin ativo nesta instância")
+        s, c, _ = http("PUT", "/api/admin/users/admin", {"role": "developer"}, self.token)
+        self.assertEqual((s, c["error"]["code"]), (409, "LAST_ADMIN"))
+
+    def test_ca_011_03_revoke_sessions(self):
+        username, t = new_user("user")
+        self.assertEqual(http("GET", "/api/me", token=t)[0], 200)
+        http("POST", f"/api/admin/users/{username}/sessions/revoke", {}, self.token)
+        self.assertEqual(http("GET", "/api/me", token=t)[0], 401)
+
+    def test_ca_011_04_restricted_program(self):
+        name = f"test.restricted_{SUFFIX}"
+        self.save(name, "def main():\n    return 'segredo'\n", restricted=True)
+        group = f"grp{SUFFIX}"
+        s, c, _ = http("PUT", f"/api/admin/groups/{group}", {"description": "teste",
+                                                             "program_patterns": ["test.*"]}, self.token)
+        self.assertEqual(s, 200, c)
+        _, member = new_user("user", groups=[group])
+        _, outsider = new_user("user")
+        self.assertEqual(self.run_program(name, token=member)[1]["result"], "segredo")
+        s, c, _ = self.run_program(name, token=outsider)
+        self.assertEqual((s, c["error"]["code"]), (403, "FORBIDDEN"))
+        http("DELETE", f"/api/admin/groups/{group}", token=self.token)
+
+    def test_ca_011_05_settings_hot_reload(self):
+        s, c, _ = http("PUT", "/api/admin/settings/exec_timeout_ms", {"value": 5}, self.token)
+        self.assertEqual(s, 400)
+        name = f"test.loop_setting_{SUFFIX}"
+        self.save(name, "def main():\n    while True:\n        pass\n")
+        try:
+            self.assertEqual(http("PUT", "/api/admin/settings/exec_timeout_ms", {"value": 2000}, self.token)[0], 200)
+            t0 = time.time()
+            s, c, _ = self.run_program(name)
+            self.assertEqual(c["error"]["code"], "TIMEOUT")
+            self.assertLess(time.time() - t0, 8)
+        finally:
+            http("PUT", "/api/admin/settings/exec_timeout_ms", {"value": 60000}, self.token)
+
+    def test_ca_011_06_monitor_and_stop(self):
+        name = f"test.sleeper_{SUFFIX}"
+        self.save(name, "import time\ndef main():\n    time.sleep(30)\n")
+        s, c, _ = self.run_program(name, **{"async": True})
+        id_ = c["id"]
+        time.sleep(0.5)
+        s, m, _ = http("GET", "/api/admin/monitor", token=self.token)
+        self.assertIn(id_, [x["id"] for x in m["running"]])
+        self.assertEqual(http("POST", f"/api/admin/executions/{id_}/stop", {}, self.token)[0], 200)
+        end, _ = self.wait_event(id_, {"end"})
+        self.assertEqual(end["status"], "aborted")
+
+    def test_ca_011_07_login_audit(self):
+        bad = f"ghost{SUFFIX}"
+        http("POST", "/api/session", {"username": bad, "password": "nope"})
+        s, rows, _ = http("GET", f"/api/admin/audit/logins?username={bad}", token=self.token)
+        self.assertTrue(rows and rows[0]["success"] is False and rows[0]["ip"] and rows[0]["reason"], rows)
+
+    def test_ca_011_08_purge_keeps_execution_history(self):
+        name = f"test.purge_{SUFFIX}"
+        self.save(name, "def main():\n    return 1\n")
+        exec_id = self.run_program(name)[1]["id"]
+        self.assertEqual(http("DELETE", f"/api/programs/{name}?purge=1", token=self.token)[0], 200)
+        CREATED_PROGRAMS.discard(name)
+        self.assertEqual(http("GET", f"/api/programs/{name}", token=self.token)[0], 404)
+        self.assertEqual(http("GET", f"/api/programs/{name}/versions", token=self.token)[1], [])
+        s, c, _ = http("GET", f"/api/executions/{exec_id}", token=self.token)
+        self.assertEqual((s, c["program"]), (200, name))
+
+    def test_rf_011_02_admin_log(self):
+        s, rows, _ = http("GET", "/api/admin/audit/changes?action=user.", token=self.token)
+        self.assertEqual(s, 200)
+        self.assertTrue(rows)
+        self.assertNotIn('"password"', json.dumps(rows))
+
+
+
+# ---------------------------------------------------------------- spec 011 (robots, P14)
+class TestRobots(Base):
+    def robot(self, role="user"):
+        username = f"rob{SUFFIX}{len(CREATED_USERS)}"
+        CREATED_USERS.append(username)
+        s, c, _ = http("POST", "/api/admin/users", {"username": username, "kind": "robot", "role": role}, self.token)
+        self.assertEqual(s, 200, c)
+        self.assertNotIn("password", c)
+        return username
+
+    def key(self, username, **body):
+        s, c, _ = http("POST", f"/api/admin/users/{username}/keys", {"name": "teste", **body}, self.token)
+        self.assertEqual(s, 200, c)
+        self.assertTrue(c["key"].startswith("ana_rk_"))
+        return c
+
+    def rpc(self, key, method, params, id_=1):
+        return http("POST", "/rpc", {"jsonrpc": "2.0", "method": method, "params": params, "id": id_}, key)
+
+    def test_ca_011_10_robot_calls_rpc_with_key_but_cannot_log_in(self):
+        name = f"test.robot_rpc_{SUFFIX}"
+        self.save(name, "def main(x):\n    return {'x': x, 'who': ana.context.user}\n", exposed=True)
+        robot = self.robot()
+        k = self.key(robot)
+        s, c, _ = self.rpc(k["key"], name, {"x": 7})
+        self.assertEqual(s, 200, c)
+        self.assertEqual(c["result"], {"x": 7, "who": robot})
+        # The key is never shown again: listing exposes only the prefix.
+        s, keys, _ = http("GET", f"/api/admin/users/{robot}/keys", token=self.token)
+        self.assertNotIn(k["key"], json.dumps(keys))
+        self.assertEqual(keys[0]["prefix"], k["prefix"])
+        # No interactive login, no password, never admin.
+        s, c, _ = http("POST", "/api/session", {"username": robot, "password": "anything-at-all-1"})
+        self.assertEqual(s, 401)
+        s, c, _ = http("POST", f"/api/admin/users/{robot}/password", {}, self.token)
+        self.assertGreaterEqual(s, 400)
+        s, c, _ = http("PUT", f"/api/admin/users/{robot}", {"role": "admin"}, self.token)
+        self.assertGreaterEqual(s, 400)
+        username = f"rob{SUFFIX}adm"
+        s, c, _ = http("POST", "/api/admin/users", {"username": username, "kind": "robot", "role": "admin"}, self.token)
+        self.assertGreaterEqual(s, 400)
+        # Keys are only for robots.
+        human, _ = new_user("user")
+        s, c, _ = http("POST", f"/api/admin/users/{human}/keys", {"name": "x"}, self.token)
+        self.assertGreaterEqual(s, 400)
+
+    def test_ca_011_11_revoked_expired_or_wrong_ip_key_is_refused(self):
+        name = f"test.robot_key_{SUFFIX}"
+        self.save(name, "def main():\n    return 1\n", exposed=True)
+        robot = self.robot()
+        good = self.key(robot)
+        self.assertEqual(self.rpc(good["key"], name, {})[0], 200)
+        s, keys, _ = http("GET", f"/api/admin/users/{robot}/keys", token=self.token)
+        used = [x for x in keys if x["id"] == good["id"]][0]
+        self.assertIsNotNone(used["last_used_at"])
+        wrong_ip = self.key(robot, ip_allow=["203.0.113.0/24"])
+        self.assertEqual(self.rpc(wrong_ip["key"], name, {})[0], 401)
+        s, c, _ = http("POST", f"/api/admin/users/{robot}/keys", {"name": "x", "ip_allow": ["nao-e-ip"]}, self.token)
+        self.assertEqual(s, 400, c)
+        self.assertEqual(self.rpc("ana_rk_" + "A" * 43, name, {})[0], 401)
+        s, _, _ = http("DELETE", f"/api/admin/keys/{good['id']}", token=self.token)
+        self.assertEqual(s, 200)
+        self.assertEqual(self.rpc(good["key"], name, {})[0], 401)
+
+    def test_ca_011_12_scheduled_job_runs_as_robot(self):
+        name = f"test.robot_job_{SUFFIX}"
+        self.save(name, "def main():\n    return ana.context.user\n")
+        robot = self.robot()
+        body = {"name": f"t-robot-{SUFFIX}", "program": name, "run_as": robot,
+                "triggers": [{"kind": "once", "fire_at": "2099-01-01T00:00:00Z"}]}
+        s, j, _ = http("POST", "/api/scheduler/jobs", body, self.token)
+        self.assertEqual(s, 200, j)
+        try:
+            self.assertEqual(j["run_as"], robot)
+            self.assertEqual(j["owner"], "admin")
+            http("POST", f"/api/scheduler/jobs/{j['id']}/run", {}, self.token)
+            end = time.time() + 30
+            done = []
+            while time.time() < end and not done:
+                occ = http("GET", f"/api/scheduler/jobs/{j['id']}/occurrences", token=self.token)[1]
+                done = [o for o in occ if o["status"] == "success"]
+                time.sleep(0.5)
+            self.assertTrue(done, occ)
+            s, rows, _ = http("GET", f"/api/admin/audit/executions?program={name}", token=self.token)
+            self.assertEqual(rows[0]["username"], robot)
+            self.assertEqual(rows[0]["origin"], "internal")
+        finally:
+            http("DELETE", f"/api/scheduler/jobs/{j['id']}", token=self.token)
+
+    def test_ca_011_13_every_execution_has_an_active_owner(self):
+        name = f"test.owner_{SUFFIX}"
+        self.save(name, "def main():\n    return 1\n")
+        robot = self.robot()
+        body = {"name": f"t-owner-{SUFFIX}", "program": name, "run_as": robot, "retries": 0,
+                "triggers": [{"kind": "once", "fire_at": "2099-01-01T00:00:00Z"}]}
+        s, j, _ = http("POST", "/api/scheduler/jobs", body, self.token)
+        self.assertEqual(s, 200, j)
+        try:
+            # The robot is deactivated: its routine no longer runs (no owner).
+            http("PUT", f"/api/admin/users/{robot}", {"active": False}, self.token)
+            http("POST", f"/api/scheduler/jobs/{j['id']}/run", {}, self.token)
+            end = time.time() + 30
+            failed = []
+            while time.time() < end and not failed:
+                occ = http("GET", f"/api/scheduler/jobs/{j['id']}/occurrences", token=self.token)[1]
+                failed = [o for o in occ if o["status"] == "error"]
+                time.sleep(0.5)
+            self.assertTrue(failed, occ)
+            self.assertIn("NO_OWNER", json.dumps(failed[0]))
+        finally:
+            http("DELETE", f"/api/scheduler/jobs/{j['id']}", token=self.token)
+        # The built-in robot owns internal tasks and is protected.
+        s, users, _ = http("GET", "/api/admin/users?search=system", token=self.token)
+        system = [u for u in users if u["username"] == "system"][0]
+        self.assertEqual((system["kind"], system["builtin"], system["active"]), ("robot", True, True))
+        s, c, _ = http("PUT", "/api/admin/users/system", {"active": False}, self.token)
+        self.assertGreaterEqual(s, 400)
+        s, c, _ = http("POST", "/api/admin/users/system/keys", {"name": "x"}, self.token)
+        self.assertGreaterEqual(s, 400)
+        s, tasks, _ = http("GET", "/api/admin/audit/tasks?task=seed.programs", token=self.token)
+        self.assertTrue(tasks and all(t["username"] == "system" for t in tasks), tasks)
+        s, c, _ = http("POST", "/api/analytics/refresh", {}, self.token)
+        self.assertEqual(s, 200, c)
+        s, tasks, _ = http("GET", "/api/admin/audit/tasks?task=analytics.refresh&username=admin", token=self.token)
+        self.assertEqual((tasks[0]["origin"], tasks[0]["status"]), ("studio", "success"), tasks)
+
+
+
+# ---------------------------------------------------------------- spec 024 / 025
+REPO = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
+
+
+def psql(sql):
+    """Runs SQL as the core role inside the database container (test setup only)."""
+    import subprocess
+    r = subprocess.run(["docker", "compose", "exec", "-T", "db", "psql", "-U", "ana", "-d", "ana",
+                        "-At", "-v", "ON_ERROR_STOP=1", "-c", sql],
+                       cwd=REPO, capture_output=True, text=True, timeout=60)
+    if r.returncode != 0:
+        raise RuntimeError(r.stderr)
+    return r.stdout.strip()
+
+
+def psql_available():
+    try:
+        return psql("SELECT 1") == "1"
+    except Exception:
+        return False
+
+
+class TestAuditTrail(Base):
+    def wait_rows(self, kind, filters, cond=lambda rows: rows, timeout=10):
+        end = time.time() + timeout
+        while True:
+            s, rows, _ = http("GET", f"/api/admin/audit/{kind}?" + urllib.parse.urlencode(filters), token=self.token)
+            self.assertEqual(s, 200, rows)
+            if cond(rows) or time.time() > end:
+                return rows
+            time.sleep(0.5)
+
+    def robot_with_key(self):
+        username = f"aud{SUFFIX}{len(CREATED_USERS)}"
+        CREATED_USERS.append(username)
+        s, c, _ = http("POST", "/api/admin/users", {"username": username, "kind": "robot", "role": "user"}, self.token)
+        self.assertEqual(s, 200, c)
+        s, k, _ = http("POST", f"/api/admin/users/{username}/keys", {"name": "auditoria"}, self.token)
+        self.assertEqual(s, 200, k)
+        return username, k
+
+    def test_ca_024_01_access_is_recorded_with_who_and_how(self):
+        name = f"test.audit_rpc_{SUFFIX}"
+        self.save(name, "def main():\n    return 1\n", exposed=True)
+        robot, key = self.robot_with_key()
+        s, _, _ = http("POST", "/rpc", {"jsonrpc": "2.0", "method": name, "params": {}, "id": 1}, key["key"])
+        self.assertEqual(s, 200)
+        rows = self.wait_rows("access", {"username": robot, "path": "/rpc"})
+        self.assertTrue(rows, "acesso do robô não registrado")
+        r = rows[0]
+        self.assertEqual((r["auth"], r["api_key_id"], r["method"], r["status"]), ("api_key", key["id"], "POST", 200))
+        self.assertTrue(r["ip"] and r["node"] and r["duration_ms"] is not None, r)
+        marker = f"/api/me?bad={SUFFIX}"
+        http("GET", marker, token="x" * 40)
+        rows = self.wait_rows("access", {"path": "/api/me", "status": "401"},
+                              lambda rows: any(x["username"] is None for x in rows))
+        self.assertTrue(any(x["username"] is None and x["auth"] == "anonymous" for x in rows), rows[:3])
+
+    def test_ca_024_02_sql_console_and_login_details(self):
+        sql = f"SELECT {SUFFIX} AS audit_marker"
+        s, c, _ = http("POST", "/api/sql", {"sql": sql}, self.token)
+        self.assertEqual(s, 200, c)
+        rows = self.wait_rows("access", {"username": "admin", "path": "/api/sql"},
+                              lambda rows: any(x["detail"] == sql for x in rows))
+        self.assertTrue(any(x["detail"] == sql for x in rows), rows[:3])
+        username, _ = new_user("user")
+        rows = self.wait_rows("access", {"username": username, "path": "/api/session"})
+        self.assertTrue(rows and rows[-1]["auth"] == "password", rows)
+        self.assertNotIn("Initial-pass-1", json.dumps(rows))
+
+    def test_ca_024_03_execution_records_origin_consumption_and_trace(self):
+        name = f"test.audit_fail_{SUFFIX}"
+        self.save(name, "def helper():\n    return 1 / 0\n\ndef main():\n    return helper()\n", exposed=True)
+        robot, key = self.robot_with_key()
+        s, c, _ = http("POST", "/rpc", {"jsonrpc": "2.0", "method": name, "params": {}, "id": 1}, key["key"])
+        self.assertEqual(s, 200)
+        exec_id = c["error"]["data"]["execution_id"]
+        self.assertNotIn("trace", json.dumps(c))          # external callers never see traces
+        s, x, _ = http("GET", f"/api/admin/audit/executions/{exec_id}", token=self.token)
+        self.assertEqual(s, 200, x)
+        self.assertEqual((x["username"], x["api_key_id"], x["origin"]), (robot, key["id"], "remote"))
+        self.assertTrue(x["client_ip"] and x["node"], x)
+        self.assertIn("ZeroDivisionError", x["error"]["message"])
+        self.assertIn("helper", x["error"]["trace"])
+        self.assertIsNotNone(x["cpu_ms"])
+        self.assertIsNotNone(x["max_rss_kb"])
+
+    def test_ca_024_04_user_trail_in_time_order(self):
+        username, t = new_user("user")
+        s, c, _ = self.run_program("demo.hello", {"name": "trilha"}, token=t)
+        self.assertEqual(s, 200, c)
+        rows = self.wait_rows("trail", {"username": username},
+                              lambda rows: {"access", "login", "execution"} <= {r["kind"] for r in rows})
+        kinds = {r["kind"] for r in rows}
+        self.assertTrue({"access", "login", "execution"} <= kinds, kinds)
+        ats = [r["at"] for r in rows]
+        self.assertEqual(ats, sorted(ats, reverse=True))
+        s, c, _ = http("GET", "/api/admin/audit/trail", token=self.token)
+        self.assertEqual(s, 400)
+        _, user_token = new_user("user")
+        self.assertEqual(http("GET", f"/api/admin/audit/trail?username={username}", token=user_token)[0], 403)
+
+    def test_ca_024_05_retention_policy_and_purge(self):
+        for key, bad in [("retention_login_days", 30), ("retention_admin_log_days", 100), ("retention_access_days", 0)]:
+            s, c, _ = http("PUT", f"/api/admin/settings/{key}", {"value": bad}, self.token)
+            self.assertEqual(s, 400, (key, c))
+        if not psql_available():
+            self.skipTest("psql no contêiner indisponível")
+        old_exec, older_exec = str(uuid.uuid4()), str(uuid.uuid4())
+        psql("INSERT INTO ana_system.access_event (at, username, auth, method, path, status, node) VALUES "
+             f"(now() - interval '3 days', 'old{SUFFIX}', 'session', 'GET', '/api/old', 200, 'test')")
+        psql("INSERT INTO ana_system.execution (id, program, username, origin, status, started_at, params, result, error) VALUES "
+             f"('{old_exec}', 'test.old', 'admin', 'studio', 'error', now() - interval '3 days', "
+             """'{"a": 1}', NULL, '{"code": "EXCEPTION", "message": "x", "trace": "line 1"}'), """
+             f"('{older_exec}', 'test.old', 'admin', 'studio', 'success', now() - interval '10 days', "
+             """'{"a": 1}', '1', NULL)""")
+        settings = {"retention_access_days": 1, "retention_payload_days": 1, "retention_execution_days": 7}
+        before = {k: v["value"] for k, v in
+                  {x["key"]: x for x in http("GET", "/api/admin/settings", token=self.token)[1]}.items() if k in settings}
+        try:
+            for k, v in settings.items():
+                self.assertEqual(http("PUT", f"/api/admin/settings/{k}", {"value": v}, self.token)[0], 200)
+            s, c, _ = http("POST", "/api/admin/retention/purge", {}, self.token)
+            self.assertEqual(s, 200, c)
+            self.assertGreaterEqual(c["counts"]["access"], 1)
+            self.assertGreaterEqual(c["counts"]["executions"], 1)
+            self.assertGreaterEqual(c["counts"]["payload"], 1)
+        finally:
+            for k, v in before.items():
+                http("PUT", f"/api/admin/settings/{k}", {"value": v}, self.token)
+        self.assertEqual(psql(f"SELECT count(*) FROM ana_system.access_event WHERE username = 'old{SUFFIX}'"), "0")
+        self.assertEqual(psql(f"SELECT count(*) FROM ana_system.execution WHERE id = '{older_exec}'"), "0")
+        s, x, _ = http("GET", f"/api/admin/audit/executions/{old_exec}", token=self.token)
+        self.assertEqual(s, 200, x)
+        self.assertIsNotNone(x["payload_purged_at"])
+        self.assertIsNone(x["params"])
+        self.assertEqual(x["error"]["code"], "EXCEPTION")     # the record stays, without the trace
+        self.assertNotIn("trace", x["error"])
+        s, tasks, _ = http("GET", "/api/admin/audit/tasks?task=retention.purge&username=admin", token=self.token)
+        self.assertEqual(tasks[0]["status"], "success", tasks[0])
+        self.assertIn("access", tasks[0]["detail"])
+        psql(f"DELETE FROM ana_system.execution WHERE id = '{old_exec}'")
+
+    def test_ca_024_06_retention_overview(self):
+        s, r, _ = http("GET", "/api/admin/retention", token=self.token)
+        self.assertEqual(s, 200, r)
+        keys = {c["key"] for c in r["categories"]}
+        self.assertTrue({"access", "logins", "executions", "payload", "tasks", "scheduler", "admin_log"} <= keys, keys)
+        for c in r["categories"]:
+            self.assertTrue(c["days"] >= 1 and c["bytes"] >= 0 and c["rows"] >= 0, c)
+        _, user_token = new_user("user")
+        self.assertEqual(http("GET", "/api/admin/retention", token=user_token)[0], 403)
+
+
+class TestStorageEfficiency(Base):
+    def setUp(self):
+        if not psql_available():
+            self.skipTest("psql no contêiner indisponível")
+
+    def test_ca_025_01_analytics_skips_when_nothing_changed(self):
+        results = []
+        for _ in range(4):
+            results.append(psql("SELECT analytics.refresh(false)"))
+            if results[-1] == "unchanged":
+                break
+            time.sleep(1.5)
+        self.assertEqual(results[-1], "unchanged", results)
+        s, c, _ = http("POST", "/api/analytics/refresh", {}, self.token)
+        self.assertEqual((s, c["result"]), (200, "refreshed"))
+
+    def test_ca_025_02_access_partitions_are_dropped_whole(self):
+        day = (datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(days=5)).date()
+        nxt = day + datetime.timedelta(days=1)
+        part = f"access_event_{day:%Y%m%d}"
+        psql(f"CREATE TABLE IF NOT EXISTS ana_system.{part} PARTITION OF ana_system.access_event "
+             f"FOR VALUES FROM ('{day} 00:00:00+00') TO ('{nxt} 00:00:00+00')")
+        psql("INSERT INTO ana_system.access_event (at, username, auth, method, path, status, node) VALUES "
+             f"('{day} 12:00:00+00', 'part{SUFFIX}', 'session', 'GET', '/api/old', 200, 'test')")
+        before = http("GET", "/api/admin/settings", token=self.token)[1]
+        old = [x["value"] for x in before if x["key"] == "retention_access_days"][0]
+        try:
+            self.assertEqual(http("PUT", "/api/admin/settings/retention_access_days", {"value": 2}, self.token)[0], 200)
+            s, c, _ = http("POST", "/api/admin/retention/purge", {}, self.token)
+            self.assertEqual(s, 200, c)
+        finally:
+            http("PUT", "/api/admin/settings/retention_access_days", {"value": old}, self.token)
+        self.assertEqual(psql(f"SELECT count(*) FROM pg_class WHERE relname = '{part}'"), "0")
+        tomorrow = (datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(days=1)).date()
+        self.assertEqual(psql(f"SELECT count(*) FROM pg_class WHERE relname = 'access_event_{tomorrow:%Y%m%d}'"), "1")
+
+    def stats(self):
+        return [int(x) for x in psql("SELECT n_tup_ins, n_tup_upd, n_tup_hot_upd FROM pg_stat_user_tables "
+                                     "WHERE schemaname = 'ana_system' AND relname = 'execution'").split("|")]
+
+    def wait_stats(self, cond, timeout=20):
+        end = time.time() + timeout
+        while True:
+            v = self.stats()
+            if cond(v) or time.time() > end:
+                return v
+            time.sleep(1)
+
+    def test_ca_025_03_short_execution_is_written_once(self):
+        time.sleep(12)          # let pending statistics from earlier tests flush
+        ins0, upd0, _ = self.stats()
+        for i in range(5):
+            s, c, _ = self.run_program("demo.hello", {"name": f"ssd{i}"})
+            self.assertEqual(s, 200, c)
+        ins, upd, _ = self.wait_stats(lambda v: v[0] >= ins0 + 5)
+        self.assertGreaterEqual(ins - ins0, 5)
+        self.assertEqual(upd - upd0, 0, "execução curta não deveria gerar UPDATE")
+        name = f"test.ssd_long_{SUFFIX}"
+        self.save(name, "import time\ndef main():\n    time.sleep(1.5)\n    return 1\n")
+        s, c, _ = self.run_program(name)
+        self.assertEqual(s, 200, c)
+        _, upd2, hot2 = self.wait_stats(lambda v: v[1] > upd)
+        self.assertEqual(upd2 - upd, 1)
+        s, x, _ = http("GET", f"/api/admin/audit/executions/{c['id']}", token=self.token)
+        self.assertEqual((x["status"], x["username"]), ("success", "admin"))
+        self.assertIsNotNone(x["cpu_ms"])
+
+    def test_ca_025_04_database_configuration(self):
+        got = dict(line.split("|") for line in psql(
+            "SELECT name, setting FROM pg_settings WHERE name IN "
+            "('wal_compression', 'checkpoint_timeout', 'fsync', 'full_page_writes', 'synchronous_commit')").splitlines())
+        self.assertEqual(got, {"wal_compression": "lz4", "checkpoint_timeout": "900", "fsync": "on",
+                               "full_page_writes": "on", "synchronous_commit": "on"})
+
+
+
+# ---------------------------------------------------------------- spec 021
+class TestConsulting(Base):
+    """Client projects end to end: structure, allocation, flow, progress, scope, viability."""
+    MON = datetime.date(2031, 3, 3)          # a Monday with no holidays around it
+
+    @classmethod
+    def setUpClass(cls):
+        super().setUpClass()
+        c = cls.client
+        cls.customer = c.call("base.save_party", name=f"Cliente Consultoria {SUFFIX}")["id"]
+        cls.cheap = c.call("projects.save_employee", name=f"Consultor A {SUFFIX}", profile="HW", hourly_cost="50")["id"]
+        cls.pricey = c.call("projects.save_employee", name=f"Consultor B {SUFFIX}", profile="HW", hourly_cost="150")["id"]
+        cls.seq = 0
+
+    def prog(self, _program, token=None, **params):
+        s, c, _ = self.run_program(_program, params, token=token)
+        self.assertEqual(s, 200, c)
+        self.assertNotIn("error", c, c.get("error"))
+        return c["result"]
+
+    def prog_err(self, _program, **params):
+        s, c, _ = self.run_program(_program, params)
+        self.assertIn("error", c, c)
+        return c["error"]
+
+    def project(self, status="active", rate="300", **extra):
+        TestConsulting.seq += 1
+        code = f"C{SUFFIX}{self.seq}"
+        params = {"code": code, "name": "Consultoria de teste", "customer": self.customer, "manager": "admin",
+                  "status": status, "billing": "hourly", "start_date": str(self.MON), "rates": {"HW": rate},
+                  "team": [{"employee": self.cheap, "profile": "HW"}]}
+        params.update(extra)
+        self.client.call("projects.save_project", **params)
+        return code
+
+    def activity(self, project, code, **f):
+        return self.prog("projects.save_activity", project=project, code=code, **{"name": f"Atividade {code}", **f})
+
+    def test_ca_021_01_template_and_first_baseline(self):
+        tpl = f"TPL{SUFFIX}"
+        self.prog("projects.save_template", code=tpl, name="Modelo de teste", items=[
+            {"code": "A", "kind": "phase", "name": "Análise"},
+            {"code": "A.1", "parent": "A", "name": "Levantamento", "profile": "HW", "planned_hours": 16, "duration_days": 2},
+            {"code": "B", "kind": "phase", "name": "Entrega"},
+            {"code": "B.1", "parent": "B", "name": "Implementação", "profile": "HW", "planned_hours": 40,
+             "duration_days": 5, "predecessors": ["A.1"]}])
+        p = self.project(status="proposal")
+        r = self.prog("projects.apply_template", project=p, template=tpl)
+        self.assertEqual(r["created"], 4)
+        rows = self.prog("projects.workspace", project=p, view="structure")["data"]
+        self.assertEqual([x["código"] for x in rows], ["A", "A.1", "B", "B.1"])
+        self.assertEqual(rows[3]["horas"], "40.00")
+        self.assertEqual(rows[3]["predecessoras"], "A.1")
+        r = self.prog("projects.approve_plan", project=p, reason="plano inicial")
+        self.assertEqual(r["baseline"], 1)
+        self.assertEqual(self.scalar(f"SELECT status FROM projects.project WHERE code = '{p}'"), "active")
+
+    def test_ca_021_02_overallocation_across_projects(self):
+        p1, p2 = self.project(), self.project()
+        self.activity(p1, "1", planned_hours=40)
+        self.activity(p2, "1", planned_hours=40)
+        week = str(self.MON + datetime.timedelta(weeks=8))
+        self.prog("projects.allocate", project=p1, activity="1", employee=self.pricey, hours=30, week=week)
+        r = self.prog("projects.allocate", project=p2, activity="1", employee=self.pricey, hours=20, week=week)
+        over = r["overallocation"]
+        self.assertEqual(len(over), 1, over)
+        self.assertEqual((over[0]["capacity"], over[0]["allocated"], over[0]["excess"]), ("40.00", "50.00", "10.00"))
+        self.assertTrue(over[0]["suggestions"], "sem sugestão de redistribuição")
+
+    def test_ca_021_02a_staff_allocation_to_tasks(self):
+        p = self.project()
+        self.activity(p, "1", planned_hours=60, planned_start=str(self.MON),
+                      planned_finish=str(self.MON + datetime.timedelta(days=18)))
+        r = self.prog("projects.allocate", project=p, activity="1", employee=self.pricey, hours=60, distribute=True)
+        self.assertEqual([a["hours"] for a in r["allocations"]], ["20.00", "20.00", "20.00"])
+        self.assertEqual(self.count("projects.project_member pm JOIN projects.project pr ON pr.id = pm.project_id",
+                                    f"pr.code = '{p}' AND pm.employee_id = {self.pricey}"), 1)
+        week2 = str(self.MON + datetime.timedelta(weeks=1))
+        self.prog("projects.allocate", project=p, activity="1", profile="HW", hours=16, week=week2)
+        self.prog("projects.allocate", project=p, activity="1", employee=self.cheap, replace_profile="HW")
+        detail = self.prog("projects.workspace", project=p, view="activity", activity="1")["data"]
+        people = {x["who"]: x["allocated"] for x in detail["people"]}
+        self.assertEqual(people[f"Consultor A {SUFFIX}"], "16.00")
+        self.assertEqual(people[f"Consultor B {SUFFIX}"], "60.00")
+        self.assertFalse(any(k.startswith("perfil") for k in people), people)
+
+    def test_ca_021_03_critical_path(self):
+        p = self.project()
+        self.activity(p, "A", duration_days=5, planned_start=str(self.MON))
+        self.activity(p, "B", duration_days=5, predecessors=["A"])
+        self.activity(p, "C", duration_days=2, predecessors=["A"])
+        self.activity(p, "D", duration_days=5, predecessors=["B", "C"])
+
+        def plan():
+            g = self.prog("projects.workspace", project=p, view="gantt")["data"]
+            return g["finish"], {i["code"]: i for i in g["items"]}
+        finish, items = plan()
+        self.assertEqual(finish, "2031-03-21")
+        self.assertTrue(items["B"]["critical"] and items["D"]["critical"] and not items["C"]["critical"])
+        self.assertEqual(items["C"]["float"], 3)
+        self.activity(p, "C", duration_days=4)                 # off the critical path: consumes float
+        finish2, items = plan()
+        self.assertEqual((finish2, items["C"]["float"]), (finish, 1))
+        self.activity(p, "B", duration_days=7)                 # on the critical path: moves the finish
+        finish3, _ = plan()
+        self.assertEqual(finish3, "2031-03-25")
+        self.assertEqual(self.prog_err("projects.save_activity", project=p, code="A",
+                                       predecessors=["D"])["code"], "DEPENDENCY_CYCLE")
+
+    def test_ca_021_04_progress_cost_performance(self):
+        p = self.project()
+        emp = self.client.call("projects.save_employee", name=f"Consultor C {SUFFIX}", profile="HW", hourly_cost="60")["id"]
+        self.client.call("projects.save_project", code=p, team=[{"employee": emp, "profile": "HW"}])
+        self.prog("projects.save_activity", project=p, code="F", name="Fase", kind="phase")
+        self.activity(p, "F.1", phase="F", planned_hours=100, duration_days=10)
+        for d in range(3):
+            self.client.call("projects.log_time", project=p, task="F.1", hours=20, description="execução",
+                             employee=emp, entry_date=str(datetime.date.today() - datetime.timedelta(days=400 + d)))
+        self.prog("projects.update_progress", project=p, activity="F.1", percent=40)
+        prog = self.prog("projects.workspace", project=p, view="progress")["data"]
+        phase = prog["phases"][0]
+        self.assertEqual((phase["code"], phase["hours_consumed_pct"], phase["percent_complete"]), ("F", "60.00", "40.00"))
+        self.assertEqual(phase["cpi"], "0.67")
+        self.assertTrue(any("IDC" in a for a in phase["alerts"]), phase["alerts"])
+        self.assertEqual(self.prog_err("projects.log_time", project=p, task="F", hours=1, employee=emp,
+                                       description="na fase")["code"], "SQL")
+
+    def test_ca_021_05_scope_change_new_baseline(self):
+        p = self.project(billing="mixed", budget_hours="100")
+        self.activity(p, "1", planned_hours=80, profile="HW", duration_days=10)
+        self.prog("projects.approve_plan", project=p)
+        n = self.prog("projects.scope_change", project=p, action="request", title="Novo sensor")["number"]
+        self.prog("projects.scope_change", project=p, action="estimate", number=n, est_hours=40, est_amount=8000, est_days=5)
+        self.assertEqual(self.prog_err("projects.scope_change", project=p, action="approve_customer", number=n,
+                                       customer_approver="Cliente")["code"], "INVALID_STATE")
+        self.prog("projects.scope_change", project=p, action="approve_internal", number=n)
+        r = self.prog("projects.scope_change", project=p, action="approve_customer", number=n,
+                      customer_approver="Eng. Cliente")
+        self.assertEqual((r["status"], r["baseline"]), ("approved", 2))
+        self.assertIsNotNone(r["milestone_id"])
+        self.assertEqual(self.scalar(f"SELECT budget_hours FROM projects.project WHERE code = '{p}'"), "140.00")
+        b = self.prog("projects.baselines", project=p)
+        self.assertEqual([x["number"] for x in b["baselines"]], [1, 2])
+        self.assertIsNotNone(b["baselines"][1]["change_id"])
+
+    def test_ca_021_06_my_week_one_click_logging(self):
+        username, token = new_user("user")
+        emp = self.client.call("projects.save_employee", name=f"Consultor D {SUFFIX}", profile="HW", username=username)["id"]
+        p = self.project(team=[{"employee": emp, "profile": "HW"}])
+        self.activity(p, "1", planned_hours=20)
+        self.prog("projects.allocate", project=p, activity="1", employee=emp, hours=8, week=str(datetime.date.today()))
+        s, c, _ = self.run_program("projects.my_week", {}, token=token)
+        self.assertEqual(s, 200, c)
+        acts = [a for a in c["result"]["activities"] if a["project"] == p]
+        self.assertEqual(acts[0]["allocated"], "8.00")
+        table = [ev for ev in c["events"] if ev.get("kind") == "table"][0]["data"]
+        log_action = [a for a in table["row_actions"][0] if a["program"] == "projects.log_time"][0]
+        self.assertEqual(set(log_action["ask"]), {"hours", "description", "entry_date"})
+        params = {**log_action["params"], "hours": "2.5", "description": "feito pela minha semana"}
+        self.prog("projects.log_time", token=token, **params)
+        s, c, _ = self.run_program("projects.my_week", {}, token=token)
+        self.assertEqual([a for a in c["result"]["activities"] if a["project"] == p][0]["logged"], "2.50")
+
+    def test_ca_021_07_scheduled_status_report_without_costs(self):
+        p = self.project()
+        self.activity(p, "1", planned_hours=20, profile="HW")
+        self.prog("projects.save_risk", project=p, title="Risco interno", client_visible=False)
+        self.prog("projects.save_risk", project=p, title="Risco visível", client_visible=True)
+        body = {"name": f"t-status-{SUFFIX}", "program": "projects.status_report", "params": {"project": p},
+                "triggers": [{"kind": "once", "fire_at": "2099-01-01T00:00:00Z"}]}
+        s, j, _ = http("POST", "/api/scheduler/jobs", body, self.token)
+        self.assertEqual(s, 200, j)
+        try:
+            http("POST", f"/api/scheduler/jobs/{j['id']}/run", {}, self.token)
+            end, done = time.time() + 30, []
+            while time.time() < end and not done:
+                occ = http("GET", f"/api/scheduler/jobs/{j['id']}/occurrences", token=self.token)[1]
+                done = [o for o in occ if o["status"] in ("success", "error")]
+                time.sleep(0.5)
+            self.assertEqual(done[0]["status"], "success", done)
+        finally:
+            http("DELETE", f"/api/scheduler/jobs/{j['id']}", token=self.token)
+        content = self.scalar("SELECT r.content::text FROM projects.status_report r JOIN projects.project p "
+                              f"ON p.id = r.project_id WHERE p.code = '{p}' AND r.client_visible")
+        for word in ("cost", "margin", "profit", "rate", "Risco interno"):
+            self.assertNotIn(word, content)
+        self.assertIn("Risco visível", content)
+
+    def test_ca_021_08_allocation_drives_profit(self):
+        p = self.project()
+        self.activity(p, "1", planned_hours=10, profile="HW")
+        week = str(self.MON)
+        self.prog("projects.allocate", project=p, activity="1", employee=self.cheap, hours=10, week=week)
+        p1 = self.prog("projects.projection", project=p)["base"]
+        self.prog("projects.allocate", project=p, activity="1", employee=self.cheap, hours=0, week=week)
+        self.prog("projects.allocate", project=p, activity="1", employee=self.pricey, hours=10, week=week)
+        p2 = self.prog("projects.projection", project=p)["base"]
+        overhead = Decimal(self.prog("projects.save_policy")["overhead_pct"])
+        expected = Decimal(10 * (150 - 50)) * (1 + overhead / 100)
+        self.assertEqual(Decimal(p1["profit"]) - Decimal(p2["profit"]), expected.quantize(Decimal("0.01")))
+        self.assertEqual(p1["revenue"], p2["revenue"])
+
+    def test_ca_021_09_proposal_projection_scenarios(self):
+        p = self.project(status="proposal")
+        self.activity(p, "1", planned_hours=80, profile="HW", duration_days=20)
+        self.prog("projects.save_planned_expense", project=p, description="Licença mensal", amount=1000, monthly=True)
+        r = self.prog("projects.projection", project=p)
+        names = [x["name"] for x in r["scenarios"]]
+        self.assertEqual(names[:3], ["base", "otimista", "pessimista"])
+        base, opt, pes = r["scenarios"][:3]
+        self.assertGreater(Decimal(opt["profit"]), Decimal(base["profit"]))
+        self.assertLess(Decimal(pes["profit"]), Decimal(base["profit"]))
+        self.assertTrue(r["base"]["monthly"])
+        self.prog("projects.save_scenario", project=p, name="Reajuste com atraso", rate_pct=10, delay_weeks=4)
+        r = self.prog("projects.projection", project=p)
+        custom = [x for x in r["scenarios"] if x["name"] == "Reajuste com atraso"][0]
+        self.assertGreater(Decimal(custom["revenue"]), Decimal(base["revenue"]))
+        self.assertGreater(Decimal(custom["expense_cost"]), Decimal(base["expense_cost"]))   # one more month of license
+
+    def test_rnf_021_01_large_plan_under_one_second(self):
+        if not psql_available():
+            self.skipTest("psql no contêiner indisponível")
+        p = self.project()
+        # 2,000 activities in 20 phases, each depending on the previous one of its phase.
+        psql(f"""
+            INSERT INTO projects.task (project_id, code, name, kind, seq)
+            SELECT pr.id, 'P' || g, 'Fase ' || g, 'phase', g * 1000 FROM projects.project pr, generate_series(1, 20) g
+            WHERE pr.code = '{p}';
+            INSERT INTO projects.task (project_id, code, name, kind, parent_id, seq, duration_days, planned_hours, profile)
+            SELECT pr.id, 'P' || g || '.' || i, 'Atividade ' || i, 'activity', ph.id, g * 1000 + i, 1 + i % 5, 8, 'HW'
+            FROM projects.project pr, generate_series(1, 20) g, generate_series(1, 100) i, projects.task ph
+            WHERE pr.code = '{p}' AND ph.project_id = pr.id AND ph.code = 'P' || g;
+            INSERT INTO projects.task_dependency (task_id, predecessor_id)
+            SELECT t.id, prev.id FROM projects.task t JOIN projects.task prev
+              ON prev.project_id = t.project_id AND prev.parent_id = t.parent_id AND prev.seq = t.seq - 1
+            JOIN projects.project pr ON pr.id = t.project_id WHERE pr.code = '{p}' AND t.kind = 'activity';""")
+        for view in ("board", "gantt", "overview", "viability"):
+            s, c, _ = self.run_program("projects.workspace", {"project": p, "view": view})
+            self.assertEqual(s, 200, c.get("error"))
+            self.assertLess(c["duration_ms"], 1000, f"{view}: {c['duration_ms']} ms")
+
+    def test_ca_021_10_margin_policy_on_approval(self):
+        p = self.project(status="proposal", rate="60")
+        self.activity(p, "1", planned_hours=40, profile="HW", duration_days=5)
+        self.prog("projects.allocate", project=p, activity="1", employee=self.pricey, hours=40, week=str(self.MON))
+        err = self.prog_err("projects.approve_plan", project=p)
+        self.assertEqual(err["code"], "LOW_MARGIN")
+        self.assertEqual(self.scalar(f"SELECT status FROM projects.project WHERE code = '{p}'"), "proposal")
+        r = self.prog("projects.approve_plan", project=p,
+                      low_margin_justification="projeto estratégico para entrar no cliente")
+        self.assertLess(Decimal(r["projected_profit"]), 0)
+        b = self.prog("projects.baselines", project=p)["baselines"][0]
+        self.assertEqual(b["low_margin_justification"], "projeto estratégico para entrar no cliente")
+        self.assertIsNotNone(b["projected_profit"])
+
+
+
+# ---------------------------------------------------------------- spec 022
+class TestParallel(Base):
+    @classmethod
+    def setUpClass(cls):
+        super().setUpClass()
+        t = cls.token
+        cls.sleep = f"test.par_sleep_{SUFFIX}"
+        cls.writer = f"test.par_writer_{SUFFIX}"
+        cls.reader = f"test.par_reader_{SUFFIX}"
+        for name, src in [
+            (cls.sleep, "import time\ndef main(i, ms=200, fail=False):\n    time.sleep(ms / 1000)\n"
+                        "    if fail:\n        raise ana.Error('BOOM', 'parte falhou')\n"
+                        "    return {'i': i, 'user': ana.context.user}\n"),
+            (cls.writer, "def main(tag, fail=False):\n"
+                         "    ana.sql_exec(\"INSERT INTO base.party (kind, name) VALUES ('customer', $1)\", tag)\n"
+                         "    if fail:\n        raise ana.Error('BOOM', 'parte falhou depois de gravar')\n    return tag\n"),
+            (cls.reader, "def main(tag):\n"
+                         "    return ana.sql_value('SELECT count(*) FROM base.party WHERE name = $1', tag)\n")]:
+            CREATED_PROGRAMS.add(name)
+            s, c, _ = http("PUT", f"/api/programs/{name}", {"source": src}, t)
+            assert s == 200, c
+
+    def main(self, body, params=None, name=None, **extra):
+        name = name or f"test.par_main_{SUFFIX}_{abs(hash(body)) % 100000}"
+        self.save(name, body, **extra)
+        s, c, _ = self.run_program(name, params or {})
+        self.assertEqual(s, 200, c)
+        return c
+
+    def parties(self, tag):
+        return self.count("base.party", f"name = '{tag}'")
+
+    def test_ca_022_01_map_runs_in_parallel_in_order(self):
+        c = self.main(f"def main():\n    return ana.map('{self.sleep}', [{{'i': i}} for i in range(50)], max_workers=10)\n")
+        r = c["result"]
+        self.assertEqual([x["result"]["i"] for x in r], list(range(50)))
+        self.assertLess(c["duration_ms"], 4000, "50 × 200 ms com 10 em paralelo deveria levar ~1 s, não 10 s")
+        self.assertTrue(all(x["result"]["user"] == "admin" for x in r))        # RNF-022-03: same user
+
+    def test_ca_022_02_errors_are_individual_and_fail_fast_cancels(self):
+        body = (f"def main(fail_fast=False):\n"
+                f"    calls = [('{self.sleep}', {{'i': 0, 'ms': 10, 'fail': True}})] + "
+                f"[('{self.sleep}', {{'i': i, 'ms': 1500}}) for i in range(1, 4)]\n"
+                f"    return ana.parallel(calls, max_workers=2, fail_fast=fail_fast)\n")
+        name = f"test.par_ff_{SUFFIX}"
+        self.save(name, body)
+        s, c, _ = self.run_program(name, {})
+        r = c["result"]
+        self.assertEqual((r[0]["ok"], r[0]["error"]["code"]), (False, "BOOM"))
+        self.assertTrue(all(x["ok"] for x in r[1:]), r)
+        s, c, _ = self.run_program(name, {"fail_fast": True})
+        r = c["result"]
+        self.assertEqual(r[0]["error"]["code"], "BOOM")
+        self.assertEqual({x["error"]["code"] for x in r[1:]}, {"CANCELLED"})
+        self.assertLess(c["duration_ms"], 1400)
+
+    def test_ca_022_03_atomic_all_or_nothing(self):
+        tag = f"atom{SUFFIX}"
+        body = (f"def main(fail=False):\n"
+                f"    ana.sql_exec(\"INSERT INTO base.party (kind, name) VALUES ('customer', $1)\", '{tag}')\n"
+                f"    calls = [('{self.writer}', {{'tag': '{tag}', 'fail': fail and i == 2}}) for i in range(4)]\n"
+                f"    return ana.parallel(calls, mode='atomic', max_workers=4)\n")
+        name = f"test.par_atomic_{SUFFIX}"
+        self.save(name, body)
+        s, c, _ = self.run_program(name, {"fail": True})
+        self.assertEqual(c["error"]["code"], "PARALLEL_ATOMIC_FAILED", c)
+        self.assertEqual(self.parties(tag), 0, "nada deveria ter sido gravado")
+        s, c, _ = self.run_program(name, {})
+        self.assertEqual(s, 200, c)
+        self.assertEqual(self.parties(tag), 5)                # 4 parts + the main execution
+        self.assertEqual(self.scalar("SELECT count(*) FROM pg_prepared_xacts WHERE gid LIKE 'ana\\_%'"), 0)
+
+    def test_ca_022_04_shared_snapshot(self):
+        tag = f"snap{SUFFIX}"
+        body = (f"def main():\n"
+                f"    a = ana.gather(ana.spawn('{self.reader}', {{'tag': '{tag}'}}, snapshot=True))[0]['result']\n"
+                f"    ana.gather(ana.spawn('{self.writer}', {{'tag': '{tag}'}}))\n"
+                f"    b = ana.gather(ana.spawn('{self.reader}', {{'tag': '{tag}'}}, snapshot=True))[0]['result']\n"
+                f"    c = ana.gather(ana.spawn('{self.reader}', {{'tag': '{tag}'}}))[0]['result']\n"
+                f"    return [a, b, c]\n")
+        r = self.main(body)["result"]
+        self.assertEqual(r, [0, 0, 1], "com instantâneo a gravação feita no meio não aparece; sem ele, aparece")
+
+    def test_ca_022_05_max_workers_reduced_to_limit(self):
+        body = (f"def main():\n"
+                f"    return ana.map('{self.sleep}', [{{'i': i, 'ms': 400}} for i in range(4)], max_workers=1000)\n")
+        c = self.main(body, name=f"test.par_limit_{SUFFIX}", limits={"max_parallel_parts": 2})
+        self.assertTrue(all(x["ok"] for x in c["result"]))
+        self.assertGreaterEqual(c["duration_ms"], 800, "com limite 2, quatro partes de 400 ms levam duas levas")
+        self.assertLess(c["duration_ms"], 1600)
+
+    def test_ca_022_06_audit_tree(self):
+        c = self.main(f"def main():\n    return ana.map('{self.sleep}', [{{'i': i, 'ms': 1}} for i in range(3)])\n",
+                      name=f"test.par_tree_{SUFFIX}")
+        s, x, _ = http("GET", f"/api/admin/audit/executions/{c['id']}", token=self.token)
+        self.assertEqual(s, 200, x)
+        self.assertEqual(len(x["parts"]), 3)
+        self.assertEqual(x["total"]["parts"], 3)
+        s, part, _ = http("GET", f"/api/admin/audit/executions/{x['parts'][0]['id']}", token=self.token)
+        self.assertEqual(part["parent"], c["id"])
+
+    def test_rnf_022_02_main_ending_cancels_parts(self):
+        name = f"test.par_timeout_{SUFFIX}"
+        self.save(name, f"import time\ndef main():\n"
+                        f"    parts = [ana.spawn('{self.sleep}', {{'i': i, 'ms': 8000}}) for i in range(2)]\n"
+                        f"    time.sleep(0.5)\n    raise ana.Error('MAIN_FAILED', 'a principal falhou')\n")
+        s, c, _ = self.run_program(name, {})
+        self.assertEqual(c["error"]["code"], "MAIN_FAILED", c)
+        self.assertLess(c["error"].get("duration_ms", 0) or 0, 8000)
+        main_id = c["error"]["execution_id"]
+        end, parts = time.time() + 10, []
+        while time.time() < end:
+            parts = http("GET", f"/api/admin/audit/executions/{main_id}", token=self.token)[1]["parts"]
+            if len(parts) == 2 and all(p["status"] != "running" for p in parts):
+                break
+            time.sleep(0.5)
+        self.assertEqual({p["status"] for p in parts}, {"aborted"}, parts)
+
+    def test_rf_022_08_debug_runs_parts_sequentially_and_rolls_back(self):
+        tag = f"dbg{SUFFIX}"
+        name = f"test.par_debug_{SUFFIX}"
+        self.save(name, f"def main():\n    return ana.map('{self.writer}', [{{'tag': '{tag}'}} for _ in range(3)])\n")
+        s, c, _ = self.run_program(name, debug=True)
+        self.assertEqual(s, 200, c)
+        ev, _ = self.wait_event(c["id"], ["end"])
+        self.assertEqual(ev["status"], "success", ev)
+        s, events, _ = http("GET", f"/api/executions/{c['id']}/events?since=0", token=self.token)
+        self.assertTrue(any("uma por vez" in json.dumps(e, ensure_ascii=False) for e in events["events"]))
+        self.assertEqual(self.parties(tag), 0, "depuração desfaz também as partes")
+
+
+if __name__ == "__main__":
+    unittest.main()
