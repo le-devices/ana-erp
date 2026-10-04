@@ -120,10 +120,35 @@ submit(w, d.querySelector("#command-form"));
 await until(() => location_hash(w).startsWith("#/ops/inventory/inventory.balance"), "go-to", jsErrors);
 ok(true, "barra Ir para abre rotina pelo comando");
 
+// Usability: selection screen with choices and lookups, collapse after running, Back (F3)
+await go(w, "#/ops/projects/projects.workspace");
+await until(() => d.querySelector("#ops-main select[name=view]"), "choices", jsErrors);
+ok([...d.querySelectorAll("#ops-main .params-form [name]")].map((i) => i.name).slice(0, 2).join(",") === "project,view",
+   "campos na ordem declarada no programa");
+ok([...d.querySelector("#ops-main select[name=view]").options].some((o) => o.textContent === "Viabilidade"), "aba como lista de escolha em português");
+await until(() => [...d.querySelector("#ops-main select[name=project]").options].some((o) => o.value === "PRJ-001"), "project lookup", jsErrors);
+ok(!text("#ops-main").includes("RF-021"), "sem texto técnico do programa na Operação");
+d.querySelector("#ops-main select[name=project]").value = "PRJ-001";
+submit(w, d.querySelector("#ops-main form"));
+await until(() => d.querySelector("#ops-main .routine-layout.collapsed") && text("#ops-main .params-summary").includes("PRJ-001"), "collapsed", jsErrors);
+ok(true, "depois de executar, o resultado ocupa a tela e os parâmetros viram resumo");
+ok(d.querySelectorAll(".splitter").length >= 2, "divisórias redimensionáveis");
+ok(!d.querySelector("#back").hidden, "botão Voltar visível");
+d.querySelector("#back").click();
+await until(() => d.querySelector("#ops-main .routine-layout:not(.collapsed)") && d.querySelector("#ops-main select[name=project]")
+             && d.querySelector("#ops-main select[name=project]").value === "PRJ-001", "back to selection", jsErrors);
+ok(true, "Voltar retorna à tela de seleção preenchida (F3)");
+
 // Consulting project in tabs (spec 021): address with parameters runs the routine (RF-020-12)
 await go(w, "#/ops/projects/projects.workspace?project=PRJ-001&view=board");
 await until(() => d.querySelectorAll("#ops-main .board-card").length > 0, "board", jsErrors);
 ok(d.querySelectorAll("#ops-main .board-col").length === 5, "quadro com as cinco colunas do fluxo (RF-021-04)");
+await go(w, "#/ops/projects/projects.workspace?project=PRJ-001&view=structure");
+await until(() => d.querySelector("#ops-main .table-box button"), "table tools", jsErrors);
+ok([...d.querySelectorAll("#ops-main .table-box button")].some((b) => b.textContent.includes("CSV")) && d.querySelector("#ops-main th.sortable"),
+   "tabelas com ordenação e exportação CSV");
+await go(w, "#/ops/projects/projects.workspace?project=PRJ-001&view=board");
+await until(() => d.querySelectorAll("#ops-main .board-card").length > 0, "board again", jsErrors);
 ok([...d.querySelectorAll("#ops-main .output-tabs button")].map((b) => b.textContent).includes("Viabilidade"), "abas do projeto, incluindo Viabilidade");
 [...d.querySelectorAll("#ops-main .board-card button")].find((b) => b.textContent === "Andamento").click();
 await until(() => d.querySelector("#ops-main .inline-form"), "inline form", jsErrors);
