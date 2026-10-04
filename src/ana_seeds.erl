@@ -3,6 +3,7 @@
 %% Reads priv/programs/<name>.py with metadata in the header:
 %%   # ana:description Creates a sales order
 %%   # ana:exposed yes
+%%   # ana:menu no            (executable helper, not a routine in the menu)
 %%   # ana:command order
 %%   # ana:kind program|library
 %%   # ana:role user|developer|admin
@@ -19,6 +20,8 @@ apply() ->
         _ = Created =/= [] andalso ok =:= logger:notice("seed programs created: ~p", [length(Created)]),
         {ok, unicode:characters_to_binary(io_lib:format("~b programa(s) criado(s)", [length(Created)]))}
     end),
+    _ = ana_task:run(<<"programs.refresh_params">>, ana_task:system_user(), <<"internal">>,
+                     fun() -> ana_program:refresh_params() end),
     ok.
 
 seed(File) ->
@@ -32,6 +35,7 @@ seed(File) ->
                        <<"kind">> => maps:get(<<"kind">>, Meta, <<"program">>),
                        <<"exposed">> => maps:get(<<"exposed">>, Meta, <<"no">>) =:= <<"yes">>,
                        <<"min_role">> => maps:get(<<"role">>, Meta, <<"user">>),
+                       <<"in_menu">> => maps:get(<<"menu">>, Meta, <<"yes">>) =/= <<"no">>,
                        <<"comment">> => <<"seed">>},
             case ana_program:save(Name, Fields, ana_task:system_user()) of
                 {ok, _} ->

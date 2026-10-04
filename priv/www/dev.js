@@ -158,6 +158,7 @@ def main(name="mundo"):
     $("#p-kind").value = p.kind || "program";
     $("#p-role").value = p.min_role || "user";
     $("#p-exposed").checked = !!p.exposed;
+    $("#p-menu").checked = p.in_menu !== false;
     $("#p-restricted").checked = !!p.restricted;
     $("#p-active").checked = p.active !== false;
     $("#purge").disabled = !p.version;
@@ -235,6 +236,7 @@ def main(name="mundo"):
       kind: $("#p-kind").value,
       min_role: $("#p-role").value,
       exposed: $("#p-exposed").checked,
+      in_menu: $("#p-menu").checked,
       restricted: $("#p-restricted").checked,
       active: $("#p-active").checked,
       comment: $("#comment").value,
@@ -282,7 +284,8 @@ def main(name="mundo"):
 
   // ------------------------------------------------------------------ params
   function buildParams(decl) {
-    state.form = R.paramsForm(decl, {});
+    state.form = R.paramsForm(decl, { showTypes: true,
+      lookup: (program, params) => API.run(program, { params }).then((r) => (r.error ? [] : r.result)).catch(() => []) });
     const old = $("#params-form");
     state.form.node.id = "params-form";
     old.replaceWith(state.form.node);
@@ -526,7 +529,7 @@ def main(name="mundo"):
       json.hidden = !json.hidden;
       $("#params-form").hidden = !json.hidden;
     });
-    for (const id of ["#p-description", "#p-kind", "#p-role", "#p-exposed", "#p-restricted", "#p-active"]) {
+    for (const id of ["#p-description", "#p-kind", "#p-role", "#p-exposed", "#p-menu", "#p-restricted", "#p-active"]) {
       $(id).addEventListener("change", () => markDirty(true));
     }
     $("#console-form").addEventListener("submit", async (e) => {

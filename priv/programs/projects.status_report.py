@@ -12,7 +12,7 @@ from ana_lib.projects import consulting as C
 from ana_lib.projects import views as V
 
 PARAMS = {
-    "project": {"type": "str", "label": "projeto (vazio = todos que eu gerencio)"},
+    "project": {"type": "str", "label": "projeto (vazio = todos que eu gerencio)", "lookup": {"program": "projects.lookup", "params": {"kind": "projects"}}},
     "days": {"type": "int", "default": 7, "label": "período (dias)"},
     "client_visible": {"type": "bool", "default": True, "label": "visível ao cliente"},
 }

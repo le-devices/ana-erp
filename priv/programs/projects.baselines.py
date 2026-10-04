@@ -5,7 +5,7 @@ from ana_lib.projects import access
 from ana_lib.projects import views as V
 
 PARAMS = {
-    "project": {"type": "str", "required": True},
+    "project": {"type": "str", "required": True, "label": "projeto", "lookup": {"program": "projects.lookup", "params": {"kind": "projects"}}},
     "a": {"type": "int", "label": "linha de base A"},
     "b": {"type": "int", "label": "linha de base B"},
 }

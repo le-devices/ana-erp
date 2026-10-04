@@ -50,3 +50,11 @@ quem importou o quê.
 - Marca do cliente no Estúdio (nome, logotipo).
 - Internacionalização (idioma, moeda, fuso) se houver clientes fora do Brasil.
 - Telemetria opcional e consentida para suporte.
+- **Atualização dos programas do produto em instalações existentes** (ligado à
+  Decisão 3): hoje as sementes só criam programas que não existem, para nunca
+  sobrescrever customizações; por isso melhorias do produto (ex.: campos de
+  escolha e consultas nos formulários, out/2026) não chegam a quem já tem o
+  programa. Opções: (a) programa do produto não editável + cópia do cliente
+  com outro nome; (b) atualizar quando o cliente não alterou (comparar com a
+  versão semeada) e avisar quando alterou, com comparação lado a lado;
+  (c) camadas com herança/sobreposição de funções.

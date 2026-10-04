@@ -319,7 +319,7 @@ class TestInspection(unittest.TestCase):
 
     def test_extracts_params(self):
         r = self.inspect('"""Doc."""\nPARAMS = {"a": {"type": "int"}}\ndef main(a): pass\n')
-        self.assertEqual(r["params"], {"a": {"type": "int"}})
+        self.assertEqual(r["params"], {"a": {"type": "int", "order": 0}})   # declared order kept
         self.assertEqual(r["docs"], "Doc.")
         self.assertTrue(r["has_main"])
 

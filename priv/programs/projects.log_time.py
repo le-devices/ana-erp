@@ -13,13 +13,13 @@ from decimal import Decimal
 from ana_lib.projects import access
 
 PARAMS = {
-    "project": {"type": "str", "required": True},
-    "task": {"type": "str", "required": True},
-    "hours": {"type": "decimal", "required": True},
-    "description": {"type": "str", "required": True},
-    "entry_date": {"type": "date"},
-    "employee": {"type": "int"},
-    "id": {"type": "int"},
+    "project": {"type": "str", "required": True, "label": "projeto", "lookup": {"program": "projects.lookup", "params": {"kind": "projects"}}},
+    "task": {"type": "str", "required": True, "label": "atividade", "lookup": {"program": "projects.lookup", "params": {"kind": "activities"}, "depends": ["project"]}},
+    "hours": {"type": "decimal", "required": True, "label": "horas"},
+    "description": {"type": "str", "required": True, "label": "o que foi feito"},
+    "entry_date": {"type": "date", "label": "data (vazio = hoje)"},
+    "employee": {"type": "int", "label": "pessoa (vazio = eu)", "lookup": {"program": "projects.lookup", "params": {"kind": "employees"}}},
+    "id": {"type": "int", "label": "corrigir o apontamento nº"},
 }
 
 

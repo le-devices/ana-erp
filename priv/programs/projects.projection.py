@@ -11,7 +11,7 @@ from ana_lib.projects import access
 from ana_lib.projects import views as V
 
 PARAMS = {
-    "project": {"type": "str", "required": True, "label": "projeto"},
+    "project": {"type": "str", "required": True, "label": "projeto", "lookup": {"program": "projects.lookup", "params": {"kind": "projects"}}},
     "rate_pct": {"type": "decimal", "label": "simular: valor-hora (%)"},
     "hours_pct": {"type": "decimal", "label": "simular: horas (%)"},
     "cost_pct": {"type": "decimal", "label": "simular: custo (%)"},

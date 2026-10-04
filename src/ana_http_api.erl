@@ -100,7 +100,7 @@ route(<<"GET">>, [<<"routines">>], Req) ->
             "SELECT p.name, p.description, p.docs, p.params, p.min_role, p.restricted, p.exposed, "
             "  (SELECT c.code FROM ana_system.command c WHERE c.program = p.name ORDER BY c.code LIMIT 1) AS command, "
             "  EXISTS (SELECT 1 FROM ana_system.user_favorite f WHERE f.program = p.name AND f.username = $1) AS favorite "
-            "FROM ana_system.program p WHERE p.active AND p.kind = 'program' ORDER BY p.name", [Who]),
+            "FROM ana_system.program p WHERE p.active AND p.kind = 'program' AND p.in_menu ORDER BY p.name", [Who]),
         ana_http:json(200, [maps:without([<<"min_role">>, <<"restricted">>], R)
                             || R = #{<<"min_role">> := M} <- Rows,
                                ana_security:has_role(U, M), ana_access:allowed(U, R)], Req)
@@ -371,6 +371,7 @@ validate_program(F) ->
         {<<"description">>, fun(V) -> is_binary(V) andalso byte_size(V) =< 500 end},
         {<<"kind">>, fun(V) -> lists:member(V, [<<"program">>, <<"library">>]) end},
         {<<"exposed">>, fun is_boolean/1},
+        {<<"in_menu">>, fun is_boolean/1},
         {<<"restricted">>, fun is_boolean/1},
         {<<"active">>, fun is_boolean/1},
         {<<"min_role">>, fun(V) -> lists:member(V, [?ADMIN, ?DEV, ?USER]) end},

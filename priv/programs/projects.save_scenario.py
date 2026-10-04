@@ -8,7 +8,7 @@ from ana_lib.projects import access
 PARAMS = {
     "project": {"type": "str", "required": True},
     "name": {"type": "str"},
-    "kind": {"type": "str", "default": "custom", "label": "custom, optimistic, pessimistic"},
+    "kind": {"type": "str", "default": "custom", "label": "tipo", "choices": [["custom", "Cenário próprio"], ["optimistic", "Otimista deste projeto"], ["pessimistic", "Pessimista deste projeto"]]},
     "rate_pct": {"type": "decimal", "default": 0},
     "hours_pct": {"type": "decimal", "default": 0},
     "cost_pct": {"type": "decimal", "default": 0},

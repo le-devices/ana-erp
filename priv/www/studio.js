@@ -12,7 +12,7 @@
     settings: "Parâmetros", accounts: "Contas padrão", commands: "Comandos", remote: "Sistemas remotos",
     scheduler: "Agendamento", monitor: "Monitor", consumption: "Consumo", audit: "Auditoria", retention: "Retenção",
   };
-  const state = { user: null, targets: new Map() };
+  const state = { user: null, targets: new Map(), trail: [] };
 
   const canSee = (minRole) => (ROLE_LEVEL[state.user.role] || 0) >= (ROLE_LEVEL[minRole] || 1);
 
@@ -58,12 +58,40 @@
     if (location.hash === hash) route(); else location.hash = hash;
   }
 
+  // ------------------------------------------------------------------ back (F3, as in classic ERP screens)
+  // The trail follows the screens visited in this tab; Back returns to the previous one
+  // (a routine comes back with its parameters filled in). With nothing behind, it goes up
+  // one level: routine → module → Operation → Home.
+  function noteNav(hash) {
+    const t = state.trail;
+    if (t.length >= 2 && t[t.length - 2] === hash) t.pop();
+    else if (t[t.length - 1] !== hash) t.push(hash);
+    if (t.length > 50) t.splice(0, t.length - 50);
+    const parent = parentOf(hash);
+    $("#back").hidden = t.length < 2 && !parent;
+  }
+
+  function parentOf(hash) {
+    const [path] = hash.replace(/^#\/?/, "").split("?");
+    const parts = path.split("/").filter(Boolean);
+    if (!parts.length || parts[0] === "home") return null;
+    if (parts[0] === "ops") return parts.length > 2 ? `#/ops/${parts[1]}` : parts.length === 2 ? "#/ops" : "#/home";
+    if (parts[0] === "dev") return parts.length > 1 ? "#/dev" : "#/home";
+    return "#/home";
+  }
+
+  function back() {
+    if (state.trail.length >= 2) history.back();
+    else { const p = parentOf(location.hash); if (p) go(p); }
+  }
+
   function replace(hash) {
     history.replaceState(null, "", hash);
   }
 
   async function route() {
     if ($("#app-screen").hidden) return;
+    noteNav(location.hash || "#/home");
     // RF-020-12: "#/ops/m/routine?project=PRJ-001" carries routine parameters.
     const [path, search] = location.hash.replace(/^#\/?/, "").split("?");
     const query = Object.fromEntries(new URLSearchParams(search || ""));
@@ -146,6 +174,15 @@
     });
     $("#password-cancel").addEventListener("click", () => showScreen("#app-screen"));
     $("#change-password").addEventListener("click", () => showPassword(false));
+    $("#back").addEventListener("click", back);
+    document.addEventListener("keydown", (e) => {
+      if (e.key === "F3" && !$("#app-screen").hidden) { e.preventDefault(); back(); }
+    });
+    // Resizable side panels (drag the divider; double click restores).
+    for (const [area, key] of [["#area-ops", "ops-nav"], ["#area-admin", "admin-nav"], ["#area-dev", "dev-tree"]]) {
+      const host = $(area);
+      host.insertBefore(window.AnaUI.splitter(host, "--side-w", { min: 160, max: 600, key }), host.children[1]);
+    }
     $("#logout").addEventListener("click", async () => { await API.logout(); location.hash = ""; location.reload(); });
     for (const b of $$(".area")) b.addEventListener("click", () => go("#/" + b.dataset.area));
     $("#command-form").addEventListener("submit", (e) => {
@@ -156,7 +193,7 @@
     window.addEventListener("hashchange", route);
   }
 
-  window.AnaStudio = { go, replace, refreshTitle, user: () => state.user, refreshTargets: buildTargets };
+  window.AnaStudio = { go, replace, back, noteNav, refreshTitle, user: () => state.user, refreshTargets: buildTargets };
 
   document.addEventListener("DOMContentLoaded", () => {
     wire();

@@ -12,7 +12,7 @@ from ana_lib.projects import consulting as C
 from ana_lib.projects import finance as F
 from ana_lib.projects import views as V
 
-PARAMS = {"status": {"type": "str", "default": "active", "label": "situação (active, proposal, all)"}}
+PARAMS = {"status": {"type": "str", "default": "active", "label": "situação", "choices": [["active", "Em execução"], ["proposal", "Propostas"], ["all", "Todos"]]}}
 
 
 def main(status="active"):
