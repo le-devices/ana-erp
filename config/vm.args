@@ -1,0 +1,6 @@
+## Erlang distribution is enabled by the start script only when
+## ANA_NODE_NAME and ANA_COOKIE are set (RNF-003-02).
++K true
++A 32
++sbwt none
+-env ERL_MAX_PORTS 65536

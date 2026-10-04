@@ -1,0 +1,9 @@
+_build/
+rebar3.crashdump
+erl_crash.dump
+__pycache__/
+*.pyc
+node_modules/
+tests/estudio/package*.json
+.env
+tests/estudio/

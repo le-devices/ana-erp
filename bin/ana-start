@@ -1,0 +1,22 @@
+#!/bin/sh
+# Starts ANA ERP in the foreground (container).
+# Erlang distribution only when ANA_NODE_NAME and ANA_COOKIE are set (RNF-003-02).
+set -eu
+ROOTDIR=/opt/ana
+VSN=$(cut -d' ' -f2 "$ROOTDIR/releases/start_erl.data")
+ERTS_VSN=$(cut -d' ' -f1 "$ROOTDIR/releases/start_erl.data")
+BINDIR="$ROOTDIR/erts-$ERTS_VSN/bin"
+export ROOTDIR BINDIR EMU=beam PROGNAME=erl
+
+DIST=""
+if [ -n "${ANA_NODE_NAME:-}" ] && [ -n "${ANA_COOKIE:-}" ]; then
+    DIST="-name $ANA_NODE_NAME -setcookie $ANA_COOKIE"
+    # Restrict the distribution port range (firewall friendly).
+    DIST="$DIST -kernel inet_dist_listen_min 9100 inet_dist_listen_max 9105"
+fi
+
+# shellcheck disable=SC2086
+exec "$BINDIR/erlexec" -boot "$ROOTDIR/releases/$VSN/start" \
+    -config "$ROOTDIR/releases/$VSN/sys" \
+    -args_file "$ROOTDIR/releases/$VSN/vm.args" \
+    -mode embedded -noshell -noinput $DIST

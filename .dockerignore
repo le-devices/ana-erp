@@ -1,0 +1,6 @@
+_build
+.git
+tests
+specs
+clientes
+*.md
