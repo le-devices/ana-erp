@@ -1,0 +1,45 @@
+# Two-node cluster for tests (spec 018 CA-018-01, spec 003 T-003-06).
+# Usage: tests/cluster/run.sh
+x-cluster-env: &cluster-env
+  ANA_COOKIE: ${ANA_TEST_COOKIE:-ana-cluster-test-cookie}
+  # In a cluster the restricted-role passwords must be shared (README).
+  ANA_DB_EXEC_PASSWORD: ${ANA_TEST_EXEC_PASSWORD:-cluster-exec-test-password}
+  ANA_DB_READ_PASSWORD: ${ANA_TEST_READ_PASSWORD:-cluster-read-test-password}
+
+services:
+  ana:
+    hostname: ana1.cluster
+    environment:
+      <<: *cluster-env
+      ANA_NODE_NAME: ana@ana1.cluster
+    networks:
+      default:
+        aliases: [ana1.cluster]
+
+  ana2:
+    build: .   # relative to the project directory
+    hostname: ana2.cluster
+    environment:
+      ANA_DB_HOST: db
+      ANA_DB_NAME: ana
+      ANA_DB_USER: ana
+      ANA_DB_PASSWORD: ${ANA_DB_PASSWORD:-ana_change_this_password}
+      ANA_HTTP_PORT: "8080"
+      ANA_DEMO: ${ANA_DEMO:-true}
+      ANA_TIMEZONE: ${ANA_TIMEZONE:-America/Sao_Paulo}
+      ANA_NODE_NAME: ana@ana2.cluster
+      <<: *cluster-env
+    ports:
+      - "8081:8080"
+    depends_on:
+      db:
+        condition: service_healthy
+    read_only: true
+    tmpfs:
+      - /tmp:size=256m,mode=1777
+    security_opt:
+      - no-new-privileges:true
+    cap_drop: [ALL]
+    networks:
+      default:
+        aliases: [ana2.cluster]
