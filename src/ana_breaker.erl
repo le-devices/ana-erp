@@ -5,7 +5,7 @@
 %% half    → after the interval, one trial call decides: success closes,
 %%           failure opens again. State lives in ETS (per node).
 -module(ana_breaker).
--export([init_table/0, call/2, call/3, state/1, reset/1]).
+-export([init_table/0, call/2, call/3, state/1, reset/1, open_keys/0]).
 
 -define(TAB, ana_breakers).
 -define(THRESHOLD, 5).
@@ -75,3 +75,10 @@ state(Key) ->
     end.
 
 reset(Key) -> success(Key).
+
+%% Spec 033 (robustness checks): breakers currently open on this node.
+-spec open_keys() -> [term()].
+open_keys() ->
+    try [K || {K, S, _, _} <- ets:tab2list(?TAB), S =/= closed]
+    catch error:badarg -> []
+    end.

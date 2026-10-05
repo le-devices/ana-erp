@@ -274,6 +274,13 @@ ok(true, "ficha do usuário abre a trilha completa (RF-024-06)");
 await go(w, "#/admin/retention");
 await until(() => text("#admin-main").includes("Alterações administrativas"), "retention", jsErrors);
 ok(d.querySelectorAll("#admin-main .num-input").length >= 7, "retenção editável por categoria (RF-024-08)");
+await go(w, "#/admin/checks");
+await until(() => d.querySelectorAll("#admin-main .check-card").length === 5, "checks", jsErrors);
+ok(text("#admin-main .check-grid").includes("Segurança") && text("#admin-main .check-grid").includes("Desempenho"),
+   "verificações por categoria com Verificar agora (spec 033)");
+[...d.querySelectorAll("#admin-main .sub-tabs button")].find((b) => b.textContent.startsWith("Inventário")).click();
+await until(() => d.querySelector("#admin-main input[type=file]") && d.querySelector("#admin-main table"), "inventory", jsErrors);
+ok(text("#admin-main table").includes("Componente") && text("#admin-main").includes("Base de vulnerabilidades (OSV)"), "inventário e envio da base OSV");
 ok(true, "todas as seções administrativas abrem");
 ok(jsErrors.length === 0, "nenhum erro de JavaScript (admin)" + (jsErrors.length ? ": " + jsErrors.join("; ") : ""));
 w.close();

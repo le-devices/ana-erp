@@ -3458,5 +3458,104 @@ class TestPaymentTermsCredit(Base):
         self.assertTrue("CENTRAL" in whs and "TRANSITO" not in whs and "QUARENTENA" not in whs)
 
 
+# ---------------------------------------------------------------- spec 033
+class TestPeriodicChecks(Base):
+    """Security, vulnerable components, robustness, dismissal and the inventory."""
+
+    def run_checks(self, category):
+        s, c, _ = http("POST", "/api/admin/checks/run", {"category": category}, self.token)
+        self.assertEqual(s, 200, c)
+        return c
+
+    def findings(self, category=None, status=None):
+        s, c, _ = http("GET", "/api/admin/checks" + "?" + urllib.parse.urlencode(
+            {k: v for k, v in (("category", category), ("status", status)) if v}), token=self.token)
+        self.assertEqual(s, 200, c)
+        return c["findings"]
+
+    def find(self, rule, target=None, status=None, category=None):
+        return [f for f in self.findings(category, status) if f["rule"] == rule and (target is None or target in f["target"])]
+
+    def osv(self, advisories):
+        s, c, _ = http("POST", "/api/admin/checks/vulnerabilities", token=self.token, raw=json.dumps(advisories).encode())
+        self.assertEqual(s, 200, c)
+        return c
+
+    def test_ca_033_01_factory_password_is_critical(self):
+        # The test environment keeps the factory password of admin (ANA_ADMIN_PASSWORD=admin).
+        self.run_checks("security")
+        f = self.find("trivial_password", "admin", "open")
+        self.assertEqual([x["severity"] for x in f], ["critical"])
+        self.assertNotIn("admin", json.dumps(f[0]["evidence"]).replace('"username": "admin"', ""))   # the guess is never stored
+        s, notices, _ = http("GET", "/api/admin/checks/notices", token=self.token)
+        self.assertTrue(any("admin" in n["message"] for n in notices))
+        s, c, _ = http("POST", "/api/admin/checks/run", {"category": "nada"}, self.token)
+        self.assertEqual(s, 400)
+
+    def test_ca_033_02_osv_range_matches_inventory(self):
+        self.run_checks("dependencies")
+        s, inv, _ = http("GET", "/api/admin/checks/inventory", token=self.token)
+        cowboy = [c for c in inv["components"] if c["ecosystem"] == "Hex" and c["name"] == "cowboy"]
+        self.assertEqual(len(cowboy), 1, inv["components"][:5])
+        self.assertTrue(any(c["ecosystem"] == "PostgreSQL" and c["name"] == "postgresql" for c in inv["components"]))
+        hit, miss = f"TEST-HIT-{SUFFIX}", f"TEST-MISS-{SUFFIX}"
+        adv = lambda i, fixed, sev: {"id": i, "summary": "aviso de teste", "database_specific": {"severity": sev},
+                                     "affected": [{"package": {"ecosystem": "Hex", "name": "cowboy"},
+                                                   "ranges": [{"type": "SEMVER", "events": [{"introduced": "0"}, {"fixed": fixed}]}]}]}
+        try:
+            r = self.osv({"vulns": [adv(hit, "99.0.0", "MODERATE"), adv(miss, "1.0.0", "CRITICAL")]})
+            self.assertEqual((r["advisories"], r["ranges"]), (2, 2))
+            f = self.find("vulnerable_component", hit, "open")
+            self.assertEqual(len(f), 1)
+            self.assertEqual((f[0]["severity"], f[0]["evidence"]["fixed"], f[0]["category"]), ("warning", "99.0.0", "dependencies"))
+            self.assertEqual(self.find("vulnerable_component", miss), [])
+            # CA-033-06: dismissed stays quiet; worse severity brings it back.
+            s, c, _ = http("POST", f"/api/admin/observability/advice/{f[0]['id']}/dismiss", {"days": 30}, self.token)
+            self.assertEqual(s, 200, c)
+            self.run_checks("dependencies")
+            self.assertEqual(len(self.find("vulnerable_component", hit, "dismissed")), 1)
+            self.osv([adv(hit, "99.0.0", "CRITICAL")])
+            again = self.find("vulnerable_component", hit, "open")
+            self.assertEqual([x["severity"] for x in again], ["critical"])
+        finally:
+            r = self.osv([{"id": hit, "withdrawn": "2026-01-01T00:00:00Z", "affected": []},
+                          {"id": miss, "withdrawn": "2026-01-01T00:00:00Z", "affected": []}])
+            self.assertEqual(r["withdrawn"], 2)
+        self.assertEqual(self.find("vulnerable_component", hit, "open"), [])
+        self.assertEqual(self.osv([{"id": "x"}])["ranges"], 0)
+        s, c, _ = http("POST", "/api/admin/checks/vulnerabilities", token=self.token, raw=b"nao e json")
+        self.assertEqual(s, 400)
+
+    @unittest.skipUnless(psql_available(), "psql no contêiner do banco")
+    def test_ca_033_04_old_backup_is_a_finding(self):
+        tag = f"teste-{SUFFIX}"
+        try:
+            psql(f"INSERT INTO ana_system.ops_event (kind, ok, detail, at) VALUES ('backup_base', true, '{tag}', now() - interval '30 hours')")
+            self.run_checks("robustness")
+            f = self.find("base_backup", "old", "open")
+            self.assertEqual(len(f), 1)
+            self.assertGreaterEqual(f[0]["evidence"]["hours"], 30)
+            psql(f"INSERT INTO ana_system.ops_event (kind, ok, detail) VALUES ('backup_base', true, '{tag}')")
+            self.run_checks("robustness")
+            self.assertEqual(self.find("base_backup", status="open"), [])
+            psql(f"INSERT INTO ana_system.ops_event (kind, ok, detail) VALUES ('backup_base', false, '{tag}')")
+            self.run_checks("robustness")
+            self.assertEqual(len(self.find("base_backup", "failed", "open")), 1)
+        finally:
+            psql(f"DELETE FROM ana_system.ops_event WHERE detail = '{tag}'")
+            self.run_checks("robustness")
+
+    def test_rf_033_07_runs_are_internal_tasks_with_owner(self):
+        self.run_checks("integrity")
+        s, c, _ = http("GET", "/api/admin/checks", token=self.token)
+        runs = {r["category"]: r for r in c["runs"]}
+        self.assertEqual((runs["integrity"]["status"], runs["integrity"]["username"]), ("success", "admin"))
+        self.assertEqual(self.find("shipped_files", status="open"), [])           # image files match the manifest
+        self.assertEqual(set(c["categories"]), {"security", "dependencies", "integrity", "robustness", "performance"})
+        u, t = new_user("user")
+        s, _, _ = http("GET", "/api/admin/checks", token=t)
+        self.assertEqual(s, 403)
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -213,6 +213,42 @@ route(<<"POST">>, [<<"observability">>, <<"advice">>, Id, <<"dismiss">>], U, Req
         reply(ana_advisor:dismiss(binary_to_integer(Id), Days, U), R)
     end);
 
+%% --- Periodic checks (spec 033) -------------------------------------------
+route(<<"GET">>, [<<"checks">>], _U, Req) ->
+    Q = ana_http:qs_map(Req),
+    Pick = fun(K) -> case Q of #{K := V} when V =/= <<>> -> V; _ -> null end end,
+    {ok, Summary} = ana_checks:summary(),
+    {ok, Findings} = ana_advisor:list(#{status => Pick(<<"status">>), category => Pick(<<"category">>)}),
+    reply({ok, Summary#{findings => Findings}}, Req);
+route(<<"POST">>, [<<"checks">>, <<"run">>], U = #{username := Who}, Req) ->
+    with_body(Req, fun(B, R) ->
+        Cat = case maps:get(<<"category">>, B, <<"all">>) of C when is_binary(C) -> C; _ -> <<"all">> end,
+        ana_admin:log(Who, <<"checks.run">>, Cat, null, null),
+        case ana_checks:run(Cat, U) of
+            {error, unknown_category} -> ana_http:reply_error(400, <<"INVALID">>, <<"categoria inexistente">>, R);
+            {error, E} -> ana_http:reply_error(500, <<"CHECK_FAILED">>, unicode:characters_to_binary(io_lib:format("~0tp", [E])), R);
+            Ok -> reply(Ok, R)
+        end
+    end);
+route(<<"GET">>, [<<"checks">>, <<"notices">>], _U, Req) ->
+    reply(ana_checks:notices(ana_http:qs_int(<<"unread">>, Req, 0) =:= 1), Req);
+route(<<"POST">>, [<<"checks">>, <<"notices">>, Id, <<"read">>], _U, Req) ->
+    case catch binary_to_integer(Id) of
+        N when is_integer(N) -> {ok, _} = ana_checks:mark_notice(N), reply({ok, #{id => N}}, Req);
+        _ -> invalid(Req)
+    end;
+route(<<"GET">>, [<<"checks">>, <<"inventory">>], _U, Req) ->
+    {ok, Components} = ana_inventory:list(),
+    {ok, Vulns} = ana_db:rows("SELECT count(DISTINCT osv_id) AS advisories, max(imported_at) AS imported_at "
+                              "FROM ana_system.vulnerability", []),
+    reply({ok, #{components => Components, feed => hd(Vulns)}}, Req);
+route(<<"POST">>, [<<"checks">>, <<"vulnerabilities">>], U, Req) ->
+    %% RF-033-02: OSV file sent by hand (installations without internet are the default path).
+    case read_raw(Req, 20 * 1048576, <<>>) of
+        {ok, Body, Req2} -> reply(ana_checks:import_vulnerabilities(Body, U), Req2);
+        {too_large, Req2} -> ana_http:reply_error(413, <<"BODY_TOO_LARGE">>, <<"base acima de 20 MiB: envie por ecossistema"/utf8>>, Req2)
+    end;
+
 %% --- Retention (spec 024, RF-024-08..10) ----------------------------------
 route(<<"GET">>, [<<"retention">>], _U, Req) ->
     reply(ana_retention:overview(), Req);
@@ -242,6 +278,13 @@ reply({error, last_admin}, Req) ->
         <<"não é possível remover ou rebaixar o último administrador ativo"/utf8>>, Req);
 reply({error, Msg}, Req) when is_binary(Msg) -> ana_http:reply_error(400, <<"INVALID">>, Msg, Req);
 reply({error, #{} = E}, Req) -> ana_http:json(400, #{error => E}, Req).
+
+read_raw(Req, Max, Acc) ->
+    case cowboy_req:read_body(Req, #{length => 1048576, period => 30000}) of
+        {_, Data, Req2} when byte_size(Acc) + byte_size(Data) > Max -> {too_large, Req2};
+        {ok, Data, Req2} -> {ok, <<Acc/binary, Data/binary>>, Req2};
+        {more, Data, Req2} -> read_raw(Req2, Max, <<Acc/binary, Data/binary>>)
+    end.
 
 with_body(Req, Fun) ->
     case ana_http:read_json(Req) of

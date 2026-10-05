@@ -820,6 +820,114 @@
       })) : el("p", { class: "muted", text: status === "open" ? "Nenhuma dica aberta. Bom sinal." : "Nada aqui." }));
   }
 
+  // ------------------------------------------------------------------ periodic checks (spec 033)
+  const CHECK_CATEGORIES = { security: "Segurança", dependencies: "Componentes", integrity: "Integridade",
+                             robustness: "Robustez", performance: "Desempenho" };
+  const SEV_ORDER = ["critical", "serious", "warning", "info"];
+
+  async function checks(tab = "findings", filter = { status: "open", category: "" }) {
+    const tabs = el("div", { class: "sub-tabs" }, [["findings", "Achados"], ["inventory", "Inventário e vulnerabilidades"]]
+      .map(([k, l]) => el("button", { class: k === tab ? "active" : "", text: l, onclick: () => guard(() => checks(k, filter)) })));
+    const head = header("Verificações", "Segurança da configuração, componentes com vulnerabilidade conhecida, integridade dos arquivos, " +
+      "robustez (cópias, filas, erros) e desempenho, verificados periodicamente pelo robô system. Missão crítica: o que é crítico vira aviso no sino.");
+    if (tab === "inventory") return checksInventory(head, tabs, filter);
+    const [data, notices] = await Promise.all([API.admin.checks(filter), API.admin.notices(true).catch(() => [])]);
+    const counts = {};
+    for (const c of data.counts) (counts[c.category] = counts[c.category] || {})[c.severity] = c.n;
+    const runs = Object.fromEntries(data.runs.map((r) => [r.category, r]));
+    const runBtn = (category, label) => el("button", { type: "button", class: category === "all" ? "" : "quiet small", text: label,
+      onclick: (e) => { e.stopPropagation(); guard(async () => {
+        e.target.disabled = true;
+        const r = await API.admin.checksRun(category);
+        toast(`${r.found} achado(s), ${r.resolved} resolvido(s).`);
+        checks(tab, filter);
+      }); } });
+    const cards = el("div", { class: "check-grid" }, data.categories.map((c) => {
+      const cc = counts[c] || {};
+      const worst = SEV_ORDER.find((s) => cc[s]);
+      const total = SEV_ORDER.reduce((n, s) => n + (cc[s] || 0), 0);
+      const r = runs[c];
+      return el("div", { class: "check-card" + (filter.category === c ? " active" : "") + (worst ? " sev-" + worst : " sev-ok"),
+                         role: "button", tabindex: "0", title: "Filtrar por " + CHECK_CATEGORIES[c],
+                         onclick: () => guard(() => checks(tab, { ...filter, category: filter.category === c ? "" : c })) },
+        el("div", { class: "check-title", text: CHECK_CATEGORIES[c] || c }),
+        el("div", { class: "check-value", text: total ? String(total) : "ok" }),
+        el("div", { class: "check-sev" }, ...SEV_ORDER.filter((s) => cc[s]).map((s) => el("span", {}, sevChip(s), ` ${cc[s]}`))),
+        el("div", { class: "muted small", text: r ? `${r.status === "success" ? "verificado" : "falhou"} ${fmtDate(r.finished_at || r.started_at)}` : "ainda não verificado" }),
+        runBtn(c, "Verificar"));
+    }));
+    const noticeBox = notices.length ? el("div", { class: "notice-box" },
+      el("strong", { text: `${notices.length} aviso(s) novo(s)` }),
+      el("ul", {}, notices.map((n) => el("li", {}, sevChip(n.severity), " ", n.message, el("span", { class: "muted small", text: " · " + fmtDate(n.created_at) })))),
+      el("button", { type: "button", class: "small", text: "Marcar como lidos", onclick: () => guard(async () => {
+        for (const n of notices) await API.admin.noticeRead(n.id);
+        checks(tab, filter);
+      }) })) : null;
+    const status = el("div", { class: "sub-tabs" }, [["open", "Abertos"], ["dismissed", "Dispensados"], ["resolved", "Resolvidos"]].map(([k, l]) =>
+      el("button", { class: k === filter.status ? "active" : "", text: l, onclick: () => guard(() => checks(tab, { ...filter, status: k })) })));
+    const list = data.findings.length ? el("div", {}, data.findings.map((a) => {
+      const card = adviceCard(a);
+      card.querySelector(".advice-head").append(pill(CHECK_CATEGORIES[a.category] || a.category, ""));
+      if (filter.status === "open") card.append(el("div", { class: "row-buttons" },
+        el("button", { type: "button", class: "quiet small", text: "Dispensar por 30 dias", onclick: () => guard(async () => { await API.admin.adviceDismiss(a.id, 30); checks(tab, filter); }) }),
+        el("button", { type: "button", class: "quiet small", text: "Dispensar sempre", onclick: () => guard(async () => { await API.admin.adviceDismiss(a.id, 0); checks(tab, filter); }) })));
+      card.append(el("div", { class: "muted small", text: `${a.rule} · desde ${fmtDate(a.first_seen)} · visto ${fmtDate(a.last_seen)}` }));
+      return card;
+    })) : el("p", { class: "muted", text: filter.status === "open" ? "Nenhum achado aberto" + (filter.category ? " nesta categoria." : ". Bom sinal.") : "Nada aqui." });
+    main().replaceChildren(...head, tabs, noticeBox || "", el("div", { class: "row-buttons" }, runBtn("all", "Verificar tudo agora")),
+      cards, status, list);
+  }
+
+  async function checksInventory(head, tabs, filter) {
+    const [inv, found] = await Promise.all([API.admin.checksInventory(), API.admin.checks({ category: "dependencies", status: "open" })]);
+    const vulnerable = new Map();
+    for (const f of found.findings) if (f.rule === "vulnerable_component" && f.evidence) {
+      const k = `${f.evidence.ecosystem}|${f.evidence.package}`;
+      vulnerable.set(k, [...(vulnerable.get(k) || []), f]);
+    }
+    const file = el("input", { type: "file", accept: ".json,application/json", "aria-label": "Arquivo da base OSV" });
+    const send = el("button", { type: "button", text: "Importar base", onclick: () => guard(async () => {
+      const f = file.files[0];
+      if (!f) { toast("Escolha o arquivo JSON da base OSV.", true); return; }
+      send.disabled = true;
+      try {
+        const r = await API.admin.checksImport(f);
+        toast(`${r.advisories} aviso(s) importado(s); ${r.findings ?? 0} achado(s) de componentes.`);
+        checks("inventory", filter);
+      } finally { send.disabled = false; }
+    }) });
+    const search = el("input", { type: "search", placeholder: "Filtrar componentes…", "aria-label": "Filtrar componentes" });
+    const SOURCES = { runtime: "núcleo", image: "imagem", database: "banco" };
+    const render = () => {
+      const q = search.value.trim().toLowerCase();
+      const rows = inv.components.filter((c) => !q || `${c.ecosystem} ${c.name} ${c.version}`.toLowerCase().includes(q))
+        .sort((a, b) => (vulnerable.has(`${b.ecosystem}|${b.name}`) - vulnerable.has(`${a.ecosystem}|${a.name}`)));
+      box.replaceChildren(table([
+        { label: "Componente", value: (c) => c.name },
+        { label: "Versão", value: (c) => c.version },
+        { label: "Ecossistema", value: (c) => c.ecosystem },
+        { label: "Origem", value: (c) => SOURCES[c.source] || c.source },
+        { label: "Vulnerabilidades", value: (c) => {
+            const v = vulnerable.get(`${c.ecosystem}|${c.name}`);
+            return v ? el("span", {}, ...v.map((f) => el("span", {}, sevChip(f.severity), " ", f.evidence.osv_id,
+                                                                  f.evidence.fixed ? ` → ${f.evidence.fixed}` : "", " "))) : "—";
+          } },
+      ], rows, { title: "Componentes", empty: "Inventário ainda não coletado: clique em Verificar em Componentes." }));
+    };
+    const box = el("div");
+    search.addEventListener("input", render);
+    const feed = inv.feed || {};
+    main().replaceChildren(...head, tabs,
+      el("div", { class: "form-card" },
+        el("h3", { text: "Base de vulnerabilidades (OSV)" }),
+        el("p", { class: "muted", text: feed.advisories ? `${feed.advisories} aviso(s), importada em ${fmtDate(feed.imported_at)}.`
+          : "Nenhuma base importada. Baixe em osv.dev (\"Data dump\") os avisos dos ecossistemas Hex, Debian e PyPI e envie o JSON aqui (até 20 MiB por arquivo)." }),
+        el("div", { class: "row-buttons" }, file, send)),
+      el("div", { class: "row-buttons" }, search, el("span", { class: "muted small", text: `${inv.components.length} componente(s) · ${vulnerable.size} com vulnerabilidade` })),
+      box);
+    render();
+  }
+
   // ------------------------------------------------------------------ integrations (spec 017)
   const MSG_STATUS = { pending: "pendente", processing: "processando", done: "entregue", dead: "esgotada", discarded: "descartada" };
   const SECRET_KEYS = { none: [], basic: ["username", "password"], bearer: ["token"], api_key: ["api_key"],
@@ -1093,7 +1201,7 @@
                        window.AnaScheduler.holidays(hol)]);
   }
 
-  const SECTIONS = { users, groups, settings, company, commands, remote, accounts, limits, consumption, scheduler, monitor, audit, retention, health, sqlperf, advice, updates, integrations };
+  const SECTIONS = { users, groups, settings, company, commands, remote, accounts, limits, consumption, scheduler, monitor, audit, retention, health, sqlperf, advice, updates, integrations, checks };
 
   function show(section) {
     refreshUpdatesCount();

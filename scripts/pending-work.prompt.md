@@ -22,7 +22,7 @@ Você trabalha no projeto ANA ERP em /home/andre/ana-erp: um ERP com núcleo Erl
 9. 014 — produção e capacidade (`specs/014-production-planning`) — implementada
 10. 015 — logística e campo (`specs/015-logistics-field-service`) — implementada
 11. 031 — condições de pagamento e crédito, usabilidade dos formulários (`specs/031-payment-terms-credit`) — implementada
-12. 033 — verificações periódicas de segurança, bibliotecas/ativos vulneráveis, robustez e desempenho (`specs/033-periodic-checks`; escreva spec/plan/tasks se ainda não existirem) — o ERP é de missão crítica
+12. 033 — verificações periódicas de segurança, bibliotecas/ativos vulneráveis, robustez e desempenho (`specs/033-periodic-checks`) — implementada; T-033-09b fica para o fim da fila
 13. 034 — instância de desenvolvimento e testes: transporte seguro e sem parada para produção; cópia de dados reais de produção mascarados como massa de testes (`specs/034-dev-test-instance`; liga com a decisão 4 da spec 009)
 14. 030 — esteiras automáticas: venda → baixa de estoque → movimentação → faturamento → cobrança, e outras, com opção de passos automáticos (`specs/030-automated-flows`)
 15. 032 — distância aproximada empresa ↔ cliente por coordenadas (`specs/032-distances`)
@@ -30,7 +30,7 @@ Você trabalha no projeto ANA ERP em /home/andre/ana-erp: um ERP com núcleo Erl
 17. 009 — licenciamento (`specs/009-licensing`): é rascunho com decisões em aberto; NÃO implemente — liste as decisões necessárias no relatório e pare.
 18. 020 — tarefas restantes da arquitetura da informação: próxima ação sugerida, fluxos guiados, continuidade (T-020-09..11) e auditoria de acessibilidade (T-020-07). Itens de fluxo podem ser adiantados quando a spec em andamento precisar deles.
 
-Escolha o **primeiro item da lista cuja `tasks.md` ainda tenha tarefas `[ ]`** (exceções: a T-023-09 é o item 5; as T-019-08b, T-019-09b, T-017-02b, T-017-02c, T-017-05b, T-017-08b, T-016-02b e T-016-04b ficam para depois de todos os outros itens). Se tudo estiver `[x]`, apenas rode as suítes e relate.
+Escolha o **primeiro item da lista cuja `tasks.md` ainda tenha tarefas `[ ]`** (exceções: a T-023-09 é o item 5; as T-019-08b, T-019-09b, T-017-02b, T-017-02c, T-017-05b, T-017-08b, T-016-02b, T-016-04b e T-033-09b ficam para depois de todos os outros itens). Se tudo estiver `[x]`, apenas rode as suítes e relate.
 
 ## Passos
 1. `cd /home/andre/ana-erp && git status` — se houver alterações não commitadas que não são suas, não as descarte; trabalhe por cima e relate.
