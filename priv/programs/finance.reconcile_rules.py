@@ -16,15 +16,19 @@ def candidates(account, tolerance_days):
         "              ch.status AS charge_status, ch.entry_id AS charge_entry "
         "       FROM l JOIN finance.charge ch ON length(ch.external_id) >= 6 "
         "         AND l.txt LIKE '%' || lower(ch.external_id) || '%' AND ch.status IN ('issued', 'paid')), "
-        "c2 AS (SELECT l.id, b.id, 'document', 0.95, NULL::bigint, NULL::text, NULL::bigint "
+        "c2 AS (SELECT l.id AS line_id, b.id AS bill_id, 'document' AS rule, 0.95 AS confidence, NULL::bigint AS charge_id, "
+        "              NULL::text AS charge_status, NULL::bigint AS charge_entry "
         "       FROM l JOIN finance.bill b ON b.status = 'open' AND b.amount = abs(l.amount) "
         "         AND b.kind = CASE WHEN l.amount > 0 THEN 'receivable' ELSE 'payable' END "
         "         AND length(b.document) >= 4 AND l.txt LIKE '%' || lower(b.document) || '%'), "
-        "c3 AS (SELECT l.id, b.id, 'amount_date', 0.8, NULL::bigint, NULL::text, NULL::bigint "
+        "c3 AS (SELECT l.id AS line_id, b.id AS bill_id, 'amount_date' AS rule, 0.8 AS confidence, NULL::bigint AS charge_id, "
+        "              NULL::text AS charge_status, NULL::bigint AS charge_entry "
         "       FROM l JOIN finance.bill b ON b.status = 'open' AND b.amount = abs(l.amount) "
         "         AND b.kind = CASE WHEN l.amount > 0 THEN 'receivable' ELSE 'payable' END "
         "         AND b.due_date BETWEEN l.posted_on - $2::int AND l.posted_on + $2::int) "
-        "SELECT * FROM c1 UNION ALL SELECT * FROM c2 UNION ALL SELECT * FROM c3", account, tolerance_days)
+        "SELECT line_id, bill_id, rule, confidence, charge_id, charge_status, charge_entry FROM c1 "
+        "UNION ALL SELECT line_id, bill_id, rule, confidence, charge_id, charge_status, charge_entry FROM c2 "
+        "UNION ALL SELECT line_id, bill_id, rule, confidence, charge_id, charge_status, charge_entry FROM c3", account, tolerance_days)
     by_line = {}
     for r in rows:
         by_line.setdefault(r["line_id"], []).append(r)

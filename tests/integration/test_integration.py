@@ -2901,5 +2901,215 @@ class TestFileRepository(Base):
         self.assertEqual(s, 404)
 
 
+# ---------------------------------------------------------------- spec 014
+class TestProduction(Base):
+    """Structures, planning (MRP), production orders, costs, capacity of resources and people."""
+
+    @classmethod
+    def setUpClass(cls):
+        super().setUpClass()
+        c = cls.client
+        cls.sfx = SUFFIX[-5:]
+        cls.supplier = c.call("base.save_party", kind="supplier", name=f"Fornecedor Prod {SUFFIX}")["id"]
+        for code, desc in (("PL", "Placa"), ("MD", "Módulo"), ("C1", "Componente 1"), ("C2", "Componente 2"),
+                           ("X", "Produto X"), ("Y", "Produto Y"), ("Z", "Produto Z")):
+            c.call("base.save_product", code=cls.code(code), description=f"{desc} {SUFFIX}", price="10")
+
+    @classmethod
+    def code(cls, k):
+        return f"P{cls.sfx}{k}"
+
+    def ok(self, _program, **params):
+        s, c, _ = self.run_program(_program, params)
+        self.assertEqual(s, 200, c)
+        self.assertNotIn("error", c, c.get("error"))
+        return c["result"]
+
+    def err(self, _program, **params):
+        s, c, _ = self.run_program(_program, params)
+        self.assertIn("error", c, c)
+        return c["error"]["code"]
+
+    def monday(self, weeks_ahead):
+        d = datetime.date.today()
+        return d - datetime.timedelta(days=d.weekday()) + datetime.timedelta(weeks=weeks_ahead)
+
+    def test_ca_014_01_02_mrp_two_levels_and_cycle(self):
+        pl, md, c1, c2 = (self.code(k) for k in ("PL", "MD", "C1", "C2"))
+        self.ok("production.save_item_plan", product=pl, make_or_buy="make", lead_time_days=5)
+        self.ok("production.save_item_plan", product=md, make_or_buy="make", lead_time_days=3)
+        self.ok("production.save_item_plan", product=c2, make_or_buy="buy", lead_time_days=7)
+        self.ok("supply.save_supplier_item", product=c1, supplier=self.supplier, price="2", lead_time_days=10, preferred=True)
+        self.ok("supply.save_supplier_item", product=c2, supplier=self.supplier, price="1", preferred=True)
+        self.ok("production.save_structure", product=pl, lines=[{"component": md, "quantity": 1}, {"component": c1, "quantity": 2}])
+        self.ok("production.save_structure", product=md, lines=[{"component": c2, "quantity": 4}])
+        self.ok("inventory.stock_in", product=c1, quantity=5)
+        need = self.monday(4)
+        self.ok("production.save_forecast", product=pl, weeks=[{"week": need.isoformat(), "quantity": 10}])
+        scen = f"t{self.sfx}"
+        r = self.ok("production.plan", scenario=scen, horizon_weeks=8)
+        mine = {s["product"]: s for s in r["suggestions"] if s["product"] in (pl, md, c1, c2)}
+        self.assertEqual({k: (v["kind"], Decimal(v["quantity"])) for k, v in mine.items()},
+                         {pl: ("make", 10), md: ("make", 10), c1: ("buy", 15), c2: ("buy", 40)})
+        pl_start = datetime.date.fromisoformat(mine[pl]["start"])
+        self.assertEqual(pl_start, need - datetime.timedelta(days=5))                    # shifted by the lead time
+        md_need = datetime.date.fromisoformat(mine[md]["need"])
+        self.assertEqual(md_need, pl_start - datetime.timedelta(days=pl_start.weekday()))  # needed when the board starts
+        self.assertEqual(datetime.date.fromisoformat(mine[c1]["start"]), md_need - datetime.timedelta(days=10))
+        # Idempotent: running again replaces the open suggestions of the scenario.
+        self.ok("production.plan", scenario=scen, horizon_weeks=8)
+        self.assertEqual(self.count("production.suggestion", f"scenario = '{scen}' AND status = 'open' AND product_id IN "
+                                    f"(SELECT id FROM base.product WHERE code IN ('{pl}', '{md}', '{c1}', '{c2}'))"), 4)
+        ids = [int(x) for x in self.scalar(
+            f"SELECT array_agg(s.id)::text FROM production.suggestion s JOIN base.product p ON p.id = s.product_id "
+            f"WHERE s.scenario = '{scen}' AND s.status = 'open' AND p.code IN ('{pl}', '{md}', '{c1}', '{c2}')").strip("{}").split(",")]
+        a = self.ok("production.approve_suggestions", scenario=scen, ids=ids)
+        self.assertEqual((len(a["orders"]), len(a["requests"])), (2, 1 if mine[c1]["need"] == mine[c2]["need"] else 2))
+        self.assertEqual(self.count("production.work_order w JOIN base.product p ON p.id = w.product_id",
+                                    f"p.code IN ('{pl}', '{md}') AND w.status = 'planned'"), 2)
+        # CA-014-02: the module containing the board would be a cycle.
+        self.assertEqual(self.err("production.save_structure", product=md, lines=[{"component": pl, "quantity": 1}]),
+                         "STRUCTURE_CYCLE")
+        self.assertEqual(self.err("production.save_structure", product=pl, lines=[{"component": pl, "quantity": 1}]),
+                         "STRUCTURE_CYCLE")
+
+    def test_ca_014_03_06_order_costs_stock_and_project(self):
+        x, c1, c2 = self.code("X"), self.code("C1"), self.code("C2")
+        self.ok("production.save_item_plan", product=c1, standard_cost="2.50")
+        self.ok("production.save_item_plan", product=c2, standard_cost="1.00")
+        self.ok("production.save_resource", code=f"R{self.sfx}", name="Bancada de montagem", cost_per_hour="60")
+        self.ok("production.save_structure", product=x, lines=[{"component": c1, "quantity": 1}, {"component": c2, "quantity": 2}])
+        self.ok("production.save_routing", product=x, operations=[{"resource": f"R{self.sfx}", "description": "montagem", "run_min": 6}])
+        self.ok("inventory.stock_in", product=c1, quantity=10)
+        self.ok("inventory.stock_in", product=c2, quantity=20)
+        o = self.ok("production.create_order", product=x, quantity=10, due_date=self.monday(1).isoformat())
+        self.assertEqual(Decimal(o["std_cost"]), Decimal("105.00"))                       # 25 + 20 + 1 h × 60
+        n = o["order"]
+        self.ok("production.release_order", order=n)
+        bal = lambda code: Decimal(self.scalar(f"SELECT COALESCE(sum(m.quantity), 0) FROM inventory.stock_movement m "
+                                               f"JOIN base.product p ON p.id = m.product_id WHERE p.code = '{code}'"))
+        c1_before, c2_before = bal(c1), bal(c2)
+        self.ok("production.issue_components", order=n)
+        self.assertEqual((c1_before - bal(c1), c2_before - bal(c2)), (10, 20))
+        self.assertEqual(self.err("production.issue_components", order=n, lines=[{"line": 1, "quantity": 5}]), "OVER_ISSUE")
+        self.ok("production.report_operation", order=n, seq=10, hours="1.5", good_qty=9, scrap_qty=1)
+        self.ok("production.deliver", order=n, good_qty=9, scrap_qty=1)
+        self.assertEqual(bal(x), 9)
+        r = self.ok("production.close_order", order=n)
+        self.assertEqual((Decimal(r["actual_cost"]), Decimal(r["components"]), Decimal(r["hours_cost"]), Decimal(r["variance"])),
+                         (Decimal("135.00"), Decimal("45.00"), Decimal("90.00"), Decimal("30.00")))
+        wip = self.scalar("SELECT COALESCE(sum(l.debit - l.credit), 0) FROM finance.journal_line l JOIN finance.journal_entry e "
+                          f"ON e.id = l.entry_id WHERE e.document LIKE 'OP-{n}%' AND l.account = '1.1.5'")
+        self.assertEqual(Decimal(wip), 0)                                                  # WIP cleared at closing
+        self.assertEqual(self.err("production.report_operation", order=n, seq=10, hours=1), "INVALID_STATE")
+        # CA-014-06: an order of a project sends its cost to the project, not to stock.
+        customer = self.client.call("base.save_party", name=f"Cliente Prod {SUFFIX}")["id"]
+        employee = self.client.call("projects.save_employee", name=f"Eng Prod {SUFFIX}", profile="HW", hourly_cost="80")["id"]
+        project = f"PP{self.sfx}"
+        self.client.call("projects.save_project", code=project, name="Protótipos", customer=customer, manager="admin",
+                         status="active", billing="mixed", tasks=[{"code": "1", "name": "Protótipo"}],
+                         team=[{"employee": employee, "profile": "HW"}], rates={"HW": "200"})
+        self.ok("inventory.stock_in", product=c1, quantity=2)
+        self.ok("inventory.stock_in", product=c2, quantity=4)
+        o = self.ok("production.create_order", product=x, quantity=2, due_date=self.monday(1).isoformat(), project=project)
+        before = bal(x)
+        for prog, extra in (("production.release_order", {}), ("production.issue_components", {}),
+                            ("production.deliver", {"good_qty": 2}), ("production.close_order", {})):
+            r = self.ok(prog, order=o["order"], **extra)
+        self.assertEqual(bal(x), before)                                                   # prototypes do not enter stock
+        self.assertEqual(Decimal(self.scalar(f"SELECT sum(e.quantity * e.unit_cost) FROM projects.expense e JOIN projects.project p "
+                                             f"ON p.id = e.project_id WHERE p.code = '{project}'")), Decimal(r["actual_cost"]))
+
+    def test_ca_014_04_overload_and_suggested_date(self):
+        y, z, c1 = self.code("Y"), self.code("Z"), self.code("C1")
+        res = f"RC{self.sfx}"
+        self.ok("production.save_resource", code=res, name="Bancada de teste", daily_hours=8)
+        for item, minutes in ((y, 180), (z, 120)):
+            self.ok("production.save_structure", product=item, lines=[{"component": c1, "quantity": 1}])
+            self.ok("production.save_routing", product=item, operations=[{"resource": res, "run_min": minutes}])
+        start = self.monday(2)
+        a = self.ok("production.create_order", product=y, quantity=10, start_date=start.isoformat(),
+                    due_date=(start + datetime.timedelta(days=4)).isoformat(), priority=1)          # 30 h
+        b = self.ok("production.create_order", product=z, quantity=10, start_date=start.isoformat(),
+                    due_date=(start + datetime.timedelta(days=4)).isoformat(), priority=5)          # 20 h
+        r = self.ok("production.capacity_load", weeks=4, resource=res)
+        week = [w for w in r["load"] if w["week"] == start.isoformat()][0]
+        self.assertEqual(Decimal(week["hours"]), 50)
+        self.assertEqual(week["pct"], str((Decimal(50) / Decimal(week["capacity"]) * 100).quantize(Decimal("1"))))
+        if Decimal(week["capacity"]) == 40:
+            self.assertEqual(week["pct"], "125")
+        late = [m for m in r["moves"] if m["ordem"] == b["order"]]
+        self.assertTrue(late and datetime.date.fromisoformat(late[0]["término possível"]) > start + datetime.timedelta(days=4), r["moves"])
+        self.assertFalse([m for m in r["moves"] if m["ordem"] == a["order"]])                 # the urgent one fits
+
+    def test_ca_014_05_service_capacity_overload(self):
+        customer = self.client.call("base.save_party", name=f"Cliente Serv {SUFFIX}")["id"]
+        eng = self.client.call("projects.save_employee", name=f"Engenheira Firmware {SUFFIX}", profile="FW", hourly_cost="90")["id"]
+        week = self.monday(3)
+        for k, hours in enumerate((20, 20, 12), start=1):
+            code = f"SC{self.sfx}{k}"
+            self.client.call("projects.save_project", code=code, name=f"Firmware {k}", customer=customer, manager="admin",
+                             status="active", billing="hourly", tasks=[{"code": "1", "name": "Firmware"}],
+                             team=[{"employee": eng, "profile": "FW"}], rates={"FW": "200"})
+            self.ok("projects.allocate", project=code, activity="1", employee=eng, hours=hours, week=week.isoformat())
+        r = self.ok("production.service_capacity", weeks=1, start=week.isoformat())
+        mine = [o for o in r["overloaded"] if o["employee"] == f"Engenheira Firmware {SUFFIX}"]
+        self.assertTrue(mine, r)
+        self.assertEqual(Decimal(mine[0]["allocated"]), 52)
+
+    def test_rnf_014_01_mrp_10k_items_5_levels(self):
+        tag = f"Q{self.sfx}"
+        build = f"test.mrp_build_{SUFFIX}"
+        self.save(build, "def main(tag):\n"
+                         "    per = [100, 400, 1500, 3000, 5000]\n"
+                         "    codes = [[f'{tag}L{l}N{i}' for i in range(n)] for l, n in enumerate(per)]\n"
+                         "    flat = [c for lvl in codes for c in lvl]\n"
+                         "    ana.sql('INSERT INTO base.product (code, description, price) SELECT c, c, 1 FROM unnest($1::text[]) c', flat)\n"
+                         "    ids = {r['code']: r['id'] for r in ana.sql('SELECT id, code FROM base.product WHERE code = ANY($1)', flat)}\n"
+                         "    parents = [c for lvl in codes[:-1] for c in lvl]\n"
+                         "    sids = {r['product_id']: r['id'] for r in ana.sql(\"INSERT INTO production.structure (product_id, version, created_by) \"\n"
+                         "        \"SELECT unnest($1::int[]), 1, 't' RETURNING id, product_id\", [ids[c] for c in parents])}\n"
+                         "    lines = []\n"
+                         "    for l in range(4):\n"
+                         "        kids = codes[l + 1]\n"
+                         "        for i, c in enumerate(codes[l]):\n"
+                         "            for k in range(3):\n"
+                         "                lines.append((sids[ids[c]], k + 1, ids[kids[(i * 3 + k) % len(kids)]]))\n"
+                         "    ana.sql('INSERT INTO production.structure_line (structure_id, line, component_id, quantity) '\n"
+                         "            'SELECT s, l, c, 1 FROM unnest($1::int[], $2::int[], $3::int[]) AS x(s, l, c)',\n"
+                         "            [x[0] for x in lines], [x[1] for x in lines], [x[2] for x in lines])\n"
+                         "    import datetime\n"
+                         "    d = datetime.date.today()\n"
+                         "    wk = d - datetime.timedelta(days=d.weekday()) + datetime.timedelta(weeks=3)\n"
+                         "    ana.sql('INSERT INTO production.forecast (product_id, week, quantity) SELECT unnest($1::int[]), $2, 5',\n"
+                         "            [ids[c] for c in codes[0]], wk)\n"
+                         "    return len(flat)\n", limits={"timeout_ms": 120000, "sql_timeout_ms": 120000})
+        s, c, _ = self.run_program(build, {"tag": tag})
+        self.assertEqual((s, c.get("result")), (200, 10000), c)
+        timer = f"test.mrp_time_{SUFFIX}"
+        self.save(timer, "import time\ndef main(scen):\n    t0 = time.monotonic()\n"
+                         "    r = ana.call('production.plan', scenario=scen, horizon_weeks=8)\n"
+                         "    return {'seconds': time.monotonic() - t0, 'n': len(r['suggestions'])}\n",
+                  limits={"timeout_ms": 180000, "sql_timeout_ms": 120000, "output_kb": 65536})
+        try:
+            s, c, _ = self.run_program(timer, {"scen": f"perf{self.sfx}"})
+            self.assertEqual(s, 200, c)
+            self.assertLess(c["result"]["seconds"], 30, c["result"])
+            # 10 000 items in 5 levels; the tree hands demand to 100 + 300 + 900 + 2 700 + 5 000 of them.
+            self.assertGreaterEqual(c["result"]["n"], 9000)
+            print(f"\n  MRP 10k itens × 5 níveis: {c['result']['seconds']:.1f} s, {c['result']['n']} sugestões", file=sys.stderr)
+        finally:
+            purge = f"test.mrp_purge_{SUFFIX}"
+            self.save(purge, "def main(tag, scen):\n"
+                             "    like = tag + 'L%'\n"
+                             "    ana.sql_exec('DELETE FROM production.suggestion WHERE scenario = $1 OR product_id IN "
+                             "(SELECT id FROM base.product WHERE code LIKE $2)', scen, like)\n"
+                             "    ana.sql_exec('DELETE FROM production.forecast WHERE product_id IN (SELECT id FROM base.product WHERE code LIKE $1)', like)\n"
+                             "    ana.sql_exec('DELETE FROM production.structure WHERE product_id IN (SELECT id FROM base.product WHERE code LIKE $1)', like)\n"
+                             "    return ana.sql_exec('DELETE FROM base.product WHERE code LIKE $1', like)\n",
+                      limits={"timeout_ms": 120000, "sql_timeout_ms": 120000})
+            self.run_program(purge, {"tag": tag, "scen": f"perf{self.sfx}"})
+
+
 if __name__ == "__main__":
     unittest.main()

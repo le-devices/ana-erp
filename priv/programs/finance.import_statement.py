@@ -45,6 +45,7 @@ def main(bank_account, content, format="ofx", file_name=None, csv_layout=None):
     inserted = 0
     for start in range(0, len(keyed), CHUNK):
         part = keyed[start:start + CHUNK]
+        # ana:lint-ok sql_in_loop — one INSERT per batch of 5 000 lines (the batching itself)
         inserted += len(ana.sql(
             "INSERT INTO finance.bank_statement_line (statement_id, bank_account, posted_on, amount, description, document, "
             "  dedup_key) SELECT $1, $2, d, a::numeric, t, doc, k "

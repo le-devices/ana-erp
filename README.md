@@ -301,6 +301,25 @@ clients/python/     cliente JSON-RPC        tests/          runtime, integration
 - **Métricas** em `/metrics` (Prometheus, autenticado) e logs JSON com
   `ANA_LOG_FORMAT=json`.
 
+## Produção e capacidade (spec 014)
+
+Bancada `producao`: estruturas em versões (componentes, perda, fantasmas; o
+banco recusa ciclos), roteiros com recursos (máquina, bancada, linha,
+pessoas; h/dia, eficiência, exceções, custo/h) e parâmetros de item (fazer
+ou comprar, prazo, lote, segurança, custo padrão).
+
+- **Planejamento de necessidades** (`mrp`): explode as estruturas nível a
+  nível em lote, desconta saldo, ordens e compras em aberto e propõe ordens
+  de produção e solicitações de compra com as datas deslocadas pelos
+  prazos; idempotente por cenário; 10 mil itens × 5 níveis em ~2 s.
+- **Ordem de produção**: liberar (reserva), requisitar (baixa, D produtos
+  em elaboração), apontar horas (custo do recurso), entregar (entrada do
+  acabado) e encerrar com custo real imutável e variação contra o padrão;
+  ordem de protótipos de um projeto vira despesa do projeto.
+- **Carga × capacidade** (`carga`) por recurso e semana, com sobrecarga e
+  data sugerida por capacidade finita; **capacidade de serviços**
+  (`capacidade`) por colaborador e perfil a partir da alocação dos projetos.
+
 ## Repositório de arquivos e portal do cliente (spec 016)
 
 **Arquivos** guarda documentos de projetos, clientes e fornecedores em pastas
@@ -426,8 +445,8 @@ correspondentes são só o valor inicial).
 
 ## Situação das specs
 
-Implementadas: 001–008, 011 (com usuários robô e dono obrigatório), 012, 018, 021, 019 (faltam alertas configuráveis e OpenTelemetry), 013, 016 (faltam S3 e antivírus), 017 (faltam SFTP/pasta/e-mail, mTLS, CNAB e pacotes de modelos), 022, 023, 024, 025, 026, 027, 028; 020 parcial (falta próxima ação
+Implementadas: 001–008, 011 (com usuários robô e dono obrigatório), 012, 018, 021, 019 (faltam alertas configuráveis e OpenTelemetry), 013, 014, 016 (faltam S3 e antivírus), 017 (faltam SFTP/pasta/e-mail, mTLS, CNAB e pacotes de modelos), 022, 023, 024, 025, 026, 027, 028; 020 parcial (falta próxima ação
 sugerida, fluxos guiados e auditoria de acessibilidade).
 Na fila (ordem em [scripts/pending-work.prompt.md](scripts/pending-work.prompt.md)):
-014 produção, 015 logística, 010 API pública; 009 licenciamento
+015 logística, 010 API pública; 009 licenciamento
 aguarda decisões.
