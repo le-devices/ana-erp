@@ -306,8 +306,10 @@ class TestChaos(unittest.TestCase):
                 states = {c["component"]: c["state"] for c in h["components"]}
             time.sleep(2)
         self.assertTrue(closed, "o banco fora deveria abrir um incidente e a volta, fechá-lo")
-        events = [e for e in h["events"] if e["component"] == "database"]
-        self.assertEqual({e["state"] for e in events[:2]}, {"red", "green"}, events[:4])
+        states_seen = [e["state"] for e in h["events"] if e["component"] == "database"]   # newest first
+        self.assertIn("red", states_seen, states_seen[:6])
+        self.assertEqual(states_seen[0], "green", states_seen[:6])                     # may pass by yellow (slow) on the way back
+        self.assertLess(states_seen.index("green"), states_seen.index("red"))
         self.assertEqual(states.get("database"), "green")
 
     # ------------------------------------------------------------------ RF-023-06

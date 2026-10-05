@@ -8,12 +8,14 @@
 - [x] T-023-06 Backup contínuo e teste de restauração documentado (RF-023-06)
 - [x] T-023-07 Disjuntores e filas limitadas (RF-023-07)
 - [x] T-023-08 Suíte de caos `tests/chaos` (CA-023-01..06, RNF-023-03)
-- [ ] T-023-09 Troca real de primário com cluster PostgreSQL local (RF-023-05, RNF-023-02):
+- [x] T-023-09 Troca real de primário com cluster PostgreSQL local (RF-023-05, RNF-023-02):
   `tests/chaos/docker-compose.pg-ha.yml` com primário + réplica em streaming (mesma imagem Citus,
   slot de replicação, `primary_conninfo`), núcleo com `ANA_DB_HOST=pg1,pg2` e
   `ANA_DB_READ_HOSTS=pg2`. Casos: (a) promover a réplica (`pg_promote()`) e derrubar o primário
   com carga — o núcleo segue o novo primário sem reiniciar, em ≤ 10 s; (b) console SQL lê na
   réplica e, com a réplica fora, cai para o primário; (c) primário antigo não é aceito se voltar
   sem ser rebaixado (`pg_is_in_recovery`); (d) opcional: reintegrar o antigo primário como réplica
-  com `pg_rewind`. Entra em `make teste-caos` como cenário separado.
+  com `pg_rewind`. Suíte `tests/pg_ha` (`make teste-pg-ha`): (a), (b) e (c) automatizados;
+  (d) não automatizado (documentado). Escolha do primário pela linha do tempo mais nova evita
+  usar um primário antigo que volte sem ser rebaixado.
 

@@ -9,7 +9,7 @@
 
 -include_lib("epgsql/include/epgsql.hrl").
 
--export([start_link/3, wait_for_database/0, connect/1, connect/2, hosts/1]).
+-export([start_link/3, wait_for_database/0, connect/1, connect/2, connect_read/2, hosts/1]).
 -export([with_connection/1, with_connection/3, checkout/2, checkin/2, transaction/1,
          query/3, batch/3, squery/2, query_limited/3,
          rows/2, one/2, exec/2, status/1, sql_error/1]).
@@ -68,8 +68,48 @@ connect(Config) -> connect(Config, primary).
 -spec connect(map(), primary | any) -> {ok, pid()} | {error, term()}.
 connect(Config = #{host := Host}, Mode) ->
     case hosts(Host) of
-        [Single] -> epgsql:connect(Config#{host => Single});
+        [Single] -> safe_connect(Config#{host => Single});
         Hosts -> try_hosts(prefer(Hosts), Config, Mode, no_hosts)
+    end.
+
+%% A failed epgsql:connect stops the connection process with the error as exit
+%% reason, and the caller is linked to it: a caller that does not trap exits (an
+%% HTTP request, for instance) would die instead of getting {error, Reason}.
+safe_connect(Config) ->
+    case process_flag(trap_exit, true) of
+        true -> normalize(catch epgsql:connect(Config));          % already trapping (pools)
+        false ->
+            R = normalize(catch epgsql:connect(Config)),
+            flush_exits(),
+            process_flag(trap_exit, false),
+            R
+    end.
+
+normalize({ok, C}) -> {ok, C};
+normalize({error, R}) -> {error, R};
+normalize({'EXIT', R}) -> {error, R};
+normalize(Other) -> {error, Other}.
+
+flush_exits() ->
+    receive {'EXIT', _, _} -> flush_exits()
+    after 0 -> ok
+    end.
+
+%% Read-only connections (SQL console): replicas first with a short connect
+%% timeout; then the primary the pools are using (no new probing), then any.
+-spec connect_read(map(), string()) -> {ok, pid()} | {error, term()}.
+connect_read(Config, Replicas) ->
+    Fast = Config#{timeout => 3000},
+    case Replicas =/= "" andalso first_ok(hosts(Replicas), Fast, no_hosts) of
+        {ok, C} -> {ok, C};
+        _ ->
+            Primary = persistent_term:get({?MODULE, last_primary}, undefined),
+            All = hosts(maps:get(host, Config)),
+            Order = case lists:member(Primary, All) of
+                true -> [Primary | lists:delete(Primary, All)];
+                false -> All
+            end,
+            first_ok(Order -- hosts(Replicas), Config, no_hosts)
     end.
 
 -spec hosts(string()) -> [string()].
@@ -83,22 +123,57 @@ prefer(Hosts) ->
         false -> Hosts
     end.
 
-try_hosts([], _, _, Last) -> {error, Last};
-try_hosts([H | Rest], Config, Mode, _) ->
-    case epgsql:connect(Config#{host => H}) of
-        {ok, C} when Mode =:= any ->
-            {ok, C};
+%% Every address is probed; among the primaries the one with the newest WAL
+%% timeline wins. A promoted replica always has a newer timeline than the old
+%% primary, so an old primary that comes back without being demoted (split
+%% brain) is never chosen — not even after the core restarts (CA T-023-09).
+try_hosts(Hosts, Config, any, _) ->
+    first_ok(Hosts, Config, no_hosts);
+try_hosts(Hosts, Config, primary, _) ->
+    %% An address that failed in the last 15 s is skipped (unless all did), so a dead
+    %% host costs one connect timeout per window, not one per connection.
+    Now = erlang:monotonic_time(millisecond),
+    {Alive, Skipped} = lists:partition(fun(H) -> Now - persistent_term:get({?MODULE, down, H}, -100000) > 15000 end, Hosts),
+    First = [{H, probe(H, Config)} || H <- Alive],
+    %% No primary among the "alive" ones: the skipped addresses get their chance right away
+    %% (a replica that was down a moment ago may be the new primary).
+    Probes = case [x || {_, {primary, _, _}} <- First] of
+        [] -> First ++ [{H, probe(H, Config)} || H <- Skipped];
+        _ -> First
+    end,
+    _ = [persistent_term:put({?MODULE, down, H}, Now) || {H, {error, _}} <- Probes],
+    _ = [persistent_term:erase({?MODULE, down, H}) || {H, {primary, _, _}} <- Probes],
+    Primaries = [{TL, H, C} || {H, {primary, TL, C}} <- Probes],
+    Last = case [R || {_, {error, R}} <- Probes] ++ [{not_primary, H} || {H, replica} <- Probes] of
+        [] -> no_hosts;
+        [R | _] -> R
+    end,
+    case lists:reverse(lists:keysort(1, Primaries)) of
+        [] -> {error, Last};
+        [{TL, H, C} | Others] ->
+            _ = [catch epgsql:close(O) || {_, _, O} <- Others],
+            _ = Others =/= [] andalso ok =:= logger:warning(
+                  "more than one primary answered (~p); using ~s (timeline ~b)", [[X || {_, X, _} <- Primaries], H, TL]),
+            persistent_term:put({?MODULE, last_primary}, H),
+            {ok, C}
+    end.
+
+first_ok([], _, Last) -> {error, Last};
+first_ok([H | Rest], Config, _) ->
+    case safe_connect(Config#{host => H}) of
+        {ok, C} -> {ok, C};
+        {error, Reason} -> first_ok(Rest, Config, {H, Reason})
+    end.
+
+probe(H, Config) ->
+    case safe_connect(Config#{host => H}) of
         {ok, C} ->
-            case epgsql:squery(C, "SELECT pg_is_in_recovery()") of
-                {ok, _, [{<<"f">>}]} ->
-                    persistent_term:put({?MODULE, last_primary}, H),
-                    {ok, C};
-                _ ->
-                    catch epgsql:close(C),
-                    try_hosts(Rest, Config, Mode, {not_primary, H})
+            case epgsql:squery(C, "SELECT pg_is_in_recovery(), CASE WHEN pg_is_in_recovery() THEN 0 ELSE "
+                                  "('x' || substring(pg_walfile_name(pg_current_wal_lsn()) from 1 for 8))::bit(32)::int END") of
+                {ok, _, [{<<"f">>, TL}]} -> {primary, binary_to_integer(TL), C};
+                _ -> catch epgsql:close(C), replica
             end;
-        {error, Reason} ->
-            try_hosts(Rest, Config, Mode, {H, Reason})
+        {error, Reason} -> {error, {H, Reason}}
     end.
 
 %% Runs Fun(Conn) with a connection borrowed from the pool.

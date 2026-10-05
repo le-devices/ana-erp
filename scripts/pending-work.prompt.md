@@ -15,7 +15,7 @@ Você trabalha no projeto ANA ERP em /home/andre/ana-erp: um ERP com núcleo Erl
 2. 022 — execução paralela (`specs/022-parallel-execution`)
 3. 023 — alta disponibilidade e testes de caos (`specs/023-high-availability`) — implementada; a tarefa pendente T-023-09 é o item 5
 4. 019 — observabilidade (`specs/019-observability`) — implementada; T-019-08b e T-019-09b ficam para o fim da fila
-5. 023 — T-023-09: troca real de primário com cluster PostgreSQL local (primário + réplica em streaming)
+5. 023 — T-023-09: troca real de primário com cluster PostgreSQL local — implementada
 6. 013 — cadeia de suprimentos (`specs/013-supply-chain`)
 7. 017 — hub de integrações (`specs/017-integration-hub`)
 8. 016 — repositório de arquivos (`specs/016-file-repository`)
@@ -39,6 +39,7 @@ Escolha o **primeiro item da lista cuja `tasks.md` ainda tenha tarefas `[ ]`** (
    - `docker run --rm --network host -v $PWD/tests/studio:/t -w /t node:22-alpine sh -c "npm i --silent --no-save jsdom@24 >/dev/null 2>&1 && node smoke.mjs"`
    - `tests/cluster/run.sh` (dois nós: agendamento exatamente uma vez, troca de líder, distribuição Erlang)
    - `tests/chaos/run.sh` (dois nós + balanceador: falhas, queda de nó, desligamento gracioso, rolling, banco, restauração)
+   - `tests/pg_ha/run.sh` (PostgreSQL primário + réplica: troca real de primário)
 5. Marque `[x]` em `tasks.md` só o que estiver implementado **e** testado; atualize a coluna "Situação" em `specs/README.md` e a seção "Situação das specs" do `README.md`.
 6. Versionamento (gitflow, ver README): crie `feature/NNN-assunto` a partir de `dev`, faça os commits da spec nela (assinados quando a chave GPG estiver liberada; se estiver bloqueada, o dono autorizou commits sem assinatura com `git -c commit.gpgsign=false commit`, sem alterar a configuração global) e, com tudo verde, integre em `dev` (merge sem fast-forward). Nunca commite nem integre em `qa` ou `master`, e não faça push, sem pedido explícito. Não apague volumes/arquivos fora do que você mesmo criou nesta execução.
 

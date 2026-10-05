@@ -252,6 +252,7 @@ make teste-runtime     # runtime Python, depurador e limites (sem banco)
 make teste-integracao  # testes contra o ambiente, rastreados a CA-xxx-nn
 make teste-estudio     # interface num DOM real (jsdom): áreas, rotina, depurador, administração
 make teste-cluster     # dois nós: agendamento exatamente uma vez, troca de líder, erpc
+make teste-pg-ha       # PostgreSQL primário + réplica: promoção com carga, console na réplica, primário antigo recusado
 make teste-caos        # dois nós + HAProxy: programas que falham, nó derrubado, desligamento
                        # gracioso, atualização rolling, banco reiniciado, restauração a um instante
 ```
@@ -305,7 +306,10 @@ clients/python/     cliente JSON-RPC        tests/          runtime, integration
   uma migração que quebra a versão anterior começa com `-- ana:breaking` e
   tira da prontidão os nós antigos.
 - **Banco**: `ANA_DB_HOST=pg1,pg2` encontra o primário e segue a réplica
-  promovida sem reiniciar o núcleo; `ANA_DB_READ_HOSTS` leva o console SQL
+  promovida sem reiniciar o núcleo (entre dois que se dizem primários, vale
+  o da linha do tempo mais nova — um primário antigo que volte sem ser
+  rebaixado nunca recebe gravações; testado com cluster local em
+  `make teste-pg-ha`); `ANA_DB_READ_HOSTS` leva o console SQL
   às réplicas; banco fora → erro imediato (`DB_UNAVAILABLE`, 503) e volta
   sozinho em segundos.
 - **Execuções interrompidas** pela queda de um nó ficam registradas como
@@ -355,7 +359,7 @@ correspondentes são só o valor inicial).
 
 ## Situação das specs
 
-Implementadas: 001–008, 011 (com usuários robô e dono obrigatório), 012, 018, 021 (portal do cliente depende da 016), 019 (faltam alertas configuráveis e OpenTelemetry), 022, 023 (falta o teste de troca real de primário, T-023-09), 024, 025, 026, 027; 020 parcial (falta próxima ação
+Implementadas: 001–008, 011 (com usuários robô e dono obrigatório), 012, 018, 021 (portal do cliente depende da 016), 019 (faltam alertas configuráveis e OpenTelemetry), 022, 023, 024, 025, 026, 027; 020 parcial (falta próxima ação
 sugerida, fluxos guiados e auditoria de acessibilidade).
 Na fila (ordem em [scripts/pending-work.prompt.md](scripts/pending-work.prompt.md)):
 013 suprimentos, 017 integrações, 016 repositório de
