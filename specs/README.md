@@ -61,6 +61,7 @@ inglês, como no código (constituição, P2a).
 | 028 | [Atualização dos programas do produto](028-product-updates/spec.md) | Versão nova de programa do produto oferecida a instalações existentes; administrador compara lado a lado e aceita ou dispensa | implementada |
 | 029 | [Linguagem visual "Linha ANA"](029-visual-language/spec.md) | Barra superior compacta, rotinas como páginas analíticas (indicadores, gráficos em cartões, tabelas em cartão), início em blocos, ícones próprios, claro/escuro | implementada |
 | 031 | [Condições de pagamento e crédito](031-payment-terms-credit/spec.md) | PIX, boleto, cartão, crédito direto e vários prazos; títulos por parcela; limite de crédito, bloqueio por inadimplência e liberação pontual; tela de venda com grade de itens e saldo por depósito | implementada |
+| 033 | [Verificações periódicas](033-periodic-checks/spec.md) | Segurança da configuração, componentes com vulnerabilidade conhecida (base OSV), integridade dos arquivos do produto, robustez (cópias, restauração, filas, erros) e desempenho (sondas com linha de base), pelo robô system, com avisos no sino | implementada (falta T-033-09b: base OSV e aviso por conector) |
 
 ## Glossário
 

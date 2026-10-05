@@ -6,6 +6,11 @@ RUN rebar3 get-deps && rebar3 compile --deps_only
 COPY config config
 COPY src src
 COPY priv priv
+# Spec 033: inventory of the Hex libraries and manifest of the shipped files (integrity check).
+RUN cp rebar.lock priv/rebar.lock \
+ && erl -noshell -eval '{ok, V} = file:read_file(filename:join([code:root_dir(), "releases", erlang:system_info(otp_release), "OTP_VERSION"])), ok = file:write_file("priv/OTP_VERSION", V), halt().' \
+ && cd priv && find www programs migrations python demo -type f -print0 | LC_ALL=C sort -z \
+    | xargs -0 sha256sum > asset-manifest.txt
 RUN rebar3 release
 
 # ---- runtime -----------------------------------------------------------------

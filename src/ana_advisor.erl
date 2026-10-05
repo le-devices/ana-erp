@@ -7,7 +7,7 @@
 -module(ana_advisor).
 -behaviour(gen_server).
 
--export([start_link/0, run/0, upsert/7, list/1, dismiss/3]).
+-export([start_link/0, run/0, upsert/7, upsert/8, list/1, dismiss/3, category/1]).
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2]).
 
 -define(EVERY_MS, 15 * 60 * 1000).
@@ -70,29 +70,42 @@ safe(F) ->
     catch C:R:St -> logger:warning("advisor rule failed: ~0p:~0p ~0p", [C, R, St]), []
     end.
 
+%% Spec 033: every finding has a category (the checks share this model).
+-spec category(binary()) -> binary().
+category(<<"file_integrity">>) -> <<"integrity">>;
+category(<<"near_limit">>) -> <<"robustness">>;
+category(<<"recurring_timeouts">>) -> <<"robustness">>;
+category(_) -> <<"performance">>.
+
 -spec upsert(binary(), binary(), binary(), binary(), binary(), binary(), map()) -> ok.
 upsert(Rule, Target, Severity, Title, Detail, Suggestion, Evidence) ->
+    upsert(category(Rule), Rule, Target, Severity, Title, Detail, Suggestion, Evidence).
+
+%% A dismissed finding stays quiet until its date, unless its severity gets worse (CA-033-06).
+-spec upsert(binary(), binary(), binary(), binary(), binary(), binary(), binary(), map()) -> ok.
+upsert(Category, Rule, Target, Severity, Title, Detail, Suggestion, Evidence) ->
     _ = ana_db:exec(
-        "INSERT INTO ana_system.advice AS a (rule, target, severity, title, detail, suggestion, evidence) "
-        "VALUES ($1, $2, $3, $4, $5, $6, $7) "
-        "ON CONFLICT (rule, target) DO UPDATE SET severity = EXCLUDED.severity, title = EXCLUDED.title, "
+        "INSERT INTO ana_system.advice AS a (rule, target, severity, title, detail, suggestion, evidence, category) "
+        "VALUES ($1, $2, $3, $4, $5, $6, $7, $8) "
+        "ON CONFLICT (rule, target) DO UPDATE SET severity = EXCLUDED.severity, title = EXCLUDED.title, category = EXCLUDED.category, "
         "  detail = EXCLUDED.detail, suggestion = EXCLUDED.suggestion, evidence = EXCLUDED.evidence, last_seen = now(), "
         "  status = CASE WHEN a.status = 'dismissed' AND (a.dismissed_until IS NULL OR a.dismissed_until > now()) "
+        "                 AND ana_system.severity_rank(EXCLUDED.severity) <= ana_system.severity_rank(a.severity) "
         "                THEN 'dismissed' ELSE 'open' END "
         "WHERE a.status = 'resolved' OR (a.status = 'dismissed' AND a.dismissed_until <= now()) "
         "   OR (a.severity, a.title, a.detail, a.suggestion) IS DISTINCT FROM "
         "      (EXCLUDED.severity, EXCLUDED.title, EXCLUDED.detail, EXCLUDED.suggestion) "
         "   OR a.last_seen < now() - interval '1 day'",
-        [Rule, Target, Severity, Title, Detail, Suggestion, Evidence]),
+        [Rule, Target, Severity, Title, Detail, Suggestion, Evidence, Category]),
     ok.
 
 list(F) ->
     ana_db:rows(
-        "SELECT id, rule, target, severity, title, detail, suggestion, evidence, status, dismissed_until, "
+        "SELECT id, rule, target, category, severity, title, detail, suggestion, evidence, status, dismissed_until, "
         "  first_seen, last_seen FROM ana_system.advice "
-        "WHERE ($1::text IS NULL OR status = $1) "
+        "WHERE ($1::text IS NULL OR status = $1) AND ($2::text IS NULL OR category = $2) "
         "ORDER BY CASE severity WHEN 'critical' THEN 0 WHEN 'serious' THEN 1 WHEN 'warning' THEN 2 ELSE 3 END, "
-        "  last_seen DESC LIMIT 500", [maps:get(status, F, null)]).
+        "  last_seen DESC LIMIT 500", [maps:get(status, F, null), maps:get(category, F, null)]).
 
 dismiss(Id, Days, #{username := Who}) ->
     {ok, N} = ana_db:exec("UPDATE ana_system.advice SET status = 'dismissed', dismissed_by = $3, "

@@ -15,6 +15,13 @@ cd "$(dirname "$0")/.."
 COMPOSE=${COMPOSE:-docker compose}
 ARCHIVE=/var/lib/postgresql/archive
 
+# Spec 033: the ERP checks the age of the last good backup (Administração → Verificações).
+record() {
+  $COMPOSE exec -T db psql -U postgres -d "${ANA_DB_NAME:-ana}" -q -v ON_ERROR_STOP=1 \
+    -c "INSERT INTO ana_system.ops_event (kind, ok, detail) VALUES ('backup_base', $1, '$2')" >/dev/null 2>&1 \
+    || echo "warning: could not record the backup event in the ERP" >&2
+}
+
 case "${1:-}" in
   enable)
     $COMPOSE exec -T -u root db sh -c "mkdir -p $ARCHIVE/wal $ARCHIVE/base && chown -R postgres:postgres $ARCHIVE"
@@ -27,8 +34,13 @@ case "${1:-}" in
     ;;
   base)
     name="base-$(date -u +%Y%m%dT%H%M%SZ)"
-    $COMPOSE exec -T -u postgres db sh -c "pg_basebackup -U postgres -D $ARCHIVE/base/$name -Ft -z -X fetch --checkpoint=fast"
-    echo "$name"
+    if $COMPOSE exec -T -u postgres db sh -c "pg_basebackup -U postgres -D $ARCHIVE/base/$name -Ft -z -X fetch --checkpoint=fast"; then
+      record true "$name"
+      echo "$name"
+    else
+      record false "$name"
+      exit 1
+    fi
     ;;
   list)
     $COMPOSE exec -T db sh -c "ls -1 $ARCHIVE/base; echo; ls $ARCHIVE/wal | wc -l | xargs echo 'archived WAL segments:'"

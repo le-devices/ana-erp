@@ -109,7 +109,16 @@ definitions() ->
      {trace_sample_pct, integer, 0, 100, "ANA_TRACE_SAMPLE_PCT", 5,
       <<"Rastros guardados das demais execuções (%)"/utf8>>},
      {n_plus_one_threshold, integer, 2, 100000, "ANA_N_PLUS_ONE", 50,
-      <<"Mesmo comando SQL repetido numa execução a partir de (vezes): dica N+1"/utf8>>}].
+      <<"Mesmo comando SQL repetido numa execução a partir de (vezes): dica N+1"/utf8>>},
+     %% Spec 033: periodic checks.
+     {checks_backup_max_hours, integer, 1, 8760, "ANA_CHECKS_BACKUP_MAX_HOURS", 26,
+      <<"Verificações: idade máxima da cópia completa do banco (horas)"/utf8>>},
+     {checks_restore_max_days, integer, 1, 365, "ANA_CHECKS_RESTORE_MAX_DAYS", 35,
+      <<"Verificações: idade máxima do último teste de restauração (dias)"/utf8>>},
+     {checks_key_max_days, integer, 30, 3650, "ANA_CHECKS_KEY_MAX_DAYS", 365,
+      <<"Verificações: idade máxima de chave de API sem validade (dias)"/utf8>>},
+     {checks_perf_factor_pct, integer, 110, 1000, "ANA_CHECKS_PERF_FACTOR_PCT", 200,
+      <<"Verificações: piora de desempenho a partir de (% da linha de base)"/utf8>>}].
 
 init_cache() ->
     _ = ets:new(?TAB, [named_table, public, set, {read_concurrency, true}]),

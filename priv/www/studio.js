@@ -12,7 +12,7 @@
     settings: "Parâmetros", accounts: "Contas padrão", commands: "Comandos", remote: "Sistemas remotos",
     scheduler: "Agendamento", monitor: "Monitor", consumption: "Consumo", audit: "Auditoria", retention: "Retenção",
     health: "Saúde", sqlperf: "Desempenho do SQL", advice: "Dicas de otimização", updates: "Atualizações do produto",
-    integrations: "Integrações",
+    integrations: "Integrações", checks: "Verificações",
   };
   const state = { user: null, targets: new Map(), trail: [] };
 
@@ -30,8 +30,14 @@
     if (!window.AnaScheduler || isExternal()) return;
     try {
       const n = await window.AnaScheduler.notifications(document.createElement("div"), true);
-      $("#notices-dot").hidden = !n;
-      $("#notices-btn").title = n ? `${n} aviso(s) das rotinas agendadas` : "Nenhum aviso das rotinas agendadas";
+      // Spec 033: administrators also see the system's notices (new critical findings of the checks).
+      const sys = canSee("admin") ? (await API.admin.notices(true).catch(() => [])).length : 0;
+      state.systemNotices = sys;
+      $("#notices-dot").hidden = !(n || sys);
+      const parts = [n ? `${n} aviso(s) das rotinas agendadas` : "", sys ? `${sys} aviso(s) das verificações do sistema` : ""].filter(Boolean);
+      $("#notices-btn").title = parts.length ? parts.join(" · ") : "Nenhum aviso";
+      const badge = $("#checks-count");
+      if (badge) { badge.hidden = !sys; badge.textContent = String(sys); }
     } catch (_) { /* notices are a convenience */ }
   }
 
@@ -227,7 +233,7 @@
     $("#logout").addEventListener("click", async () => { await API.logout(); location.hash = ""; location.reload(); });
     for (const b of $$(".area")) b.addEventListener("click", () => go("#/" + b.dataset.area));
     $("#user-avatar").addEventListener("click", (e) => { e.stopPropagation(); toggle($("#user-avatar"), () => { $("#user-menu").hidden = false; }); });
-    $("#notices-btn").addEventListener("click", () => go("#/home"));
+    $("#notices-btn").addEventListener("click", () => go(state.systemNotices ? "#/admin/checks" : "#/home"));
     document.addEventListener("click", (e) => { if (!e.target.closest("#user-menu")) closeMenus(); });
     document.addEventListener("keydown", (e) => { if (e.key === "Escape") closeMenus(); });
     $("#command-form").addEventListener("submit", (e) => {

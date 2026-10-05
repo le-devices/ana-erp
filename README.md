@@ -373,6 +373,30 @@ ou comprar, prazo, lote, segurança, custo padrão).
   outros; se faltar, só avisa (com "Transferir de X"), pede a transferência
   ou recusa; mostra as parcelas e leva a "Faturar agora" ou "Expedir".
 
+## Verificações periódicas (spec 033)
+
+Administração → Observabilidade → **Verificações**: o robô `system` confere,
+no nó líder, a **segurança** da configuração (senha trivial em conta
+privilegiada, chave mestra/senha do banco/cookie de exemplo, política de
+senha e sessão, administradores demais, chaves de API paradas ou sem
+validade, links abertos, conectores sem hosts permitidos, retenção curta), os
+**componentes** com vulnerabilidade conhecida, a **integridade** dos arquivos
+do produto (manifesto SHA-256 gerado na construção da imagem), a
+**robustez** (arquivamento do WAL, idade da última cópia completa e do último
+teste de restauração — registradas por `scripts/backup.sh` e
+`scripts/restore-test.sh` —, filas de falha, disjuntores, falhas técnicas,
+disco do repositório) e o **desempenho** (sondas a cada 5 min; aviso quando o
+p95 da última hora passa do fator da linha de base de 7 dias). Segurança,
+integridade e componentes rodam diariamente; robustez a cada 15 min;
+desempenho a cada hora; e sob demanda. Achado crítico novo acende o sino dos
+administradores; achados podem ser dispensados (voltam se piorarem).
+
+O **inventário** lista ANA, OTP e bibliotecas, Python, PostgreSQL e
+extensões e os pacotes Debian da imagem. A **base de vulnerabilidades** está
+no formato OSV: baixe em osv.dev os avisos de Hex, Debian e PyPI e envie em
+Verificações → Inventário (nada é consultado na internet sem o administrador
+pedir). Avisos retirados (`withdrawn`) removem o aviso anterior.
+
 ## Repositório de arquivos e portal do cliente (spec 016)
 
 **Arquivos** guarda documentos de projetos, clientes e fornecedores em pastas
@@ -498,11 +522,10 @@ correspondentes são só o valor inicial).
 
 ## Situação das specs
 
-Implementadas: 001–008, 011 (com usuários robô e dono obrigatório), 012, 018, 021, 019 (faltam alertas configuráveis e OpenTelemetry), 013, 014, 015, 016 (faltam S3 e antivírus), 017 (faltam SFTP/pasta/e-mail, mTLS, CNAB e pacotes de modelos), 022, 023, 024, 025, 026, 027, 028, 029, 031; 020 parcial (falta próxima ação
+Implementadas: 001–008, 011 (com usuários robô e dono obrigatório), 012, 018, 021, 019 (faltam alertas configuráveis e OpenTelemetry), 013, 014, 015, 016 (faltam S3 e antivírus), 017 (faltam SFTP/pasta/e-mail, mTLS, CNAB e pacotes de modelos), 022, 023, 024, 025, 026, 027, 028, 029, 031, 033 (falta base OSV por conector); 020 parcial (falta próxima ação
 sugerida, fluxos guiados e auditoria de acessibilidade).
 Na fila (ordem em [scripts/pending-work.prompt.md](scripts/pending-work.prompt.md)):
-033 verificações periódicas (segurança, bibliotecas vulneráveis, robustez e
-desempenho); 034 ambiente de desenvolvimento e testes com transporte para
+034 ambiente de desenvolvimento e testes com transporte para
 produção e cópia mascarada de dados; 030 esteiras automáticas (venda →
 estoque → expedição → faturamento → cobrança); 032 distâncias por
 coordenadas; 010 API pública; 009 licenciamento aguarda decisões.

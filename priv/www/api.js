@@ -188,6 +188,12 @@
       advice: (status) => API.request("GET", "/api/admin/observability/advice" + query(status ? { status } : {})),
       adviceRun: () => API.request("POST", "/api/admin/observability/advice/run", {}),
       adviceDismiss: (id, days) => API.request("POST", `/api/admin/observability/advice/${id}/dismiss`, { days }),
+      checks: (filters) => API.request("GET", "/api/admin/checks" + query(filters || {})),
+      checksRun: (category) => API.request("POST", "/api/admin/checks/run", { category }),
+      checksInventory: () => API.request("GET", "/api/admin/checks/inventory"),
+      checksImport: (blob) => API.raw("POST", "/api/admin/checks/vulnerabilities", blob),
+      notices: (unread) => API.request("GET", "/api/admin/checks/notices" + query(unread ? { unread: 1 } : {})),
+      noticeRead: (id) => API.request("POST", `/api/admin/checks/notices/${id}/read`, {}),
       connectors: () => API.request("GET", "/api/admin/connectors"),
       saveConnector: (name, body) => API.request("PUT", `/api/admin/connectors/${encodeURIComponent(name)}`, body),
       saveSecret: (name, key, value, expires_at) =>
