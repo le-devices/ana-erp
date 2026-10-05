@@ -6,8 +6,11 @@ Contract: POST <charges_path> with the charge as JSON; the answer has id and, as
 asks, qr_code, digitable_line or url. Connector options: charges_path (default /charges),
 response_field (unwraps the answer, e.g. "result"). 5xx/network → retried; 4xx → charge failed."""
 
-PARAMS = {"message": {"type": "dict", "required": True}, "connector": {"type": "dict", "required": True},
-          "attempt": {"type": "int"}}
+PARAMS = {
+    "message": {"type": "dict", "required": True, "label": "mensagem"},
+    "connector": {"type": "dict", "required": True, "label": "conector"},
+    "attempt": {"type": "int", "label": "tentativa"},
+}
 
 
 def main(message, connector, attempt=1):

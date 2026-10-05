@@ -8,7 +8,9 @@ from decimal import Decimal
 from ana_lib.projects import access
 from ana_lib.util.format import money
 
-PARAMS = {"project": {"type": "str"}}
+PARAMS = {
+    "project": {"type": "str", "label": "projeto", "lookup": {"program": "projects.lookup", "params": {"kind": "projects"}}},
+}
 
 
 def main(project=None):

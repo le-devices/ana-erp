@@ -794,13 +794,26 @@ def _to_str(v):
     return str(v)
 
 
+def _to_decimal(v):
+    """Decimal from JSON numbers or typed text; Brazilian notation ("1.234,56", "4,79") accepted."""
+    if isinstance(v, (int, float, decimal.Decimal)) and not isinstance(v, bool):
+        return decimal.Decimal(str(v))
+    s = str(v).strip()
+    if "," in s:
+        s = s.replace(".", "").replace(",", ".")
+    return decimal.Decimal(s)
+
+
 PARAM_TYPES = {
     "int": _to_int,
     "float": float,
-    "decimal": lambda v: decimal.Decimal(str(v)),
+    "decimal": _to_decimal,
     "str": _to_str,
     "bool": _to_bool,
     "date": lambda v: v if isinstance(v, datetime.date) else datetime.date.fromisoformat(v),
+    # Spec 029: date and time pickers on screen send ISO text ("2026-10-05T14:30", "14:30").
+    "datetime": lambda v: v if isinstance(v, datetime.datetime) else datetime.datetime.fromisoformat(str(v).replace(" ", "T")),
+    "time": lambda v: v if isinstance(v, datetime.time) else datetime.time.fromisoformat(str(v)),
     "list": _to_list,
     "dict": _to_dict,
 }
@@ -1152,7 +1165,14 @@ def with_order(params):
     """The declared order survives storage (JSON objects have no order): "order" per parameter."""
     if not isinstance(params, dict):
         return params
-    return {k: ({**v, "order": i} if isinstance(v, dict) else v) for i, (k, v) in enumerate(params.items())}
+    out = {}
+    for i, (k, v) in enumerate(params.items()):
+        if isinstance(v, dict):
+            v = {**v, "order": i}
+            if isinstance(v.get("columns"), dict):
+                v["columns"] = with_order(v["columns"])  # grid columns keep their order too
+        out[k] = v
+    return out
 
 
 def inspect(channel, msg):

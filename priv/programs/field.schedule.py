@@ -10,7 +10,7 @@ from ana_lib.field import common
 PARAMS = {
     "order": {"type": "int", "required": True, "label": "OS", "lookup": {"program": "logistics.lookup", "params": {"kind": "service_orders"}}},
     "technician": {"type": "int", "required": True, "label": "técnico", "lookup": {"program": "logistics.lookup", "params": {"kind": "technicians"}}},
-    "start": {"type": "str", "required": True, "label": "início (AAAA-MM-DD HH:MM)"},
+    "start": {"type": "datetime", "required": True, "label": "início"},
     "hours": {"type": "decimal", "default": 2, "label": "duração (h)"},
     "travel_min": {"type": "int", "default": 0, "label": "deslocamento estimado (min)"},
     "distance_km": {"type": "decimal", "label": "distância (km)"},

@@ -1,10 +1,11 @@
 # ana:description Opções para campos de escolha de logística e serviços em campo
 # ana:kind program
 # ana:menu no
-"""Lookup for forms: [{"value", "label"}]. kind: warehouses | carriers | orders | technicians | service_orders | services."""
+"""Lookup for forms: [{"value", "label"}]. kind: warehouses | carriers | orders | technicians | service_orders | services | transfers."""
 
-PARAMS = {"kind": {"type": "str", "required": True,
-                   "choices": ["warehouses", "carriers", "orders", "technicians", "service_orders", "services"]}}
+PARAMS = {
+    "kind": {"type": "str", "required": True, "label": "tipo", "choices": ["warehouses", "carriers", "orders", "technicians", "service_orders", "services", "transfers"]},
+}
 
 
 def main(kind):
@@ -24,6 +25,13 @@ def main(kind):
         rows = ana.sql("SELECT e.id, e.name FROM field.technician t JOIN projects.employee e ON e.id = t.employee_id "
                        "WHERE t.active AND e.active ORDER BY e.name LIMIT 500")
         return [{"value": r["id"], "label": r["name"]} for r in rows]
+    if kind == "transfers":
+        rows = ana.sql("SELECT t.number, f.code AS src, d.code AS dst, t.status FROM logistics.transfer t "
+                       "JOIN inventory.warehouse f ON f.id = t.from_wh JOIN inventory.warehouse d ON d.id = t.to_wh "
+                       "WHERE t.status IN ('draft', 'shipped') ORDER BY t.number DESC LIMIT 500")
+        names = {"draft": "rascunho", "shipped": "em trânsito"}
+        return [{"value": r["number"], "label": f"{r['number']} — {r['src']} → {r['dst']} ({names[r['status']]})"}
+                for r in rows]
     if kind == "services":
         rows = ana.sql("SELECT code, description FROM base.product WHERE active AND kind = 'service' ORDER BY code LIMIT 500")
         return [{"value": r["code"], "label": f"{r['code']} — {r['description']}"} for r in rows]

@@ -8,7 +8,7 @@ import datetime
 PARAMS = {
     "scenario": {"type": "str", "default": "principal", "label": "cenário"},
     "ids": {"type": "list", "label": "sugestões (vazio = todas as abertas)"},
-    "warehouse": {"type": "str", "default": "CENTRAL", "label": "depósito das compras"},
+    "warehouse": {"type": "str", "default": "CENTRAL", "label": "depósito das compras", "lookup": {"program": "production.lookup", "params": {"kind": "warehouses"}}},
 }
 
 

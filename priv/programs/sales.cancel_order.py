@@ -3,7 +3,9 @@
 # ana:command cancel
 from ana_lib.util import validation as v
 
-PARAMS = {"number": {"type": "int", "required": True}}
+PARAMS = {
+    "number": {"type": "int", "required": True, "label": "pedido", "lookup": {"program": "sales.lookup", "params": {"kind": "orders"}}},
+}
 
 
 def main(number):

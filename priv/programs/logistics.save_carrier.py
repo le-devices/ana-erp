@@ -5,7 +5,10 @@
 PARAMS = {
     "name": {"type": "str", "required": True, "label": "nome"},
     "tracking_url": {"type": "str", "label": "endereço de rastreio (use {codigo})"},
-    "rates": {"type": "list", "label": "tabela de frete"},
+    "rates": {"type": "list", "label": "tabela de frete", "add_label": "Adicionar faixa", "columns": {
+        "region": {"type": "str", "default": "*", "label": "UF de destino (* = demais)"},
+        "max_weight_kg": {"type": "decimal", "required": True, "label": "até (kg)"},
+        "price": {"type": "decimal", "required": True, "label": "preço"}}},
     "active": {"type": "bool", "default": True, "label": "ativa"},
 }
 

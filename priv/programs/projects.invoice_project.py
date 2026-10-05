@@ -15,9 +15,9 @@ from ana_lib.util.format import money
 from ana_lib.util.pdf import Pdf
 
 PARAMS = {
-    "project": {"type": "str", "required": True},
-    "through": {"type": "date"},
-    "payment_days": {"type": "int", "default": 30},
+    "project": {"type": "str", "required": True, "label": "projeto", "lookup": {"program": "projects.lookup", "params": {"kind": "projects"}}},
+    "through": {"type": "date", "label": "até a data"},
+    "payment_days": {"type": "int", "default": 30, "label": "prazo de pagamento (dias)"},
 }
 
 CENT = Decimal("0.01")

@@ -7,9 +7,9 @@ services never have a stock balance."""
 from ana_lib.util.format import money, quantity
 
 PARAMS = {
-    "kind": {"type": "str"},                 # goods | service | (all)
-    "search": {"type": "str"},
-    "include_inactive": {"type": "bool", "default": False},
+    "kind": {"type": "str", "label": "tipo", "choices": [["goods", "Mercadorias"], ["service", "Serviços"]]},
+    "search": {"type": "str", "label": "buscar"},
+    "include_inactive": {"type": "bool", "default": False, "label": "incluir inativos"},
 }
 
 

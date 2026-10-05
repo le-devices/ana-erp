@@ -10,7 +10,10 @@ PARAMS = {
     "name": {"type": "str", "required": True, "label": "nome"},
     "source": {"type": "str", "required": True, "label": "centro de origem",
                "lookup": {"program": "finance.lookup", "params": {"kind": "cost_centers"}}},
-    "targets": {"type": "list", "required": True, "label": "destinos com percentuais"},
+    "targets": {"type": "list", "required": True, "label": "destinos com percentuais (somam 100)", "add_label": "Adicionar destino", "columns": {
+        "cost_center": {"type": "str", "required": True, "label": "centro de destino",
+                        "lookup": {"program": "finance.lookup", "params": {"kind": "cost_centers"}}},
+        "pct": {"type": "decimal", "required": True, "label": "percentual"}}},
     "account_prefix": {"type": "str", "default": "5", "label": "contas que começam com"},
     "active": {"type": "bool", "default": True, "label": "ativa"},
 }

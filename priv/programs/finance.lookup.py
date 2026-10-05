@@ -3,7 +3,9 @@
 # ana:menu no
 """Lookup for forms: [{"value", "label"}]. kind: cost_centers | accounts | rules | bank_accounts | connectors."""
 
-PARAMS = {"kind": {"type": "str", "required": True, "choices": ["cost_centers", "accounts", "rules", "bank_accounts"]}}
+PARAMS = {
+    "kind": {"type": "str", "required": True, "label": "tipo", "choices": ["cost_centers", "accounts", "rules", "bank_accounts", "payment_terms"]},
+}
 
 
 def main(kind):
@@ -17,6 +19,9 @@ def main(kind):
     if kind == "accounts":
         rows = ana.sql("SELECT code, description FROM finance.account WHERE postable ORDER BY code")
         return [{"value": r["code"], "label": f"{r['code']} {r['description']}"} for r in rows]
+    if kind == "payment_terms":
+        rows = ana.sql("SELECT code, name FROM finance.payment_term WHERE active ORDER BY name LIMIT 500")
+        return [{"value": r["code"], "label": f"{r['name']} ({r['code']})"} for r in rows]
     if kind == "bank_accounts":
         rows = ana.sql("SELECT code, name FROM finance.bank_account WHERE active ORDER BY code LIMIT 500")
         return [{"value": r["code"], "label": f"{r['code']} — {r['name']}"} for r in rows]

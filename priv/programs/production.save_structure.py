@@ -8,8 +8,11 @@ from ana_lib.production import common
 
 PARAMS = {
     "product": {"type": "str", "required": True, "label": "item fabricado", "lookup": {"program": "production.lookup", "params": {"kind": "products"}}},
-    "lines": {"type": "list", "required": True, "label": "componentes",
-              "help": '[{"component": "MCU-ARM-M4", "quantity": 1, "scrap_pct": 2, "phantom": false}]'},
+    "lines": {"type": "list", "required": True, "label": "componentes", "add_label": "Adicionar componente", "columns": {
+        "component": {"type": "str", "required": True, "label": "componente", "lookup": {"program": "production.lookup", "params": {"kind": "products"}}},
+        "quantity": {"type": "decimal", "required": True, "default": 1, "label": "quantidade por unidade"},
+        "scrap_pct": {"type": "decimal", "label": "perda (%)"},
+        "phantom": {"type": "bool", "label": "fantasma (explode direto)"}}},
     "notes": {"type": "str", "label": "observação"},
 }
 

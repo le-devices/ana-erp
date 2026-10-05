@@ -5,7 +5,7 @@
 from ana_lib.field import common
 
 PARAMS = {
-    "order": {"type": "int", "required": True, "label": "OS"},
+    "order": {"type": "int", "required": True, "label": "OS", "lookup": {"program": "logistics.lookup", "params": {"kind": "service_orders"}}},
     "answers": {"type": "list", "label": "respostas", "help": '[{"item": 1, "answer": "ok"}]'},
 }
 

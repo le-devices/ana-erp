@@ -3319,5 +3319,144 @@ class TestLogisticsField(Base):
             self.run_program(purge, {"ids": ids, "order_id": order_id})
 
 
+# ---------------------------------------------------------------- spec 031
+class TestPaymentTermsCredit(Base):
+    """Payment terms with installments, credit limit, delinquency block, releases; sales form behaviors."""
+
+    @classmethod
+    def setUpClass(cls):
+        super().setUpClass()
+        c = cls.client
+        cls.sfx = SUFFIX[-5:]
+        cls.item = f"C{cls.sfx}IT"
+        c.call("base.save_product", code=cls.item, description=f"Item crédito {SUFFIX}", price="100")
+        c.call("inventory.stock_in", product=cls.item, quantity=50, warehouse="CENTRAL")
+        cls.term3 = f"T{cls.sfx}3X"
+        c.call("finance.save_payment_term", code=cls.term3, name="Boleto 30/60/90 (teste)", method="boleto", installments="30/60/90")
+
+    def ok(self, _program, **params):
+        s, c, _ = self.run_program(_program, params)
+        self.assertEqual(s, 200, c)
+        self.assertNotIn("error", c, c.get("error"))
+        return c["result"]
+
+    def err(self, _program, **params):
+        s, c, _ = self.run_program(_program, params)
+        self.assertIn("error", c, c)
+        return c["error"]["code"]
+
+    def customer(self, tag):
+        return self.client.call("base.save_party", name=f"Cliente {tag} {SUFFIX}", state="SP")["id"]
+
+    def overdue_bill(self, customer, days, amount=50):
+        name = f"test.overdue_{SUFFIX}"
+        if name not in CREATED_PROGRAMS:
+            self.save(name, "def main(customer, days, amount):\n"
+                            "    return ana.sql_value(\"INSERT INTO finance.bill (kind, party_id, document, issue_date, due_date, amount) \"\n"
+                            "        \"VALUES ('receivable', $1, 'TESTE-ATRASO', current_date - $2::int - 30, current_date - $2::int, $3::numeric) RETURNING id\",\n"
+                            "        customer, days, amount)\n")
+        return self.ok(name, customer=customer, days=days, amount=amount)
+
+    def order(self, customer, **extra):
+        return self.run_program("sales.create_order", {"customer": customer, "items": [{"product": self.item, "quantity": 1}], **extra})
+
+    def test_ca_031_01_three_installments_with_cents_in_the_last(self):
+        cust = self.customer("Parcelas")
+        o = self.ok("sales.create_order", customer=cust, items=[{"product": self.item, "quantity": 1}], payment_term=self.term3)
+        self.assertEqual(o["payment_term"], self.term3)
+        inv = self.ok("sales.invoice_order", number=o["number"])
+        self.assertEqual(inv["installments"], 3)
+        s, c, _ = http("POST", "/api/sql", {"sql": "SELECT installment, installments, amount, due_date - issue_date, payment_method, document "
+                                                   f"FROM finance.bill WHERE id IN ({','.join(map(str, inv['bills']))}) ORDER BY installment"},
+                       self.token)
+        self.assertEqual(s, 200, c)
+        self.assertEqual([(r[0], r[1], Decimal(r[2]), int(r[3]), r[4]) for r in c["rows"]],
+                         [(1, 3, Decimal("33.33"), 30, "boleto"), (2, 3, Decimal("33.33"), 60, "boleto"), (3, 3, Decimal("33.34"), 90, "boleto")])
+        self.assertTrue(all(r[5].endswith(f"/{k}") for k, r in enumerate(c["rows"], start=1)))
+        sim = self.ok("finance.simulate_payment", term=self.term3, amount="100")
+        self.assertIn("installments", json.dumps(sim))
+
+    def test_rf_031_01_installments_must_sum_100(self):
+        self.assertEqual(self.err("finance.save_payment_term", code=f"T{self.sfx}BAD", name="Errada", method="boleto",
+                                  schedule=[{"days": 30, "pct": 50}, {"days": 60, "pct": 40}]), "INVALID_INSTALLMENTS")
+
+    def test_ca_031_02_overdue_customer_refused_and_one_time_release(self):
+        cust = self.customer("Atraso")
+        self.ok("finance.save_credit_profile", customer=cust, grace_days=5, auto_block=True)
+        self.overdue_bill(cust, 3)                     # within the grace period: still buys
+        self.ok("sales.create_order", customer=cust, items=[{"product": self.item, "quantity": 1}])
+        self.overdue_bill(cust, 10)                    # beyond: blocked
+        s, c, _ = self.order(cust)
+        self.assertEqual(c["error"]["code"], "CUSTOMER_BLOCKED", c)
+        self.assertIn("inadimplência", c["error"]["message"])
+        self.assertEqual(self.err("field.open_order", customer=cust, description="Visita"), "CUSTOMER_BLOCKED")
+        self.ok("finance.credit_block", customer=cust, action="release_order", reason="pagamento combinado com o gerente")
+        self.ok("sales.create_order", customer=cust, items=[{"product": self.item, "quantity": 1}])
+        self.assertEqual(self.order(cust)[1]["error"]["code"], "CUSTOMER_BLOCKED")    # the release is used once
+        self.assertEqual(self.count("finance.credit_release", f"party_id = {cust} AND used_at IS NOT NULL"), 1)
+
+    def test_ca_031_02b_auto_block_off_by_default(self):
+        # P13: existing installations are not blocked suddenly; the policy ships with auto_block off.
+        cust = self.customer("SemPolitica")
+        self.overdue_bill(cust, 40)
+        if self.scalar("SELECT auto_block FROM finance.credit_policy WHERE id = 1") in (False, "f", "false"):
+            self.ok("sales.create_order", customer=cust, items=[{"product": self.item, "quantity": 1}])
+
+    def test_ca_031_03_credit_limit(self):
+        cust = self.customer("Limite")
+        self.ok("finance.save_credit_profile", customer=cust, credit_limit="250")
+        self.ok("sales.create_order", customer=cust, items=[{"product": self.item, "quantity": 2}])     # 200 of 250
+        s, c, _ = self.order(cust)                                                                      # +100 > 250
+        self.assertEqual(c["error"]["code"], "CUSTOMER_BLOCKED", c)
+        self.assertIn("limite", c["error"]["message"])
+        self.ok("finance.save_credit_profile", customer=cust, credit_limit="150")                      # limit lowered below exposure
+        self.assertIn(cust, self.ok("finance.credit_report")["blocked"])
+
+    def test_ca_031_04_manual_block_and_audited_unblock(self):
+        cust = self.customer("Manual")
+        self.ok("finance.credit_block", customer=cust, action="block", reason="protesto em cartório")
+        s, c, _ = self.order(cust)
+        self.assertIn("bloqueio manual", c["error"]["message"])
+        r = self.ok("finance.credit_block", customer=cust, action="unblock", reason="protesto baixado")
+        self.assertFalse(r["still_blocked"])
+        s, c, _ = http("POST", "/api/sql", {"sql": "SELECT released_by, released_at IS NOT NULL, release_reason FROM finance.credit_block "
+                                                   f"WHERE party_id = {cust}"}, self.token)
+        self.assertEqual(c["rows"], [["admin", True, "protesto baixado"]])
+        self.assertNotIn(cust, self.ok("finance.credit_report")["blocked"])
+        self.ok("sales.create_order", customer=cust, items=[{"product": self.item, "quantity": 1}])
+
+    def test_invoice_refused_for_blocked_customer(self):
+        cust = self.customer("Fatura")
+        o = self.ok("sales.create_order", customer=cust, items=[{"product": self.item, "quantity": 1}])
+        self.ok("finance.credit_block", customer=cust, action="block", reason="cheque devolvido")
+        self.assertEqual(self.err("sales.invoice_order", number=o["number"]), "CUSTOMER_BLOCKED")
+        self.ok("finance.credit_block", customer=cust, action="release_invoice", order=o["number"], reason="liberado pela diretoria")
+        self.assertEqual(self.ok("sales.invoice_order", number=o["number"])["number"], o["number"])
+
+    def test_term_not_allowed_for_customer(self):
+        cust = self.customer("Restrito")
+        self.ok("finance.save_credit_profile", customer=cust, allowed_terms=["AVISTA"])
+        self.assertEqual(self.err("sales.create_order", customer=cust, items=[{"product": self.item, "quantity": 1}],
+                                  payment_term=self.term3), "PAYMENT_TERM_NOT_ALLOWED")
+
+    def test_sales_form_refuse_transfer_and_brazilian_decimals(self):
+        cust = self.customer("Deposito")
+        item = f"C{self.sfx}TR"
+        self.client.call("base.save_product", code=item, description=f"Item transferência {SUFFIX}", price="10")
+        self.ok("inventory.stock_in", product=item, quantity=5, warehouse="LAB")
+        self.assertEqual(self.err("sales.create_order", customer=cust, items=[{"product": item, "quantity": 3}], fulfill="refuse"),
+                         "INSUFFICIENT_STOCK")
+        warn = self.ok("sales.create_order", customer=cust, items=[{"product": item, "quantity": 3, "price": "9,50"}])
+        self.assertEqual((Decimal(warn["total"]), warn["shortages"][0]["product"], warn["transfers"]), (Decimal("28.50"), item, []))
+        t = self.ok("sales.create_order", customer=cust, items=[{"product": item, "quantity": "2"}], fulfill="transfer")
+        self.assertEqual([(x["from"], Decimal(str(x["quantity"]))) for x in t["transfers"]], [("LAB", Decimal(2))])
+        opts = self.ok("sales.lookup", kind="products", warehouse="LAB")
+        mine = [o for o in opts if o["value"] == item][0]
+        self.assertIn("saldo 3", mine["label"])                    # pt-BR, no trailing zeros ("3", not "3.000")
+        self.assertIn("R$ 10,00", mine["label"])
+        whs = [o["value"] for o in self.ok("sales.lookup", kind="warehouses")]
+        self.assertTrue("CENTRAL" in whs and "TRANSITO" not in whs and "QUARENTENA" not in whs)
+
+
 if __name__ == "__main__":
     unittest.main()

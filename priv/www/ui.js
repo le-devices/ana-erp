@@ -154,6 +154,9 @@
     close: "M6 6l12 12M18 6L6 18",
     folder: "M3.5 7.5a2 2 0 0 1 2-2h4l2 2h7a2 2 0 0 1 2 2v7.5a2 2 0 0 1-2 2h-13a2 2 0 0 1-2-2z",
     file: "M7 3.5h6.5l4 4V20a.5.5 0 0 1-.5.5H7a.5.5 0 0 1-.5-.5V4a.5.5 0 0 1 .5-.5zM13.5 3.5V8h4",
+    calendar: "M5 6.5h14v13H5zM5 10.5h14M9 4v4M15 4v4",
+    clock: "M12 4.5a7.5 7.5 0 1 1 0 15 7.5 7.5 0 0 1 0-15zM12 8v4.5l3 2",
+    plus: "M12 5v14M5 12h14",
   };
   const SVG_NS = "http://www.w3.org/2000/svg";
   function icon(name, size = 18) {

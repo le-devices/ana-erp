@@ -2,7 +2,9 @@
 # ana:exposed yes
 from ana_lib.projects import access
 
-PARAMS = {"id": {"type": "int", "required": True}}
+PARAMS = {
+    "id": {"type": "int", "required": True, "label": "apontamento (id)"},
+}
 
 
 def main(id):

@@ -11,11 +11,11 @@ import datetime
 from ana_lib.projects import access
 
 PARAMS = {
-    "project": {"type": "str", "required": True},
-    "ids": {"type": "list"},
-    "through": {"type": "date"},
-    "reject": {"type": "bool", "default": False},
-    "reason": {"type": "str"},
+    "project": {"type": "str", "required": True, "label": "projeto", "lookup": {"program": "projects.lookup", "params": {"kind": "projects"}}},
+    "ids": {"type": "list", "label": "apontamentos (ids)"},
+    "through": {"type": "date", "label": "até a data"},
+    "reject": {"type": "bool", "default": False, "label": "recusar"},
+    "reason": {"type": "str", "label": "motivo"},
 }
 
 

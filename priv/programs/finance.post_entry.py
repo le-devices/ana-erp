@@ -9,7 +9,11 @@ from decimal import Decimal
 
 PARAMS = {
     "memo": {"type": "str", "required": True, "label": "histórico"},
-    "lines": {"type": "list", "required": True, "label": "linhas"},
+    "lines": {"type": "list", "required": True, "label": "linhas (débitos = créditos)", "columns": {
+        "account": {"type": "str", "required": True, "label": "conta", "lookup": {"program": "finance.lookup", "params": {"kind": "accounts"}}},
+        "debit": {"type": "decimal", "label": "débito"},
+        "credit": {"type": "decimal", "label": "crédito"},
+        "cost_center": {"type": "str", "label": "centro de custo", "lookup": {"program": "finance.lookup", "params": {"kind": "cost_centers"}}}}},
     "entry_date": {"type": "date", "label": "data (vazio = hoje)"},
     "document": {"type": "str", "label": "documento"},
 }

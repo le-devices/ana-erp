@@ -8,10 +8,10 @@ import datetime
 from ana_lib.projects import access
 
 PARAMS = {
-    "project": {"type": "str", "required": True},
-    "start": {"type": "date"},
-    "end": {"type": "date"},
-    "approved_only": {"type": "bool", "default": True},
+    "project": {"type": "str", "required": True, "label": "projeto", "lookup": {"program": "projects.lookup", "params": {"kind": "projects"}}},
+    "start": {"type": "date", "label": "de"},
+    "end": {"type": "date", "label": "até"},
+    "approved_only": {"type": "bool", "default": True, "label": "só aprovados"},
 }
 
 

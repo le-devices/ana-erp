@@ -6,12 +6,12 @@
 from ana_lib.projects import access
 
 PARAMS = {
-    "id": {"type": "int"},
-    "name": {"type": "str", "required": True},
-    "profile": {"type": "str", "required": True},
-    "hourly_cost": {"type": "decimal", "default": 0},
-    "username": {"type": "str"},
-    "active": {"type": "bool", "default": True},
+    "id": {"type": "int", "label": "colaborador (id; vazio = novo)"},
+    "name": {"type": "str", "required": True, "label": "nome"},
+    "profile": {"type": "str", "required": True, "label": "perfil", "lookup": {"program": "projects.lookup", "params": {"kind": "profiles"}}},
+    "hourly_cost": {"type": "decimal", "default": 0, "label": "custo por hora (confidencial)"},
+    "username": {"type": "str", "label": "usuário do sistema"},
+    "active": {"type": "bool", "default": True, "label": "ativo"},
 }
 
 

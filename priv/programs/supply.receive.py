@@ -22,7 +22,12 @@ PARAMS = {
     "price": {"type": "decimal", "label": "preço na nota (vazio = o da ordem)", "order": 4},
     "document": {"type": "str", "label": "nota fiscal / documento", "order": 5},
     "note": {"type": "str", "label": "observação (aceite de serviço)", "order": 6},
-    "lines": {"type": "list", "label": "várias linhas (integração)", "order": 7},
+    "lines": {"type": "list", "label": "várias linhas de uma vez", "order": 7, "columns": {
+        "line": {"type": "int", "required": True, "label": "linha",
+                 "lookup": {"program": "supply.lookup", "params": {"kind": "order_lines"}, "depends": ["order"]}},
+        "quantity": {"type": "decimal", "label": "quantidade (vazio = o pendente)"},
+        "price": {"type": "decimal", "label": "preço na nota (vazio = o da ordem)"},
+        "note": {"type": "str", "label": "observação"}}},
 }
 CENT = Decimal("0.01")
 KIND_OF_EXPENSE = {"goods": "component", "service": "subcontract"}

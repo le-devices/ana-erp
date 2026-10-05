@@ -6,11 +6,11 @@
 from ana_lib.util import validation as v
 
 PARAMS = {
-    "code": {"type": "str", "required": True},
-    "description": {"type": "str", "required": True},
-    "price": {"type": "decimal", "required": True},
-    "unit": {"type": "str", "default": "UN"},
-    "kind": {"type": "str", "default": "goods"},
+    "code": {"type": "str", "required": True, "label": "código"},
+    "description": {"type": "str", "required": True, "label": "descrição"},
+    "price": {"type": "decimal", "required": True, "label": "preço"},
+    "unit": {"type": "str", "default": "UN", "label": "unidade"},
+    "kind": {"type": "str", "default": "goods", "label": "tipo", "choices": [["goods", "Mercadoria (controla estoque)"], ["service", "Serviço"]]},
 }
 
 

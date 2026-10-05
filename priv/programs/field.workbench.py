@@ -23,7 +23,7 @@ def main():
                 "_actions": [{"label": "Agendar", "program": "field.schedule", "params": {"order": r["number"]}, "style": "primary",
                               "ask": {"technician": {"type": "int", "label": "técnico", "required": True,
                                                      "lookup": {"program": "logistics.lookup", "params": {"kind": "technicians"}}},
-                                      "start": {"type": "str", "label": "início (AAAA-MM-DD HH:MM)", "required": True},
+                                      "start": {"type": "datetime", "label": "início", "required": True},
                                       "hours": {"type": "decimal", "label": "duração (h)"}}}]} for r in rows],
               title="Chamados a agendar")
     done = ana.sql("SELECT o.number, p.name, o.done_at FROM field.service_order o JOIN base.party p ON p.id = o.customer_id "

@@ -10,7 +10,9 @@ from ana_lib.production import common
 
 PARAMS = {
     "order": {"type": "int", "required": True, "label": "ordem", "lookup": {"program": "production.lookup", "params": {"kind": "orders"}}},
-    "lines": {"type": "list", "label": "linhas e quantidades (vazio = tudo o que falta)", "help": '[{"line": 1, "quantity": 5}]'},
+    "lines": {"type": "list", "label": "linhas e quantidades (vazio = tudo o que falta)", "columns": {
+        "line": {"type": "int", "required": True, "label": "linha da ordem"},
+        "quantity": {"type": "decimal", "required": True, "label": "quantidade"}}},
 }
 
 

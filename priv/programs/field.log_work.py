@@ -5,11 +5,11 @@
 from ana_lib.field import common
 
 PARAMS = {
-    "order": {"type": "int", "required": True, "label": "OS"},
+    "order": {"type": "int", "required": True, "label": "OS", "lookup": {"program": "logistics.lookup", "params": {"kind": "service_orders"}}},
     "kind": {"type": "str", "default": "work", "label": "tipo", "choices": [["work", "Trabalho"], ["travel", "Deslocamento"]]},
     "hours": {"type": "decimal", "required": True, "label": "horas"},
     "km": {"type": "decimal", "default": 0, "label": "km (deslocamento)"},
-    "technician": {"type": "int", "label": "técnico (vazio = eu)"},
+    "technician": {"type": "int", "label": "técnico (vazio = eu)", "lookup": {"program": "logistics.lookup", "params": {"kind": "technicians"}}},
     "note": {"type": "str", "label": "observação"},
     "client_key": {"type": "str", "label": "chave do app (idempotência)"},
 }
