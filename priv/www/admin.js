@@ -686,7 +686,7 @@
   const STATE = { green: ["●", "normal", "ok"], yellow: ["▲", "atenção", "warn"], red: ["■", "falha", "off"] };
   const SEVERITY = { info: ["ℹ", "informação", ""], warning: ["▲", "atenção", "warn"], serious: ["◆", "sério", "off"], critical: ["■", "crítico", "off"] };
   const COMPONENT = { database: "Banco de dados", pool_core: "Conexões do núcleo", pool_programs: "Conexões dos programas",
-    python: "Processos Python", scheduler: "Agendamento", access_log: "Registro de acessos", remote_systems: "Sistemas remotos" };
+    python: "Processos Python", scheduler: "Agendamento", access_log: "Registro de acessos", remote_systems: "Sistemas remotos", integrations: "Integrações" };
   const stateChip = (s) => { const [icon, label, cls] = STATE[s] || ["?", s, ""]; return pill(`${icon} ${label}`, cls); };
   const sevChip = (s) => { const [icon, label, cls] = SEVERITY[s] || ["", s, ""]; return pill(`${icon} ${label}`, cls); };
   const n2 = (v) => (v === null || v === undefined ? "—" : Number(v).toLocaleString("pt-BR", { maximumFractionDigits: 1 }));
@@ -818,6 +818,140 @@
           el("div", { class: "muted small", text: `${a.rule} · visto pela primeira vez ${fmtDate(a.first_seen)} · última ${fmtDate(a.last_seen)}` }));
         return card;
       })) : el("p", { class: "muted", text: status === "open" ? "Nenhuma dica aberta. Bom sinal." : "Nada aqui." }));
+  }
+
+  // ------------------------------------------------------------------ integrations (spec 017)
+  const MSG_STATUS = { pending: "pendente", processing: "processando", done: "entregue", dead: "esgotada", discarded: "descartada" };
+  const SECRET_KEYS = { none: [], basic: ["username", "password"], bearer: ["token"], api_key: ["api_key"],
+                        oauth2_client: ["client_id", "client_secret"] };
+
+  async function integrations(tab = "panel", filter = {}) {
+    const tabs = el("div", { class: "sub-tabs" }, [["panel", "Painel"], ["connectors", "Conectores"], ["outbox", "Saída"], ["inbox", "Entrada"]]
+      .map(([k, l]) => el("button", { class: k === tab ? "active" : "", text: l, onclick: () => guard(() => integrations(k)) })));
+    const body = el("div");
+    main().replaceChildren(...header("Integrações", "Conectores com bancos, gateways e serviços externos. Programas usam o conector (ana.http, ana.send); segredos ficam no cofre e nunca chegam aos programas. Mensagens são entregues pelo menos uma vez, com novas tentativas."), tabs, body);
+    if (tab === "panel") {
+      const rows = await API.admin.integrationStats();
+      body.replaceChildren(table([
+        { label: "Conector", value: (c) => c.name },
+        { label: "Tipo", value: (c) => (c.kind === "http_api" ? "saída HTTP" : "webhook de entrada") },
+        { label: "Situação", value: (c) => (c.active ? pill("ativo", "ok") : pill("inativo", "off")) },
+        { label: "Chamadas 24 h", value: (c) => c.calls },
+        { label: "Erro %", value: (c) => (c.error_pct === null ? "—" : c.error_pct) },
+        { label: "p95 (ms)", value: (c) => c.p95_ms ?? "—" },
+        { label: "Fila de saída", value: (c) => `${c.out_pending}` + (c.out_dead ? ` · ${c.out_dead} esgotada(s)` : "") },
+        { label: "Fila de entrada", value: (c) => `${c.in_pending}` + (c.in_dead ? ` · ${c.in_dead} esgotada(s)` : "") },
+      ], rows, { empty: "Nenhum conector cadastrado.", onRow: (c) => guard(() => integrations(c.kind === "http_api" ? "outbox" : "inbox", { connector: c.name })) }));
+    } else if (tab === "connectors") {
+      body.replaceChildren(await connectorsView());
+    } else {
+      body.replaceChildren(await messagesView(tab, filter));
+    }
+  }
+
+  async function connectorsView() {
+    const data = await API.admin.connectors();
+    const side = el("div");
+    const form = (c = {}) => {
+      const f = {
+        name: el("input", { value: c.name || "", placeholder: "ex.: banco_x", disabled: !!c.name }),
+        description: el("input", { value: c.description || "" }),
+        kind: el("select", {}, [["http_api", "Saída HTTP (API)"], ["webhook_in", "Webhook de entrada"]].map(([v, l]) => el("option", { value: v, text: l, selected: c.kind === v }))),
+        base_url: el("input", { value: c.base_url || "", placeholder: "https://api.exemplo.com" }),
+        auth: el("select", {}, [["none", "Nenhuma"], ["basic", "Usuário e senha"], ["bearer", "Token"], ["api_key", "Chave de API"], ["oauth2_client", "OAuth2 (client credentials)"]].map(([v, l]) => el("option", { value: v, text: l, selected: (c.auth || "none") === v }))),
+        token_url: el("input", { value: c.token_url || "", placeholder: "https://… (OAuth2)" }),
+        allowed_hosts: el("input", { value: (c.allowed_hosts || []).join(", "), placeholder: "outros hosts além do da URL base" }),
+        outbound_program: el("input", { value: c.outbound_program || "", placeholder: "programa que entrega a caixa de saída" }),
+        inbound_program: el("input", { value: c.inbound_program || "", placeholder: "programa que processa os webhooks" }),
+        run_as: el("input", { value: c.run_as || "system" }),
+        max_attempts: el("input", { type: "number", min: 1, max: 50, value: c.max_attempts || 8 }),
+        timeout_ms: el("input", { type: "number", min: 100, max: 120000, value: c.timeout_ms || 15000 }),
+        rate_per_min: el("input", { type: "number", min: 1, value: c.rate_per_min || 600 }),
+        options: el("textarea", { rows: 3, class: "params-json", value: JSON.stringify(c.options || {}, null, 1) }),
+        active: el("input", { type: "checkbox", checked: c.active !== false }),
+      };
+      const secrets = el("div");
+      const drawSecrets = () => {
+        const have = new Map((c.secrets || []).map((x) => [x.key, x]));
+        const keys = [...new Set([...(SECRET_KEYS[f.auth.value] || []), ...(f.kind.value === "webhook_in" ? ["hmac_key"] : []), ...have.keys()])];
+        secrets.replaceChildren(el("h4", { text: "Segredos (só escrita)" }), ...keys.map((k) => {
+          const input = el("input", { type: "password", autocomplete: "new-password", placeholder: have.has(k) ? "definido — digite para trocar" : "não definido" });
+          const exp = el("input", { type: "date", value: (have.get(k) || {}).expires_at || "" });
+          return el("div", { class: "row-buttons" }, el("code", { text: k }), input, exp,
+            have.get(k) && have.get(k).expiring ? pill("vence em breve", "warn") : null,
+            el("button", { type: "button", class: "small", text: "Gravar", disabled: !c.name, onclick: () => guard(async () => {
+              if (!input.value) return;
+              await API.admin.saveSecret(c.name, k, input.value, exp.value); input.value = ""; toast("Segredo gravado no cofre.");
+              integrations("connectors");
+            }) }));
+        }), c.name ? null : el("p", { class: "muted small", text: "Salve o conector antes de gravar segredos." }),
+          data.vault ? null : el("p", { class: "muted small", text: "Cofre desligado: defina ANA_MASTER_KEY em todos os nós." }));
+      };
+      f.auth.addEventListener("change", drawSecrets);
+      f.kind.addEventListener("change", drawSecrets);
+      drawSecrets();
+      side.replaceChildren(el("form", { class: "form-card", onsubmit: (e) => { e.preventDefault(); guard(async () => {
+        let options;
+        try { options = JSON.parse(f.options.value || "{}"); } catch (_) { toast("Opções devem ser um JSON de objeto.", true); return; }
+        const name = f.name.value.trim();
+        await API.admin.saveConnector(name, { description: f.description.value, kind: f.kind.value, base_url: f.base_url.value.trim() || null,
+          auth: f.auth.value, token_url: f.token_url.value.trim() || null,
+          allowed_hosts: f.allowed_hosts.value.split(",").map((h) => h.trim()).filter(Boolean),
+          outbound_program: f.outbound_program.value.trim() || null, inbound_program: f.inbound_program.value.trim() || null,
+          run_as: f.run_as.value.trim() || "system", max_attempts: Number(f.max_attempts.value), timeout_ms: Number(f.timeout_ms.value),
+          rate_per_min: Number(f.rate_per_min.value), options, active: f.active.checked });
+        toast("Conector salvo."); integrations("connectors");
+      }); } },
+        el("h3", { text: c.name ? `Conector ${c.name}` : "Novo conector" }),
+        field("Nome", f.name), field("Descrição", f.description), field("Tipo", f.kind), field("URL base", f.base_url),
+        field("Autenticação", f.auth), field("URL do token (OAuth2)", f.token_url), field("Hosts permitidos", f.allowed_hosts),
+        field("Programa de entrega (saída)", f.outbound_program), field("Programa de processamento (entrada)", f.inbound_program),
+        field("Roda como (usuário dono)", f.run_as), field("Tentativas", f.max_attempts), field("Tempo máximo (ms)", f.timeout_ms),
+        field("Chamadas por minuto", f.rate_per_min), field("Opções para os programas (JSON)", f.options), check("Ativo", f.active),
+        el("div", { class: "row-buttons" }, el("button", { class: "primary", type: "submit", text: "Salvar" })),
+        secrets,
+        c.kind === "webhook_in" ? el("p", { class: "muted small", text: `Endereço: POST /hooks/${c.name} com cabeçalhos ${c.timestamp_header} (segundos), ${c.signature_header} = sha256=<HMAC-SHA256 hex de "carimbo.corpo"> e ${c.event_id_header}.` }) : null));
+    };
+    form();
+    return el("div", { class: "admin-columns" },
+      el("div", {}, el("div", { class: "row-buttons" }, el("button", { text: "Novo conector", onclick: () => form() })),
+        table([
+          { label: "Nome", value: (c) => c.name },
+          { label: "Tipo", value: (c) => (c.kind === "http_api" ? "saída HTTP" : "webhook") },
+          { label: "Destino", value: (c) => c.base_url || `/hooks/${c.name}` },
+          { label: "Segredos", value: (c) => (c.secrets.length ? c.secrets.map((x) => x.key).join(", ") : "—") },
+          { label: "Situação", value: (c) => (c.active ? pill("ativo", "ok") : pill("inativo", "off")) },
+        ], data.connectors, { empty: "Nenhum conector.", onRow: (c) => form(c) })),
+      side);
+  }
+
+  async function messagesView(kind, filter = {}) {
+    const status = el("select", {}, [["", "Todas"], ...Object.entries(MSG_STATUS)].map(([v, l]) => el("option", { value: v, text: l, selected: (filter.status || "") === v })));
+    const connector = el("input", { value: filter.connector || "", placeholder: "conector" });
+    const reload = () => guard(() => integrations(kind, { status: status.value || undefined, connector: connector.value.trim() || undefined }));
+    status.addEventListener("change", reload);
+    connector.addEventListener("keydown", (e) => { if (e.key === "Enter") reload(); });
+    const rows = await API.admin.integrationMessages({ kind, ...filter });
+    const detail = el("div");
+    return el("div", {},
+      el("div", { class: "row-buttons" }, field("Situação", status), field("Conector", connector), el("button", { text: "Atualizar", onclick: reload })),
+      table([
+        { label: "#", value: (m) => m.id },
+        { label: "Conector", value: (m) => m.connector },
+        { label: kind === "outbox" ? "Tipo" : "Evento", value: (m) => (kind === "outbox" ? m.kind : m.event_id) },
+        { label: "Situação", value: (m) => pill(MSG_STATUS[m.status] || m.status, m.status === "done" ? "ok" : m.status === "dead" ? "warn" : "") },
+        { label: "Tentativas", value: (m) => m.attempts },
+        { label: "Último erro", value: (m) => m.last_error || "" },
+        { label: "Criada", value: (m) => fmtDate(m.created_at) },
+        { label: "", value: (m) => el("div", { class: "row-buttons" },
+            ["dead", "discarded"].includes(m.status) ? el("button", { class: "small", text: "Reprocessar", onclick: () => guard(async () => {
+              await API.admin.integrationAction(kind, m.id, "reprocess"); toast("Mensagem voltou para a fila."); reload(); }) }) : null,
+            ["dead", "pending"].includes(m.status) ? el("button", { class: "small quiet", text: "Descartar", onclick: () => guard(async () => {
+              if (!confirm(`Descartar a mensagem ${m.id}? Ela não será entregue.`)) return;
+              await API.admin.integrationAction(kind, m.id, "discard"); reload(); }) }) : null) },
+      ], rows, { empty: "Nenhuma mensagem.", onRow: (m) => detail.replaceChildren(el("h4", { text: `Mensagem ${m.id}` }),
+        el("pre", { class: "code-view", text: JSON.stringify({ payload: m.payload, result: m.result, headers: m.headers }, null, 2) })) }),
+      detail);
   }
 
   // ------------------------------------------------------------------ product updates (spec 028)
@@ -959,7 +1093,7 @@
                        window.AnaScheduler.holidays(hol)]);
   }
 
-  const SECTIONS = { users, groups, settings, company, commands, remote, accounts, limits, consumption, scheduler, monitor, audit, retention, health, sqlperf, advice, updates };
+  const SECTIONS = { users, groups, settings, company, commands, remote, accounts, limits, consumption, scheduler, monitor, audit, retention, health, sqlperf, advice, updates, integrations };
 
   function show(section) {
     refreshUpdatesCount();

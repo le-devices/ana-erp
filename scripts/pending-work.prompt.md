@@ -17,7 +17,7 @@ Você trabalha no projeto ANA ERP em /home/andre/ana-erp: um ERP com núcleo Erl
 4. 019 — observabilidade (`specs/019-observability`) — implementada; T-019-08b e T-019-09b ficam para o fim da fila
 5. 023 — T-023-09: troca real de primário com cluster PostgreSQL local — implementada
 6. 013 — cadeia de suprimentos (`specs/013-supply-chain`) — implementada
-7. 017 — hub de integrações (`specs/017-integration-hub`)
+7. 017 — hub de integrações (`specs/017-integration-hub`) — implementada; T-017-02b/02c/05b/08b ficam para o fim da fila
 8. 016 — repositório de arquivos (`specs/016-file-repository`)
 9. 014 — produção e capacidade (`specs/014-production-planning`)
 10. 015 — logística e campo (`specs/015-logistics-field-service`)
@@ -25,7 +25,7 @@ Você trabalha no projeto ANA ERP em /home/andre/ana-erp: um ERP com núcleo Erl
 12. 009 — licenciamento (`specs/009-licensing`): é rascunho com decisões em aberto; NÃO implemente — liste as decisões necessárias no relatório e pare.
 13. 020 — tarefas restantes da arquitetura da informação: próxima ação sugerida, fluxos guiados, continuidade (T-020-09..11) e auditoria de acessibilidade (T-020-07). Itens de fluxo podem ser adiantados quando a spec em andamento precisar deles.
 
-Escolha o **primeiro item da lista cuja `tasks.md` ainda tenha tarefas `[ ]`** (exceções: a T-023-09 é o item 5; as T-019-08b e T-019-09b ficam para depois de todos os outros itens). Se tudo estiver `[x]`, apenas rode as suítes e relate.
+Escolha o **primeiro item da lista cuja `tasks.md` ainda tenha tarefas `[ ]`** (exceções: a T-023-09 é o item 5; as T-019-08b, T-019-09b, T-017-02b, T-017-02c, T-017-05b e T-017-08b ficam para depois de todos os outros itens). Se tudo estiver `[x]`, apenas rode as suítes e relate.
 
 ## Passos
 1. `cd /home/andre/ana-erp && git status` — se houver alterações não commitadas que não são suas, não as descarte; trabalhe por cima e relate.

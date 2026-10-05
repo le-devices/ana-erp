@@ -409,9 +409,11 @@ prepare_run(P, L, St) ->
                 undefined -> "BEGIN; ";
                 S -> ["BEGIN ISOLATION LEVEL REPEATABLE READ; SET TRANSACTION SNAPSHOT '", S, "'; "]
             end,
+            %% ana.username: informational (outbox created_by, spec 017); never used for authorization.
             Begin = io_lib:format(
-                "~sSET LOCAL statement_timeout = ~b; SET LOCAL lock_timeout = ~b",
-                [Snap, maps:get(<<"sql_timeout_ms">>, L), maps:get(<<"lock_timeout_ms">>, L)]),
+                "~sSET LOCAL statement_timeout = ~b; SET LOCAL lock_timeout = ~b; SET LOCAL ana.username = '~ts'",
+                [Snap, maps:get(<<"sql_timeout_ms">>, L), maps:get(<<"lock_timeout_ms">>, L),
+                 binary:replace(maps:get(username, St1#st.user), <<"'">>, <<"''">>, [global])]),
             case lists:flatten([epgsql:squery(C, Begin)]) of
                 [{ok, [], []} | _] = Rs ->
                     case [E || {error, E} <- Rs] of
@@ -510,6 +512,9 @@ request(<<"sql_batch">>, Id, #{<<"sql">> := Sql, <<"batch">> := Batch} = A, St)
 request(<<"remote">>, Id, #{<<"system">> := S, <<"function">> := F} = A, St) ->
     P = maps:get(<<"params">>, A, #{}),
     async(Id, fun(_C) -> ana_remote_system:call(S, F, P) end, St);
+request(<<"http">>, Id, #{<<"connector">> := C, <<"method">> := M, <<"path">> := P} = A, St) ->
+    ExecId = St#st.id,
+    async(Id, fun(_C) -> ana_connector:http(C, M, P, maps:get(<<"options">>, A, #{}), ExecId) end, St);
 request(<<"library_source">>, Id, #{<<"name">> := Name}, St) ->
     respond(Id, {ok, ana_program:library_source(Name)}, St),
     St;
