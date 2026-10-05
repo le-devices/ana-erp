@@ -43,7 +43,7 @@ inglês, como no código (constituição, P2a).
 | 010 | [API pública](010-public-api/spec.md) | Chamadas pela internet por sites e sistemas de terceiros | especificada |
 | 011 | [Administração](011-administration/spec.md) | Usuários e robôs (chaves de API), grupos, parâmetros, monitor, auditoria pela UI; dono obrigatório em toda execução | implementada |
 | 012 | [Governança de execução](012-execution-governance/spec.md) | Limites finos de tempo, CPU, memória, SQL, concorrência e cotas | implementada |
-| 013 | [Cadeia de suprimentos](013-supply-chain/spec.md) | Fornecedores, compras, aprovação, recebimento, reposição | especificada |
+| 013 | [Cadeia de suprimentos](013-supply-chain/spec.md) | Fornecedores, compras, aprovação, recebimento, reposição | implementada |
 | 014 | [Produção e capacidade](014-production-planning/spec.md) | Estruturas, roteiros, necessidades, ordens, capacidade (bens e serviços) | especificada |
 | 015 | [Logística e campo](015-logistics-field-service/spec.md) | Transferências, expedição, devoluções, ordens de serviço, agenda, rotas | especificada |
 | 016 | [Repositório de arquivos](016-file-repository/spec.md) | Pastas, versões, permissões granulares, portal do cliente, links | especificada |

@@ -87,6 +87,7 @@ def main(start, customer=None):
 | `chart` | gráficos: linha, área, colunas, empilhadas, barras e rosca (paleta validada para daltonismo, legenda, dicas, tabela) |
 | `context` | usuário, papel, execução, versão, origem |
 | `Error(code, message, data)` | erro de negócio estruturado |
+| `SqlError` | erro do banco (`sqlstate`); regra de gatilho que levanta `'CODIGO: mensagem'` (check_violation) chega a quem chamou com esse código |
 
 Toda execução é **uma Unidade de Trabalho**: sucesso → COMMIT; erro, prazo
 estourado ou parada → ROLLBACK. Depuração sempre desfaz, salvo se marcado
@@ -110,6 +111,14 @@ estourado ou parada → ROLLBACK. Depuração sempre desfaz, salvo se marcado
   consolidação, orçamento × realizado, **rateio** de custos compartilhados
   (prévia, uma vez por mês), lançamento manual e resultado gerencial por
   centro com gráficos (`centros`); balancete filtrável por centro.
+- **Suprimentos** (spec 013): catálogo de fornecimento (preço, prazo, lote,
+  preferencial), solicitação de compra com **alçadas** por papel ou grupo
+  (quem pede não aprova), ordens por fornecedor, recebimento parcial ou
+  aceite de serviço numa só transação (estoque ou despesa do projeto,
+  lançamento com centro de custo e título a pagar; o banco recusa receber
+  acima da tolerância), sugestão de reposição por conjunto (saldo + em
+  pedido − reservado), desempenho de fornecedores e confirmação de prazo
+  exposta para integração. Tudo começa na bancada `compras`.
 
 ## Consultoria: projetos de clientes (spec 021)
 
@@ -359,9 +368,9 @@ correspondentes são só o valor inicial).
 
 ## Situação das specs
 
-Implementadas: 001–008, 011 (com usuários robô e dono obrigatório), 012, 018, 021 (portal do cliente depende da 016), 019 (faltam alertas configuráveis e OpenTelemetry), 022, 023, 024, 025, 026, 027; 020 parcial (falta próxima ação
+Implementadas: 001–008, 011 (com usuários robô e dono obrigatório), 012, 018, 021 (portal do cliente depende da 016), 019 (faltam alertas configuráveis e OpenTelemetry), 013, 022, 023, 024, 025, 026, 027; 020 parcial (falta próxima ação
 sugerida, fluxos guiados e auditoria de acessibilidade).
 Na fila (ordem em [scripts/pending-work.prompt.md](scripts/pending-work.prompt.md)):
-013 suprimentos, 017 integrações, 016 repositório de
+017 integrações, 016 repositório de
 arquivos, 014 produção, 015 logística, 010 API pública; 009 licenciamento
 aguarda decisões.
