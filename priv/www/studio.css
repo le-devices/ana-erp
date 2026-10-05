@@ -400,3 +400,15 @@ button.link:hover strong { color: var(--accent); }
 .advice-head { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
 .advice-suggestion { display: flex; gap: 8px; align-items: flex-start; margin-top: 6px; }
 .advice-suggestion code { flex: 1 1 auto; white-space: pre-wrap; background: var(--surface-2); padding: 6px 8px; border-radius: 6px; font-size: 12px; }
+
+/* Product updates (spec 028): side-by-side comparison */
+.nav-count { display: inline-block; min-width: 1.4em; padding: 0 .4em; margin-left: .3em; border-radius: 999px;
+  background: var(--accent); color: var(--accent-text); font-size: .75em; text-align: center; }
+.diff-box { overflow: auto; max-height: 70vh; border: 1px solid var(--border); border-radius: 6px; resize: vertical; }
+table.diff { width: 100%; border-collapse: collapse; font-family: var(--mono); font-size: .82em; table-layout: fixed; }
+table.diff th { position: sticky; top: 0; background: var(--surface-2); text-align: left; padding: .3em .5em; }
+table.diff td { padding: 0 .5em; vertical-align: top; white-space: pre-wrap; word-break: break-word; }
+table.diff td.diff-n { width: 3.5em; color: var(--text-2); text-align: right; user-select: none; }
+table.diff tr.diff-del td.diff-code:nth-child(2) { background: rgba(220, 38, 38, .14); }
+table.diff tr.diff-add td.diff-code:nth-child(4) { background: rgba(22, 163, 74, .16); }
+table.diff tr.diff-skip td { color: var(--text-2); text-align: center; font-style: italic; background: var(--surface-2); }

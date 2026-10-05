@@ -200,9 +200,20 @@ for (const [section, marker] of [["groups", "Grupos de acesso"], ["limits", "Per
                                  ["settings", "ceiling_cpu_ms"], ["accounts", "service_revenue"], ["commands", "hello"],
                                  ["remote", "Sistemas remotos"], ["scheduler", "Feriados"], ["monitor", "Execuções ativas"], ["consumption", "CPU total"],
                                  ["retention", "Expurgos recentes"], ["health", "Mudanças de estado"], ["sqlperf", "Desempenho do SQL"],
-                                 ["advice", "Dicas de otimização"], ["audit", "Auditoria"]]) {
+                                 ["advice", "Dicas de otimização"], ["updates", "Atualizações do produto"], ["audit", "Auditoria"]]) {
   await go(w, `#/admin/${section}`);
   await until(() => text("#admin-main").includes(marker), section, jsErrors);
+  if (section === "updates") {
+    // Spec 028: an update row opens the side-by-side comparison (demo.hello is used by the integration suite).
+    const view = [...d.querySelectorAll("#admin-main tbody button")][0];
+    if (view) {
+      view.click();
+      await until(() => text("#admin-main").includes("Instalado × produto"), "product update detail", jsErrors);
+      ok(true, "atualização do produto abre a comparação lado a lado (spec 028)");
+    }
+    const ops = w.AnaAdmin.lineDiff(["a", "b", "c", "d"], ["a", "x", "c", "d", "e"]).map((o) => o.t).join(",");
+    ok(ops === "same,add,del,same,same,add" || ops === "same,del,add,same,same,add", "comparação linha a linha: " + ops);
+  }
 }
 [...d.querySelectorAll("#admin-main .sub-tabs button")].find((b) => b.textContent === "Tarefas internas").click();
 await until(() => text("#admin-main tbody").includes("seed.programs"), "internal tasks", jsErrors);

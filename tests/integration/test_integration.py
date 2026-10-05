@@ -2262,5 +2262,94 @@ class TestSupplyChain(Base):
             self.assertTrue(any(e.get("kind") == "metrics" for e in c["events"]))
 
 
+# ---------------------------------------------------------------- spec 028
+class TestProductUpdates(Base):
+    """A seed newer than the installed program is offered; the administrator decides."""
+    NAME = "demo.hello"
+
+    def psql(self, sql):
+        import subprocess
+        r = subprocess.run(["docker", "compose", "-f", os.path.join(ROOT, "docker-compose.yml"), "exec", "-T", "db",
+                            "psql", "-U", "postgres", "-d", "ana", "-At", "-v", "ON_ERROR_STOP=1", "-c", sql],
+                           capture_output=True, text=True, timeout=60)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        return r.stdout.strip()
+
+    def source(self):
+        s, c, _ = http("GET", f"/api/programs/{self.NAME}", token=self.token)
+        self.assertEqual(s, 200, c)
+        return c["source"], c["version"]
+
+    def put(self, source):
+        s, c, _ = http("PUT", f"/api/programs/{self.NAME}", {"source": source, "comment": "teste 028"}, self.token)
+        self.assertEqual(s, 200, c)
+
+    def base_from_current(self):           # the installation was based on what is there now
+        self.psql(f"UPDATE ana_system.program SET seed_hash = encode(sha256(convert_to(source, 'UTF8')), 'hex') "
+                  f"WHERE name = '{self.NAME}'")
+
+    def check(self):
+        s, c, _ = http("POST", "/api/admin/product-updates/check", {}, self.token)
+        self.assertEqual(s, 200, c)
+        s, c, _ = http("GET", "/api/admin/product-updates", token=self.token)
+        return {u["name"]: u for u in c["updates"]}.get(self.NAME)
+
+    def accept(self, overwrite=False):
+        return http("POST", f"/api/admin/product-updates/{self.NAME}/accept", {"overwrite": overwrite}, self.token)
+
+    def setUp(self):
+        self.put_marker = f"\n# local {SUFFIX}\n"
+
+    def test_ca_028_01_04_unmodified_offer_accept_and_local_customization(self):
+        original, _ = self.source()
+        self.put(original + self.put_marker)                  # "older product version" installed…
+        self.base_from_current()                               # …and not changed here
+        u = self.check()
+        self.assertEqual((u["status"], u["locally_modified"]), ("available", False))
+        s, d, _ = http("GET", f"/api/admin/product-updates/{self.NAME}", token=self.token)
+        self.assertEqual(d["installed"], original + self.put_marker)
+        seed = d["seed_source"]
+        _, before = self.source()
+        s, c, _ = self.accept()
+        self.assertEqual(s, 200, c)
+        now, version = self.source()
+        self.assertEqual((now, version), (seed, before + 1))
+        self.assertEqual(self.check()["status"], "accepted")
+        # CA-028-04: changing it here on top of the current product version offers nothing.
+        self.put(seed + self.put_marker)
+        self.assertNotEqual((self.check() or {}).get("status"), "available")
+        self.put(seed)
+
+    def test_ca_028_02_modified_needs_explicit_overwrite(self):
+        original, _ = self.source()
+        self.put(original + "\n# base antiga\n")
+        self.base_from_current()
+        self.put(original + "\n# base antiga\n" + self.put_marker)   # …and changed here afterwards
+        u = self.check()
+        self.assertEqual((u["status"], u["locally_modified"]), ("available", True))
+        s, c, _ = self.accept()
+        self.assertEqual((s, c["error"]["code"]), (400, "LOCALLY_MODIFIED"))
+        s, c, _ = self.accept(overwrite=True)
+        self.assertEqual(s, 200, c)
+
+    def test_ca_028_03_dismissed_stays_quiet(self):
+        original, _ = self.source()
+        self.put(original + "\n# outra base\n")
+        self.base_from_current()
+        self.assertEqual(self.check()["status"], "available")
+        s, c, _ = http("POST", f"/api/admin/product-updates/{self.NAME}/dismiss", {}, self.token)
+        self.assertEqual(s, 200, c)
+        self.assertEqual(self.check()["status"], "dismissed")
+        s, d, _ = http("GET", f"/api/admin/product-updates/{self.NAME}", token=self.token)
+        self.put(d["seed_source"])                                     # back in sync with the product
+        self.assertIsNone(self.check())                                # the dismissal no longer applies
+
+    def test_ca_028_05_only_admin(self):
+        _, t = new_user("developer")
+        for method, path in (("GET", "/api/admin/product-updates"), ("POST", f"/api/admin/product-updates/{self.NAME}/accept")):
+            s, _, _ = http(method, path, {} if method == "POST" else None, t)
+            self.assertEqual(s, 403)
+
+
 if __name__ == "__main__":
     unittest.main()

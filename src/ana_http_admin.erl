@@ -91,6 +91,23 @@ route(<<"PUT">>, [<<"remote-systems">>, Name], U, Req) ->
         (_, R) -> invalid(R)
     end);
 
+%% --- Product updates (spec 028) -------------------------------------------
+route(<<"GET">>, [<<"product-updates">>], _U, Req) ->
+    {ok, Rows} = ana_product_updates:list(),
+    ana_http:json(200, #{updates => Rows, available => ana_product_updates:pending_count()}, Req);
+route(<<"POST">>, [<<"product-updates">>, <<"check">>], _U, Req) ->
+    reply(ana_product_updates:check(), Req);
+route(<<"POST">>, [<<"product-updates">>, <<"accept-unmodified">>], U, Req) ->
+    reply(ana_product_updates:accept_unmodified(U), Req);
+route(<<"GET">>, [<<"product-updates">>, Name], _U, Req) ->
+    reply(ana_product_updates:detail(Name), Req);
+route(<<"POST">>, [<<"product-updates">>, Name, <<"accept">>], U, Req) ->
+    with_body(Req, fun(B, R) ->
+        reply(ana_product_updates:accept(Name, maps:get(<<"overwrite">>, B, false) =:= true, U), R)
+    end);
+route(<<"POST">>, [<<"product-updates">>, Name, <<"dismiss">>], U, Req) ->
+    reply(ana_product_updates:dismiss(Name, U), Req);
+
 %% --- Limits and quotas (spec 012, RF-012-08) ------------------------------
 route(<<"GET">>, [<<"limit-profiles">>], _U, Req) ->
     reply(ana_limits:list_profiles(), Req);
