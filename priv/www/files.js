@@ -41,8 +41,10 @@
     const canUpload = data.level >= 3 && folder !== null;
     const list = el("div", { class: "files-list" },
       table([
-        { label: "Nome", value: (r) => r.kind === "folder" ? el("button", { class: "linkish", text: "📁 " + r.name, onclick: () => go(r.id) })
-                                                               : el("button", { class: "linkish", text: r.name, onclick: () => guard(() => fileDetail(r.id, detail)) }) },
+        { label: "Nome", value: (r) => r.kind === "folder"
+            ? el("button", { class: "linkish icon-text", onclick: () => go(r.id) }, window.AnaUI.icon("folder", 16), el("span", { text: r.name }))
+            : el("button", { class: "linkish icon-text", onclick: () => guard(() => fileDetail(r.id, detail)) }, window.AnaUI.icon("file", 16),
+                 el("span", { text: r.name })) },
         { label: "Versão", value: (r) => r.version ? `v${r.version}` : "" },
         { label: "Tamanho", value: (r) => size(r.size) },
         { label: "Atualizado", value: (r) => r.updated_at ? fmtDate(r.updated_at) : "" },

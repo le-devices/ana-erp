@@ -59,6 +59,7 @@ inglês, como no código (constituição, P2a).
 | 026 | [Gráficos](026-charts/spec.md) | `ana.chart`: linha, área, colunas, empilhadas, barras, rosca; paleta validada para daltonismo, legenda, dicas e tabela | implementada |
 | 027 | [Centros de custo](027-cost-centers/spec.md) | Centro em cada lançamento (política por conta, garantida no banco), origem automática, hierarquia, orçado × realizado, rateio, lançamento manual, resultado gerencial | implementada |
 | 028 | [Atualização dos programas do produto](028-product-updates/spec.md) | Versão nova de programa do produto oferecida a instalações existentes; administrador compara lado a lado e aceita ou dispensa | implementada |
+| 029 | [Linguagem visual "Linha ANA"](029-visual-language/spec.md) | Barra superior compacta, rotinas como páginas analíticas (indicadores, gráficos em cartões, tabelas em cartão), início em blocos, ícones próprios, claro/escuro | implementada |
 
 ## Glossário
 

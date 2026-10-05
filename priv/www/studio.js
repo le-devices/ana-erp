@@ -15,6 +15,28 @@
     integrations: "Integrações",
   };
   const state = { user: null, targets: new Map(), trail: [] };
+  const AREA_TITLES = { home: "Início", ops: "Operação", files: "Arquivos", portal: "Portal", dev: "Desenvolvimento", admin: "Administração" };
+
+  // ------------------------------------------------------------------ shell menus (spec 029)
+  function closeMenus() {
+    $("#area-menu").classList.remove("open");
+    $("#area-title").setAttribute("aria-expanded", "false");
+    $("#user-menu").hidden = true;
+    $("#user-avatar").setAttribute("aria-expanded", "false");
+  }
+  function toggle(button, open) {
+    const wasOpen = button.getAttribute("aria-expanded") === "true";
+    closeMenus();
+    if (!wasOpen) { open(); button.setAttribute("aria-expanded", "true"); }
+  }
+  async function refreshNotices() {
+    if (!window.AnaScheduler || isExternal()) return;
+    try {
+      const n = await window.AnaScheduler.notifications(document.createElement("div"), true);
+      $("#notices-dot").hidden = !n;
+      $("#notices-btn").title = n ? `${n} aviso(s) das rotinas agendadas` : "Nenhum aviso das rotinas agendadas";
+    } catch (_) { /* notices are a convenience */ }
+  }
 
   const canSee = (minRole) => (ROLE_LEVEL[state.user.role] || 0) >= (ROLE_LEVEL[minRole] || 1);
   const isExternal = () => state.user && state.user.role === "external";
@@ -49,7 +71,15 @@
                               : b.dataset.only === "external" || !canSee(b.dataset.minRole || "user");
     }
     $("#command-form").hidden = isExternal();
-    $("#user-name").textContent = `${state.user.name || state.user.username} (${state.user.role})`;
+    const display = state.user.name || state.user.username;
+    const initials = display.split(/\s+/).filter(Boolean).slice(0, 2).map((w) => w[0].toUpperCase()).join("") || "?";
+    $("#user-name").textContent = display;
+    $("#user-role").textContent = { admin: "administrador", developer: "desenvolvedor", user: "usuário", external: "portal" }[state.user.role] || state.user.role;
+    $("#avatar-initials").textContent = initials;
+    $("#avatar-initials-big").textContent = initials;
+    $("#user-avatar").title = `${display} — minha conta`;
+    $("#notices-btn").hidden = isExternal();
+    refreshNotices();
     refreshTitle(state.user.company);
     showScreen("#app-screen");
     if (!isExternal()) await buildTargets();
@@ -115,6 +145,8 @@
       replace("#/" + area);
     }
     for (const b of $$(".area")) b.classList.toggle("active", b.dataset.area === area);
+    $("#area-title-text").textContent = AREA_TITLES[area] || "ANA";
+    closeMenus();
     for (const a of ["home", "ops", "files", "portal", "dev", "admin"]) $("#area-" + a).hidden = a !== area;
     try {
       if (area === "files") await window.AnaFiles.show(rest);
@@ -198,6 +230,12 @@
     }
     $("#logout").addEventListener("click", async () => { await API.logout(); location.hash = ""; location.reload(); });
     for (const b of $$(".area")) b.addEventListener("click", () => go("#/" + b.dataset.area));
+    $("#area-title").addEventListener("click", (e) => { e.stopPropagation(); toggle($("#area-title"), () => $("#area-menu").classList.add("open")); });
+    $("#user-avatar").addEventListener("click", (e) => { e.stopPropagation(); toggle($("#user-avatar"), () => { $("#user-menu").hidden = false; }); });
+    $("#home-btn").addEventListener("click", () => go(isExternal() ? "#/portal" : "#/home"));
+    $("#notices-btn").addEventListener("click", () => go("#/home"));
+    document.addEventListener("click", (e) => { if (!e.target.closest("#user-menu, #area-menu")) closeMenus(); });
+    document.addEventListener("keydown", (e) => { if (e.key === "Escape") closeMenus(); });
     $("#command-form").addEventListener("submit", (e) => {
       e.preventDefault();
       goTo($("#command").value);

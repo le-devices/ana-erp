@@ -95,10 +95,14 @@
                           download: (title || "dados").replace(/[^\w\- ]+/g, "").trim().replace(/\s+/g, "_") + ".csv" });
       document.body.append(a); a.click(); a.remove();
     };
+    const exportBtn = el("button", { type: "button", class: "quiet small icon-text", title: "Exportar para planilha (CSV)", onclick: csv },
+      icon("download", 16), el("span", { text: "CSV" }));
     return el("div", { class: "table-box" },
-      el("div", { class: "table-head" }, el("strong", { text: title || "" }),
+      el("div", { class: "table-head" },
+        el("strong", { class: "table-title", text: title || "Itens" }),
+        el("span", { class: "table-count", text: `(${rows.length})` }),
         el("span", { class: "muted", text: `${rows.length} linha(s)` }),
-        el("button", { type: "button", class: "quiet small", text: "⬇ CSV", title: "Exportar para planilha", onclick: csv })),
+        el("div", { class: "table-tools" }, exportBtn)),
       el("div", { class: "resizable" }, t));
   }
 
@@ -130,5 +134,40 @@
 
   function pill(text, kind = "") { return el("span", { class: "pill " + kind, text }); }
 
-  window.AnaUI = { $, $$, el, fmtDate, errorText, toast, table, dataTable, pill, splitter };
+  // Own line icons (spec 029): 24×24 grid, 1.8 stroke, no icon font, no third-party set.
+  const ICONS = {
+    back: "M15 5l-7 7 7 7",
+    home: "M3.5 11.5L12 4.5l8.5 7M6 10v9.5h4.5v-5h3v5H18V10",
+    search: "M10.5 4.5a6 6 0 1 1 0 12 6 6 0 0 1 0-12zM15 15l5 5",
+    bell: "M6.5 16.5V11a5.5 5.5 0 0 1 11 0v5.5l1.5 2H5zM10 20.5a2 2 0 0 0 4 0",
+    down: "M6.5 9.5l5.5 5.5 5.5-5.5",
+    right: "M9.5 6l6 6-6 6",
+    download: "M12 4.5v10M7.5 10.5L12 15l4.5-4.5M5 19.5h14",
+    table: "M4.5 5.5h15v13h-15zM4.5 10h15M4.5 14.5h15M10 5.5v13",
+    chart: "M5.5 19V12M10 19V6M14.5 19v-5M19 19V9",
+    refresh: "M19 12a7 7 0 1 1-2.05-4.95M19 5v4h-4",
+    filter: "M4.5 5.5h15l-5.75 7v5l-3.5 2v-7z",
+    edit: "M5 19l.8-3.6L15.6 5.6a1.5 1.5 0 0 1 2.1 0l.7.7a1.5 1.5 0 0 1 0 2.1L8.6 18.2z",
+    play: "M8 5.5v13l10.5-6.5z",
+    menu: "M4.5 7h15M4.5 12h15M4.5 17h15",
+    expand: "M14 4.5h5.5V10M10 19.5H4.5V14M19.5 4.5L13.5 10.5M4.5 19.5l6-6",
+    close: "M6 6l12 12M18 6L6 18",
+    folder: "M3.5 7.5a2 2 0 0 1 2-2h4l2 2h7a2 2 0 0 1 2 2v7.5a2 2 0 0 1-2 2h-13a2 2 0 0 1-2-2z",
+    file: "M7 3.5h6.5l4 4V20a.5.5 0 0 1-.5.5H7a.5.5 0 0 1-.5-.5V4a.5.5 0 0 1 .5-.5zM13.5 3.5V8h4",
+  };
+  const SVG_NS = "http://www.w3.org/2000/svg";
+  function icon(name, size = 18) {
+    const svg = document.createElementNS(SVG_NS, "svg");
+    for (const [k, v] of Object.entries({ viewBox: "0 0 24 24", width: size, height: size, fill: "none", stroke: "currentColor",
+      "stroke-width": "1.8", "stroke-linecap": "round", "stroke-linejoin": "round", "aria-hidden": "true", class: "icon" })) {
+      svg.setAttribute(k, String(v));
+    }
+    const path = document.createElementNS(SVG_NS, "path");
+    path.setAttribute("d", ICONS[name] || ICONS.right);
+    if (name === "play") { path.setAttribute("fill", "currentColor"); path.setAttribute("stroke", "none"); }
+    svg.append(path);
+    return svg;
+  }
+
+  window.AnaUI = { $, $$, el, fmtDate, errorText, toast, table, dataTable, pill, splitter, icon };
 })();
