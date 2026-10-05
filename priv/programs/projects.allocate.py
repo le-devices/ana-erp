@@ -112,11 +112,14 @@ def replace(p, t, profile, employee):
     if not rows:
         raise ana.Error("ALLOCATION_NOT_FOUND", f"não há alocação do perfil {profile} em {t['code']}")
     join_team(p, employee)
-    ana.sql_exec("DELETE FROM projects.allocation WHERE task_id = $1 AND profile = $2", t["id"], profile)
-    for r in rows:
-        existing = ana.sql_value("SELECT hours FROM projects.allocation WHERE task_id = $1 AND employee_id = $2 "
-                                 "AND week = $3", t["id"], employee, r["week"]) or 0
-        upsert(p, t, employee, None, r["week"], existing + r["hours"])
+    # One statement: the profile's weeks move to the person, adding to what they already had.
+    ana.sql_exec("WITH moved AS (DELETE FROM projects.allocation WHERE task_id = $2 AND profile = $3 "
+                 "  RETURNING week, hours) "
+                 "INSERT INTO projects.allocation (project_id, task_id, week, employee_id, hours) "
+                 "SELECT $1, $2, week, $4, hours FROM moved "
+                 "ON CONFLICT (task_id, employee_id, week) WHERE employee_id IS NOT NULL "
+                 "DO UPDATE SET hours = projects.allocation.hours + EXCLUDED.hours",
+                 p["id"], t["id"], profile, employee)
     return [r["week"] for r in rows]
 
 

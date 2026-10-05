@@ -36,15 +36,20 @@ memória gravados por minuto, só mudanças de estado, amostragem de rastros.
 ## Análise estática (runtime Python, na inspeção)
 AST: chamadas `ana.sql*` — literal de texto analisado por regras; f-string
 ou concatenação → SQL dinâmico; chamada dentro de `for`/`while`/compreensão
-→ N+1 provável. Resultado com linha, regra, severidade, mensagem e sugestão.
+→ N+1 provável (a fonte de uma compreensão roda uma vez e não conta). Resultado
+com linha, regra, severidade, mensagem e sugestão. Aceite consciente:
+`# ana:lint-ok regra — motivo` na linha da chamada (ou na de cima), ex.: busca
+`ILIKE '%x%'` coberta por índice trigram.
 
 ## Dicas (ana_advisor)
 Roda a cada 15 min no nó líder do agendador (uma vez no cluster) e sob
 demanda. Regras: N+1 observado, varredura sequencial lenta (índice
 sugerido), crescimento (projeção 90/180 dias × varredura completa), análise
-estática dos programas, FK sem índice, índice não usado, tabela com muito
+estática dos programas, FK sem índice, índice não usado (exceto o que sustenta
+FK), tabela com muito
 espaço morto, programa perto do limite de tempo (p95), prazos estourados
-recorrentes. Dica que deixa de valer é marcada resolvida.
+recorrentes. Dica que deixa de valer é marcada resolvida (N+1 também quando o
+programa é removido ou desativado).
 
 ## Saúde e incidentes (ana_health)
 A cada 10 s: banco (latência), pools (espera), Python, liderança do

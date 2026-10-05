@@ -54,7 +54,10 @@ def require_view(p):
 
 
 def activity(p, code, lock=False):
-    t = ana.sql_one("SELECT * FROM projects.task WHERE project_id = $1 AND code = $2 AND active"
+    t = ana.sql_one("SELECT id, project_id, code, name, planned_hours, billable, active, kind, parent_id, seq, "
+                    "owner_employee_id, profile, duration_days, planned_start, planned_finish, status, percent_complete, "
+                    "actual_start, actual_finish, deliverable, acceptance_criteria, notes, client_visible, updated_at "
+                    "FROM projects.task WHERE project_id = $1 AND code = $2 AND active"
                     + (" FOR UPDATE" if lock else ""), p["id"], str(code))
     if not t:
         raise ana.Error("TASK_NOT_FOUND", f"atividade {code} não encontrada no projeto {p['code']}")

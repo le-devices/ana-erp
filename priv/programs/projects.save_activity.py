@@ -48,7 +48,7 @@ def main(project, code, phase=None, owner=None, predecessors=None, **f):
         if ph["kind"] != "phase":
             raise ana.Error("INVALID_PARAMETER", f"{phase} não é uma fase")
         parent_id = ph["id"]
-    current = ana.sql_one("SELECT * FROM projects.task WHERE project_id = $1 AND code = $2 FOR UPDATE", p["id"], code)
+    current = ana.sql_one("SELECT id FROM projects.task WHERE project_id = $1 AND code = $2 FOR UPDATE", p["id"], code)
     if current is None:
         if not f.get("name"):
             raise ana.Error("INVALID_PARAMETER", "atividade nova exige nome")
@@ -64,8 +64,13 @@ def main(project, code, phase=None, owner=None, predecessors=None, **f):
             f.get("acceptance_criteria"), f.get("billable"), f.get("client_visible"), f.get("active"))
     else:
         task_id = current["id"]
-        sets = [f"{c} = COALESCE(${n + 2}, {c})" for n, c in enumerate(FIELDS)]
-        ana.sql_exec(f"UPDATE projects.task SET {', '.join(sets)}, updated_at = now() WHERE id = $1",
+        ana.sql_exec("UPDATE projects.task SET name = COALESCE($2, name), kind = COALESCE($3, kind), owner_employee_id = "
+                     "COALESCE($4, owner_employee_id), profile = COALESCE($5, profile), planned_hours = COALESCE($6, "
+                     "planned_hours), duration_days = COALESCE($7, duration_days), planned_start = COALESCE($8, "
+                     "planned_start), planned_finish = COALESCE($9, planned_finish), deliverable = COALESCE($10, "
+                     "deliverable), acceptance_criteria = COALESCE($11, acceptance_criteria), billable = COALESCE($12, "
+                     "billable), client_visible = COALESCE($13, client_visible), active = COALESCE($14, active), "
+                     "updated_at = now() WHERE id = $1",
                      task_id, *[f.get(c) for c in FIELDS])
         if phase is not None:
             ana.sql_exec("UPDATE projects.task SET parent_id = $2 WHERE id = $1", task_id, parent_id)

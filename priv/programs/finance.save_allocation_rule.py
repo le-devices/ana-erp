@@ -24,8 +24,9 @@ def main(code, name, source, targets, account_prefix="5", active=True):
     clean = [{"cost_center": str(t["cost_center"]).upper(), "pct": str(Decimal(str(t["pct"])))} for t in targets]
     if any(t["cost_center"] == source for t in clean):
         raise ana.Error("INVALID_TARGETS", "o centro de origem não pode ser destino")
-    missing = [t["cost_center"] for t in clean if not ana.sql_value(
-        "SELECT count(*) FROM finance.cost_center WHERE code = $1 AND active", t["cost_center"])]
+    usable = {r["code"] for r in ana.sql("SELECT code FROM finance.cost_center WHERE code = ANY($1) AND active",
+                                         [t["cost_center"] for t in clean])}
+    missing = [t["cost_center"] for t in clean if t["cost_center"] not in usable]
     if missing:
         raise ana.Error("COST_CENTER_INACTIVE", "centros inexistentes ou inativos: " + ", ".join(missing))
     ana.sql_exec("INSERT INTO finance.allocation_rule (code, name, source, account_prefix, targets, active) "

@@ -33,16 +33,19 @@ def main(number, payment_days=30):
 
     document = f"ORD-{number}"
     goods = [i for i in items if i["kind"] == "goods"]
-    for item in goods:
-        # Ordered lock per product: prevents races and deadlocks.
-        ana.sql("SELECT id FROM base.product WHERE id = $1 FOR UPDATE", item["product_id"])
-        balance = ana.sql_value(
-            "SELECT COALESCE(sum(quantity), 0) FROM inventory.stock_movement "
-            "WHERE product_id = $1 AND warehouse_id = $2", item["product_id"], order["warehouse_id"])
-        if balance < item["quantity"]:
-            raise ana.Error("INSUFFICIENT_STOCK",
-                            f"{item['code']}: saldo {balance}, necessário {item['quantity']}",
-                            {"product": item["code"], "balance": balance, "required": item["quantity"]})
+    if goods:
+        # Ordered locks on the products (one statement): prevents races and deadlocks.
+        ana.sql("SELECT id FROM base.product WHERE id = ANY($1) ORDER BY id FOR UPDATE", [i["product_id"] for i in goods])
+        balances = {r["product_id"]: r["balance"] for r in ana.sql(
+            "SELECT product_id, sum(quantity) AS balance FROM inventory.stock_movement "
+            "WHERE product_id = ANY($1) AND warehouse_id = $2 GROUP BY product_id",
+            [i["product_id"] for i in goods], order["warehouse_id"])}
+        for item in goods:
+            balance = balances.get(item["product_id"], 0)
+            if balance < item["quantity"]:
+                raise ana.Error("INSUFFICIENT_STOCK",
+                                f"{item['code']}: saldo {balance}, necessário {item['quantity']}",
+                                {"product": item["code"], "balance": balance, "required": item["quantity"]})
 
     ana.sql_batch(
         "INSERT INTO inventory.stock_movement (product_id, warehouse_id, quantity, kind, document, created_by) "
