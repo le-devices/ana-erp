@@ -32,7 +32,15 @@ def main(number, payment_days=30):
     v.require(items, "EMPTY_ORDER", f"pedido {number} não tem itens")
 
     document = f"ORD-{number}"
-    goods = [i for i in items if i["kind"] == "goods"]
+    # Spec 015: what already left at shipment (stock_out_on = shipment) is not taken again; freight
+    # charged on the shipments goes into the invoice.
+    shipped = {r["product_id"]: r["q"] for r in ana.sql(
+        "SELECT l.product_id, sum(l.quantity) AS q FROM logistics.shipment_line l JOIN logistics.shipment s ON s.id = l.shipment_id "
+        "WHERE s.sales_order_id = $1 AND s.stock_moved AND s.status NOT IN ('returned', 'cancelled') GROUP BY 1", order["id"])}
+    freight = ana.sql_value("SELECT COALESCE(sum(freight_charged), 0) FROM logistics.shipment WHERE sales_order_id = $1 "
+                            "AND status NOT IN ('returned', 'cancelled')", order["id"])
+    items = [{**i, "quantity": i["quantity"] - shipped.get(i["product_id"], 0)} for i in items]
+    goods = [i for i in items if i["kind"] == "goods" and i["quantity"] > 0]
     if goods:
         # Ordered locks on the products (one statement): prevents races and deadlocks.
         ana.sql("SELECT id FROM base.product WHERE id = ANY($1) ORDER BY id FOR UPDATE", [i["product_id"] for i in goods])
@@ -62,15 +70,15 @@ def main(number, payment_days=30):
     ana.sql_batch(
         "INSERT INTO finance.journal_line (entry_id, account, debit, credit) "
         "VALUES ($1, finance.account_for($2), $3, $4)",
-        [[entry, "customers", order["total"], 0], [entry, "sales_revenue", 0, order["total"]]])
+        [[entry, "customers", order["total"] + freight, 0], [entry, "sales_revenue", 0, order["total"] + freight]])
 
     due = datetime.date.today() + datetime.timedelta(days=payment_days)
     bill = ana.sql_value(
         "INSERT INTO finance.bill (kind, party_id, document, due_date, amount, entry_id) "
         "VALUES ('receivable', $1, $2, $3, $4, $5) RETURNING id",
-        order["customer_id"], document, due, order["total"], entry)
+        order["customer_id"], document, due, order["total"] + freight, entry)
 
     ana.sql_exec("UPDATE sales.sales_order SET status = 'INVOICED', invoiced_at = now() WHERE id = $1",
                  order["id"])
     ana.log(f"pedido {number} faturado: {money(order['total'])}, vencimento {due}")
-    return {"number": number, "total": order["total"], "bill": bill, "entry": entry, "due_date": due}
+    return {"number": number, "total": order["total"] + freight, "freight": freight, "bill": bill, "entry": entry, "due_date": due}

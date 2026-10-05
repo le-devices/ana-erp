@@ -331,6 +331,23 @@ ou comprar, prazo, lote, segurança, custo padrão).
   data sugerida por capacidade finita; **capacidade de serviços**
   (`capacidade`) por colaborador e perfil a partir da alocação dos projetos.
 
+## Logística e serviços em campo (spec 015)
+
+- **Logística** (bancada `expedicao`): transferências entre depósitos com
+  trânsito e divergência registrada; expedição total ou parcial (separar,
+  embalar, despachar, entregar ou voltar) com transportadora, rastreio e
+  frete pela tabela (UF, peso); baixa do estoque no faturamento ou na
+  expedição (`logistics.policy.stock_out_on`), frete cobrado vai à fatura;
+  devoluções para o estoque ou a quarentena, com crédito ao cliente.
+- **Campo** (bancada `campo`): ordem de serviço com prazo de SLA (por
+  prioridade ou contrato do cliente), aberta também pelo cliente no portal;
+  agenda sem sobreposição garantida no banco e respeitando ausências; rota do
+  dia; apontamento de deslocamento e horas, peças do estoque do técnico,
+  checklist e aceite — tudo idempotente pela chave do app; faturamento
+  (horas × valor do perfil, deslocamento, peças) ou lançamento no projeto;
+  indicadores (`sla`): SLA cumprido, atrasadas, resposta, horas em campo,
+  visitas e retornos.
+
 ## Repositório de arquivos e portal do cliente (spec 016)
 
 **Arquivos** guarda documentos de projetos, clientes e fornecedores em pastas
@@ -456,8 +473,8 @@ correspondentes são só o valor inicial).
 
 ## Situação das specs
 
-Implementadas: 001–008, 011 (com usuários robô e dono obrigatório), 012, 018, 021, 019 (faltam alertas configuráveis e OpenTelemetry), 013, 014, 016 (faltam S3 e antivírus), 017 (faltam SFTP/pasta/e-mail, mTLS, CNAB e pacotes de modelos), 022, 023, 024, 025, 026, 027, 028, 029; 020 parcial (falta próxima ação
+Implementadas: 001–008, 011 (com usuários robô e dono obrigatório), 012, 018, 021, 019 (faltam alertas configuráveis e OpenTelemetry), 013, 014, 015, 016 (faltam S3 e antivírus), 017 (faltam SFTP/pasta/e-mail, mTLS, CNAB e pacotes de modelos), 022, 023, 024, 025, 026, 027, 028, 029; 020 parcial (falta próxima ação
 sugerida, fluxos guiados e auditoria de acessibilidade).
 Na fila (ordem em [scripts/pending-work.prompt.md](scripts/pending-work.prompt.md)):
-015 logística, 010 API pública; 009 licenciamento
+010 API pública; 009 licenciamento
 aguarda decisões.

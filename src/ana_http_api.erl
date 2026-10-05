@@ -6,7 +6,7 @@
 -define(ADMIN, <<"admin">>).
 -define(USER, <<"user">>).
 -define(BUSINESS_SCHEMAS, [<<"base">>, <<"inventory">>, <<"sales">>, <<"finance">>,
-                           <<"projects">>, <<"supply">>, <<"production">>, <<"analytics">>]).
+                           <<"projects">>, <<"supply">>, <<"production">>, <<"logistics">>, <<"field">>, <<"analytics">>]).
 
 init(Req, health) ->
     {ok, health(Req), health};
