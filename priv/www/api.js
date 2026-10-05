@@ -155,6 +155,13 @@
       advice: (status) => API.request("GET", "/api/admin/observability/advice" + query(status ? { status } : {})),
       adviceRun: () => API.request("POST", "/api/admin/observability/advice/run", {}),
       adviceDismiss: (id, days) => API.request("POST", `/api/admin/observability/advice/${id}/dismiss`, { days }),
+      productUpdates: () => API.request("GET", "/api/admin/product-updates"),
+      productUpdate: (name) => API.request("GET", `/api/admin/product-updates/${encodeURIComponent(name)}`),
+      productUpdatesCheck: () => API.request("POST", "/api/admin/product-updates/check", {}),
+      productUpdateAccept: (name, overwrite) =>
+        API.request("POST", `/api/admin/product-updates/${encodeURIComponent(name)}/accept`, { overwrite: !!overwrite }),
+      productUpdateDismiss: (name) => API.request("POST", `/api/admin/product-updates/${encodeURIComponent(name)}/dismiss`, {}),
+      productUpdatesAcceptUnmodified: () => API.request("POST", "/api/admin/product-updates/accept-unmodified", {}),
       purge: () => API.request("POST", "/api/admin/retention/purge", {}),
     },
   };

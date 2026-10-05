@@ -820,6 +820,132 @@
       })) : el("p", { class: "muted", text: status === "open" ? "Nenhuma dica aberta. Bom sinal." : "Nada aqui." }));
   }
 
+  // ------------------------------------------------------------------ product updates (spec 028)
+  /** Line diff (LCS) for the side-by-side comparison: [{t: "same"|"del"|"add", a, b}]. */
+  function lineDiff(a, b) {
+    const n = a.length, m = b.length;
+    if (n * m > 4000000) return null;                       // too big to compare here
+    const w = m + 1, len = new Uint32Array((n + 1) * w);
+    for (let i = n - 1; i >= 0; i--) {
+      for (let j = m - 1; j >= 0; j--) {
+        len[i * w + j] = a[i] === b[j] ? len[(i + 1) * w + j + 1] + 1 : Math.max(len[(i + 1) * w + j], len[i * w + j + 1]);
+      }
+    }
+    const out = [];
+    let i = 0, j = 0;
+    while (i < n || j < m) {
+      if (i < n && j < m && a[i] === b[j]) { out.push({ t: "same", a: a[i++], b: b[j++] }); }
+      else if (j < m && (i >= n || len[i * w + j + 1] >= len[(i + 1) * w + j])) { out.push({ t: "add", b: b[j++] }); }
+      else { out.push({ t: "del", a: a[i++] }); }
+    }
+    return out;
+  }
+
+  function diffView(leftTitle, left, rightTitle, right) {
+    const ops = lineDiff((left || "").split("\n"), (right || "").split("\n"));
+    if (!ops) return el("p", { class: "muted", text: "Programa grande demais para comparar aqui." });
+    const changed = ops.filter((o) => o.t !== "same").length;
+    if (!changed) return el("p", { class: "muted", text: "Sem diferenças." });
+    const rows = [];
+    let la = 0, lb = 0;
+    const keep = new Set();                                  // 3 lines of context around each change
+    ops.forEach((o, k) => { if (o.t !== "same") for (let d = -3; d <= 3; d++) keep.add(k + d); });
+    let skipped = 0;
+    const flushSkip = () => {
+      if (skipped) rows.push(el("tr", { class: "diff-skip" }, el("td", { colspan: "4", text: `… ${skipped} linha(s) iguais …` })));
+      skipped = 0;
+    };
+    ops.forEach((o, k) => {
+      if (o.t !== "add") la++;
+      if (o.t !== "del") lb++;
+      if (!keep.has(k)) { skipped++; return; }
+      flushSkip();
+      rows.push(el("tr", { class: "diff-" + o.t },
+        el("td", { class: "diff-n", text: o.t === "add" ? "" : String(la) }),
+        el("td", { class: "diff-code", text: o.t === "add" ? "" : o.a }),
+        el("td", { class: "diff-n", text: o.t === "del" ? "" : String(lb) }),
+        el("td", { class: "diff-code", text: o.t === "del" ? "" : o.b })));
+    });
+    flushSkip();
+    return el("div", { class: "diff-box" },
+      el("p", { class: "muted small", text: `${changed} linha(s) diferente(s)` }),
+      el("table", { class: "diff" },
+        el("thead", {}, el("tr", {}, el("th", { colspan: "2", text: leftTitle }), el("th", { colspan: "2", text: rightTitle }))),
+        el("tbody", {}, rows)));
+  }
+
+  async function refreshUpdatesCount() {
+    const badge = $("#updates-count");
+    if (!badge) return;
+    try {
+      const r = await API.admin.productUpdates();
+      badge.textContent = String(r.available);
+      badge.hidden = !r.available;
+    } catch (_) { badge.hidden = true; }
+  }
+
+  const UPDATE_STATUS = { available: "disponível", accepted: "aceita", dismissed: "dispensada" };
+
+  async function updates() {
+    const r = await API.admin.productUpdates();
+    refreshUpdatesCount();
+    const available = r.updates.filter((u) => u.status === "available");
+    const unmodified = available.filter((u) => !u.locally_modified).length;
+    main().replaceChildren(
+      ...header("Atualizações do produto", "Versões novas dos programas que vêm com o ANA. Nada muda sozinho: você compara e decide. Programas alterados nesta instalação pedem confirmação; a versão atual sempre fica no histórico."),
+      el("div", { class: "row-buttons" },
+        el("button", { text: "Verificar agora", onclick: () => guard(async () => {
+          const c = await API.admin.productUpdatesCheck(); toast(`${c.available} atualização(ões) disponível(is).`); updates();
+        }) }),
+        unmodified ? el("button", { class: "primary", text: `Aceitar as ${unmodified} não alteradas aqui`, onclick: () => guard(async () => {
+          if (!confirm(`Atualizar ${unmodified} programa(s) que não foram alterados nesta instalação?`)) return;
+          const a = await API.admin.productUpdatesAcceptUnmodified();
+          toast(`${a.accepted.length} atualizado(s)` + (a.failed.length ? `, ${a.failed.length} com problema` : "") + ".", a.failed.length > 0);
+          updates();
+        }) }) : null),
+      table([
+        { label: "Programa", value: (u) => u.name },
+        { label: "Tipo", value: (u) => (u.kind === "library" ? "biblioteca" : "programa") },
+        { label: "Situação", value: (u) => UPDATE_STATUS[u.status] || u.status },
+        { label: "Alterado aqui", value: (u) => (u.locally_modified ? pill("sim", "warn") : "não") },
+        { label: "Detectada em", value: (u) => fmtDate(u.detected_at) },
+        { label: "", value: (u) => el("button", { class: "quiet small", text: u.status === "available" ? "Comparar e decidir" : "Ver",
+                                                   onclick: () => guard(() => updateDetail(u.name)) }) },
+      ], r.updates, { empty: "Todos os programas do produto estão em dia." }));
+  }
+
+  async function updateDetail(name) {
+    const d = await API.admin.productUpdate(name);
+    const pending = d.status === "available";
+    const compare = el("div");
+    const views = [["installed", "Instalado × produto"]].concat(d.base ? [["local", "O que foi alterado aqui"], ["product", "O que o produto mudou"]] : []);
+    const showView = (k) => {
+      for (const b of tabs.children) b.classList.toggle("active", b.dataset.k === k);
+      compare.replaceChildren(
+        k === "installed" ? diffView(`Instalado (versão ${d.version})`, d.installed, "Produto (nova)", d.seed_source)
+        : k === "local" ? diffView("Base do produto", d.base, "Instalado", d.installed)
+        : diffView("Base do produto", d.base, "Produto (nova)", d.seed_source));
+    };
+    const tabs = el("div", { class: "sub-tabs" }, views.map(([k, l]) => el("button", { "data-k": k, text: l, onclick: () => showView(k) })));
+    main().replaceChildren(
+      ...header(`Atualização de ${name}`, d.locally_modified
+        ? "Este programa foi alterado nesta instalação. Aceitar substitui as alterações pela versão do produto (a atual fica no histórico e pode ser restaurada)."
+        : "Este programa não foi alterado nesta instalação: aceitar só traz a versão nova do produto."),
+      el("div", { class: "row-buttons" },
+        el("button", { class: "quiet", text: "← Voltar à lista", onclick: () => guard(updates) }),
+        pending ? el("button", { class: d.locally_modified ? "danger" : "primary", text: d.locally_modified ? "Sobrescrever com a versão do produto" : "Aceitar", onclick: () => guard(async () => {
+          if (d.locally_modified && !confirm(`Substituir as alterações feitas aqui em ${name} pela versão do produto?`)) return;
+          const a = await API.admin.productUpdateAccept(name, d.locally_modified);
+          toast(`${name} atualizado para a versão ${a.version}.`);
+          updates();
+        }) }) : null,
+        pending ? el("button", { class: "quiet", text: "Dispensar", onclick: () => guard(async () => {
+          await API.admin.productUpdateDismiss(name); toast("Dispensada: só volta quando o produto mudar de novo."); updates();
+        }) }) : null),
+      tabs, compare);
+    showView("installed");
+  }
+
   // ------------------------------------------------------------------ navigation
   // ------------------------------------------------------------------ scheduler (spec 018)
   async function scheduler() {
@@ -833,9 +959,10 @@
                        window.AnaScheduler.holidays(hol)]);
   }
 
-  const SECTIONS = { users, groups, settings, company, commands, remote, accounts, limits, consumption, scheduler, monitor, audit, retention, health, sqlperf, advice };
+  const SECTIONS = { users, groups, settings, company, commands, remote, accounts, limits, consumption, scheduler, monitor, audit, retention, health, sqlperf, advice, updates };
 
   function show(section) {
+    refreshUpdatesCount();
     current = section;
     if (!SECTIONS[section]) section = "users";
     current = section;
@@ -848,5 +975,5 @@
     for (const b of $$("#area-admin .nav-link")) b.addEventListener("click", () => window.AnaStudio.go("#/admin/" + b.dataset.section));
   }
 
-  window.AnaAdmin = { wire, show, current: () => current };
+  window.AnaAdmin = { wire, show, current: () => current, lineDiff };
 })();

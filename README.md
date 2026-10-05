@@ -301,6 +301,17 @@ clients/python/     cliente JSON-RPC        tests/          runtime, integration
 - **Métricas** em `/metrics` (Prometheus, autenticado) e logs JSON com
   `ANA_LOG_FORMAT=json`.
 
+## Atualização dos programas do produto (spec 028)
+
+As sementes (`priv/programs`) nunca sobrescrevem um programa instalado. Ao
+subir, cada nó compara cada semente com o programa e com a versão do produto
+em que ele se baseia: quando o produto traz versão nova, aparece em
+**Administração → Sistema → Atualizações do produto** (com contador). O
+administrador compara lado a lado (instalado × produto, o que foi alterado
+aqui, o que o produto mudou) e aceita — vira nova versão, com histórico — ou
+dispensa. Programa alterado nesta instalação só é sobrescrito com
+confirmação explícita; "aceitar as não alteradas" atualiza o resto de uma vez.
+
 ## Operação 24/7 (spec 023)
 
 - **Saúde**: `/health/live` (o processo está de pé) e `/health/ready` (banco,
@@ -368,7 +379,7 @@ correspondentes são só o valor inicial).
 
 ## Situação das specs
 
-Implementadas: 001–008, 011 (com usuários robô e dono obrigatório), 012, 018, 021 (portal do cliente depende da 016), 019 (faltam alertas configuráveis e OpenTelemetry), 013, 022, 023, 024, 025, 026, 027; 020 parcial (falta próxima ação
+Implementadas: 001–008, 011 (com usuários robô e dono obrigatório), 012, 018, 021 (portal do cliente depende da 016), 019 (faltam alertas configuráveis e OpenTelemetry), 013, 022, 023, 024, 025, 026, 027, 028; 020 parcial (falta próxima ação
 sugerida, fluxos guiados e auditoria de acessibilidade).
 Na fila (ordem em [scripts/pending-work.prompt.md](scripts/pending-work.prompt.md)):
 017 integrações, 016 repositório de

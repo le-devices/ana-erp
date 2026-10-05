@@ -58,3 +58,5 @@ quem importou o quê.
   com outro nome; (b) atualizar quando o cliente não alterou (comparar com a
   versão semeada) e avisar quando alterou, com comparação lado a lado;
   (c) camadas com herança/sobreposição de funções.
+  **Decidido (out/2026): oferecer e o administrador aceita** — implementado na
+  [spec 028](../028-product-updates/spec.md).
