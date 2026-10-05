@@ -37,6 +37,17 @@ dados de demonstração (`ANA_DEMO=true`): comércio e o caso de P&D em
 eletrônica/firmware (projeto `PRJ-001`). Em produção, defina `ANA_DEMO=false`,
 `ANA_ADMIN_PASSWORD`, `ANA_DB_PASSWORD`, `POSTGRES_PASSWORD` e `ANA_TIMEZONE`.
 
+## Linguagem visual "Linha ANA" (spec 029)
+
+Identidade própria (logotipo, ícones em SVG, paleta, fonte do sistema),
+inspirada em páginas analíticas de ERPs corporativos sem usar fonte, ícones,
+temas ou marcas de terceiros. Barra superior compacta (conta, voltar, início,
+título da área com menu ▾, busca e avisos); cada rotina é uma página
+analítica — faixa de cabeçalho com filtros em linha, indicadores como chips
+de estado, gráficos lado a lado em cartões e tabelas em cartão com
+"Título (N)" e exportação; início em blocos. Tema claro e escuro, sem
+rolagem horizontal no celular.
+
 ## Áreas da interface (spec 020)
 
 | Área | Para quem | O que tem |
@@ -445,7 +456,7 @@ correspondentes são só o valor inicial).
 
 ## Situação das specs
 
-Implementadas: 001–008, 011 (com usuários robô e dono obrigatório), 012, 018, 021, 019 (faltam alertas configuráveis e OpenTelemetry), 013, 014, 016 (faltam S3 e antivírus), 017 (faltam SFTP/pasta/e-mail, mTLS, CNAB e pacotes de modelos), 022, 023, 024, 025, 026, 027, 028; 020 parcial (falta próxima ação
+Implementadas: 001–008, 011 (com usuários robô e dono obrigatório), 012, 018, 021, 019 (faltam alertas configuráveis e OpenTelemetry), 013, 014, 016 (faltam S3 e antivírus), 017 (faltam SFTP/pasta/e-mail, mTLS, CNAB e pacotes de modelos), 022, 023, 024, 025, 026, 027, 028, 029; 020 parcial (falta próxima ação
 sugerida, fluxos guiados e auditoria de acessibilidade).
 Na fila (ordem em [scripts/pending-work.prompt.md](scripts/pending-work.prompt.md)):
 015 logística, 010 API pública; 009 licenciamento

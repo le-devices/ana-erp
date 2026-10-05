@@ -9,7 +9,8 @@
   const MODULES = {
     base: "Cadastros", inventory: "Estoque", sales: "Vendas", finance: "Financeiro",
     projects: "Projetos", analytics: "Analítico", supply: "Suprimentos", production: "Produção",
-    logistics: "Logística", field: "Serviços em campo", demo: "Demonstração",
+    logistics: "Logística", field: "Serviços em campo", demo: "Demonstração", files: "Arquivos",
+    integration: "Integrações",
   };
   const moduleOf = (name) => name.split(".")[0];
   const moduleLabel = (m) => MODULES[m] || m;
@@ -147,7 +148,13 @@
     else if (ev.kind === "log") node = el("div", { class: "log " + ev.data.level, text: `[${ev.data.level}] ${ev.data.message}` });
     else if (ev.kind === "table") node = drawTable(ev.data, ctx);
     else if (ev.kind === "metrics") node = drawMetrics(ev.data);
-    else if (ev.kind === "chart") node = window.AnaCharts.render(ev.data);
+    else if (ev.kind === "chart") {
+      // Consecutive charts share a responsive grid of cards (RF-029-04).
+      const chart = window.AnaCharts.render(ev.data);
+      const last = container.lastElementChild;
+      if (last && last.classList.contains("viz-grid")) { last.append(chart); return; }
+      node = el("div", { class: "viz-grid" }, chart);
+    }
     else if (ev.kind === "board") node = drawBoard(ev.data, ctx);
     else if (ev.kind === "gantt") node = drawGantt(ev.data);
     else if (ev.kind === "tabs") node = drawTabs(ev.data, ctx);
@@ -170,9 +177,11 @@
     return box;
   }
 
+  // Indicators as KPI chips: label, big value, state border (spec 029, RF-029-03).
   function drawMetrics(d) {
-    return el("div", {}, d.title ? el("h3", { text: d.title }) : null,
-      el("div", { class: "stat-grid" }, d.items.map((m) => el("div", { class: "stat" + (m.status ? " stat-" + m.status : "") },
+    return el("div", { class: "kpi-block" }, d.title ? el("h3", { class: "block-title", text: d.title }) : null,
+      el("div", { class: "stat-grid kpi-strip" }, d.items.map((m) => el("div", { class: "stat kpi" + (m.status ? " stat-" + m.status : ""),
+                                                                           title: m.hint || "" },
         el("div", { class: "label", text: m.label }), el("div", { class: "value", text: show(m.value) }),
         m.hint ? el("div", { class: "sub", text: m.hint }) : null))));
   }

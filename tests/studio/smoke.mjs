@@ -45,13 +45,13 @@ const go = async (w, hash) => { w.location.hash = hash; await sleep(50); };
 // ---------------------------------------------------------------- admin/developer
 const { w, d, jsErrors } = await open("admin", PASSWORD);
 const text = (s) => (d.querySelector(s) || {}).textContent || "";
-await until(() => text("#area-home").includes("Favoritos"), "home");
+await until(() => text("#area-home").includes("Favoritas"), "home");
 ok(!d.querySelector("#area-home").hidden, "Início é a área inicial");
 ok([...d.querySelectorAll(".area:not([hidden])")].map((b) => b.dataset.area).join(",") === "home,ops,files,dev,admin", "admin vê as cinco áreas (Portal é só para contas externas)");
 
 // Operation: routine with form, result and history together (RF-020-03)
 await go(w, "#/ops/demo/demo.hello");
-await until(() => text("#ops-main").includes("Parâmetros") && d.querySelector("#ops-main form"), "routine page", jsErrors);
+await until(() => text("#ops-main").includes("Filtros") && d.querySelector("#ops-main form"), "routine page", jsErrors);
 ok(text("#ops-nav").includes("Demonstração") && text("#ops-nav").includes("Projetos"), "módulos agrupados na navegação");
 const form = d.querySelector("#ops-main form");
 form.querySelector("[name=name]").value = "Operador";
@@ -255,7 +255,7 @@ await fetch(ANA_URL + "/api/admin/users", { method: "POST", headers: { "Content-
   body: JSON.stringify({ username: uname, password: "Operator-pass-1", role: "user", must_change_password: false }) });
 const u = await open(uname, "Operator-pass-1");
 const utext = (s) => (u.d.querySelector(s) || {}).textContent || "";
-await until(() => utext("#area-home").includes("Favoritos"), "user home", u.jsErrors);
+await until(() => utext("#area-home").includes("Favoritas"), "user home", u.jsErrors);
 ok([...u.d.querySelectorAll(".area")].filter((b) => !b.hidden).map((b) => b.dataset.area).join(",") === "home,ops,files", "usuário vê Início, Operação e Arquivos");
 u.w.location.hash = "#/dev";
 await sleep(300);
