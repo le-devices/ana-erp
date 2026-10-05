@@ -15,12 +15,9 @@
     integrations: "Integrações",
   };
   const state = { user: null, targets: new Map(), trail: [] };
-  const AREA_TITLES = { home: "Início", ops: "Operação", files: "Arquivos", portal: "Portal", dev: "Desenvolvimento", admin: "Administração" };
 
   // ------------------------------------------------------------------ shell menus (spec 029)
   function closeMenus() {
-    $("#area-menu").classList.remove("open");
-    $("#area-title").setAttribute("aria-expanded", "false");
     $("#user-menu").hidden = true;
     $("#user-avatar").setAttribute("aria-expanded", "false");
   }
@@ -145,7 +142,6 @@
       replace("#/" + area);
     }
     for (const b of $$(".area")) b.classList.toggle("active", b.dataset.area === area);
-    $("#area-title-text").textContent = AREA_TITLES[area] || "ANA";
     closeMenus();
     for (const a of ["home", "ops", "files", "portal", "dev", "admin"]) $("#area-" + a).hidden = a !== area;
     try {
@@ -230,11 +226,9 @@
     }
     $("#logout").addEventListener("click", async () => { await API.logout(); location.hash = ""; location.reload(); });
     for (const b of $$(".area")) b.addEventListener("click", () => go("#/" + b.dataset.area));
-    $("#area-title").addEventListener("click", (e) => { e.stopPropagation(); toggle($("#area-title"), () => $("#area-menu").classList.add("open")); });
     $("#user-avatar").addEventListener("click", (e) => { e.stopPropagation(); toggle($("#user-avatar"), () => { $("#user-menu").hidden = false; }); });
-    $("#home-btn").addEventListener("click", () => go(isExternal() ? "#/portal" : "#/home"));
     $("#notices-btn").addEventListener("click", () => go("#/home"));
-    document.addEventListener("click", (e) => { if (!e.target.closest("#user-menu, #area-menu")) closeMenus(); });
+    document.addEventListener("click", (e) => { if (!e.target.closest("#user-menu")) closeMenus(); });
     document.addEventListener("keydown", (e) => { if (e.key === "Escape") closeMenus(); });
     $("#command-form").addEventListener("submit", (e) => {
       e.preventDefault();

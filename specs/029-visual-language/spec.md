@@ -20,8 +20,11 @@ tabela de itens), **sem copiar propriedade intelectual de terceiros**.
 
 ## Requisitos
 - **RF-029-01** Barra superior compacta: avatar com iniciais (menu do
-  usuário: trocar senha, sair), voltar, início, marca; ao centro o título da
-  tela com menu ▾ das áreas; à direita busca (Ir para…) e avisos.
+  usuário: trocar senha, sair), voltar, marca e as **áreas como abas sempre
+  visíveis** (a ativa sublinhada; troca com um clique); à direita busca
+  (Ir para…) e avisos. No celular, as abas formam uma linha rolável sob a
+  barra. (Revisado a pedido do dono do produto: o menu ▾ isolado no centro
+  era lento e pouco intuitivo.)
 - **RF-029-02** Página de rotina analítica: faixa de cabeçalho com módulo,
   título, favorito e filtros em linha (Executar à direita); depois de
   executar, os filtros viram um resumo com "Alterar". Resultado em largura
