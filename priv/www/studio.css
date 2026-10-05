@@ -412,3 +412,17 @@ table.diff td.diff-n { width: 3.5em; color: var(--text-2); text-align: right; us
 table.diff tr.diff-del td.diff-code:nth-child(2) { background: rgba(220, 38, 38, .14); }
 table.diff tr.diff-add td.diff-code:nth-child(4) { background: rgba(22, 163, 74, .16); }
 table.diff tr.diff-skip td { color: var(--text-2); text-align: center; font-style: italic; background: var(--surface-2); }
+
+/* File repository (spec 016) */
+.files-split { display: grid; grid-template-columns: var(--files-list-w, minmax(320px, 1.4fr)) 6px minmax(280px, 1fr); gap: 0 .75rem; align-items: start; }
+.files-list { min-height: 160px; border: 1px dashed transparent; border-radius: 8px; }
+.files-list.drop { border-color: var(--accent); background: var(--surface-2); }
+.files-detail { min-width: 0; }
+.breadcrumbs { margin: .25rem 0 .5rem; color: var(--text-2); }
+button.linkish { background: none; border: 0; padding: 0; color: var(--accent); cursor: pointer; text-align: left; }
+button.linkish:hover { text-decoration: underline; }
+.upload-progress .upload-line { font-size: .85em; padding: .15rem 0; }
+.upload-progress .upload-line.ok { color: var(--ok, #15803d); }
+.upload-progress .upload-line.error { color: var(--danger, #b91c1c); }
+.inline-form { display: flex; flex-wrap: wrap; gap: .5rem; align-items: end; margin: .5rem 0; }
+@media (max-width: 900px) { .files-split { grid-template-columns: 1fr; } .files-split > .splitter { display: none; } }

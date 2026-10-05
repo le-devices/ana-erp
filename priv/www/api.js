@@ -79,6 +79,39 @@
     version: (n, v) => API.request("GET", `/api/programs/${enc(n)}/versions/${v}`),
     restore: (n, v) => API.request("POST", `/api/programs/${enc(n)}/versions/${v}/restore`, {}),
     run: (n, body) => API.request("POST", `/api/programs/${enc(n)}/run`, body, { accept: [422] }),
+    /** Raw body (file upload): bytes go as they are, with the session token. */
+    async raw(method, path, blob) {
+      const headers = { "Accept": "application/json", "Content-Type": "application/octet-stream" };
+      if (token) headers["Authorization"] = "Bearer " + token;
+      const resp = await fetch(path, { method, headers, body: blob, cache: "no-store", credentials: "omit" });
+      const text = await resp.text();
+      let data = null;
+      try { data = text ? JSON.parse(text) : null; } catch (_) { data = { error: { message: text } }; }
+      if (resp.status === 401) { API.setToken(null); API.onExpired(); }
+      if (!resp.ok) throw new ApiError(resp.status, data);
+      return data;
+    },
+    files: {
+      list: (parent) => API.request("GET", "/api/files/folders" + query(parent ? { parent } : {})),
+      createFolder: (parent, name) => API.request("POST", "/api/files/folders", { parent: parent || null, name }),
+      detail: (id) => API.request("GET", `/api/files/files/${id}`),
+      update: (id, body) => API.request("PUT", `/api/files/files/${id}`, body),
+      remove: (id) => API.request("DELETE", `/api/files/files/${id}`),
+      download: (id, version, inline) => API.request("POST", `/api/files/files/${id}/download`, { version: version || null, inline: !!inline }),
+      zip: (folder) => API.request("POST", `/api/files/folders/${folder}/zip`, {}),
+      search: (q) => API.request("GET", "/api/files/search" + query(q)),
+      grant: (body) => API.request("POST", "/api/files/grants", body),
+      revoke: (id) => API.request("DELETE", `/api/files/grants/${id}`),
+      link: (id, body) => API.request("POST", `/api/files/files/${id}/links`, body),
+      unlink: (id) => API.request("DELETE", `/api/files/links/${id}`),
+      uploadSmall: (folder, name, blob, comment) =>
+        API.raw("POST", "/api/files/upload" + query({ folder, name, comment: comment || undefined }), blob),
+      uploadInit: (folder, name, size, comment) => API.request("POST", "/api/files/uploads", { folder, name, size, comment: comment || null }),
+      uploadStatus: (id) => API.request("GET", `/api/files/uploads/${id}`),
+      uploadChunk: (id, offset, blob) => API.raw("PUT", `/api/files/uploads/${id}` + query({ offset }), blob),
+      uploadComplete: (id) => API.request("POST", `/api/files/uploads/${id}/complete`, {}),
+    },
+    portalPrograms: () => API.request("GET", "/api/portal/programs"),
     executions: (program, mine) => API.request("GET", "/api/executions" + query({ limit: 50, program, mine: mine ? 1 : undefined })),
     execution: (id) => API.request("GET", `/api/executions/${enc(id)}`),
     events: (id, since, signal) => API.request("GET",

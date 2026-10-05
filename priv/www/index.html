@@ -15,6 +15,7 @@
 <script src="studio/ops.js" defer></script>
 <script src="studio/dev.js" defer></script>
 <script src="studio/admin.js" defer></script>
+<script src="studio/files.js" defer></script>
 <script src="studio/studio.js" defer></script>
 </head>
 <body>
@@ -55,6 +56,8 @@
     <nav class="area-switch" aria-label="Áreas">
       <button class="area" data-area="home">Início</button>
       <button class="area" data-area="ops">Operação</button>
+      <button class="area" data-area="files">Arquivos</button>
+      <button class="area" data-area="portal" data-only="external">Portal</button>
       <button class="area" data-area="dev" data-min-role="developer">Desenvolvimento</button>
       <button class="area" data-area="admin" data-min-role="admin">Administração</button>
     </nav>
@@ -221,6 +224,11 @@
       <div id="sql-result"></div>
     </section>
   </div>
+
+  <!-- File repository (spec 016) -->
+  <div id="area-files" class="area-page" hidden><main id="files-main" class="page-main"></main></div>
+  <!-- External portal (spec 016, RF-016-04) -->
+  <div id="area-portal" class="area-page" hidden><main id="portal-main" class="page-main"></main></div>
 
   <!-- Administration (RF-020-06) -->
   <div id="area-admin" class="area-page two-col" hidden>

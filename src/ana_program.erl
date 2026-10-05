@@ -57,7 +57,7 @@ for_execution(Name) ->
         [] ->
             case ana_db:one(
                    "SELECT name, version, source, kind, exposed, restricted, min_role, active, params, "
-                   "       description, docs, limits "
+                   "       description, docs, limits, portal "
                    "FROM ana_system.program WHERE name = $1", [Name]) of
                 {ok, #{} = P} ->
                     ets:insert(?CACHE, {Name, P}),
@@ -112,8 +112,8 @@ write(C, Name, Fields, Source, Insp, Who) ->
         undefined ->
             ok = exec(C,
                 "INSERT INTO ana_system.program (name, description, kind, exposed, restricted, min_role, "
-                "  active, version, source, params, docs, warning, updated_by, limits, in_menu, lint) "
-                "VALUES ($1, $2, $3, $4, $5, $6, $7, 1, $8, $9, $10, $11, $12, $13, $14, $15)",
+                "  active, version, source, params, docs, warning, updated_by, limits, in_menu, lint, portal) "
+                "VALUES ($1, $2, $3, $4, $5, $6, $7, 1, $8, $9, $10, $11, $12, $13, $14, $15, $16)",
                 [Name, maps:get(<<"description">>, Fields, <<>>),
                  maps:get(<<"kind">>, Fields, <<"program">>),
                  maps:get(<<"exposed">>, Fields, false),
@@ -121,7 +121,8 @@ write(C, Name, Fields, Source, Insp, Who) ->
                  maps:get(<<"min_role">>, Fields, <<"user">>),
                  maps:get(<<"active">>, Fields, true),
                  Source, field(params, Insp), field(docs, Insp), field(warning, Insp), Who,
-                 maps:get(<<"limits">>, Fields, #{}), maps:get(<<"in_menu">>, Fields, true), field(lint, Insp)]),
+                 maps:get(<<"limits">>, Fields, #{}), maps:get(<<"in_menu">>, Fields, true), field(lint, Insp),
+                 maps:get(<<"portal">>, Fields, false) =:= true]),
             ok = new_version(C, Name, 1, Source, Comment, Who),
             notify(C, Name),
             {ok, #{version => 1, created => true, warning => field(warning, Insp)}};
@@ -141,7 +142,8 @@ write(C, Name, Fields, Source, Insp, Who) ->
                         "  warning = CASE WHEN $9 IS NULL THEN warning ELSE $12 END, "
                         "  updated_at = now(), updated_by = $13, limits = COALESCE($14, limits), "
                         "  in_menu = COALESCE($15, in_menu), "
-                        "  lint = CASE WHEN $9 IS NULL THEN lint ELSE $16 END "
+                        "  lint = CASE WHEN $9 IS NULL THEN lint ELSE $16 END, "
+                        "  portal = COALESCE($17, portal) "
                         "WHERE name = $1",
                         [Name, maps:get(<<"description">>, Fields, null),
                          maps:get(<<"kind">>, Fields, null),
@@ -151,7 +153,8 @@ write(C, Name, Fields, Source, Insp, Who) ->
                          maps:get(<<"active">>, Fields, null), NV,
                          null_if_undefined(Source), field(params, Insp), field(docs, Insp),
                          field(warning, Insp), Who, maps:get(<<"limits">>, Fields, null),
-                         maps:get(<<"in_menu">>, Fields, null), field(lint, Insp)]),
+                         maps:get(<<"in_menu">>, Fields, null), field(lint, Insp),
+                         maps:get(<<"portal">>, Fields, null)]),
                     _ = Changed andalso (ok =:= new_version(C, Name, NV, Source, Comment, Who)),
                     notify(C, Name),
                     {ok, #{version => NV, created => false, warning => field(warning, Insp)}};

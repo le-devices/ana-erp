@@ -7,6 +7,7 @@
 %%   # ana:command order
 %%   # ana:kind program|library
 %%   # ana:role user|developer|admin
+%%   # ana:portal yes          (external portal accounts may run it, spec 016)
 %% Only creates what does not exist: never overwrites studio changes.
 -module(ana_seeds).
 -export([apply/0, files/0, metadata/1]).
@@ -46,6 +47,7 @@ seed(File) ->
                        <<"exposed">> => maps:get(<<"exposed">>, Meta, <<"no">>) =:= <<"yes">>,
                        <<"min_role">> => maps:get(<<"role">>, Meta, <<"user">>),
                        <<"in_menu">> => maps:get(<<"menu">>, Meta, <<"yes">>) =/= <<"no">>,
+                       <<"portal">> => maps:get(<<"portal">>, Meta, <<"no">>) =:= <<"yes">>,
                        <<"comment">> => <<"seed">>},
             case ana_program:save(Name, Fields, ana_task:system_user()) of
                 {ok, _} ->

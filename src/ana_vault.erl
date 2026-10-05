@@ -5,13 +5,14 @@
 %% reaches Python, the API or the logs. The connector name is authenticated data,
 %% so a ciphertext copied to another connector does not decrypt.
 -module(ana_vault).
--export([enabled/0, store/5, fetch/2, keys/1, delete/2, encrypt/3, decrypt/4]).
+-export([enabled/0, master_key/0, store/5, fetch/2, keys/1, delete/2, encrypt/3, decrypt/4]).
 
 -define(AAD(Connector, Key), <<"ana-vault:", Connector/binary, ":", Key/binary>>).
 
 -spec enabled() -> boolean().
 enabled() -> master_key() =/= undefined.
 
+-spec master_key() -> binary() | undefined.
 master_key() ->
     case persistent_term:get({?MODULE, key}, unset) of
         unset ->

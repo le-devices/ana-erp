@@ -301,6 +301,32 @@ clients/python/     cliente JSON-RPC        tests/          runtime, integration
 - **Métricas** em `/metrics` (Prometheus, autenticado) e logs JSON com
   `ANA_LOG_FORMAT=json`.
 
+## Repositório de arquivos e portal do cliente (spec 016)
+
+**Arquivos** guarda documentos de projetos, clientes e fornecedores em pastas
+com versões imutáveis. Acesso por usuário, grupo, papel ou **cliente**
+(`ver` < `baixar` < `enviar` < `gerenciar`), herdado pelas pastas (a herança
+pode ser interrompida) e com negação explícita; o que não pode ver é 404.
+O conteúdo fica fora do banco (`ANA_FILES_DIR`, volume compartilhado pelos
+nós), cifrado (AES-256-CTR + HMAC, chave derivada da `ANA_MASTER_KEY`) e
+deduplicado pelo SHA-256; o nome nunca vira caminho no disco. Downloads só
+por URL assinada de 5 min (`attachment`, `nosniff`, `Range`); links de
+compartilhamento com validade, senha e limite de downloads; envio retomável;
+tipo real conferido pela assinatura (um `.exe` renomeado é recusado);
+auditoria de cada operação; verificação periódica de integridade.
+
+- Contas de **portal** (papel `external`, ligadas a um cliente) veem só
+  Arquivos e as consultas marcadas `# ana:portal yes`: **Minhas faturas**
+  (`faturas`), **Meus projetos** (`meusprojetos`: andamento, marcos,
+  próximos passos e riscos do último relatório de status, sem custos) e
+  **Aprovações** (`aprovacoes`: aceite de entregáveis e aprovação de
+  mudanças de escopo, que ajusta orçamento, prazo e linha de base).
+- Faturas de serviço viram PDF em `Clientes/<cliente>/Faturas`, liberado ao
+  cliente; projetos têm `Projetos/<código>/Entregáveis`.
+- Programas: `ana.files.put/get/list/folder/grant` (com as permissões de quem
+  executa); `util.pdf` gera PDFs simples.
+- **Backup:** inclua o volume de arquivos junto com o do banco.
+
 ## Integrações e conciliação bancária (spec 017)
 
 Programas nunca fazem rede nem veem segredos. Em **Administração → Operação
@@ -400,9 +426,8 @@ correspondentes são só o valor inicial).
 
 ## Situação das specs
 
-Implementadas: 001–008, 011 (com usuários robô e dono obrigatório), 012, 018, 021 (portal do cliente depende da 016), 019 (faltam alertas configuráveis e OpenTelemetry), 013, 017 (faltam SFTP/pasta/e-mail, mTLS, CNAB e pacotes de modelos), 022, 023, 024, 025, 026, 027, 028; 020 parcial (falta próxima ação
+Implementadas: 001–008, 011 (com usuários robô e dono obrigatório), 012, 018, 021, 019 (faltam alertas configuráveis e OpenTelemetry), 013, 016 (faltam S3 e antivírus), 017 (faltam SFTP/pasta/e-mail, mTLS, CNAB e pacotes de modelos), 022, 023, 024, 025, 026, 027, 028; 020 parcial (falta próxima ação
 sugerida, fluxos guiados e auditoria de acessibilidade).
 Na fila (ordem em [scripts/pending-work.prompt.md](scripts/pending-work.prompt.md)):
-016 repositório de
-arquivos, 014 produção, 015 logística, 010 API pública; 009 licenciamento
+014 produção, 015 logística, 010 API pública; 009 licenciamento
 aguarda decisões.

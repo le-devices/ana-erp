@@ -46,12 +46,12 @@ inglês, como no código (constituição, P2a).
 | 013 | [Cadeia de suprimentos](013-supply-chain/spec.md) | Fornecedores, compras, aprovação, recebimento, reposição | implementada |
 | 014 | [Produção e capacidade](014-production-planning/spec.md) | Estruturas, roteiros, necessidades, ordens, capacidade (bens e serviços) | especificada |
 | 015 | [Logística e campo](015-logistics-field-service/spec.md) | Transferências, expedição, devoluções, ordens de serviço, agenda, rotas | especificada |
-| 016 | [Repositório de arquivos](016-file-repository/spec.md) | Pastas, versões, permissões granulares, portal do cliente, links | especificada |
+| 016 | [Repositório de arquivos](016-file-repository/spec.md) | Pastas, versões, permissões granulares, portal do cliente, links | implementada (faltam S3 e antivírus) |
 | 017 | [Hub de integrações](017-integration-hub/spec.md) | Conectores, cofre, webhooks, extratos, conciliação, gateways | implementada (faltam SFTP/pasta/e-mail, mTLS, CNAB e pacotes de modelos) |
 | 018 | [Agendamento](018-scheduler/spec.md) | Rotinas com cron/calendário, cluster, tentativas, dependências | implementada |
 | 019 | [Observabilidade](019-observability/spec.md) | Saúde, métricas, rastros, stack traces, perfilamento, dicas | implementada (faltam alertas configuráveis e OpenTelemetry) |
 | 020 | [Arquitetura da informação](020-information-architecture/spec.md) | Áreas por tarefa; fluxo coerente (próxima ação, fluxos guiados) | parcial |
-| 021 | [Consultoria](021-consulting-projects/spec.md) | Fases, alocação de pessoal, quadro/Gantt e caminho crítico, valor agregado, mudanças, riscos, viabilidade e lucro (base/otimista/pessimista), portfólio | implementada (portal: 016) |
+| 021 | [Consultoria](021-consulting-projects/spec.md) | Fases, alocação de pessoal, quadro/Gantt e caminho crítico, valor agregado, mudanças, riscos, viabilidade e lucro (base/otimista/pessimista), portfólio | implementada |
 | 022 | [Execução paralela](022-parallel-execution/spec.md) | `ana.parallel`/`ana.map`: dividir e juntar, atômico ou independente | implementada |
 | 023 | [Alta disponibilidade](023-high-availability/spec.md) | Operação 24/7, drenagem, rolling, banco HA, testes de caos | implementada |
 | 024 | [Trilha de auditoria e retenção](024-audit-trail-retention/spec.md) | Acessos, execuções, CPU e stack traces de pessoas e robôs; trilha por usuário; retenção configurável | implementada |

@@ -143,7 +143,7 @@ login(Username, Password, Ip) ->
             {error, locked};
         false ->
             {ok, Rec} = ana_db:one(
-                "SELECT username, name, password_hash, role, must_change_password, kind "
+                "SELECT username, name, password_hash, role, must_change_password, kind, party_id "
                 "FROM ana_system.app_user WHERE username = $1 AND active", [Username]),
             Hash = case Rec of undefined -> ?DUMMY_HASH; #{<<"password_hash">> := H} -> H end,
             Valid = verify_password(Password, Hash) andalso Rec =/= undefined,
@@ -189,7 +189,7 @@ validate(Token) when byte_size(Token) > 20, byte_size(Token) < 100 ->
         [{_, User, Until}] when Until > Now -> {ok, User};
         _ ->
             case ana_db:one(
-                   "SELECT u.username, u.name, u.role, u.must_change_password, u.kind "
+                   "SELECT u.username, u.name, u.role, u.must_change_password, u.kind, u.party_id "
                    "FROM ana_system.session s JOIN ana_system.app_user u USING (username) "
                    "WHERE s.token_hash = $1 AND s.expires_at > now() AND u.active", [H]) of
                 {ok, #{} = Rec} ->
@@ -222,7 +222,9 @@ owner(_) -> {error, no_owner}.
 user(#{<<"username">> := U, <<"role">> := R} = Rec) ->
     #{username => U, role => R, name => maps:get(<<"name">>, Rec, <<>>),
       kind => maps:get(<<"kind">>, Rec, <<"human">>),
-      must_change_password => maps:get(<<"must_change_password">>, Rec, false)}.
+      must_change_password => maps:get(<<"must_change_password">>, Rec, false),
+      %% Spec 016: external portal accounts belong to a party (customer/supplier).
+      party_id => maps:get(<<"party_id">>, Rec, null)}.
 
 %% RF-011-13/14: robot API keys. The IP check is done by PostgreSQL (`<<=` on
 %% cidr), and cached per (key, ip) for 30 s; revocation clears the cache.

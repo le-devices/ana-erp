@@ -8,6 +8,7 @@ credentials: every data access is requested from the core.
 Each process serves a single execution (or inspection) and exits.
 """
 
+import base64
 import bdb
 import builtins
 import datetime
@@ -351,6 +352,7 @@ class Context:
     def __init__(self, d):
         self.user = d.get("user")
         self.role = d.get("role")
+        self.party = d.get("party")          # external portal accounts (spec 016)
         self.execution_id = d.get("execution_id")
         self.program = d.get("program")
         self.version = d.get("version")
@@ -460,6 +462,52 @@ def make_ana_module(channel, output, context):
         delivered after the commit, with retries; nothing is sent if the execution fails."""
         return sql_value("SELECT integration.enqueue($1, $2, $3::text::jsonb, $4) AS id", str(connector), str(kind),
                          to_json(payload), key)
+
+    class Files:
+        """Repository (spec 016), with the permissions of the execution's user.
+        Writes are immediate (like ana.remote), not part of the execution transaction."""
+
+        @staticmethod
+        def _where(folder=None, entity=None, subfolder=None):
+            w = {}
+            if entity is not None:
+                kind, ident = entity
+                w["entity"] = {"kind": str(kind), "id": int(ident)}
+            elif folder is not None:
+                w["folder"] = folder if isinstance(folder, int) else str(folder)
+            if subfolder:
+                w["subfolder"] = str(subfolder)
+            return w
+
+        def put(self, name, data, folder=None, entity=None, subfolder=None, comment=None):
+            """Stores bytes (or text, as UTF-8) as a new file or a new version: {file, version, size, mime}."""
+            raw = data.encode("utf-8") if isinstance(data, str) else bytes(data)
+            return channel.request("files", {"action": "put", "name": str(name), "comment": comment,
+                                             "data": base64.b64encode(raw).decode("ascii"),
+                                             **self._where(folder, entity, subfolder)})
+
+        def get(self, file, version=None):
+            """{name, mime, version, data: bytes}."""
+            r = channel.request("files", {"action": "get", "file": int(file), "version": version})
+            r["data"] = base64.b64decode(r["data"])
+            return r
+
+        def list(self, folder=None):
+            return channel.request("files", {"action": "list", "folder": folder})
+
+        def folder(self, folder=None, entity=None, subfolder=None, create=True):
+            """Id of a folder by path ("/Clientes/ACME") or entity (("party", 7)), created if missing."""
+            return channel.request("files", {"action": "folder", "create": bool(create),
+                                             **self._where(folder, entity, subfolder)})
+
+        def grant(self, subject_kind, subject, level, folder_id=None, file_id=None, expires_at=None, deny=False):
+            body = {"action": "grant", "subject_kind": subject_kind, "subject": str(subject), "level": level,
+                    "deny": bool(deny), "expires_at": expires_at}
+            if folder_id is not None:
+                body["folder_id"] = int(folder_id)
+            if file_id is not None:
+                body["file_id"] = int(file_id)
+            return channel.request("files", body)
 
     def log(message, level="info"):
         output.flush()
@@ -633,6 +681,7 @@ def make_ana_module(channel, output, context):
     m.remote = remote
     m.http = http
     m.send = send
+    m.files = Files()
     m.log = log
     m.table = table
     m.metrics = metrics

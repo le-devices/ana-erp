@@ -47,7 +47,7 @@ const { w, d, jsErrors } = await open("admin", PASSWORD);
 const text = (s) => (d.querySelector(s) || {}).textContent || "";
 await until(() => text("#area-home").includes("Favoritos"), "home");
 ok(!d.querySelector("#area-home").hidden, "Início é a área inicial");
-ok(d.querySelectorAll(".area:not([hidden])").length === 4, "admin vê as quatro áreas");
+ok([...d.querySelectorAll(".area:not([hidden])")].map((b) => b.dataset.area).join(",") === "home,ops,files,dev,admin", "admin vê as cinco áreas (Portal é só para contas externas)");
 
 // Operation: routine with form, result and history together (RF-020-03)
 await go(w, "#/ops/demo/demo.hello");
@@ -256,17 +256,49 @@ await fetch(ANA_URL + "/api/admin/users", { method: "POST", headers: { "Content-
 const u = await open(uname, "Operator-pass-1");
 const utext = (s) => (u.d.querySelector(s) || {}).textContent || "";
 await until(() => utext("#area-home").includes("Favoritos"), "user home", u.jsErrors);
-ok([...u.d.querySelectorAll(".area")].filter((b) => !b.hidden).map((b) => b.dataset.area).join(",") === "home,ops", "usuário vê só Início e Operação");
+ok([...u.d.querySelectorAll(".area")].filter((b) => !b.hidden).map((b) => b.dataset.area).join(",") === "home,ops,files", "usuário vê Início, Operação e Arquivos");
 u.w.location.hash = "#/dev";
 await sleep(300);
 ok(!u.d.querySelector("#area-home").hidden, "acesso direto a #/dev volta ao Início");
 u.w.location.hash = "#/ops";
 await until(() => utext("#ops-nav").includes("Vendas"), "user ops", u.jsErrors);
 ok(!utext("#ops-nav").includes("Utilidades"), "bibliotecas não aparecem como rotinas");
+u.w.location.hash = "#/files";
+await until(() => utext("#area-files").includes("Arraste arquivos"), "user files", u.jsErrors);
+ok(true, "área Arquivos abre para o usuário (spec 016)");
 ok(u.jsErrors.length === 0, "nenhum erro de JavaScript (usuário)");
 await fetch(`${ANA_URL}/api/admin/users/${uname}`, { method: "PUT", headers: { "Content-Type": "application/json", Authorization: "Bearer " + token },
   body: JSON.stringify({ active: false }) });
 u.w.close();
+
+// ---------------------------------------------------------------- external portal account (spec 016)
+const auth = { "Content-Type": "application/json", Authorization: "Bearer " + token };
+const sql = await (await fetch(ANA_URL + "/api/sql", { method: "POST", headers: auth,
+  body: JSON.stringify({ sql: "SELECT id FROM base.party WHERE active ORDER BY id LIMIT 1" }) })).json();
+const xname = "ex" + Date.now().toString().slice(-7);
+await fetch(ANA_URL + "/api/admin/users", { method: "POST", headers: auth,
+  body: JSON.stringify({ username: xname, password: "Portal-pass-1", role: "external", party_id: sql.rows[0][0] }) });
+const xt = (await (await fetch(ANA_URL + "/api/session", { method: "POST", headers: { "Content-Type": "application/json" },
+  body: JSON.stringify({ username: xname, password: "Portal-pass-1" }) })).json()).token;
+await fetch(ANA_URL + "/api/me/password", { method: "POST", headers: { "Content-Type": "application/json", Authorization: "Bearer " + xt },
+  body: JSON.stringify({ current: "Portal-pass-1", new: "Portal-pass-2" }) });
+const x = await open(xname, "Portal-pass-2");
+const xtext = (s) => (x.d.querySelector(s) || {}).textContent || "";
+await until(() => xtext("#area-portal").includes("Consultas liberadas"), "portal", x.jsErrors);
+ok([...x.d.querySelectorAll(".area")].filter((b) => !b.hidden).map((b) => b.dataset.area).join(",") === "files,portal",
+   "conta externa vê só Arquivos e Portal");
+[...x.d.querySelectorAll("#portal-main button")].find((b) => b.textContent.startsWith("Minhas faturas")).click();
+await until(() => [...x.d.querySelectorAll("#portal-main h3, #portal-main .table-title, #portal-main caption")]
+  .some((n) => n.textContent.includes("Faturas")) || xtext("#portal-main .output").includes("Faturas"), "my invoices", x.jsErrors);
+ok(true, "portal executa Minhas faturas");
+ok([...x.d.querySelectorAll("#portal-main button")].some((b) => b.textContent.startsWith("Aprovações do cliente")),
+   "portal oferece as aprovações do cliente (T-021-11)");
+x.w.location.hash = "#/dev";
+await sleep(300);
+ok(!x.d.querySelector("#area-portal").hidden, "conta externa não entra no Desenvolvimento");
+ok(x.jsErrors.length === 0, "nenhum erro de JavaScript (portal)" + (x.jsErrors.length ? ": " + x.jsErrors.join("; ") : ""));
+await fetch(`${ANA_URL}/api/admin/users/${xname}`, { method: "PUT", headers: auth, body: JSON.stringify({ active: false }) });
+x.w.close();
 process.exit(0);
 
 function location_hash(win) { return win.location.hash; }

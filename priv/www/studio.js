@@ -17,6 +17,7 @@
   const state = { user: null, targets: new Map(), trail: [] };
 
   const canSee = (minRole) => (ROLE_LEVEL[state.user.role] || 0) >= (ROLE_LEVEL[minRole] || 1);
+  const isExternal = () => state.user && state.user.role === "external";
 
   // ------------------------------------------------------------------ screens
   function showScreen(id) {
@@ -42,11 +43,16 @@
     try { state.user = await API.me(); } catch (_) { showLogin(); return; }
     if (state.user.must_change_password) { showPassword(true); return; }
     document.body.classList.toggle("is-admin", state.user.role === "admin");
-    for (const b of $$(".area")) b.hidden = !canSee(b.dataset.minRole || "user");
+    // Spec 016: an external portal account sees only Files and Portal.
+    for (const b of $$(".area")) {
+      b.hidden = isExternal() ? !["files", "portal"].includes(b.dataset.area)
+                              : b.dataset.only === "external" || !canSee(b.dataset.minRole || "user");
+    }
+    $("#command-form").hidden = isExternal();
     $("#user-name").textContent = `${state.user.name || state.user.username} (${state.user.role})`;
     refreshTitle(state.user.company);
     showScreen("#app-screen");
-    await buildTargets();
+    if (!isExternal()) await buildTargets();
     route();
   }
 
@@ -79,6 +85,8 @@
     if (!parts.length || parts[0] === "home") return null;
     if (parts[0] === "ops") return parts.length > 2 ? `#/ops/${parts[1]}` : parts.length === 2 ? "#/ops" : "#/home";
     if (parts[0] === "dev") return parts.length > 1 ? "#/dev" : "#/home";
+    if (parts[0] === "files") return parts.length > 1 ? "#/files" : isExternal() ? null : "#/home";
+    if (parts[0] === "portal") return null;
     return "#/home";
   }
 
@@ -99,16 +107,19 @@
     const query = Object.fromEntries(new URLSearchParams(search || ""));
     const parts = path.split("/").filter(Boolean).map(decodeURIComponent);
     let [area, ...rest] = parts;
-    const allowed = { home: "user", ops: "user", dev: "developer", admin: "admin" };
-    if (!allowed[area] || !canSee(allowed[area])) {
-      area = "home";
+    const allowed = { home: "user", ops: "user", files: "user", dev: "developer", admin: "admin" };
+    const ok = isExternal() ? ["files", "portal"].includes(area) : (allowed[area] && canSee(allowed[area]));
+    if (!ok) {
+      area = isExternal() ? "portal" : "home";
       rest = [];
-      replace("#/home");
+      replace("#/" + area);
     }
     for (const b of $$(".area")) b.classList.toggle("active", b.dataset.area === area);
-    for (const a of ["home", "ops", "dev", "admin"]) $("#area-" + a).hidden = a !== area;
+    for (const a of ["home", "ops", "files", "portal", "dev", "admin"]) $("#area-" + a).hidden = a !== area;
     try {
-      if (area === "home") await window.AnaOps.home();
+      if (area === "files") await window.AnaFiles.show(rest);
+      else if (area === "portal") await window.AnaFiles.portal(rest);
+      else if (area === "home") await window.AnaOps.home();
       else if (area === "ops") await window.AnaOps.ops(rest[0], rest[1], query);
       else if (area === "dev") await window.AnaDev.show(rest);
       else if (area === "admin") window.AnaAdmin.show(rest[0] || "users");
