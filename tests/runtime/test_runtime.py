@@ -364,6 +364,17 @@ class TestInspection(unittest.TestCase):
                          "    b = ana.sql(\"SELECT id FROM t WHERE name ILIKE '%' || $1 || '%' LIMIT 10\", q)\n")
         self.assertEqual([(f["line"], f["rule"]) for f in r["lint"]], [(4, "leading_wildcard")])
 
+    def test_lint_rules_are_precise(self):
+        r = self.inspect(
+            "def main(ids):\n"
+            "    ana.sql('SELECT x FROM unnest($1::int[]) AS u(x) JOIN s.t ON t.id = u.x', ids)\n"          # 2: bounded by unnest
+            "    ana.sql('SELECT (SELECT count(*) FROM s.a WHERE a.k = $1) AS n, "
+            "(SELECT COALESCE(sum(v), 0) FROM s.b WHERE b.k = $1) AS m', 1)\n"                              # 3: no function in WHERE
+            "    ana.sql('SELECT sum(v) FILTER (WHERE lower(c) = $1) FROM s.t', 'x')\n"                     # 4: FILTER is not a WHERE
+            "    ana.sql('SELECT id FROM s.t WHERE lower(name) = $1', 'x')\n")                              # 5: real one
+        got = sorted((f["line"], f["rule"]) for f in r["lint"])
+        self.assertEqual(got, [(4, "unbounded_select"), (5, "function_on_column")])
+
     def test_lint_comprehension_source_runs_once(self):
         r = self.inspect("def main(ids):\n"
                          "    a = {x['id']: x for x in ana.sql('SELECT id FROM t WHERE id = ANY($1)', ids)}\n"

@@ -23,6 +23,7 @@ def main(kind, order=None):
         return [{"value": r["code"], "label": f"{r['code']} — {r['description']}" + (" (serviço)" if r["kind"] == "service" else "")}
                 for r in rows]
     if kind == "warehouses":
+        # ana:lint-ok unbounded_select — warehouses: small master table, the whole list is the answer
         rows = ana.sql("SELECT code, description FROM inventory.warehouse ORDER BY code")
         return [{"value": r["code"], "label": f"{r['code']} — {r['description']}"} for r in rows]
     if kind == "projects":

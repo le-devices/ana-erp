@@ -30,6 +30,7 @@ def main(receipt_tolerance_pct=None, default_payment_days=None, limit_kind=None,
                          "ON CONFLICT (target_kind, target) DO UPDATE SET max_amount = EXCLUDED.max_amount",
                          limit_kind, limit_target, limit_amount)
     policy = ana.sql_one("SELECT receipt_tolerance_pct, default_payment_days FROM supply.policy WHERE id = 1")
+    # ana:lint-ok unbounded_select — approval limits: small configuration table
     limits = ana.sql("SELECT CASE target_kind WHEN 'role' THEN 'papel' ELSE 'grupo' END AS tipo, target AS \"papel/grupo\", "
                      "COALESCE(max_amount::text, 'sem limite') AS \"valor máximo\" FROM supply.approval_limit ORDER BY 1, 2")
     ana.metrics([{"label": "Tolerância de recebimento", "value": f"{policy['receipt_tolerance_pct']}%"},

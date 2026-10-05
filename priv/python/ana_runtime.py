@@ -1131,13 +1131,28 @@ WHERE_FUNC_RE = re.compile(r"\b(LOWER|UPPER|DATE_TRUNC|DATE|TO_CHAR|COALESCE|TRI
 CLAUSE_END_RE = re.compile(r"\b(GROUP\s+BY|ORDER\s+BY|LIMIT|RETURNING|HAVING|UNION)\b", re.I)
 
 
-def _where_clause(sql):
-    m = re.search(r"\bWHERE\b", sql, re.I)
-    if not m:
-        return None
-    rest = sql[m.end():]
-    end = CLAUSE_END_RE.search(rest)
-    return rest[:end.start()] if end else rest
+def _where_clauses(sql):
+    """Each WHERE clause up to the end of its own parenthesis level; FILTER (WHERE …) of
+    aggregates is not a row filter and is skipped."""
+    out = []
+    for m in re.finditer(r"\bWHERE\b", sql, re.I):
+        if re.search(r"\bFILTER\s*\(\s*$", sql[:m.start()], re.I):
+            continue
+        depth, i, rest = 0, m.end(), sql[m.end():]
+        end = len(rest)
+        for i, ch in enumerate(rest):
+            if ch == "(":
+                depth += 1
+            elif ch == ")":
+                depth -= 1
+                if depth < 0:
+                    end = i
+                    break
+            elif depth == 0 and CLAUSE_END_RE.match(rest, i) and (i == 0 or not rest[i - 1].isalnum()):
+                end = i
+                break
+        out.append(rest[:end])
+    return out
 
 
 def _check_sql(text):
@@ -1146,15 +1161,16 @@ def _check_sql(text):
         if rx.search(text):
             out.append((rule, severity, message, suggestion))
     head = text.lstrip().split(None, 1)[0].upper() if text.strip() else ""
-    where = _where_clause(text)
-    if head in ("UPDATE", "DELETE") and where is None:
+    wheres = _where_clauses(text)
+    if head in ("UPDATE", "DELETE") and not wheres:
         out.append(("no_where", "critical", f"{head} sem WHERE altera a tabela inteira.",
                     "Confirme que é isso mesmo; senão, filtre com WHERE."))
-    if where is not None and WHERE_FUNC_RE.search(where):
+    if any(WHERE_FUNC_RE.search(w) for w in wheres):
         out.append(("function_on_column", "info",
                     "Função sobre coluna no filtro impede o índice comum dessa coluna.",
                     "Crie um índice de expressão (ex.: CREATE INDEX … ON t (lower(col))) ou compare com o valor já transformado."))
-    if head == "SELECT" and where is None and re.search(r"\bFROM\s+[a-z_]", text, re.I) \
+    # Only a real table read whole counts (not unnest(…), generate_series(…) or no table at all).
+    if head == "SELECT" and not wheres and re.search(r"\bFROM\s+[a-z_][a-z0-9_]*\.[a-z_]", text, re.I) \
             and not re.search(r"\bLIMIT\b", text, re.I):
         out.append(("unbounded_select", "info",
                     "Consulta sem filtro nem LIMIT: o tempo cresce junto com a tabela.",

@@ -214,11 +214,14 @@ def schedule(project, tasks=None, deps=None, today=None, forecast=True):
 # ---------------------------------------------------------------- earned value
 
 def latest_baseline(project_id):
-    return ana.sql_one("SELECT * FROM projects.baseline WHERE project_id = $1 ORDER BY number DESC LIMIT 1",
+    return ana.sql_one("SELECT id, project_id, number, reason, change_id, total_hours, total_value, finish_date, "
+                       "created_by, created_at, projected_revenue, projected_cost, projected_profit, "
+                       "low_margin_justification FROM projects.baseline WHERE project_id = $1 ORDER BY number DESC LIMIT 1",
                        project_id)
 
 
 def rates(project_id):
+    # ana:lint-ok unbounded_select — rate profiles: small configuration table, read whole on purpose
     rows = ana.sql(
         "SELECT r.code, COALESCE(pr.hourly_rate, r.hourly_rate) AS rate FROM projects.rate_profile r "
         "LEFT JOIN projects.project_rate pr ON pr.profile = r.code AND pr.project_id = $1", project_id)
@@ -232,7 +235,8 @@ def progress(project, today=None):
     base = latest_baseline(project["id"])
     base_items = {}
     if base:
-        for b in ana.sql("SELECT * FROM projects.baseline_item WHERE baseline_id = $1", base["id"]):
+        for b in ana.sql("SELECT baseline_id, task_id, code, name, kind, parent_code, planned_hours, planned_start, "
+                         "planned_finish, planned_value FROM projects.baseline_item WHERE baseline_id = $1", base["id"]):
             base_items[b["task_id"]] = b
     plan = schedule(project, tasks, deps, today, forecast=False)
     cal = plan["calendar"]

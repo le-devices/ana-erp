@@ -14,7 +14,9 @@ PARAMS = {
 
 def main(number, reason):
     inv = ana.sql_one(
-        "SELECT i.*, p.code AS project_code FROM projects.invoice i "
+        "SELECT i.id, i.number, i.project_id, i.customer_id, i.issue_date, i.through_date, i.total, "
+        "i.service_tax_rate, i.service_tax_amount, i.service_tax_withheld, i.net_amount, i.status, "
+        "i.bill_id, i.entry_id, i.reversal_entry_id, i.created_by, i.created_at, p.code AS project_code FROM projects.invoice i "
         "JOIN projects.project p ON p.id = i.project_id WHERE i.number = $1 FOR UPDATE OF i", number)
     if not inv:
         raise ana.Error("INVOICE_NOT_FOUND", f"fatura {number} não encontrada")

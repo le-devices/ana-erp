@@ -43,7 +43,9 @@ def main(project, action, number=None, title=None, description=None, est_hours=N
     access.require_manager(p)
     if number is None:
         raise ana.Error("INVALID_PARAMETER", "informe o número da mudança")
-    c = ana.sql_one("SELECT * FROM projects.scope_change WHERE project_id = $1 AND number = $2 FOR UPDATE",
+    c = ana.sql_one("SELECT id, project_id, number, title, description, requested_by, requested_at, est_hours, "
+                    "est_amount, est_days, status, internal_approved_by, internal_approved_at, "
+                    "customer_approver, customer_approved_at, rejection_reason, milestone_id, baseline_id FROM projects.scope_change WHERE project_id = $1 AND number = $2 FOR UPDATE",
                     p["id"], number)
     if not c:
         raise ana.Error("CHANGE_NOT_FOUND", f"mudança {number} não encontrada")
