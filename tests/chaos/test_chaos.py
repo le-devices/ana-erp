@@ -288,6 +288,32 @@ class TestChaos(unittest.TestCase):
         self.assertEqual(before, after, "o núcleo não pode ter sido reiniciado")
         self.assertEqual(http(NODE1, "GET", "/health/ready")[0], 200)
 
+    # ------------------------------------------------------------------ CA-019-01
+    def test_g_database_down_opens_and_closes_an_incident(self):
+        s, h = http(NODE1, "GET", "/api/admin/observability/health", token=self.token)
+        seen = max([i["id"] for i in h["incidents"]] or [0]) if s == 200 else 0   # incidents of earlier runs
+        compose("stop", "db")
+        try:
+            time.sleep(15)                      # > one health check interval (10 s)
+        finally:
+            compose("start", "db")
+        wait_ready(NODE1)
+        token = login(NODE1)
+        end, closed, states = time.time() + 60, [], {}
+        while time.time() < end and not (closed and states.get("database") == "green"):
+            s, h = http(NODE1, "GET", "/api/admin/observability/health", token=token)
+            if s == 200:
+                closed = [i for i in h["incidents"] if i["component"] == "database" and i["closed_at"]
+                          and i["seconds"] >= 5 and i["id"] > seen]
+                states = {c["component"]: c["state"] for c in h["components"]}
+            time.sleep(2)
+        self.assertTrue(closed, "o banco fora deveria abrir um incidente e a volta, fechá-lo")
+        states_seen = [e["state"] for e in h["events"] if e["component"] == "database"]   # newest first
+        self.assertIn("red", states_seen, states_seen[:6])
+        self.assertEqual(states_seen[0], "green", states_seen[:6])                     # may pass by yellow (slow) on the way back
+        self.assertLess(states_seen.index("green"), states_seen.index("red"))
+        self.assertEqual(states.get("database"), "green")
+
     # ------------------------------------------------------------------ RF-023-06
     def test_z_point_in_time_restore(self):
         def psql(sql):

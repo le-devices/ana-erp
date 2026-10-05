@@ -6,7 +6,7 @@
 -module(ana_admin).
 -export([log/5,
          list_users/1, get_user/1, create_user/2, update_user/3, reset_password/2,
-         revoke_sessions/2, unlock_user/2, list_keys/1, create_key/3, revoke_key/2,
+         revoke_sessions/2, unlock_user/2, unlock_ip/2, list_keys/1, create_key/3, revoke_key/2,
          list_groups/0, save_group/3, delete_group/2,
          get_company/0, save_company/2,
          list_default_accounts/0, save_default_account/3,
@@ -42,7 +42,7 @@ list_users(Filter) ->
     end,
     ana_db:rows(
         "SELECT u.username, u.name, u.role, u.kind, u.builtin, u.active, u.must_change_password, u.created_at, "
-        "       u.last_login_at, COALESCE(array_agg(ug.group_name ORDER BY ug.group_name) "
+        "       u.last_login_at, u.party_id, COALESCE(array_agg(ug.group_name ORDER BY ug.group_name) "
         "         FILTER (WHERE ug.group_name IS NOT NULL), '{}') AS groups "
         "FROM ana_system.app_user u LEFT JOIN ana_system.user_group ug USING (username) "
         "WHERE ($1::text IS NULL OR u.username ILIKE $1 OR u.name ILIKE $1) "
@@ -80,6 +80,34 @@ create_user(Fields = #{<<"kind">> := <<"robot">>}, #{username := Who}) ->
                 {error, E} -> {error, E}
             end
     end;
+%% Spec 016 (RF-016-04): external portal account, tied to a customer/supplier.
+create_user(Fields = #{<<"role">> := <<"external">>}, #{username := Who}) ->
+    Username = maps:get(<<"username">>, Fields, <<>>),
+    Party = maps:get(<<"party_id">>, Fields, null),
+    {Password, Generated} = case maps:get(<<"password">>, Fields, null) of
+        P when is_binary(P), P =/= <<>> -> {P, false};
+        _ -> {generate_password(), true}
+    end,
+    case {is_integer(Party), ana_security:check_policy(Username, Password)} of
+        {false, _} -> {error, <<"conta externa exige o cliente/fornecedor (party_id)"/utf8>>};
+        {_, {error, _} = E} -> E;
+        {true, ok} ->
+            case ana_db:exec(
+                   "INSERT INTO ana_system.app_user (username, name, password_hash, role, party_id, must_change_password) "
+                   "SELECT $1, $2, $3, 'external', $4, true WHERE EXISTS (SELECT 1 FROM base.party WHERE id = $4 AND active)",
+                   [Username, maps:get(<<"name">>, Fields, <<>>), ana_security:hash_password(Password), Party]) of
+                {ok, 1} ->
+                    log(Who, <<"user.create_external">>, Username, null, maps:without([<<"password">>], Fields)),
+                    {ok, case Generated of
+                             true -> #{username => Username, password => Password};
+                             false -> #{username => Username}
+                         end};
+                {ok, 0} -> {error, <<"cliente/fornecedor inexistente ou inativo"/utf8>>};
+                {error, #{sqlstate := <<"23505">>}} -> {error, <<"login já existe"/utf8>>};
+                {error, #{sqlstate := <<"23514">>}} -> {error, <<"login inválido"/utf8>>};
+                {error, E} -> {error, E}
+            end
+    end;
 create_user(Fields, #{username := Who}) ->
     Username = maps:get(<<"username">>, Fields, <<>>),
     Role = maps:get(<<"role">>, Fields, <<"user">>),
@@ -112,16 +140,24 @@ create_user(Fields, #{username := Who}) ->
     end.
 
 %% RF-011-02: name, role, active, groups. Never removes the last active admin.
-update_user(Username, Fields, #{username := Who}) ->
+update_user(Username, Fields, Admin) ->
+    try do_update_user(Username, Fields, Admin)
+    catch throw:{error, _} = E -> E
+    end.
+
+do_update_user(Username, Fields, #{username := Who}) ->
     case get_user(Username) of
         {error, _} = E -> E;
         {ok, Before} ->
             Role = maps:get(<<"role">>, Fields, maps:get(<<"role">>, Before)),
+            %% An external account stays external (it belongs to a party), and vice versa.
+            (Role =:= <<"external">>) =:= (maps:get(<<"role">>, Before) =:= <<"external">>)
+                orelse throw({error, <<"conta externa não muda de papel; crie outra conta"/utf8>>}),
             Active = maps:get(<<"active">>, Fields, maps:get(<<"active">>, Before)),
             LosesAdmin = maps:get(<<"role">>, Before) =:= <<"admin">>
                          andalso maps:get(<<"active">>, Before) =:= true
                          andalso (Role =/= <<"admin">> orelse Active =/= true),
-            case lists:member(Role, ?ROLES) andalso is_boolean(Active) of
+            case (lists:member(Role, ?ROLES) orelse Role =:= <<"external">>) andalso is_boolean(Active) of
                 false -> {error, <<"dados inválidos"/utf8>>};
                 true when LosesAdmin ->
                     case other_active_admins(Username) of
@@ -183,6 +219,12 @@ revoke_sessions(Username, #{username := Who}) ->
     {ok, N} = ana_security:revoke_sessions(Username),
     log(Who, <<"user.revoke_sessions">>, Username, null, #{sessions => N}),
     {ok, #{sessions => N}}.
+
+%% RF-011 (operation): unblock an address after legitimate failures (spec 001 brute-force protection).
+unlock_ip(Ip, #{username := Who}) ->
+    ok = ana_security:unlock_ip(Ip),
+    log(Who, <<"security.unlock_ip">>, Ip, null, null),
+    {ok, #{ip => Ip}}.
 
 unlock_user(Username, #{username := Who}) ->
     ok = ana_security:unlock(Username),
@@ -448,7 +490,8 @@ audit_execution(Id) ->
                 "  error->>'code' AS error FROM ana_system.execution "
                 "WHERE parent_execution_id = $1::text::uuid ORDER BY started_at", [Id]),
             Sum = fun(K) -> lists:sum([V || #{K := V} <- [R | Parts], is_integer(V)]) end,
-            {ok, R#{<<"parts">> => Parts,
+            {ok, R#{<<"trace">> => case ana_observability:trace(Id) of undefined -> null; T -> T end,
+                    <<"parts">> => Parts,
                     <<"total">> => #{cpu_ms => Sum(<<"cpu_ms">>), sql_count => Sum(<<"sql_count">>),
                                      parts => length(Parts)}}};
         {error, _} -> {error, not_found}

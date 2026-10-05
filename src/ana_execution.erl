@@ -81,7 +81,15 @@
     parent_mon :: reference() | undefined,
     prepare :: binary() | undefined,
     snapshot_in :: binary() | undefined,
-    par = #{} :: map()
+    par = #{} :: map(),
+    %% Spec 019: SQL measured per statement; profile when asked.
+    sql_cur :: {integer(), binary(), term()} | undefined,
+    sql_events = [] :: [map()],
+    sql_n = 0 :: non_neg_integer(),
+    sql_by_hash = #{} :: map(),
+    sql_us = 0 :: non_neg_integer(),
+    profile_req = false :: boolean(),
+    profile :: map() | null | undefined
 }).
 
 %% ==========================================================================
@@ -270,7 +278,10 @@ init(#{id := Id, program := Program, params := Params, user := User,
              snapshot_in = case ana_parallel:valid_snapshot(maps:get(snapshot, Op, undefined)) of
                  true -> maps:get(snapshot, Op);
                  false -> undefined
-             end},
+             end,
+             profile_req = maps:get(profile, Op, false) =:= true andalso ana_security:has_role(User, <<"developer">>)},
+    %% RF-019-09: logs of this process carry the execution, program and user.
+    logger:set_process_metadata(#{execution_id => Id, program => Program, user => maps:get(username, User)}),
     {ok, St, {continue, start}}.
 
 handle_continue(start, St) ->
@@ -326,7 +337,7 @@ handle_info({Port, {exit_status, S}}, St = #st{status = Status}) when Status =/=
 handle_info({pending, Ref, Res}, St = #st{pending = {Ref, _, RequestId}}) ->
     {Res2, St2} = count_rows(Res, St),
     respond(RequestId, Res2, St2),
-    {noreply, St2#st{pending = undefined}};
+    {noreply, note_sql(Res, St2#st{pending = undefined})};
 handle_info(timeout, St = #st{status = running}) ->
     Msg = unicode:characters_to_binary(io_lib:format("tempo máximo de execução (~b ms) excedido",
                                                      [St#st.timeout_ms])),
@@ -398,9 +409,11 @@ prepare_run(P, L, St) ->
                 undefined -> "BEGIN; ";
                 S -> ["BEGIN ISOLATION LEVEL REPEATABLE READ; SET TRANSACTION SNAPSHOT '", S, "'; "]
             end,
+            %% ana.username: informational (outbox created_by, spec 017); never used for authorization.
             Begin = io_lib:format(
-                "~sSET LOCAL statement_timeout = ~b; SET LOCAL lock_timeout = ~b",
-                [Snap, maps:get(<<"sql_timeout_ms">>, L), maps:get(<<"lock_timeout_ms">>, L)]),
+                "~sSET LOCAL statement_timeout = ~b; SET LOCAL lock_timeout = ~b; SET LOCAL ana.username = '~ts'",
+                [Snap, maps:get(<<"sql_timeout_ms">>, L), maps:get(<<"lock_timeout_ms">>, L),
+                 binary:replace(maps:get(username, St1#st.user), <<"'">>, <<"''">>, [global])]),
             case lists:flatten([epgsql:squery(C, Begin)]) of
                 [{ok, [], []} | _] = Rs ->
                     case [E || {error, E} <- Rs] of
@@ -418,7 +431,12 @@ prepare_run(P, L, St) ->
 load(Name, User) ->
     case ana_program:valid_name(Name) andalso ana_program:for_execution(Name) of
         {ok, #{<<"active">> := true, <<"kind">> := <<"program">>, <<"min_role">> := Min} = P} ->
-            case ana_security:has_role(User, Min) andalso ana_access:allowed(User, P) of
+            %% Spec 016: an external portal account runs only programs marked for the portal.
+            Allowed = case User of
+                #{role := <<"external">>} -> maps:get(<<"portal">>, P, false) =:= true;
+                _ -> ana_security:has_role(User, Min) andalso ana_access:allowed(User, P)
+            end,
+            case Allowed of
                 true -> {ok, P};
                 false -> {error, err(<<"FORBIDDEN">>, <<"sem permissão para o programa"/utf8>>)}
             end;
@@ -442,10 +460,12 @@ open_frame(P, RequestId, Savepoint, St = #st{stack = Stack}) ->
                     params => Params,
                     context => #{user => maps:get(username, St#st.user),
                                  role => maps:get(role, St#st.user),
+                                 party => maps:get(party_id, St#st.user, null),
                                  execution_id => St#st.id,
                                  origin => St#st.origin,
                                  depth => length(Stack)},
                     debug => Root andalso St#st.debug,
+                    profile => Root andalso St#st.profile_req andalso not St#st.debug,
                     limits => maps:with([<<"cpu_ms">>, <<"memory_mb">>, <<"output_kb">>], St#st.limits),
                     breakpoints => St#st.breakpoints,
                     stop_on_entry => St#st.stop_on_entry},
@@ -489,14 +509,20 @@ request(Op, Id, _, St = #st{sql_count = N, limits = #{<<"max_sql">> := Max}})
     St;
 request(<<"sql">>, Id, #{<<"sql">> := Sql} = A, St) when is_binary(Sql) ->
     Params = maps:get(<<"params">>, A, []),
-    async(Id, fun(C) -> ana_db:query(C, Sql, as_list(Params)) end, St#st{sql_count = St#st.sql_count + 1});
-request(<<"sql_batch">>, Id, #{<<"sql">> := Sql, <<"batch">> := Batch}, St)
+    async(Id, fun(C) -> ana_db:query(C, Sql, as_list(Params)) end,
+          St#st{sql_count = St#st.sql_count + 1, sql_cur = {now_us(), Sql, maps:get(<<"at">>, A, null)}});
+request(<<"sql_batch">>, Id, #{<<"sql">> := Sql, <<"batch">> := Batch} = A, St)
   when is_binary(Sql), is_list(Batch) ->
     async(Id, fun(C) -> ana_db:batch(C, Sql, [as_list(P) || P <- Batch]) end,
-          St#st{sql_count = St#st.sql_count + length(Batch)});
+          St#st{sql_count = St#st.sql_count + length(Batch), sql_cur = {now_us(), Sql, maps:get(<<"at">>, A, null)}});
 request(<<"remote">>, Id, #{<<"system">> := S, <<"function">> := F} = A, St) ->
     P = maps:get(<<"params">>, A, #{}),
     async(Id, fun(_C) -> ana_remote_system:call(S, F, P) end, St);
+request(<<"http">>, Id, #{<<"connector">> := C, <<"method">> := M, <<"path">> := P} = A, St) ->
+    ExecId = St#st.id,
+    async(Id, fun(_C) -> ana_connector:http(C, M, P, maps:get(<<"options">>, A, #{}), ExecId) end, St);
+request(<<"files">>, Id, A, St = #st{user = User}) when is_map(A) ->
+    async(Id, fun(_C) -> files_reply(ana_files:program(User, A)) end, St);
 request(<<"library_source">>, Id, #{<<"name">> := Name}, St) ->
     respond(Id, {ok, ana_program:library_source(Name)}, St),
     St;
@@ -515,6 +541,12 @@ request(<<"cancel">>, Id, #{<<"handles">> := Hs}, St) when is_list(Hs) ->
 request(Op, Id, _, St) ->
     respond(Id, {error, err(<<"INVALID_OPERATION">>, Op)}, St),
     St.
+
+files_reply({ok, V}) -> {ok, V};
+files_reply({error, not_found}) -> {error, err(<<"FILE_NOT_FOUND">>, <<"arquivo ou pasta não encontrado"/utf8>>)};
+files_reply({error, forbidden}) -> {error, err(<<"FORBIDDEN">>, <<"sem permissão no repositório"/utf8>>)};
+files_reply({error, M}) when is_binary(M) -> {error, err(<<"FILES_REFUSED">>, M)};
+files_reply({error, #{} = E}) -> {error, E}.
 
 %% Runs outside this process so deadlines and commands are still served.
 async(Id, Fun, St = #st{conn = C}) ->
@@ -588,7 +620,7 @@ nested_end2(M, F = #frame{savepoint = Sp, request_id = RequestId}, St = #st{conn
     St.
 
 root_end(M, St0) ->
-    root_end2(M, add_usage(M, St0)).
+    root_end2(M, add_usage(M, St0#st{profile = maps:get(<<"profile">>, M, null)})).
 
 root_end2(#{<<"ok">> := true} = M, St0 = #st{conn = C}) ->
     Result = maps:get(<<"result">>, M, null),
@@ -1021,6 +1053,7 @@ finish(Status, Data, St00) ->
     end,
     RolledBack = maps:get(rolled_back, Data, false),
     audit_end(St, Status, Duration, Result, Error),
+    _ = (catch observe(Status, Duration, St)),
     Final = #{final_status => Status, result => Result, error => Error,
               duration_ms => Duration, rolled_back => RolledBack,
               usage => usage(St), limits => St#st.limits},
@@ -1127,6 +1160,73 @@ audit_end(St, Status, Duration, Result, Error) ->
 
 json_text(null) -> null;
 json_text(V) -> iolist_to_binary(json:encode(V)).
+
+%% ==========================================================================
+%% SQL performance (spec 019)
+%% ==========================================================================
+
+-define(MAX_SQL_EVENTS, 2000).
+
+now_us() -> erlang:monotonic_time(microsecond).
+
+note_sql(_Res, St = #st{sql_cur = undefined}) -> St;
+note_sql(Res, St = #st{sql_cur = {T0, Sql, At}}) ->
+    Us = now_us() - T0,
+    Rows = case Res of
+        {ok, #{rows := R}} when is_list(R) -> length(R);
+        {ok, #{affected := N}} when is_integer(N) -> N;
+        _ -> 0
+    end,
+    Norm = ana_sql_stats:normalize(Sql),
+    H = ana_sql_stats:hash(Norm),
+    ByHash = case maps:find(H, St#st.sql_by_hash) of
+        {ok, {Q, C, T, M, Rw, At0}} -> (St#st.sql_by_hash)#{H := {Q, C + 1, T + Us, max(M, Us), Rw + Rows, At0}};
+        error -> (St#st.sql_by_hash)#{H => {Norm, 1, Us, Us, Rows, At}}
+    end,
+    Events = case St#st.sql_n < ?MAX_SQL_EVENTS of
+        true -> [#{t_ms => (T0 div 1000) - St#st.started, ms => Us / 1000, rows => Rows, hash => H,
+                   sql => binary:part(Norm, 0, min(byte_size(Norm), 2000)), at => At,
+                   error => element(1, Res) =:= error} | St#st.sql_events];
+        false -> St#st.sql_events
+    end,
+    St#st{sql_cur = undefined, sql_by_hash = ByHash, sql_events = Events, sql_n = St#st.sql_n + 1,
+          sql_us = St#st.sql_us + Us}.
+
+%% At the end: aggregates, N+1, metrics and (sampled) trace — never in the way of the result.
+observe(Status, Duration, St = #st{program = Program}) ->
+    Stats = [{H, Q, C, T, M, R} || {H, {Q, C, T, M, R, _}} <- maps:to_list(St#st.sql_by_hash)],
+    ok = ana_sql_stats:record(Program, Stats),
+    Threshold = ana_settings:get(n_plus_one_threshold),
+    _ = [ana_sql_stats:n_plus_one(Program, H, Q, C, At, St#st.id)
+         || {H, {Q, C, _, _, _, At}} <- maps:to_list(St#st.sql_by_hash), C >= Threshold],
+    SqlMs = St#st.sql_us / 1000,
+    ok = ana_metrics:observe(Program, Status, Duration, SqlMs),
+    Reason = if
+        Status =/= <<"success">> -> <<"error">>;
+        is_map(St#st.profile) -> <<"profile">>;
+        true ->
+            case Duration >= ana_settings:get(trace_slow_ms) of
+                true -> <<"slow">>;
+                false ->
+                    case rand:uniform(100) =< ana_settings:get(trace_sample_pct) of
+                        true -> <<"sample">>;
+                        false -> none
+                    end
+            end
+    end,
+    case Reason of
+        none -> ok;
+        _ ->
+            Events = lists:reverse(St#st.sql_events),
+            Profile = case St#st.profile of P when is_map(P) -> P; _ -> null end,
+            Id = St#st.id,
+            _ = spawn(fun() ->
+                ana_db:exec("INSERT INTO ana_system.execution_trace (execution_id, program, reason, sql_ms, events, profile) "
+                            "VALUES ($1::text::uuid, $2, $3, $4, $5, $6) ON CONFLICT (execution_id) DO NOTHING",
+                            [Id, Program, Reason, SqlMs, Events, Profile])
+            end),
+            ok
+    end.
 
 %% ==========================================================================
 %% Measurement and row limits (spec 012)

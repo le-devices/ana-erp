@@ -1,5 +1,5 @@
 # ANA ERP — atalhos de desenvolvimento
-.PHONY: subir parar logs compilar eunit dialyzer teste-runtime teste-integracao teste-estudio teste-cluster teste-caos testes limpar
+.PHONY: subir parar logs compilar eunit dialyzer teste-runtime teste-integracao teste-estudio teste-cluster teste-caos teste-pg-ha testes limpar
 
 subir:            ## sobe banco + núcleo
 	docker compose up -d --build
@@ -35,7 +35,10 @@ teste-cluster:    ## dois nós (sobe e remove o segundo nó)
 teste-caos:       ## dois nós + balanceador: falhas, queda de nó, rolling, banco, restauração
 	tests/chaos/run.sh
 
-testes: eunit teste-runtime teste-integracao teste-estudio teste-cluster teste-caos
+teste-pg-ha:      ## PostgreSQL primário + réplica: troca real de primário
+	tests/pg_ha/run.sh
+
+testes: eunit teste-runtime teste-integracao teste-estudio teste-cluster teste-caos teste-pg-ha
 
 limpar:           ## apaga containers E dados
 	docker compose down -v

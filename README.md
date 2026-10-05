@@ -37,6 +37,17 @@ dados de demonstração (`ANA_DEMO=true`): comércio e o caso de P&D em
 eletrônica/firmware (projeto `PRJ-001`). Em produção, defina `ANA_DEMO=false`,
 `ANA_ADMIN_PASSWORD`, `ANA_DB_PASSWORD`, `POSTGRES_PASSWORD` e `ANA_TIMEZONE`.
 
+## Linguagem visual "Linha ANA" (spec 029)
+
+Identidade própria (logotipo, ícones em SVG, paleta, fonte do sistema),
+inspirada em páginas analíticas de ERPs corporativos sem usar fonte, ícones,
+temas ou marcas de terceiros. Barra superior compacta (conta, voltar, marca,
+áreas como abas sempre visíveis, busca e avisos); cada rotina é uma página
+analítica — faixa de cabeçalho com filtros em linha, indicadores como chips
+de estado, gráficos lado a lado em cartões e tabelas em cartão com
+"Título (N)" e exportação; início em blocos. Tema claro e escuro, sem
+rolagem horizontal no celular.
+
 ## Áreas da interface (spec 020)
 
 | Área | Para quem | O que tem |
@@ -84,8 +95,10 @@ def main(start, customer=None):
 | `savepoint()` | `with`: falha no bloco desfaz só o bloco |
 | `log`, `table`, `print` | saída na tela e na auditoria |
 | `metrics`, `board`, `gantt`, `tabs`, `actions` | indicadores, quadro, linha do tempo, abas e ações (próximo passo, formulário em linha) |
+| `chart` | gráficos: linha, área, colunas, empilhadas, barras e rosca (paleta validada para daltonismo, legenda, dicas, tabela) |
 | `context` | usuário, papel, execução, versão, origem |
 | `Error(code, message, data)` | erro de negócio estruturado |
+| `SqlError` | erro do banco (`sqlstate`); regra de gatilho que levanta `'CODIGO: mensagem'` (check_violation) chega a quem chamou com esse código |
 
 Toda execução é **uma Unidade de Trabalho**: sucesso → COMMIT; erro, prazo
 estourado ou parada → ROLLBACK. Depuração sempre desfaz, salvo se marcado
@@ -103,6 +116,20 @@ estourado ou parada → ROLLBACK. Depuração sempre desfaz, salvo se marcado
   de estoque), marcos, fatura de serviço com imposto retido, cancelamento com
   estorno, painel orçado × realizado e extrato para o cliente.
 - **Analítico**: visões materializadas e tabela fato **colunar**.
+- **Centros de custo** (spec 027): cada lançamento de receita e despesa tem
+  centro de custo (garantido no banco para qualquer programa), vindo do
+  pedido, do depósito, do projeto ou do padrão da empresa; hierarquia com
+  consolidação, orçamento × realizado, **rateio** de custos compartilhados
+  (prévia, uma vez por mês), lançamento manual e resultado gerencial por
+  centro com gráficos (`centros`); balancete filtrável por centro.
+- **Suprimentos** (spec 013): catálogo de fornecimento (preço, prazo, lote,
+  preferencial), solicitação de compra com **alçadas** por papel ou grupo
+  (quem pede não aprova), ordens por fornecedor, recebimento parcial ou
+  aceite de serviço numa só transação (estoque ou despesa do projeto,
+  lançamento com centro de custo e título a pagar; o banco recusa receber
+  acima da tolerância), sugestão de reposição por conjunto (saldo + em
+  pedido − reservado), desempenho de fornecedores e confirmação de prazo
+  exposta para integração. Tudo começa na bancada `compras`.
 
 ## Consultoria: projetos de clientes (spec 021)
 
@@ -245,6 +272,7 @@ make teste-runtime     # runtime Python, depurador e limites (sem banco)
 make teste-integracao  # testes contra o ambiente, rastreados a CA-xxx-nn
 make teste-estudio     # interface num DOM real (jsdom): áreas, rotina, depurador, administração
 make teste-cluster     # dois nós: agendamento exatamente uma vez, troca de líder, erpc
+make teste-pg-ha       # PostgreSQL primário + réplica: promoção com carga, console na réplica, primário antigo recusado
 make teste-caos        # dois nós + HAProxy: programas que falham, nó derrubado, desligamento
                        # gracioso, atualização rolling, banco reiniciado, restauração a um instante
 ```
@@ -260,6 +288,124 @@ priv/www/           interface (HTML/CSS/JS, sem dependências)
 clients/python/     cliente JSON-RPC        tests/          runtime, integration, studio
 ```
 
+## Observabilidade e desempenho do SQL (spec 019)
+
+- **Desempenho do SQL** (Administração → Observabilidade): cada comando de
+  cada programa é medido (tempo, linhas, linha do programa) e agregado; os
+  lentos ganham plano (`EXPLAIN`, sem executar) e sugestão concreta, como o
+  `CREATE INDEX CONCURRENTLY` com as colunas do filtro.
+- **Análise do SQL do código** (aba Desempenho do programa): `SELECT *`,
+  `LIKE '%…'`, função sobre coluna no filtro, `UPDATE`/`DELETE` sem `WHERE`,
+  paginação por `OFFSET`, `NOT IN (SELECT…)`, SQL montado com valores
+  recebidos (injeção) e SQL dentro de laço (N+1) — com a linha e a correção.
+- **Dicas de otimização**: N+1 observado, varredura completa lenta,
+  **crescimento** (a consulta rápida hoje que vai ficar lenta com a tabela
+  crescendo, com projeção de 6 meses), FK sem índice, índice nunca usado,
+  espaço morto, programa perto do limite, prazos estourados. Dispensar por
+  30 dias ou sempre; resolvidas somem sozinhas.
+- **Saúde e incidentes**: componentes verificados a cada 10 s, incidentes
+  abertos/fechados automaticamente (inclusive com o banco fora), webhook
+  opcional (`ANA_ALERT_WEBHOOK`).
+- **Execução detalhada**: linha do tempo do SQL, quadros e variáveis do erro
+  (só para desenvolvedores, nomes sensíveis mascarados) e **perfil** sob
+  demanda ("Perfilar uma execução").
+- **Métricas** em `/metrics` (Prometheus, autenticado) e logs JSON com
+  `ANA_LOG_FORMAT=json`.
+
+## Produção e capacidade (spec 014)
+
+Bancada `producao`: estruturas em versões (componentes, perda, fantasmas; o
+banco recusa ciclos), roteiros com recursos (máquina, bancada, linha,
+pessoas; h/dia, eficiência, exceções, custo/h) e parâmetros de item (fazer
+ou comprar, prazo, lote, segurança, custo padrão).
+
+- **Planejamento de necessidades** (`mrp`): explode as estruturas nível a
+  nível em lote, desconta saldo, ordens e compras em aberto e propõe ordens
+  de produção e solicitações de compra com as datas deslocadas pelos
+  prazos; idempotente por cenário; 10 mil itens × 5 níveis em ~2 s.
+- **Ordem de produção**: liberar (reserva), requisitar (baixa, D produtos
+  em elaboração), apontar horas (custo do recurso), entregar (entrada do
+  acabado) e encerrar com custo real imutável e variação contra o padrão;
+  ordem de protótipos de um projeto vira despesa do projeto.
+- **Carga × capacidade** (`carga`) por recurso e semana, com sobrecarga e
+  data sugerida por capacidade finita; **capacidade de serviços**
+  (`capacidade`) por colaborador e perfil a partir da alocação dos projetos.
+
+## Logística e serviços em campo (spec 015)
+
+- **Logística** (bancada `expedicao`): transferências entre depósitos com
+  trânsito e divergência registrada; expedição total ou parcial (separar,
+  embalar, despachar, entregar ou voltar) com transportadora, rastreio e
+  frete pela tabela (UF, peso); baixa do estoque no faturamento ou na
+  expedição (`logistics.policy.stock_out_on`), frete cobrado vai à fatura;
+  devoluções para o estoque ou a quarentena, com crédito ao cliente.
+- **Campo** (bancada `campo`): ordem de serviço com prazo de SLA (por
+  prioridade ou contrato do cliente), aberta também pelo cliente no portal;
+  agenda sem sobreposição garantida no banco e respeitando ausências; rota do
+  dia; apontamento de deslocamento e horas, peças do estoque do técnico,
+  checklist e aceite — tudo idempotente pela chave do app; faturamento
+  (horas × valor do perfil, deslocamento, peças) ou lançamento no projeto;
+  indicadores (`sla`): SLA cumprido, atrasadas, resposta, horas em campo,
+  visitas e retornos.
+
+## Repositório de arquivos e portal do cliente (spec 016)
+
+**Arquivos** guarda documentos de projetos, clientes e fornecedores em pastas
+com versões imutáveis. Acesso por usuário, grupo, papel ou **cliente**
+(`ver` < `baixar` < `enviar` < `gerenciar`), herdado pelas pastas (a herança
+pode ser interrompida) e com negação explícita; o que não pode ver é 404.
+O conteúdo fica fora do banco (`ANA_FILES_DIR`, volume compartilhado pelos
+nós), cifrado (AES-256-CTR + HMAC, chave derivada da `ANA_MASTER_KEY`) e
+deduplicado pelo SHA-256; o nome nunca vira caminho no disco. Downloads só
+por URL assinada de 5 min (`attachment`, `nosniff`, `Range`); links de
+compartilhamento com validade, senha e limite de downloads; envio retomável;
+tipo real conferido pela assinatura (um `.exe` renomeado é recusado);
+auditoria de cada operação; verificação periódica de integridade.
+
+- Contas de **portal** (papel `external`, ligadas a um cliente) veem só
+  Arquivos e as consultas marcadas `# ana:portal yes`: **Minhas faturas**
+  (`faturas`), **Meus projetos** (`meusprojetos`: andamento, marcos,
+  próximos passos e riscos do último relatório de status, sem custos) e
+  **Aprovações** (`aprovacoes`: aceite de entregáveis e aprovação de
+  mudanças de escopo, que ajusta orçamento, prazo e linha de base).
+- Faturas de serviço viram PDF em `Clientes/<cliente>/Faturas`, liberado ao
+  cliente; projetos têm `Projetos/<código>/Entregáveis`.
+- Programas: `ana.files.put/get/list/folder/grant` (com as permissões de quem
+  executa); `util.pdf` gera PDFs simples.
+- **Backup:** inclua o volume de arquivos junto com o do banco.
+
+## Integrações e conciliação bancária (spec 017)
+
+Programas nunca fazem rede nem veem segredos. Em **Administração → Operação
+do sistema → Integrações** o administrador cadastra **conectores** (URL base,
+hosts permitidos, autenticação, limite por minuto, programa de entrega e de
+processamento, usuário dono); os segredos vão para um **cofre** cifrado
+(AES-256-GCM, `ANA_MASTER_KEY` igual em todos os nós) e são só de escrita.
+
+- `ana.http("banco_x", "GET", "/extratos", params={...})` — o núcleo põe a
+  credencial, confere o host, aplica prazo, limite, disjuntor e registra.
+- `ana.send("gateway", "charge.create", dados)` — caixa de saída na mesma
+  transação: só sai se a execução confirmar; entrega com novas tentativas
+  (10 s × 2ⁿ) e fila de mortos com reprocessar.
+- Webhooks em `POST /hooks/<conector>` com HMAC-SHA256 de `carimbo.corpo`,
+  janela anti-repetição e idempotência pelo id do evento.
+- Extratos OFX/CSV sem duplicar (`extrato`), conciliação automática por
+  cobrança, documento e valor + data, e bancada manual (`conciliar`) com
+  baixa agrupada, juros/tarifas e estorno; cobrança por gateway
+  (`finance.create_charge`) liquidada pelo aviso de pagamento.
+- Modelo de conector de gateway: `integration.generic_gateway_out` / `_in`.
+
+## Atualização dos programas do produto (spec 028)
+
+As sementes (`priv/programs`) nunca sobrescrevem um programa instalado. Ao
+subir, cada nó compara cada semente com o programa e com a versão do produto
+em que ele se baseia: quando o produto traz versão nova, aparece em
+**Administração → Sistema → Atualizações do produto** (com contador). O
+administrador compara lado a lado (instalado × produto, o que foi alterado
+aqui, o que o produto mudou) e aceita — vira nova versão, com histórico — ou
+dispensa. Programa alterado nesta instalação só é sobrescrito com
+confirmação explícita; "aceitar as não alteradas" atualiza o resto de uma vez.
+
 ## Operação 24/7 (spec 023)
 
 - **Saúde**: `/health/live` (o processo está de pé) e `/health/ready` (banco,
@@ -274,7 +420,10 @@ clients/python/     cliente JSON-RPC        tests/          runtime, integration
   uma migração que quebra a versão anterior começa com `-- ana:breaking` e
   tira da prontidão os nós antigos.
 - **Banco**: `ANA_DB_HOST=pg1,pg2` encontra o primário e segue a réplica
-  promovida sem reiniciar o núcleo; `ANA_DB_READ_HOSTS` leva o console SQL
+  promovida sem reiniciar o núcleo (entre dois que se dizem primários, vale
+  o da linha do tempo mais nova — um primário antigo que volte sem ser
+  rebaixado nunca recebe gravações; testado com cluster local em
+  `make teste-pg-ha`); `ANA_DB_READ_HOSTS` leva o console SQL
   às réplicas; banco fora → erro imediato (`DB_UNAVAILABLE`, 503) e volta
   sozinho em segundos.
 - **Execuções interrompidas** pela queda de um nó ficam registradas como
@@ -324,9 +473,8 @@ correspondentes são só o valor inicial).
 
 ## Situação das specs
 
-Implementadas: 001–008, 011 (com usuários robô e dono obrigatório), 012, 018, 021 (portal do cliente depende da 016), 022, 023 (falta o teste de troca real de primário, T-023-09), 024, 025; 020 parcial (falta próxima ação
+Implementadas: 001–008, 011 (com usuários robô e dono obrigatório), 012, 018, 021, 019 (faltam alertas configuráveis e OpenTelemetry), 013, 014, 015, 016 (faltam S3 e antivírus), 017 (faltam SFTP/pasta/e-mail, mTLS, CNAB e pacotes de modelos), 022, 023, 024, 025, 026, 027, 028, 029; 020 parcial (falta próxima ação
 sugerida, fluxos guiados e auditoria de acessibilidade).
 Na fila (ordem em [scripts/pending-work.prompt.md](scripts/pending-work.prompt.md)):
-019 observabilidade, 013 suprimentos, 017 integrações, 016 repositório de
-arquivos, 014 produção, 015 logística, 010 API pública; 009 licenciamento
+010 API pública; 009 licenciamento
 aguarda decisões.

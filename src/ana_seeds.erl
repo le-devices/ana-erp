@@ -7,9 +7,10 @@
 %%   # ana:command order
 %%   # ana:kind program|library
 %%   # ana:role user|developer|admin
+%%   # ana:portal yes          (external portal accounts may run it, spec 016)
 %% Only creates what does not exist: never overwrites studio changes.
 -module(ana_seeds).
--export([apply/0]).
+-export([apply/0, files/0, metadata/1]).
 
 
 apply() ->
@@ -22,7 +23,17 @@ apply() ->
     end),
     _ = ana_task:run(<<"programs.refresh_params">>, ana_task:system_user(), <<"internal">>,
                      fun() -> ana_program:refresh_params() end),
+    %% Spec 028: newer product versions of installed programs are offered, never applied.
+    _ = ana_task:run(<<"programs.product_updates">>, ana_task:system_user(), <<"internal">>,
+                     fun() -> ana_product_updates:check() end),
     ok.
+
+%% Seed files: [{Name, Source}].
+-spec files() -> [{binary(), binary()}].
+files() ->
+    Dir = filename:join(code:priv_dir(ana), "programs"),
+    [{list_to_binary(filename:basename(F, ".py")), Source}
+     || F <- lists:sort(filelib:wildcard(filename:join(Dir, "*.py"))), {ok, Source} <- [file:read_file(F)]].
 
 seed(File) ->
     Name = list_to_binary(filename:basename(File, ".py")),
@@ -36,6 +47,7 @@ seed(File) ->
                        <<"exposed">> => maps:get(<<"exposed">>, Meta, <<"no">>) =:= <<"yes">>,
                        <<"min_role">> => maps:get(<<"role">>, Meta, <<"user">>),
                        <<"in_menu">> => maps:get(<<"menu">>, Meta, <<"yes">>) =/= <<"no">>,
+                       <<"portal">> => maps:get(<<"portal">>, Meta, <<"no">>) =:= <<"yes">>,
                        <<"comment">> => <<"seed">>},
             case ana_program:save(Name, Fields, ana_task:system_user()) of
                 {ok, _} ->

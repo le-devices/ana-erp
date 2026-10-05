@@ -70,6 +70,7 @@
     changePassword: (current, next) => API.request("POST", "/api/me/password", { current, new: next }),
 
     programs: (inactive) => API.request("GET", "/api/programs" + query({ inactive: inactive ? 1 : 0 })),
+    programPerformance: (name) => API.request("GET", `/api/programs/${enc(name)}/performance`),
     program: (n) => API.request("GET", `/api/programs/${enc(n)}`),
     saveProgram: (n, fields) => API.request("PUT", `/api/programs/${enc(n)}`, fields),
     purgeProgram: (n) => API.request("DELETE", `/api/programs/${enc(n)}?purge=1`),
@@ -78,6 +79,39 @@
     version: (n, v) => API.request("GET", `/api/programs/${enc(n)}/versions/${v}`),
     restore: (n, v) => API.request("POST", `/api/programs/${enc(n)}/versions/${v}/restore`, {}),
     run: (n, body) => API.request("POST", `/api/programs/${enc(n)}/run`, body, { accept: [422] }),
+    /** Raw body (file upload): bytes go as they are, with the session token. */
+    async raw(method, path, blob) {
+      const headers = { "Accept": "application/json", "Content-Type": "application/octet-stream" };
+      if (token) headers["Authorization"] = "Bearer " + token;
+      const resp = await fetch(path, { method, headers, body: blob, cache: "no-store", credentials: "omit" });
+      const text = await resp.text();
+      let data = null;
+      try { data = text ? JSON.parse(text) : null; } catch (_) { data = { error: { message: text } }; }
+      if (resp.status === 401) { API.setToken(null); API.onExpired(); }
+      if (!resp.ok) throw new ApiError(resp.status, data);
+      return data;
+    },
+    files: {
+      list: (parent) => API.request("GET", "/api/files/folders" + query(parent ? { parent } : {})),
+      createFolder: (parent, name) => API.request("POST", "/api/files/folders", { parent: parent || null, name }),
+      detail: (id) => API.request("GET", `/api/files/files/${id}`),
+      update: (id, body) => API.request("PUT", `/api/files/files/${id}`, body),
+      remove: (id) => API.request("DELETE", `/api/files/files/${id}`),
+      download: (id, version, inline) => API.request("POST", `/api/files/files/${id}/download`, { version: version || null, inline: !!inline }),
+      zip: (folder) => API.request("POST", `/api/files/folders/${folder}/zip`, {}),
+      search: (q) => API.request("GET", "/api/files/search" + query(q)),
+      grant: (body) => API.request("POST", "/api/files/grants", body),
+      revoke: (id) => API.request("DELETE", `/api/files/grants/${id}`),
+      link: (id, body) => API.request("POST", `/api/files/files/${id}/links`, body),
+      unlink: (id) => API.request("DELETE", `/api/files/links/${id}`),
+      uploadSmall: (folder, name, blob, comment) =>
+        API.raw("POST", "/api/files/upload" + query({ folder, name, comment: comment || undefined }), blob),
+      uploadInit: (folder, name, size, comment) => API.request("POST", "/api/files/uploads", { folder, name, size, comment: comment || null }),
+      uploadStatus: (id) => API.request("GET", `/api/files/uploads/${id}`),
+      uploadChunk: (id, offset, blob) => API.raw("PUT", `/api/files/uploads/${id}` + query({ offset }), blob),
+      uploadComplete: (id) => API.request("POST", `/api/files/uploads/${id}/complete`, {}),
+    },
+    portalPrograms: () => API.request("GET", "/api/portal/programs"),
     executions: (program, mine) => API.request("GET", "/api/executions" + query({ limit: 50, program, mine: mine ? 1 : undefined })),
     execution: (id) => API.request("GET", `/api/executions/${enc(id)}`),
     events: (id, since, signal) => API.request("GET",
@@ -119,6 +153,7 @@
       resetPassword: (u) => API.request("POST", `/api/admin/users/${enc(u)}/password`, {}),
       revokeSessions: (u) => API.request("POST", `/api/admin/users/${enc(u)}/sessions/revoke`, {}),
       unlock: (u) => API.request("POST", `/api/admin/users/${enc(u)}/unlock`, {}),
+      unlockIp: (ip) => API.request("POST", "/api/admin/security/unlock-ip", { ip }),
       keys: (u) => API.request("GET", `/api/admin/users/${enc(u)}/keys`),
       createKey: (u, body) => API.request("POST", `/api/admin/users/${enc(u)}/keys`, body),
       revokeKey: (id) => API.request("DELETE", `/api/admin/keys/${id}`),
@@ -144,6 +179,30 @@
       audit: (kind, filters) => API.request("GET", `/api/admin/audit/${kind}` + query(filters)),
       execution: (id) => API.request("GET", `/api/admin/audit/executions/${enc(id)}`),
       retention: () => API.request("GET", "/api/admin/retention"),
+      obsHealth: () => API.request("GET", "/api/admin/observability/health"),
+      obsCheck: () => API.request("POST", "/api/admin/observability/health/check", {}),
+      obsSql: (filters) => API.request("GET", "/api/admin/observability/sql" + query(filters || {})),
+      obsSqlDetail: (hash) => API.request("GET", `/api/admin/observability/sql/${enc(hash)}`),
+      obsFlush: () => API.request("POST", "/api/admin/observability/sql/flush", {}),
+      obsSamples: (hours) => API.request("GET", "/api/admin/observability/samples" + query({ hours })),
+      advice: (status) => API.request("GET", "/api/admin/observability/advice" + query(status ? { status } : {})),
+      adviceRun: () => API.request("POST", "/api/admin/observability/advice/run", {}),
+      adviceDismiss: (id, days) => API.request("POST", `/api/admin/observability/advice/${id}/dismiss`, { days }),
+      connectors: () => API.request("GET", "/api/admin/connectors"),
+      saveConnector: (name, body) => API.request("PUT", `/api/admin/connectors/${encodeURIComponent(name)}`, body),
+      saveSecret: (name, key, value, expires_at) =>
+        API.request("PUT", `/api/admin/connectors/${encodeURIComponent(name)}/secrets/${key}`, { value, expires_at: expires_at || null }),
+      deleteSecret: (name, key) => API.request("DELETE", `/api/admin/connectors/${encodeURIComponent(name)}/secrets/${key}`),
+      integrationStats: () => API.request("GET", "/api/admin/integrations/stats"),
+      integrationMessages: (q) => API.request("GET", "/api/admin/integrations/messages" + query(q)),
+      integrationAction: (kind, id, action) => API.request("POST", `/api/admin/integrations/${kind}/${id}/${action}`, {}),
+      productUpdates: () => API.request("GET", "/api/admin/product-updates"),
+      productUpdate: (name) => API.request("GET", `/api/admin/product-updates/${encodeURIComponent(name)}`),
+      productUpdatesCheck: () => API.request("POST", "/api/admin/product-updates/check", {}),
+      productUpdateAccept: (name, overwrite) =>
+        API.request("POST", `/api/admin/product-updates/${encodeURIComponent(name)}/accept`, { overwrite: !!overwrite }),
+      productUpdateDismiss: (name) => API.request("POST", `/api/admin/product-updates/${encodeURIComponent(name)}/dismiss`, {}),
+      productUpdatesAcceptUnmodified: () => API.request("POST", "/api/admin/product-updates/accept-unmodified", {}),
       purge: () => API.request("POST", "/api/admin/retention/purge", {}),
     },
   };

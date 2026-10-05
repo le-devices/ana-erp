@@ -91,7 +91,25 @@ definitions() ->
      {retention_admin_log_days, integer, 365, 36500, "ANA_RETENTION_ADMIN_LOG_DAYS", 1825,
       <<"Retenção: alterações administrativas (dias, mínimo 365)"/utf8>>},
      {retention_hour, integer, 0, 23, "ANA_RETENTION_HOUR", 3,
-      <<"Hora do expurgo diário (fuso do cliente)"/utf8>>}].
+      <<"Hora do expurgo diário (fuso do cliente)"/utf8>>},
+     {retention_trace_days, integer, 1, 36500, "ANA_RETENTION_TRACE_DAYS", 30,
+      <<"Retenção: rastros de execução e perfis (dias)"/utf8>>},
+     {retention_observability_days, integer, 7, 36500, "ANA_RETENTION_OBSERVABILITY_DAYS", 90,
+      <<"Retenção: eventos de saúde e amostras de métricas (dias)"/utf8>>},
+     {retention_integration_days, integer, 7, 36500, "ANA_RETENTION_INTEGRATION_DAYS", 90,
+      <<"Retenção: chamadas e mensagens de integração concluídas (dias)"/utf8>>},
+     %% Spec 016.
+     {files_max_file_mb, integer, 1, 102400, "ANA_FILES_MAX_FILE_MB", 512,
+      <<"Repositório: tamanho máximo de um arquivo (MB)"/utf8>>},
+     %% Spec 019: observability.
+     {slow_sql_ms, integer, 1, 600000, "ANA_SLOW_SQL_MS", 200,
+      <<"Comando SQL lento a partir de (ms): registra o plano e gera dicas"/utf8>>},
+     {trace_slow_ms, integer, 1, 3600000, "ANA_TRACE_SLOW_MS", 1000,
+      <<"Execução lenta a partir de (ms): sempre guarda o rastro"/utf8>>},
+     {trace_sample_pct, integer, 0, 100, "ANA_TRACE_SAMPLE_PCT", 5,
+      <<"Rastros guardados das demais execuções (%)"/utf8>>},
+     {n_plus_one_threshold, integer, 2, 100000, "ANA_N_PLUS_ONE", 50,
+      <<"Mesmo comando SQL repetido numa execução a partir de (vezes): dica N+1"/utf8>>}].
 
 init_cache() ->
     _ = ets:new(?TAB, [named_table, public, set, {read_concurrency, true}]),

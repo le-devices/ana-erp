@@ -56,7 +56,8 @@ class FakeCore:
                     self.send({"type": "response", "id": m["id"], "ok": True, "value": value})
                 except Exception as e:  # noqa: BLE001
                     self.send({"type": "response", "id": m["id"], "ok": False,
-                               "error": {"code": "SQL", "message": str(e), "sqlstate": "42501"}})
+                               "error": {"code": "SQL", "message": str(e),
+                                         "sqlstate": getattr(e, "sqlstate", "42501")}})
                 continue
             if m["type"] in types:
                 return m
@@ -127,6 +128,25 @@ class TestExecution(unittest.TestCase):
         self.assertFalse(end["ok"])
         self.assertEqual(end["error"]["code"], "INVALID_PARAMETER")
 
+    def test_ca_026_02_03_chart_validation_and_other(self):
+        source = ("def main():\n"
+                  "    x = ['a', 'b']\n"
+                  "    ana.chart(type='line', x=x, series=[{'name': f's{i}', 'values': [i, i + 1]} for i in range(10)])\n"
+                  "    ana.chart(type='donut', x=list('abcdefgh'), series=[{'name': 'p', 'values': [8, 7, 6, 5, 4, 3, 2, 1]}])\n")
+        end, ev = run(source)
+        self.assertTrue(end["ok"], end)
+        line, donut = [e["data"] for e in ev if e.get("kind") == "chart"]
+        self.assertEqual(len(line["series"]), 8)
+        self.assertEqual(line["series"][-1]["name"], "Outros")
+        self.assertEqual(line["series"][-1]["values"], [3.0, 6.0])   # the three smallest series (0, 1, 2) summed
+        self.assertEqual(donut["x"][-1], "Outros")
+        self.assertEqual(donut["series"][0]["values"][-1], 6.0)
+        for bad in ("ana.chart(type='pie', x=[1], series=[{'name': 'a', 'values': [1]}])",
+                    "ana.chart(type='line', x=[1, 2], series=[{'name': 'a', 'values': [1]}])",
+                    "ana.chart(type='line', x=[1], series=[{'name': 'a', 'values': ['x']}])"):
+            end, _ = run("def main():\n    " + bad + "\n")
+            self.assertEqual(end["error"]["code"], "INVALID_PARAMETER", bad)
+
     def test_rf_002_05_typed_sql(self):
         def handler(op, args):
             self.assertEqual(op, "sql")
@@ -163,6 +183,20 @@ class TestExecution(unittest.TestCase):
                   "        return e.sqlstate\n")
         end, _ = run(source, handler=handler)
         self.assertEqual(end["result"], "42501")
+
+    def test_database_rule_keeps_its_code(self):
+        class Violation(Exception):
+            sqlstate = "23514"
+
+        def handler(op, args):
+            raise Violation("OVER_RECEIPT: recebido 11 acima do pedido 10")
+        end, _ = run("def main():\n    ana.sql_exec('update x set y = 1')\n", handler=handler)
+        self.assertEqual((end["error"]["code"], end["error"]["message"]),
+                         ("OVER_RECEIPT", "recebido 11 acima do pedido 10"))
+        source = ("def main():\n    try:\n        ana.sql('x')\n    except ana.SqlError as e:\n"
+                  "        return [e.code, e.sqlstate]\n")
+        end, _ = run(source, handler=handler)
+        self.assertEqual(end["result"], ["OVER_RECEIPT", "23514"])           # still an ana.SqlError
 
     def test_python_exception_becomes_structured_error(self):
         end, _ = run("def main():\n    return 1/0\n")
@@ -322,6 +356,31 @@ class TestInspection(unittest.TestCase):
         self.assertEqual(r["params"], {"a": {"type": "int", "order": 0}})   # declared order kept
         self.assertEqual(r["docs"], "Doc.")
         self.assertTrue(r["has_main"])
+
+    def test_lint_ok_marker_accepts_a_finding_on_purpose(self):
+        r = self.inspect("def main(q):\n"
+                         "    # ana:lint-ok leading_wildcard — trigram index\n"
+                         "    a = ana.sql(\"SELECT id FROM t WHERE name ILIKE '%' || $1 || '%' LIMIT 10\", q)\n"
+                         "    b = ana.sql(\"SELECT id FROM t WHERE name ILIKE '%' || $1 || '%' LIMIT 10\", q)\n")
+        self.assertEqual([(f["line"], f["rule"]) for f in r["lint"]], [(4, "leading_wildcard")])
+
+    def test_lint_rules_are_precise(self):
+        r = self.inspect(
+            "def main(ids):\n"
+            "    ana.sql('SELECT x FROM unnest($1::int[]) AS u(x) JOIN s.t ON t.id = u.x', ids)\n"          # 2: bounded by unnest
+            "    ana.sql('SELECT (SELECT count(*) FROM s.a WHERE a.k = $1) AS n, "
+            "(SELECT COALESCE(sum(v), 0) FROM s.b WHERE b.k = $1) AS m', 1)\n"                              # 3: no function in WHERE
+            "    ana.sql('SELECT sum(v) FILTER (WHERE lower(c) = $1) FROM s.t', 'x')\n"                     # 4: FILTER is not a WHERE
+            "    ana.sql('SELECT id FROM s.t WHERE lower(name) = $1', 'x')\n")                              # 5: real one
+        got = sorted((f["line"], f["rule"]) for f in r["lint"])
+        self.assertEqual(got, [(4, "unbounded_select"), (5, "function_on_column")])
+
+    def test_lint_comprehension_source_runs_once(self):
+        r = self.inspect("def main(ids):\n"
+                         "    a = {x['id']: x for x in ana.sql('SELECT id FROM t WHERE id = ANY($1)', ids)}\n"
+                         "    b = [ana.sql_one('SELECT id FROM t WHERE id = $1', i) for i in ids]\n")
+        loops = [f["line"] for f in r["lint"] if f["rule"] == "sql_in_loop"]
+        self.assertEqual(loops, [3])
 
 
 DEBUGGABLE = ("def main():\n"      # 1

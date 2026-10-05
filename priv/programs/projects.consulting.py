@@ -93,7 +93,10 @@ class Calendar:
 
 def load_plan(project_id):
     tasks = ana.sql(
-        "SELECT t.*, e.name AS owner_name FROM projects.task t "
+        "SELECT t.id, t.project_id, t.code, t.name, t.planned_hours, t.billable, t.active, t.kind, t.parent_id, t.seq, "
+        "  t.owner_employee_id, t.profile, t.duration_days, t.planned_start, t.planned_finish, t.status, "
+        "  t.percent_complete, t.actual_start, t.actual_finish, t.deliverable, t.acceptance_criteria, t.notes, "
+        "  t.client_visible, t.updated_at, e.name AS owner_name FROM projects.task t "
         "LEFT JOIN projects.employee e ON e.id = t.owner_employee_id "
         "WHERE t.project_id = $1 AND t.active ORDER BY t.seq, t.code", project_id)
     deps = ana.sql(
@@ -211,11 +214,14 @@ def schedule(project, tasks=None, deps=None, today=None, forecast=True):
 # ---------------------------------------------------------------- earned value
 
 def latest_baseline(project_id):
-    return ana.sql_one("SELECT * FROM projects.baseline WHERE project_id = $1 ORDER BY number DESC LIMIT 1",
+    return ana.sql_one("SELECT id, project_id, number, reason, change_id, total_hours, total_value, finish_date, "
+                       "created_by, created_at, projected_revenue, projected_cost, projected_profit, "
+                       "low_margin_justification FROM projects.baseline WHERE project_id = $1 ORDER BY number DESC LIMIT 1",
                        project_id)
 
 
 def rates(project_id):
+    # ana:lint-ok unbounded_select — rate profiles: small configuration table, read whole on purpose
     rows = ana.sql(
         "SELECT r.code, COALESCE(pr.hourly_rate, r.hourly_rate) AS rate FROM projects.rate_profile r "
         "LEFT JOIN projects.project_rate pr ON pr.profile = r.code AND pr.project_id = $1", project_id)
@@ -229,7 +235,8 @@ def progress(project, today=None):
     base = latest_baseline(project["id"])
     base_items = {}
     if base:
-        for b in ana.sql("SELECT * FROM projects.baseline_item WHERE baseline_id = $1", base["id"]):
+        for b in ana.sql("SELECT baseline_id, task_id, code, name, kind, parent_code, planned_hours, planned_start, "
+                         "planned_finish, planned_value FROM projects.baseline_item WHERE baseline_id = $1", base["id"]):
             base_items[b["task_id"]] = b
     plan = schedule(project, tasks, deps, today, forecast=False)
     cal = plan["calendar"]

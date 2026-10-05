@@ -36,7 +36,7 @@ list(IncludeInactive) ->
 get(Name) ->
     ana_db:one(
         "SELECT name, description, kind, exposed, restricted, min_role, active, in_menu, version, source, "
-        "       params, docs, warning, limits, updated_at, updated_by "
+        "       params, docs, warning, limits, lint, updated_at, updated_by "
         "FROM ana_system.program WHERE name = $1", [Name]).
 
 versions(Name) ->
@@ -57,7 +57,7 @@ for_execution(Name) ->
         [] ->
             case ana_db:one(
                    "SELECT name, version, source, kind, exposed, restricted, min_role, active, params, "
-                   "       description, docs, limits "
+                   "       description, docs, limits, portal "
                    "FROM ana_system.program WHERE name = $1", [Name]) of
                 {ok, #{} = P} ->
                     ets:insert(?CACHE, {Name, P}),
@@ -112,8 +112,8 @@ write(C, Name, Fields, Source, Insp, Who) ->
         undefined ->
             ok = exec(C,
                 "INSERT INTO ana_system.program (name, description, kind, exposed, restricted, min_role, "
-                "  active, version, source, params, docs, warning, updated_by, limits, in_menu) "
-                "VALUES ($1, $2, $3, $4, $5, $6, $7, 1, $8, $9, $10, $11, $12, $13, $14)",
+                "  active, version, source, params, docs, warning, updated_by, limits, in_menu, lint, portal) "
+                "VALUES ($1, $2, $3, $4, $5, $6, $7, 1, $8, $9, $10, $11, $12, $13, $14, $15, $16)",
                 [Name, maps:get(<<"description">>, Fields, <<>>),
                  maps:get(<<"kind">>, Fields, <<"program">>),
                  maps:get(<<"exposed">>, Fields, false),
@@ -121,7 +121,8 @@ write(C, Name, Fields, Source, Insp, Who) ->
                  maps:get(<<"min_role">>, Fields, <<"user">>),
                  maps:get(<<"active">>, Fields, true),
                  Source, field(params, Insp), field(docs, Insp), field(warning, Insp), Who,
-                 maps:get(<<"limits">>, Fields, #{}), maps:get(<<"in_menu">>, Fields, true)]),
+                 maps:get(<<"limits">>, Fields, #{}), maps:get(<<"in_menu">>, Fields, true), field(lint, Insp),
+                 maps:get(<<"portal">>, Fields, false) =:= true]),
             ok = new_version(C, Name, 1, Source, Comment, Who),
             notify(C, Name),
             {ok, #{version => 1, created => true, warning => field(warning, Insp)}};
@@ -140,7 +141,9 @@ write(C, Name, Fields, Source, Insp, Who) ->
                         "  docs = CASE WHEN $9 IS NULL THEN docs ELSE $11 END, "
                         "  warning = CASE WHEN $9 IS NULL THEN warning ELSE $12 END, "
                         "  updated_at = now(), updated_by = $13, limits = COALESCE($14, limits), "
-                        "  in_menu = COALESCE($15, in_menu) "
+                        "  in_menu = COALESCE($15, in_menu), "
+                        "  lint = CASE WHEN $9 IS NULL THEN lint ELSE $16 END, "
+                        "  portal = COALESCE($17, portal) "
                         "WHERE name = $1",
                         [Name, maps:get(<<"description">>, Fields, null),
                          maps:get(<<"kind">>, Fields, null),
@@ -150,7 +153,8 @@ write(C, Name, Fields, Source, Insp, Who) ->
                          maps:get(<<"active">>, Fields, null), NV,
                          null_if_undefined(Source), field(params, Insp), field(docs, Insp),
                          field(warning, Insp), Who, maps:get(<<"limits">>, Fields, null),
-                         maps:get(<<"in_menu">>, Fields, null)]),
+                         maps:get(<<"in_menu">>, Fields, null), field(lint, Insp),
+                         maps:get(<<"portal">>, Fields, null)]),
                     _ = Changed andalso (ok =:= new_version(C, Name, NV, Source, Comment, Who)),
                     notify(C, Name),
                     {ok, #{version => NV, created => false, warning => field(warning, Insp)}};
@@ -193,14 +197,16 @@ restore(Name, V, User) ->
 -spec refresh_params() -> {ok, non_neg_integer()}.
 refresh_params() ->
     {ok, Rows} = ana_db:rows(
-        "SELECT name, source FROM ana_system.program p WHERE kind = 'program' "
-        "AND jsonb_typeof(params) = 'object' AND params <> '{}'::jsonb "
-        "AND NOT EXISTS (SELECT 1 FROM jsonb_each(p.params) e "
-        "                WHERE jsonb_typeof(e.value) = 'object' AND e.value ? 'order')", []),
-    N = length([ok || #{<<"name">> := Name, <<"source">> := Source} <- Rows,
-                      #{params := P} <- [inspection(Source, <<"program">>)], is_map(P),
-                      {ok, _} <- [ana_db:exec("UPDATE ana_system.program SET params = $2 WHERE name = $1",
-                                              [Name, P])],
+        "SELECT name, source, kind FROM ana_system.program", []),
+    %% Also refreshes the static SQL findings (spec 019): the rules evolve with the product.
+    %% Written only when something changed (P15).
+    N = length([ok || #{<<"name">> := Name, <<"source">> := Source, <<"kind">> := Kind} <- Rows,
+                      #{params := P, lint := L} <- [inspection(Source, Kind)],
+                      {ok, 1} <- [ana_db:exec("UPDATE ana_system.program SET params = COALESCE($2, params), "
+                                              "lint = COALESCE($3, '[]'::jsonb) WHERE name = $1 "
+                                              "AND (params IS DISTINCT FROM COALESCE($2, params) "
+                                              "     OR lint IS DISTINCT FROM COALESCE($3, '[]'::jsonb))",
+                                              [Name, P, L])],
                       _ <- [invalidate(Name)]]),
     {ok, N}.
 
@@ -210,7 +216,7 @@ inspection(Source, Kind) ->
     case ana_py:inspect(Source) of
         {ok, #{<<"ok">> := false, <<"error">> := #{<<"line">> := L, <<"message">> := M}}} ->
             #{warning => unicode:characters_to_binary(io_lib:format("linha ~p: ~ts", [L, M])),
-              params => null, docs => null};
+              params => null, docs => null, lint => null};
         {ok, #{<<"ok">> := true} = R} ->
             Warning = case R of
                 #{<<"error">> := #{<<"line">> := L, <<"message">> := M}} ->
@@ -221,10 +227,11 @@ inspection(Source, Kind) ->
             end,
             #{warning => Warning,
               params => maps:get(<<"params">>, R, null),
-              docs => maps:get(<<"docs">>, R, null)};
+              docs => maps:get(<<"docs">>, R, null),
+              lint => maps:get(<<"lint">>, R, null)};
         {error, Reason} ->
             logger:warning("inspection unavailable: ~0p", [Reason]),
-            #{warning => null, params => null, docs => null}
+            #{warning => null, params => null, docs => null, lint => null}
     end.
 
 field(_, undefined) -> null;

@@ -82,6 +82,8 @@ CREATED_USERS = []
 
 def tearDownModule():
     t = admin_token()
+    # The suite fails logins on purpose (brute force, robots): clear this address's counter.
+    http("POST", "/api/admin/security/unlock-ip", {"ip": "self"}, t)
     for name in sorted(CREATED_PROGRAMS):
         http("DELETE", f"/api/programs/{name}?purge=1", token=t)
     for u in CREATED_USERS:
@@ -659,6 +661,8 @@ class TestProjects(Base):
 
     def test_ca_008_05_expense_consumes_stock(self):
         p = self.make_project()
+        # The test brings the stock it consumes (repeated runs must not exhaust the demo balance).
+        self.client.call("inventory.stock_in", product="SENSOR-IMU", quantity=2, warehouse="LAB", document=f"TEST-{SUFFIX}")
         before = self.scalar("SELECT sum(quantity) FROM inventory.stock_movement m JOIN base.product p "
                              "ON p.id = m.product_id WHERE p.code = 'SENSOR-IMU'")
         r = self.client.call("projects.post_expense", project=p, kind="component", description="IMU",
@@ -1484,12 +1488,30 @@ class TestConsulting(Base):
                                     f"pr.code = '{p}' AND pm.employee_id = {self.pricey}"), 1)
         week2 = str(self.MON + datetime.timedelta(weeks=1))
         self.prog("projects.allocate", project=p, activity="1", profile="HW", hours=16, week=week2)
+        self.prog("projects.allocate", project=p, activity="1", employee=self.cheap, hours=4, week=week2)
         self.prog("projects.allocate", project=p, activity="1", employee=self.cheap, replace_profile="HW")
         detail = self.prog("projects.workspace", project=p, view="activity", activity="1")["data"]
         people = {x["who"]: x["allocated"] for x in detail["people"]}
-        self.assertEqual(people[f"Consultor A {SUFFIX}"], "16.00")
+        self.assertEqual(people[f"Consultor A {SUFFIX}"], "20.00")              # 4 already there + 16 of the profile
         self.assertEqual(people[f"Consultor B {SUFFIX}"], "60.00")
         self.assertFalse(any(k.startswith("perfil") for k in people), people)
+
+    def test_ca_021_policy_profile_costs_in_one_statement(self):
+        name = f"test.hw_cost_{SUFFIX}"         # the console (ana_read) does not see standard costs
+        self.save(name, "def main(v=None, restore=False):\n    if restore:\n"
+                        "        ana.sql_exec(\"UPDATE projects.rate_profile SET standard_cost = $1::numeric WHERE code = 'HW'\", v)\n"
+                        "    return ana.sql_value(\"SELECT standard_cost FROM projects.rate_profile WHERE code = 'HW'\")\n")
+        cost = lambda: self.prog(name)
+        before = cost()
+        try:
+            self.prog("projects.save_policy", profile_costs={"hw": 95})
+            self.assertEqual(Decimal(cost()), 95)
+            e = self.prog_err("projects.save_policy", profile_costs={"HW": 70, "ZZ9": 1})
+            self.assertEqual(e["code"], "PROFILE_NOT_FOUND")
+            self.assertIn("ZZ9", e["message"])
+            self.assertEqual(Decimal(cost()), 95)                                # all or nothing
+        finally:
+            self.prog(name, v=before, restore=True)
 
     def test_ca_021_03_critical_path(self):
         p = self.project()
@@ -1530,7 +1552,7 @@ class TestConsulting(Base):
         self.assertEqual(phase["cpi"], "0.67")
         self.assertTrue(any("IDC" in a for a in phase["alerts"]), phase["alerts"])
         self.assertEqual(self.prog_err("projects.log_time", project=p, task="F", hours=1, employee=emp,
-                                       description="na fase")["code"], "SQL")
+                                       description="na fase")["code"], "PHASE_NOT_LOGGABLE")
 
     def test_ca_021_05_scope_change_new_baseline(self):
         p = self.project(billing="mixed", budget_hours="100")
@@ -1820,6 +1842,1481 @@ class TestHighAvailability(Base):
             psql(f"DELETE FROM ana_system.migration_flag WHERE name = '{name}'")
             psql(f"DELETE FROM ana_system.migration WHERE name = '{name}'")
         self.assertEqual(http("GET", "/health/ready")[0], 200)
+
+
+
+# ---------------------------------------------------------------- spec 026
+class TestCharts(Base):
+    def test_ca_026_01_program_draws_a_chart(self):
+        name = f"test.chart_{SUFFIX}"
+        self.save(name, "def main():\n    ana.chart(type='line', title='T', x=['2026-01-01', '2026-02-01'], format='money',\n"
+                        "              series=[{'name': n, 'values': [1, 2]} for n in ('a', 'b', 'c')])\n")
+        s, c, _ = self.run_program(name)
+        self.assertEqual(s, 200, c)
+        chart = [e["data"] for e in c["events"] if e.get("kind") == "chart"][0]
+        self.assertEqual((chart["type"], chart["format"], len(chart["series"])), ("line", "money", 3))
+
+    def test_ca_026_04_viability_has_monthly_charts(self):
+        s, c, _ = self.run_program("projects.workspace", {"project": "PRJ-001", "view": "viability"})
+        self.assertEqual(s, 200, c)
+        titles = [e["data"]["title"] for e in c["events"] if e.get("kind") == "chart"]
+        self.assertIn("Faturamento × custo por mês", titles)
+        self.assertIn("Resultado acumulado", titles)
+
+
+
+# ---------------------------------------------------------------- spec 019
+class TestObservability(Base):
+    def advice(self, status="open"):
+        return http("GET", f"/api/admin/observability/advice?status={status}", token=self.token)[1]
+
+    def setting(self, key, value):
+        old = [x["value"] for x in http("GET", "/api/admin/settings", token=self.token)[1] if x["key"] == key][0]
+        self.assertEqual(http("PUT", f"/api/admin/settings/{key}", {"value": value}, self.token)[0], 200)
+        return old
+
+    def test_rf_019_01_health_components(self):
+        s, h, _ = http("POST", "/api/admin/observability/health/check", {}, self.token)
+        self.assertEqual(s, 200, h)
+        states = {c["component"]: c["state"] for c in h["components"]}
+        for c in ("database", "pool_core", "pool_programs", "python", "scheduler"):
+            self.assertEqual(states.get(c), "green", (c, h["components"]))
+
+    def test_ca_019_02_error_frames_and_locals_for_developers_only(self):
+        name = f"test.obs_err_{SUFFIX}"
+        self.save(name, "def helper(total, password):\n    ratio = total / 0\n    return ratio\n\n"
+                        "def main(total=10):\n    return helper(total, 'segredo')\n", exposed=True)
+        s, c, _ = self.run_program(name)
+        e = c["error"]
+        self.assertEqual([f["function"] for f in e["frames"]], ["main", "helper"])
+        self.assertEqual(e["frames"][-1]["line"], 2)
+        self.assertEqual(e["locals"]["total"], "10")
+        self.assertEqual(e["locals"]["password"], "***")                 # sensitive names masked
+        _, user_token = new_user("user")
+        s, c, _ = self.run_program(name, token=user_token)
+        self.assertNotIn("frames", c["error"])
+        self.assertNotIn("trace", c["error"])
+        s, c, _ = http("POST", "/rpc", {"jsonrpc": "2.0", "method": name, "params": {}, "id": 1}, self.token)
+        self.assertNotIn("frames", json.dumps(c))
+
+    def test_ca_019_03_n_plus_one_advice(self):
+        name = f"test.obs_n1_{SUFFIX}"
+        self.save(name, "def main():\n    for i in range(60):\n        ana.sql_one('SELECT $1::int AS v', i)\n    return 1\n")
+        s, c, _ = self.run_program(name)
+        self.assertEqual(s, 200, c)
+        end, found = time.time() + 10, []
+        while time.time() < end and not found:
+            found = [a for a in self.advice() if a["rule"] == "n_plus_one" and a["evidence"].get("program") == name]
+            time.sleep(0.5)
+        self.assertTrue(found, "dica N+1 não gerada")
+        self.assertEqual((found[0]["evidence"]["calls"], found[0]["evidence"]["line"]), (60, 3))
+        self.assertIn("ANY($1)", found[0]["suggestion"])
+
+    def test_ca_019_04_07_09_slow_scan_index_and_growth(self):
+        if not psql_available():
+            self.skipTest("psql no contêiner indisponível")
+        tag = f"obs{SUFFIX}"
+        psql(f"INSERT INTO base.party (kind, name, city) SELECT 'customer', '{tag}-' || g, '{tag}-city-' || (g % 300) "
+             f"FROM generate_series(1, 30000) g; ANALYZE base.party")
+        name = f"test.obs_slow_{SUFFIX}"
+        self.save(name, f"def main():\n    return len(ana.sql('SELECT id FROM base.party WHERE city = $1', '{tag}-city-7'))\n")
+        old = self.setting("slow_sql_ms", 1)
+        try:
+            for _ in range(3):
+                self.assertEqual(self.run_program(name)[0], 200)
+            http("POST", "/api/admin/observability/sql/flush", {}, self.token)
+            end, stat = time.time() + 15, None
+            while time.time() < end:
+                rows = http("GET", f"/api/admin/observability/sql?program={name}", token=self.token)[1]
+                stat = next((r for r in rows if "city = $1" in r["sql"]), None)
+                if stat and stat["plan_summary"]:
+                    break
+                time.sleep(1)
+            # CA-019-07: measured, aggregated, with the plan summary
+            self.assertGreaterEqual(stat["calls"], 3)
+            scan = stat["plan_summary"]["seq_scans"][0]
+            self.assertEqual((scan["table"], scan["columns"]), ("base.party", ["city"]))
+            s, r, _ = http("POST", "/api/admin/observability/advice/run", {}, self.token)
+            self.assertEqual(s, 200, r)
+            slow = [a for a in self.advice() if a["rule"] == "slow_seq_scan" and a["target"].startswith(stat["hash"])]
+            self.assertTrue(slow, "dica de índice não gerada")
+            self.assertIn("CREATE INDEX CONCURRENTLY party_city_idx ON base.party (city)", slow[0]["suggestion"])  # CA-019-04
+            # CA-019-09: a statement fast today on a table that grows gets a preventive tip.
+            mean, peak = float(stat["mean_ms"]), float(stat["max_ms"])
+            # Not slow today (above the mean and the peak rule), but the table grew 10× in two days.
+            self.setting("slow_sql_ms", max(2, int(max(mean * 3, peak / 5)) + 1))
+            psql("DELETE FROM ana_system.table_growth WHERE table_name = 'base.party'; "
+                 "INSERT INTO ana_system.table_growth (day, table_name, rows, bytes) "
+                 "SELECT current_date - 2, 'base.party', (reltuples / 10)::bigint, 0 FROM pg_class WHERE oid = 'base.party'::regclass")
+            http("POST", "/api/admin/observability/advice/run", {}, self.token)
+            growth = [a for a in self.advice() if a["rule"] == "growth_risk" and a["target"].startswith(stat["hash"])]
+            self.assertTrue(growth, "dica preventiva de crescimento não gerada")
+            self.assertGreater(growth[0]["evidence"]["projected_rows_180d"], growth[0]["evidence"]["table_rows"])
+        finally:
+            self.setting("slow_sql_ms", old)
+            psql(f"DELETE FROM base.party WHERE name LIKE '{tag}-%'; ANALYZE base.party; "
+                 "DELETE FROM ana_system.table_growth WHERE table_name = 'base.party' AND day = current_date - 2")
+
+    def test_ca_019_05_profile_shows_costliest_function(self):
+        name = f"test.obs_prof_{SUFFIX}"
+        self.save(name, "def heavy():\n    return sum(i * i for i in range(400000))\n\n"
+                        "def light():\n    return 1\n\ndef main():\n    light()\n    return heavy()\n")
+        s, c, _ = self.run_program(name, profile=True)
+        self.assertEqual(s, 200, c)
+        s, x, _ = http("GET", f"/api/admin/audit/executions/{c['id']}", token=self.token)
+        funcs = {f["function"]: f for f in x["trace"]["profile"]["functions"]}
+        self.assertGreater(funcs["heavy"]["total_ms"], funcs["light"]["total_ms"] * 10)
+        self.assertEqual(x["trace"]["reason"], "profile")
+
+    def test_ca_019_06_metrics_require_auth(self):
+        req = urllib.request.Request(URL + "/metrics")
+        try:
+            urllib.request.urlopen(req, timeout=10)
+            self.fail("/metrics sem autenticação")
+        except urllib.error.HTTPError as e:
+            self.assertEqual(e.code, 401)
+        req = urllib.request.Request(URL + "/metrics", headers={"Authorization": "Bearer " + self.token})
+        with urllib.request.urlopen(req, timeout=10) as r:
+            body = r.read().decode()
+        self.assertIn("ana_executions_total{", body)
+        self.assertIn("ana_execution_duration_ms_bucket{", body)
+
+    def test_ca_019_08_static_sql_findings(self):
+        name = f"test.obs_lint_{SUFFIX}"
+        self.save(name, "def main(ids, city):\n"
+                        "    a = ana.sql('SELECT * FROM base.party WHERE id = $1', 1)\n"
+                        "    b = ana.sql(\"SELECT id FROM base.party WHERE name LIKE '%x'\")\n"
+                        "    c = ana.sql(f\"SELECT id FROM base.party WHERE city = '{city}'\")\n"
+                        "    for i in ids:\n"
+                        "        ana.sql_exec('UPDATE base.party SET city = $2 WHERE id = $1', i, city)\n"
+                        "    return 1\n")
+        s, p, _ = http("GET", f"/api/programs/{name}/performance", token=self.token)
+        self.assertEqual(s, 200, p)
+        got = {(f["line"], f["rule"]) for f in p["lint"]}
+        self.assertTrue({(2, "select_star"), (3, "leading_wildcard"), (4, "dynamic_sql"), (6, "sql_in_loop")} <= got, got)
+        self.assertEqual([f["severity"] for f in p["lint"] if f["rule"] == "dynamic_sql"], ["serious"])
+
+
+
+# ---------------------------------------------------------------- spec 027
+class TestCostCenters(Base):
+    @classmethod
+    def setUpClass(cls):
+        super().setUpClass()
+        c = cls.client
+        cls.cc = f"T{SUFFIX}"
+        c.call("finance.save_cost_center", code=cls.cc, name="Centro de teste", kind="operational")
+        c.call("finance.save_cost_center", code=cls.cc + "-A", name="Filho A", parent=cls.cc)
+        c.call("finance.save_cost_center", code=cls.cc + "-B", name="Filho B", parent=cls.cc)
+        c.call("finance.save_cost_center", code=cls.cc + "-OFF", name="Inativo", active=False)
+        cls.customer = c.call("base.save_party", name=f"Cliente CC {SUFFIX}")["id"]
+        cls.employee = c.call("projects.save_employee", name=f"Eng CC {SUFFIX}", profile="HW", hourly_cost="80")["id"]
+
+    def lines(self, document):
+        s, c, _ = http("POST", "/api/sql", {"sql": "SELECT l.account, l.debit, l.credit, l.cost_center FROM finance.journal_line l "
+                                                  f"JOIN finance.journal_entry e ON e.id = l.entry_id WHERE e.document = '{document}' "
+                                                  "ORDER BY l.id"}, self.token)
+        self.assertEqual(s, 200, c)
+        return [dict(zip([x["name"] for x in c["columns"]], r)) for r in c["rows"]]
+
+    def err(self, function, **params):
+        with self.assertRaises(AnaRemoteError) as ctx:
+            self.client.call(function, **params)
+        return ctx.exception.code
+
+    def test_ca_027_01_policies_enforced_by_the_database(self):
+        doc = f"MAN-{SUFFIX}-1"
+        self.client.call("finance.post_entry", memo="despesa sem centro", document=doc,
+                         lines=[{"account": "5.1.1", "debit": 100}, {"account": "1.1.1", "credit": 100}])
+        got = {l["account"]: l["cost_center"] for l in self.lines(doc)}
+        self.assertEqual(got, {"5.1.1": "GERAL", "1.1.1": None})          # required → company default; asset → none
+        self.assertEqual(self.err("finance.post_entry", memo="x", lines=[{"account": "5.1.1", "debit": 1, "cost_center": self.cc},
+                                                                      {"account": "1.1.1", "credit": 1, "cost_center": self.cc}]),
+                         "COST_CENTER_NOT_ALLOWED")
+        self.assertEqual(self.err("finance.post_entry", memo="x", lines=[{"account": "5.1.1", "debit": 1, "cost_center": self.cc + "-OFF"},
+                                                                      {"account": "1.1.1", "credit": 1}]),
+                         "COST_CENTER_INACTIVE")
+        # Any program, even writing SQL directly, goes through the same rules.
+        name = f"test.cc_direct_{SUFFIX}"
+        self.save(name, "def main():\n    e = ana.sql_value(\"INSERT INTO finance.journal_entry (memo, created_by) VALUES ('x', 't') RETURNING id\")\n"
+                        "    ana.sql_exec(\"INSERT INTO finance.journal_line (entry_id, account, debit, cost_center) VALUES ($1, '1.1.1', 5, 'GERAL')\", e)\n")
+        s, c, _ = self.run_program(name)
+        self.assertEqual(c["error"]["code"], "COST_CENTER_NOT_ALLOWED")
+
+    def test_ca_027_06_manual_entry_must_balance(self):
+        self.assertEqual(self.err("finance.post_entry", memo="x", lines=[{"account": "5.1.1", "debit": 10},
+                                                                      {"account": "1.1.1", "credit": 9}]), "UNBALANCED")
+
+    def test_ca_027_02_documents_carry_their_cost_center(self):
+        code = f"SV{SUFFIX}CC"
+        self.client.call("base.save_product", code=code, description="Serviço CC", price="100", kind="service")
+        o = self.client.call("sales.create_order", customer=self.customer, items=[{"product": code, "quantity": 2}],
+                             cost_center=self.cc + "-A")
+        self.client.call("sales.invoice_order", number=o["number"])
+        rev = [l for l in self.lines(f"ORD-{o['number']}") if l["account"].startswith("4")]
+        self.assertEqual(rev[0]["cost_center"], self.cc + "-A")
+        p = f"CC{SUFFIX}"
+        self.client.call("projects.save_project", code=p, name="Projeto CC", customer=self.customer, manager="admin",
+                         status="active", billing="mixed", cost_center=self.cc + "-B",
+                         tasks=[{"code": "1", "name": "Trabalho"}], team=[{"employee": self.employee, "profile": "HW"}],
+                         rates={"HW": "200"})
+        m = self.client.call("projects.save_milestone", project=p, description="Entrega", amount="1000")["id"]
+        self.client.call("projects.complete_milestone", id=m)
+        inv = self.client.call("projects.invoice_project", project=p)
+        rev = [l for l in self.lines(f"INV-{inv['number']}") if l["account"].startswith("4")]
+        self.assertEqual(rev[0]["cost_center"], self.cc + "-B")
+        self.client.call("projects.cancel_invoice", number=inv["number"], reason="teste de estorno")
+        back = [l for l in self.lines(f"INV-{inv['number']}-REV") if l["account"].startswith("4")]
+        self.assertEqual((back[0]["cost_center"], back[0]["debit"]), (self.cc + "-B", rev[0]["credit"]))
+
+    def test_ca_027_03_05_report_rolls_up_and_budget(self):
+        for child, amount in (("-A", 300), ("-B", 200)):
+            self.client.call("finance.post_entry", memo="despesa", document=f"MAN-{SUFFIX}{child}",
+                             lines=[{"account": "5.1.1", "debit": amount, "cost_center": self.cc + child},
+                                    {"account": "1.1.1", "credit": amount}])
+        month = datetime.date.today().strftime("%Y-%m")
+        self.client.call("finance.save_budget", cost_center=self.cc + "-A", account="5.1.1", months=[month], amount="250")
+        s, c, _ = self.run_program("finance.cost_center_report", {"cost_center": self.cc,
+                                                                  "start": datetime.date.today().replace(day=1).isoformat()})
+        self.assertEqual(s, 200, c)
+        rows = {r["centro"].strip().split(" — ")[0]: r for r in c["result"]["centers"]}
+        parent, a = rows[self.cc], rows[self.cc + "-A"]
+        self.assertEqual(Decimal(parent["despesas"]), Decimal(a["despesas"]) + Decimal(rows[self.cc + "-B"]["despesas"]))
+        self.assertGreaterEqual(Decimal(a["despesas"]), 300)
+        self.assertEqual(Decimal(a["resultado orçado"]), Decimal(-250))
+        self.assertTrue(any(e.get("kind") == "chart" for e in c["events"]))
+        s, c, _ = self.run_program("finance.trial_balance", {"cost_center": self.cc + "-A"})
+        exp = [r for r in c["events"] if r.get("kind") == "table"][0]["data"]
+        row = [r for r in exp["rows"] if r[0] == "5.1.1"][0]
+        self.assertNotEqual(row[2], "0,00")                      # only lines of that center (and children)
+
+    def test_ca_027_04_allocation_preview_execute_once(self):
+        src, a, b = self.cc + "-SRC", self.cc + "-X", self.cc + "-Y"
+        for code in (src, a, b):
+            self.client.call("finance.save_cost_center", code=code, name=code)
+        self.client.call("finance.post_entry", memo="aluguel", document=f"MAN-{SUFFIX}-SRC",
+                         lines=[{"account": "5.1.1", "debit": "1000.01", "cost_center": src}, {"account": "1.1.1", "credit": "1000.01"}])
+        rule = f"R{SUFFIX}"
+        self.assertEqual(self.err("finance.save_allocation_rule", code=rule, name="x", source=src,
+                                  targets=[{"cost_center": a, "pct": 60}, {"cost_center": b, "pct": 30}]), "INVALID_TARGETS")
+        self.client.call("finance.save_allocation_rule", code=rule, name="Rateio teste", source=src,
+                         targets=[{"cost_center": a, "pct": 60}, {"cost_center": b, "pct": 40}])
+        today = datetime.date.today().isoformat()
+        prev = self.client.call("finance.allocate_costs", month=today, rule=rule)
+        self.assertTrue(prev["preview"])
+        self.assertEqual(self.lines(f"RATEIO-{rule}-{today[:7]}"), [])
+        done = self.client.call("finance.allocate_costs", month=today, rule=rule, execute=True)
+        got = {l["cost_center"]: (Decimal(l["debit"]) - Decimal(l["credit"])) for l in self.lines(done["entries"][0]["document"])}
+        self.assertEqual(got, {a: Decimal("600.01"), b: Decimal("400.00"), src: Decimal("-1000.01")})
+        self.assertEqual(self.err("finance.allocate_costs", month=today, rule=rule, execute=True), "ALREADY_ALLOCATED")
+
+
+# ---------------------------------------------------------------- spec 013
+class TestSupplyChain(Base):
+    @classmethod
+    def setUpClass(cls):
+        super().setUpClass()
+        c = cls.client
+        cls.supplier = c.call("base.save_party", kind="supplier", name=f"Fornecedor SC {SUFFIX}")["id"]
+        cls.other = c.call("base.save_party", kind="supplier", name=f"Outro SC {SUFFIX}")["id"]
+        cls.mcu, cls.lab, cls.repl = f"MCU{SUFFIX}", f"EMC{SUFFIX}", f"REP{SUFFIX}"
+        c.call("base.save_product", code=cls.mcu, description="MCU de teste", price="40")
+        c.call("base.save_product", code=cls.lab, description="Ensaio de laboratório", price="0", kind="service")
+        c.call("base.save_product", code=cls.repl, description="Item com reposição", price="10")
+        c.call("supply.save_supplier_item", product=cls.mcu, supplier=cls.other, price="25.00", lead_time_days=3)
+        c.call("supply.save_supplier_item", product=cls.mcu, supplier=cls.supplier, price="21.40", lead_time_days=10,
+               preferred=True, supplier_code="STM-F411")
+        c.call("supply.save_supplier_item", product=cls.lab, supplier=cls.supplier, price="4200", lead_time_days=20, preferred=True)
+        c.call("supply.save_supplier_item", product=cls.repl, supplier=cls.supplier, price="2", multiple="10", preferred=True)
+        cls.requester, cls.req_token = new_user("user")
+        cls.req_client = Ana(URL, token=cls.req_token)
+
+    def err(self, function, client=None, **params):
+        with self.assertRaises(AnaRemoteError) as ctx:
+            (client or self.client).call(function, **params)
+        return ctx.exception
+
+    def ordered(self, product, quantity, **extra):
+        """Request by the plain user, approved by admin, turned into an order. Returns the order number."""
+        r = self.req_client.call("supply.request_purchase", reason="teste", product=product, quantity=quantity, **extra)
+        self.client.call("supply.approve_request", request=r["number"])
+        return self.client.call("supply.create_orders", requests=[r["number"]])["orders"][0]
+
+    def test_ca_013_01_approved_request_becomes_order_of_preferred_supplier(self):
+        r = self.req_client.call("supply.request_purchase", reason="protótipo", product=self.mcu, quantity=10)
+        self.assertEqual((r["status"], Decimal(r["total"])), ("submitted", Decimal("214.00")))
+        self.client.call("supply.approve_request", request=r["number"])
+        o = self.client.call("supply.create_orders", requests=[r["number"]])["orders"]
+        self.assertEqual(len(o), 1)
+        s, c, _ = http("POST", "/api/sql", {"sql": "SELECT o.supplier_id, o.status, l.price, l.quantity, l.promised_date - current_date "
+                                                  "FROM supply.purchase_order o JOIN supply.purchase_order_line l ON l.order_id = o.id "
+                                                  f"WHERE o.number = {o[0]}"}, self.token)
+        self.assertEqual(c["rows"][0][0:2], [self.supplier, "sent"])
+        self.assertEqual((Decimal(c["rows"][0][2]), Decimal(c["rows"][0][3]), c["rows"][0][4]), (Decimal("21.40"), Decimal(10), 10))
+        self.assertEqual(self.scalar(f"SELECT status FROM supply.purchase_request WHERE number = {r['number']}"), "ordered")
+        self.assertEqual(self.err("supply.create_orders", requests=[r["number"]]).code, "INVALID_STATE")
+
+    def test_ca_013_02_self_approval_and_limits(self):
+        own = self.client.call("supply.request_purchase", reason="minha", product=self.mcu, quantity=1)
+        self.assertEqual(self.err("supply.approve_request", request=own["number"]).code, "SELF_APPROVAL")
+        group = f"compras{SUFFIX}"
+        http("PUT", f"/api/admin/groups/{group}", {"description": "aprovadores", "program_patterns": []}, self.token)
+        self.client.call("supply.settings", limit_kind="group", limit_target=group, limit_amount="100")
+        try:
+            _, t = new_user("user", groups=[group])
+            approver = Ana(URL, token=t)
+            big = self.req_client.call("supply.request_purchase", reason="grande", product=self.mcu, quantity=10)
+            e = self.err("supply.approve_request", client=approver, request=big["number"])
+            self.assertEqual(e.code, "ABOVE_APPROVAL_LIMIT")
+            small = self.req_client.call("supply.request_purchase", reason="pequena", product=self.mcu, quantity=2)
+            self.assertEqual(approver.call("supply.approve_request", request=small["number"])["status"], "approved")
+            # Without a limit (plain user, no group) nobody approves anything.
+            self.assertEqual(self.err("supply.approve_request", client=self.req_client, request=own["number"]).code,
+                             "ABOVE_APPROVAL_LIMIT")
+            self.client.call("supply.approve_request", request=big["number"])          # admin: unlimited
+        finally:
+            self.client.call("supply.settings", limit_kind="group", limit_target=group, remove_limit=True)
+            http("DELETE", f"/api/admin/groups/{group}", token=self.token)
+
+    def test_ca_013_03_06_partial_receipt_and_tolerance(self):
+        number = self.ordered(self.mcu, 10, warehouse="CENTRAL")
+        before = Decimal(self.scalar(f"SELECT COALESCE(sum(m.quantity), 0) FROM inventory.stock_movement m JOIN base.product p "
+                                     f"ON p.id = m.product_id JOIN inventory.warehouse w ON w.id = m.warehouse_id "
+                                     f"WHERE p.code = '{self.mcu}' AND w.code = 'CENTRAL'"))
+        r = self.client.call("supply.receive", order=number, line=1, quantity=6, document="NF-1")
+        self.assertEqual((r["order_status"], Decimal(r["total"])), ("partially_received", Decimal("128.40")))
+        after = Decimal(self.scalar(f"SELECT sum(m.quantity) FROM inventory.stock_movement m JOIN base.product p "
+                                    f"ON p.id = m.product_id JOIN inventory.warehouse w ON w.id = m.warehouse_id "
+                                    f"WHERE p.code = '{self.mcu}' AND w.code = 'CENTRAL'"))
+        self.assertEqual(after - before, 6)
+        s, c, _ = http("POST", "/api/sql", {"sql": "SELECT kind, amount, party_id FROM finance.bill WHERE id = " + str(r["bill"])}, self.token)
+        self.assertEqual((c["rows"][0][0], Decimal(c["rows"][0][1]), c["rows"][0][2]), ("payable", Decimal("128.40"), self.supplier))
+        s, c, _ = http("POST", "/api/sql", {"sql": "SELECT account, debit, credit FROM finance.journal_line WHERE entry_id = "
+                                                  f"{r['entry']} ORDER BY account"}, self.token)
+        lines = {row[0]: (Decimal(row[1]), Decimal(row[2])) for row in c["rows"]}
+        self.assertEqual(lines, {"1.1.3": (Decimal("128.40"), 0), "2.1.1": (0, Decimal("128.40"))})
+        # CA-013-06: 6 + 5 > 10 (tolerance 0) → refused by the database, nothing changes.
+        e = self.err("supply.receive", order=number, line=1, quantity=5)
+        self.assertEqual(e.code, "OVER_RECEIPT")
+        self.assertEqual(Decimal(self.scalar(f"SELECT l.received_qty FROM supply.purchase_order_line l JOIN supply.purchase_order o "
+                                             f"ON o.id = l.order_id WHERE o.number = {number}")), 6)
+        name = f"test.over_receipt_{SUFFIX}"
+        self.save(name, "def main(n):\n    ana.sql_exec(\"UPDATE supply.purchase_order_line l SET received_qty = 11 FROM supply.purchase_order o "
+                        "WHERE o.id = l.order_id AND o.number = $1\", n)\n")
+        s, c, _ = self.run_program(name, {"n": number})
+        self.assertEqual(c["error"]["code"], "OVER_RECEIPT")                     # even writing SQL directly
+        done = self.client.call("supply.receive", order=number)                    # the remaining 4
+        self.assertEqual(done["order_status"], "received")
+        self.assertEqual(self.err("supply.receive", order=number).code, "INVALID_STATE")
+        s, c, _ = self.run_program(name, {"n": number})
+        self.assertEqual(c["error"]["code"], "ORDER_CLOSED")                     # received order is immutable
+
+    def test_ca_013_04_service_acceptance_becomes_project_expense(self):
+        customer = self.client.call("base.save_party", name=f"Cliente SC {SUFFIX}")["id"]
+        employee = self.client.call("projects.save_employee", name=f"Eng SC {SUFFIX}", profile="HW", hourly_cost="80")["id"]
+        project = f"SC{SUFFIX}"
+        self.client.call("projects.save_project", code=project, name="Projeto suprimentos", customer=customer, manager="admin",
+                         status="active", billing="mixed", cost_center="GERAL", tasks=[{"code": "1", "name": "Ensaios"}],
+                         team=[{"employee": employee, "profile": "HW"}], rates={"HW": "200"})
+        moves = self.count("inventory.stock_movement")
+        number = self.ordered(self.lab, 1, project=project, rebillable=True)
+        r = self.client.call("supply.receive", order=number, note="ensaio aprovado")
+        self.assertEqual(r["order_status"], "received")
+        self.assertEqual(self.count("inventory.stock_movement"), moves)
+        s, c, _ = http("POST", "/api/sql", {"sql": "SELECT e.kind, e.unit_cost, e.rebillable FROM projects.expense e JOIN projects.project p "
+                                                  f"ON p.id = e.project_id WHERE p.code = '{project}'"}, self.token)
+        self.assertEqual((c["rows"][0][0], Decimal(c["rows"][0][1]), c["rows"][0][2]), ("subcontract", Decimal(4200), True))
+        s, c, _ = http("POST", "/api/sql", {"sql": "SELECT account, debit, cost_center FROM finance.journal_line WHERE entry_id = "
+                                                  f"{r['entry']} AND debit > 0"}, self.token)
+        self.assertEqual((c["rows"][0][0], Decimal(c["rows"][0][1]), c["rows"][0][2]), ("5.1.3", Decimal(4200), "GERAL"))
+
+    def test_ca_013_05_replenishment_suggestion(self):
+        self.client.call("supply.save_replenishment_rule", product=self.repl, warehouse="CENTRAL", min_qty=20, max_qty=50)
+        self.client.call("inventory.stock_in", product=self.repl, quantity=5, warehouse="CENTRAL")
+        s, c, _ = self.run_program("supply.suggest_replenishment", {"warehouse": "CENTRAL"})
+        self.assertEqual(s, 200, c)
+        mine = [x for x in c["result"]["suggestions"] if x["product"] == self.repl]
+        self.assertEqual(Decimal(mine[0]["quantity"]), 50)                       # 50 − 5 = 45 → multiple of 10
+        self.assertTrue(any(e.get("kind") == "chart" for e in c["events"]))
+        made = self.req_client.call("supply.suggest_replenishment", warehouse="CENTRAL", create=True)["requests"]
+        self.assertEqual(len(made), 1)
+        self.assertEqual(self.scalar(f"SELECT origin FROM supply.purchase_request WHERE number = {made[0]}"), "replenishment")
+        # A request is not stock on order yet; once ordered, the item leaves the suggestion.
+        self.client.call("supply.approve_request", request=made[0])
+        self.client.call("supply.create_orders", requests=[made[0]])
+        again = self.client.call("supply.suggest_replenishment", warehouse="CENTRAL")["suggestions"]
+        self.assertFalse([x for x in again if x["product"] == self.repl])
+
+    def test_rf_013_09_10_performance_confirm_date_and_workbench(self):
+        number = self.ordered(self.mcu, 3)
+        new_date = (datetime.date.today() + datetime.timedelta(days=30)).isoformat()
+        self.assertEqual(self.client.call("supply.confirm_delivery_date", order=number, promised_date=new_date)["lines"], 1)
+        self.client.call("supply.receive", order=number)
+        s, c, _ = self.run_program("supply.supplier_performance", {"supplier": self.supplier})
+        self.assertEqual(s, 200, c)
+        row = c["result"]["suppliers"][0]
+        self.assertEqual(Decimal(row["no prazo %"]), 100)
+        for view in ("approve", "buy", "receive", "late"):
+            s, c, _ = self.run_program("supply.workbench", {"view": view})
+            self.assertEqual(s, 200, c)
+            self.assertTrue(any(e.get("kind") == "metrics" for e in c["events"]))
+
+
+# ---------------------------------------------------------------- spec 028
+class TestProductUpdates(Base):
+    """A seed newer than the installed program is offered; the administrator decides."""
+    NAME = "demo.hello"
+
+    def psql(self, sql):
+        import subprocess
+        r = subprocess.run(["docker", "compose", "-f", os.path.join(ROOT, "docker-compose.yml"), "exec", "-T", "db",
+                            "psql", "-U", "postgres", "-d", "ana", "-At", "-v", "ON_ERROR_STOP=1", "-c", sql],
+                           capture_output=True, text=True, timeout=60)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        return r.stdout.strip()
+
+    def source(self):
+        s, c, _ = http("GET", f"/api/programs/{self.NAME}", token=self.token)
+        self.assertEqual(s, 200, c)
+        return c["source"], c["version"]
+
+    def put(self, source):
+        s, c, _ = http("PUT", f"/api/programs/{self.NAME}", {"source": source, "comment": "teste 028"}, self.token)
+        self.assertEqual(s, 200, c)
+
+    def base_from_current(self):           # the installation was based on what is there now
+        self.psql(f"UPDATE ana_system.program SET seed_hash = encode(sha256(convert_to(source, 'UTF8')), 'hex') "
+                  f"WHERE name = '{self.NAME}'")
+
+    def check(self):
+        s, c, _ = http("POST", "/api/admin/product-updates/check", {}, self.token)
+        self.assertEqual(s, 200, c)
+        s, c, _ = http("GET", "/api/admin/product-updates", token=self.token)
+        return {u["name"]: u for u in c["updates"]}.get(self.NAME)
+
+    def accept(self, overwrite=False):
+        return http("POST", f"/api/admin/product-updates/{self.NAME}/accept", {"overwrite": overwrite}, self.token)
+
+    def setUp(self):
+        self.put_marker = f"\n# local {SUFFIX}\n"
+
+    def test_ca_028_01_04_unmodified_offer_accept_and_local_customization(self):
+        original, _ = self.source()
+        self.put(original + self.put_marker)                  # "older product version" installed…
+        self.base_from_current()                               # …and not changed here
+        u = self.check()
+        self.assertEqual((u["status"], u["locally_modified"]), ("available", False))
+        s, d, _ = http("GET", f"/api/admin/product-updates/{self.NAME}", token=self.token)
+        self.assertEqual(d["installed"], original + self.put_marker)
+        seed = d["seed_source"]
+        _, before = self.source()
+        s, c, _ = self.accept()
+        self.assertEqual(s, 200, c)
+        now, version = self.source()
+        self.assertEqual((now, version), (seed, before + 1))
+        self.assertEqual(self.check()["status"], "accepted")
+        # CA-028-04: changing it here on top of the current product version offers nothing.
+        self.put(seed + self.put_marker)
+        self.assertNotEqual((self.check() or {}).get("status"), "available")
+        self.put(seed)
+
+    def test_ca_028_02_modified_needs_explicit_overwrite(self):
+        original, _ = self.source()
+        self.put(original + "\n# base antiga\n")
+        self.base_from_current()
+        self.put(original + "\n# base antiga\n" + self.put_marker)   # …and changed here afterwards
+        u = self.check()
+        self.assertEqual((u["status"], u["locally_modified"]), ("available", True))
+        s, c, _ = self.accept()
+        self.assertEqual((s, c["error"]["code"]), (400, "LOCALLY_MODIFIED"))
+        s, c, _ = self.accept(overwrite=True)
+        self.assertEqual(s, 200, c)
+
+    def test_ca_028_03_dismissed_stays_quiet(self):
+        original, _ = self.source()
+        self.put(original + "\n# outra base\n")
+        self.base_from_current()
+        self.assertEqual(self.check()["status"], "available")
+        s, c, _ = http("POST", f"/api/admin/product-updates/{self.NAME}/dismiss", {}, self.token)
+        self.assertEqual(s, 200, c)
+        self.assertEqual(self.check()["status"], "dismissed")
+        s, d, _ = http("GET", f"/api/admin/product-updates/{self.NAME}", token=self.token)
+        self.put(d["seed_source"])                                     # back in sync with the product
+        self.assertIsNone(self.check())                                # the dismissal no longer applies
+
+    def test_ca_028_05_only_admin(self):
+        _, t = new_user("developer")
+        for method, path in (("GET", "/api/admin/product-updates"), ("POST", f"/api/admin/product-updates/{self.NAME}/accept")):
+            s, _, _ = http(method, path, {} if method == "POST" else None, t)
+            self.assertEqual(s, 403)
+
+
+# ---------------------------------------------------------------- spec 017
+class TestIntegrationHub(Base):
+    """Connectors, vault, reliable delivery, webhooks, statements, reconciliation, charges."""
+
+    @classmethod
+    def setUpClass(cls):
+        super().setUpClass()
+        c = cls.client
+        cls.api = f"t{SUFFIX}_api"
+        cls.hooks = f"t{SUFFIX}_hooks"
+        cls.out_prog = f"test.int_out_{SUFFIX}"
+        CREATED_PROGRAMS.add(cls.out_prog)
+        # Delivery program: GET <options.path> on the connector; anything but 2xx fails (retried).
+        s, r, _ = http("PUT", f"/api/programs/{cls.out_prog}", {"source":
+            "def main(message, connector, attempt=1):\n"
+            "    r = ana.http(connector['name'], 'GET', connector['options'].get('path', '/nope'))\n"
+            "    if not r.ok:\n"
+            "        raise ana.Error('DELIVERY_FAILED', f\"HTTP {r['status']}\")\n"
+            "    return {'status': r['status'], 'got': message['payload']}\n"}, cls.token)
+        assert s == 200, r
+        cls.connector(cls.api, {"kind": "http_api", "base_url": "http://localhost:8080", "auth": "bearer",
+                                "outbound_program": cls.out_prog, "max_attempts": 2, "options": {"path": "/nope"}})
+        cls.secret(cls.api, "token", "super-secret-token-value")
+        cls.connector(cls.hooks, {"kind": "webhook_in", "inbound_program": "integration.generic_gateway_in"})
+        cls.hmac_key = f"hook-key-{SUFFIX}"
+        cls.secret(cls.hooks, "hmac_key", cls.hmac_key)
+        cls.customer = c.call("base.save_party", name=f"Cliente Banco {SUFFIX}")["id"]
+        cls.service = f"SV{SUFFIX}BK"
+        c.call("base.save_product", code=cls.service, description="Serviço conciliação", price="1", kind="service")
+
+    @classmethod
+    def tearDownClass(cls):
+        # Connectors point to test programs (the FK blocks purging them): detach first.
+        for name in (cls.api, cls.hooks, f"t{SUFFIX}_gw"):
+            http("PUT", f"/api/admin/connectors/{name}", {"kind": "webhook_in", "active": False}, cls.token)
+
+    @classmethod
+    def connector(cls, name, body):
+        s, c, _ = http("PUT", f"/api/admin/connectors/{name}", body, cls.token)
+        assert s == 200, c
+
+    @classmethod
+    def secret(cls, name, key, value):
+        s, c, _ = http("PUT", f"/api/admin/connectors/{name}/secrets/{key}", {"value": value}, cls.token)
+        assert s == 200, c
+
+    def bill(self, amount):
+        """A receivable bill of exactly `amount` (service order, invoiced)."""
+        o = self.client.call("sales.create_order", customer=self.customer,
+                             items=[{"product": self.service, "quantity": 1, "price": str(amount)}])
+        self.client.call("sales.invoice_order", number=o["number"])
+        return int(self.scalar(f"SELECT id FROM finance.bill WHERE document = 'ORD-{o['number']}' AND kind = 'receivable'"))
+
+    def ofx(self, *trns):
+        body = "".join(f"<STMTTRN><TRNTYPE>CREDIT<DTPOSTED>{d}120000<TRNAMT>{a}<FITID>{f}<MEMO>{m}</STMTTRN>\n"
+                       for d, a, f, m in trns)
+        return f"OFXHEADER:100\nDATA:OFXSGML\n<OFX><BANKMSGSRSV1><STMTTRNRS><STMTRS><BANKTRANLIST>\n{body}</BANKTRANLIST></STMTRS></STMTTRNRS></BANKMSGSRSV1></OFX>"
+
+    def wait(self, sql, expected, seconds=40):
+        end = time.time() + seconds
+        while time.time() < end:
+            v = self.scalar(sql)
+            if v == expected:
+                return v
+            time.sleep(1)
+        self.fail(f"{sql} → {v!r}, esperado {expected!r}")
+
+    def run_ok(self, name, params=None):
+        s, c, _ = self.run_program(name, params or {})
+        self.assertEqual(s, 200, c)
+        self.assertNotIn("error", c, c.get("error"))
+        return c["result"]
+
+    def test_ca_017_01_ofx_import_twice_does_not_duplicate(self):
+        today = datetime.date.today().strftime("%Y%m%d")
+        content = self.ofx((today, "10.00", f"F1{SUFFIX}", "tarifa"), (today, "-3.50", f"F2{SUFFIX}", "pacote"))
+        first = self.client.call("finance.import_statement", bank_account="CAIXA", content=content)
+        again = self.client.call("finance.import_statement", bank_account="CAIXA", content=content)
+        self.assertEqual((first["lines"], first["duplicates"]), (2, 0))
+        self.assertEqual((again["lines"], again["duplicates"]), (0, 2))
+        csv = "data;histórico;valor\n05/10/2026;PIX recebido;1.234,56\n05/10/2026;PIX recebido;1.234,56\n"
+        r1 = self.client.call("finance.import_statement", bank_account="CAIXA", format="csv",
+                              content=csv.replace("PIX", f"PIX {SUFFIX}"))
+        r2 = self.client.call("finance.import_statement", bank_account="CAIXA", format="csv",
+                              content=csv.replace("PIX", f"PIX {SUFFIX}"))
+        self.assertEqual((r1["lines"], r2["lines"], r2["duplicates"]), (2, 0, 2))   # two equal lines are both kept once
+
+    def test_ca_017_02_charge_id_in_statement_settles_automatically(self):
+        amount = Decimal(f"{300 + int(SUFFIX[-3:])}.17")
+        bill = self.bill(amount)
+        ext = f"PIX{SUFFIX}AUTO"
+        self.run_ok(self.charge_prog(), {"bill": bill, "ext": ext, "connector": self.api})
+        today = datetime.date.today().strftime("%Y%m%d")
+        self.client.call("finance.import_statement", bank_account="CAIXA",
+                         content=self.ofx((today, str(amount), f"F3{SUFFIX}", f"PIX REC {ext} CLIENTE")))
+        r = self.client.call("finance.reconcile", bank_account="CAIXA")
+        self.assertGreaterEqual(r["settled"], 1)
+        self.assertEqual(self.scalar(f"SELECT status FROM finance.bill WHERE id = {bill}"), "settled")
+        line = self.scalar(f"SELECT id FROM finance.bank_statement_line WHERE dedup_key = 'id:F3{SUFFIX}'")
+        s, c, _ = http("POST", "/api/sql", {"sql": "SELECT sum(debit), sum(credit), count(*) FROM finance.journal_line l "
+                                                  "JOIN finance.journal_entry e ON e.id = l.entry_id "
+                                                  f"WHERE e.document = 'EXT-{line}'"}, self.token)
+        debit, credit, n = c["rows"][0]
+        self.assertEqual((Decimal(debit), Decimal(credit)), (amount, amount))
+        self.assertEqual(self.scalar(f"SELECT status FROM finance.charge WHERE external_id = '{ext}'"), "paid")
+
+    def charge_prog(self):
+        name = f"test.int_charge_{SUFFIX}"
+        if name not in CREATED_PROGRAMS:
+            self.save(name, "def main(bill, ext, connector):\n"
+                            "    amount = ana.sql_value('SELECT amount FROM finance.bill WHERE id = $1', bill)\n"
+                            "    return ana.sql_value(\"INSERT INTO finance.charge (bill_id, connector, method, status, external_id, "
+                            "amount, created_by) VALUES ($1, $2, 'pix', 'issued', $3, $4, 't') RETURNING id\", bill, connector, ext, amount)\n")
+        return name
+
+    def test_ca_017_03_equal_amounts_stay_for_manual_with_two_suggestions(self):
+        amount = Decimal(f"{700 + int(SUFFIX[-3:])}.43")
+        b1, b2 = self.bill(amount), self.bill(amount)
+        today = datetime.date.today().strftime("%Y%m%d")
+        self.client.call("finance.import_statement", bank_account="CAIXA",
+                         content=self.ofx((today, str(amount), f"F4{SUFFIX}", "DEPOSITO SEM IDENTIFICACAO")))
+        line = int(self.scalar(f"SELECT id FROM finance.bank_statement_line WHERE dedup_key = 'id:F4{SUFFIX}'"))
+        r = self.client.call("finance.reconcile", bank_account="CAIXA", tolerance_days=40)   # sales bills fall due in 30 days
+        self.assertEqual(self.scalar(f"SELECT status FROM finance.bank_statement_line WHERE id = {line}"), "open")
+        sug = {x["bill"] for x in r["suggestions"][str(line)]}
+        self.assertTrue({b1, b2} <= sug, sug)
+        # Manual: the user picks one; undo reverses and reopens it.
+        self.client.call("finance.match_statement_line", line=line, bills=[b1])
+        self.assertEqual(self.scalar(f"SELECT status FROM finance.bill WHERE id = {b1}"), "settled")
+        back = self.client.call("finance.unmatch_statement_line", line=line, reason="engano")
+        self.assertTrue(back["reversed"])
+        self.assertEqual(self.scalar(f"SELECT status FROM finance.bill WHERE id = {b1}"), "open")
+        self.assertEqual(self.scalar(f"SELECT count(*) FROM finance.journal_entry WHERE document = 'EXT-{line}-REV'"), 1)
+        with self.assertRaises(AnaRemoteError) as ctx:
+            self.client.call("finance.match_statement_line", line=line, bills=[b1, b2])     # 2× the line amount
+        self.assertEqual(ctx.exception.code, "DIFFERENCE")
+
+    def signed(self, body, ts=None, key=None, event=None):
+        import hashlib
+        import hmac as _hmac
+        ts = str(ts or int(time.time()))
+        raw = json.dumps(body).encode()
+        sig = _hmac.new((key or self.hmac_key).encode(), ts.encode() + b"." + raw, hashlib.sha256).hexdigest()
+        headers = {"X-Timestamp": ts, "X-Signature": "sha256=" + sig, "Content-Type": "application/json"}
+        if event:
+            headers["X-Event-Id"] = event
+        req = urllib.request.Request(URL + f"/hooks/{self.hooks}", data=raw, method="POST", headers=headers)
+        try:
+            with urllib.request.urlopen(req, timeout=30) as r:
+                return r.status, json.loads(r.read() or b"{}")
+        except urllib.error.HTTPError as e:
+            return e.code, json.loads(e.read() or b"{}")
+
+    def test_ca_017_04_webhook_signature_and_idempotency(self):
+        amount = Decimal(f"{500 + int(SUFFIX[-3:])}.29")
+        bill = self.bill(amount)
+        ext = f"GW{SUFFIX}HOOK"
+        self.run_ok(self.charge_prog(), {"bill": bill, "ext": ext, "connector": self.api})
+        event = {"id": f"evt-{SUFFIX}", "type": "charge.paid", "charge_id": ext, "amount": str(amount), "fee": "1.99"}
+        self.assertEqual(self.signed(event, key="wrong-key")[0], 401)
+        self.assertEqual(self.signed(event, ts=int(time.time()) - 3600)[0], 401)          # outside the replay window
+        s, c = self.signed(event)
+        self.assertEqual(s, 202, c)
+        self.wait(f"SELECT status FROM finance.bill WHERE id = {bill}", "settled")
+        s, c = self.signed(event)
+        self.assertEqual((s, c.get("duplicate")), (200, True))
+        s, c = self.signed({**event, "id": f"evt-{SUFFIX}-again"})                       # same payment, other event id
+        self.assertEqual(s, 202, c)
+        self.wait(f"SELECT status FROM integration.inbox WHERE connector = '{self.hooks}' AND event_id = 'evt-{SUFFIX}-again'",
+                  "done")
+        charge = self.scalar(f"SELECT id FROM finance.charge WHERE external_id = '{ext}'")
+        self.assertEqual(self.scalar(f"SELECT count(*) FROM finance.journal_entry WHERE document = 'CHG-{charge}'"), 1)
+        self.assertEqual(Decimal(self.scalar(f"SELECT fee FROM finance.charge WHERE id = {charge}")), Decimal("1.99"))
+
+    def test_ca_017_05_retries_dead_letter_and_reprocess(self):
+        name = f"test.int_send_{SUFFIX}"
+        self.save(name, "def main(connector):\n    return ana.send(connector, 'ping', {'n': 1})\n")
+        msg = self.run_ok(name, {"connector": self.api})
+        self.wait(f"SELECT status FROM integration.outbox WHERE id = {msg}", "dead", seconds=60)
+        self.assertEqual(self.scalar(f"SELECT attempts FROM integration.outbox WHERE id = {msg}"), 2)
+        self.assertIn("HTTP 404", self.scalar(f"SELECT last_error FROM integration.outbox WHERE id = {msg}"))
+        # The administrator fixes the connector and reprocesses.
+        self.connector(self.api, {"kind": "http_api", "base_url": "http://localhost:8080", "auth": "bearer",
+                                  "outbound_program": self.out_prog, "max_attempts": 2, "options": {"path": "/health"}})
+        s, c, _ = http("POST", f"/api/admin/integrations/outbox/{msg}/reprocess", {}, self.token)
+        self.assertEqual(s, 200, c)
+        self.wait(f"SELECT status FROM integration.outbox WHERE id = {msg}", "done")
+        # A message enqueued by a failing execution is never sent (same transaction).
+        bad = f"test.int_send_fail_{SUFFIX}"
+        self.save(bad, "def main(connector):\n    ana.send(connector, 'ghost', {'n': 2})\n    raise ana.Error('NOPE', 'x')\n")
+        before = self.count("integration.outbox", f"connector = '{self.api}' AND kind = 'ghost'")
+        self.run_program(bad, {"connector": self.api})
+        self.assertEqual(self.count("integration.outbox", f"connector = '{self.api}' AND kind = 'ghost'"), before)
+        s, stats, _ = http("GET", "/api/admin/integrations/stats", token=self.token)
+        mine = [x for x in stats if x["name"] == self.api][0]
+        self.assertGreaterEqual(mine["calls"], 3)
+
+    def test_ca_017_06_programs_cannot_read_secrets_nor_leave_the_allowed_hosts(self):
+        name = f"test.int_escape_{SUFFIX}"
+        self.save(name, "def main(connector):\n"
+                        "    out = {}\n"
+                        "    try:\n"
+                        "        ana.sql('SELECT ciphertext FROM integration.secret')\n"
+                        "        out['secret'] = 'read'\n"
+                        "    except ana.SqlError as e:\n"
+                        "        out['secret'] = e.sqlstate\n"
+                        "    for path in ('https://example.com/x', '//example.com/x', '/../x', 'http://localhost:8080/health'):\n"
+                        "        try:\n"
+                        "            ana.http(connector, 'GET', path)\n"
+                        "            out[path] = 'called'\n"
+                        "        except ana.Error as e:\n"
+                        "            out[path] = e.code\n"
+                        "    return out\n")
+        r = self.run_ok(name, {"connector": self.api})
+        self.assertEqual(r["secret"], "42501")
+        self.assertEqual({k: v for k, v in r.items() if k != "secret"},
+                         {"https://example.com/x": "HOST_NOT_ALLOWED", "//example.com/x": "HOST_NOT_ALLOWED",
+                          "/../x": "HOST_NOT_ALLOWED", "http://localhost:8080/health": "HOST_NOT_ALLOWED"})
+        s, c, _ = http("GET", "/api/admin/connectors", token=self.token)
+        self.assertNotIn("super-secret-token-value", json.dumps(c))
+        self.assertEqual([x["key"] for x in [k for k in c["connectors"] if k["name"] == self.api][0]["secrets"]], ["token"])
+        s, log, _ = http("GET", "/api/admin/audit/changes?action=connector.secret&limit=200", token=self.token)
+        mine = [x for x in log if x["target"] == f"{self.api}:token"]
+        self.assertTrue(mine)
+        self.assertNotIn("super-secret", json.dumps(log))                 # recorded without the value
+
+    def test_rf_017_08_charge_through_gateway_connector(self):
+        robot = f"rob{SUFFIX}gw"
+        CREATED_USERS.append(robot)
+        http("POST", "/api/admin/users", {"username": robot, "kind": "robot", "role": "user"}, self.token)
+        s, k, _ = http("POST", f"/api/admin/users/{robot}/keys", {"name": "gateway"}, self.token)
+        fake = f"test.fakegw_{SUFFIX}"
+        self.save(fake, "def main(**kw):\n    return {'id': 'FGW-' + ana.context.execution_id[:8], 'qr_code': '000201PIX'}\n")
+        gw = f"t{SUFFIX}_gw"
+        self.connector(gw, {"kind": "http_api", "base_url": "http://localhost:8080", "auth": "bearer",
+                            "outbound_program": "integration.generic_gateway_out",
+                            "options": {"charges_path": f"/api/programs/{fake}/run", "response_field": "result"}})
+        self.secret(gw, "token", k["key"])
+        bill = self.bill(Decimal("42.00"))
+        r = self.client.call("finance.create_charge", bill=bill, connector=gw, method="pix")
+        self.wait(f"SELECT status FROM finance.charge WHERE id = {r['charge']}", "issued")
+        self.assertTrue(self.scalar(f"SELECT external_id FROM finance.charge WHERE id = {r['charge']}").startswith("FGW-"))
+        with self.assertRaises(AnaRemoteError) as ctx:
+            self.client.call("finance.create_charge", bill=bill, connector=gw)
+        self.assertEqual(ctx.exception.code, "CHARGE_EXISTS")
+
+    def test_rnf_017_03_import_100k_lines_under_60s(self):
+        name = f"test.int_bulk_{SUFFIX}"
+        self.save(name, "import datetime, time\n"
+                        "def main(n, tag):\n"
+                        "    d = datetime.date.today().strftime('%Y%m%d')\n"
+                        "    trn = ''.join(f'<STMTTRN><DTPOSTED>{d}<TRNAMT>{(i % 900) + 1}.{i % 100:02d}<FITID>{tag}-{i}'\n"
+                        "                  f'<MEMO>lote {i}</STMTTRN>' for i in range(n))\n"
+                        "    t0 = time.monotonic()\n"
+                        "    r = ana.call('finance.import_statement', bank_account='CAIXA', content='<OFX>' + trn + '</OFX>')\n"
+                        "    return {'lines': r['lines'], 'seconds': time.monotonic() - t0}\n",
+                  limits={"timeout_ms": 180000, "sql_timeout_ms": 120000})
+        s, c, _ = self.run_program(name, {"n": 100000, "tag": f"B{SUFFIX}"})
+        self.assertEqual(s, 200, c)
+        self.assertEqual(c["result"]["lines"], 100000)
+        self.assertLess(c["result"]["seconds"], 60, c["result"])
+        # Leave the account clean for the other suites (these are test lines only).
+        purge = f"test.int_bulk_purge_{SUFFIX}"
+        self.save(purge, "def main(tag):\n    return ana.sql_exec(\"DELETE FROM finance.bank_statement_line "
+                         "WHERE dedup_key LIKE 'id:' || $1 || '-%'\", tag)\n")
+        self.run_program(purge, {"tag": f"B{SUFFIX}"})
+
+
+# ---------------------------------------------------------------- spec 016
+class TestFileRepository(Base):
+    """Folders, versions, grants, external portal accounts, links, real type, invoices, audit."""
+
+    @classmethod
+    def setUpClass(cls):
+        super().setUpClass()
+        c = cls.client
+        cls.cust_a = c.call("base.save_party", name=f"Cliente Arq A {SUFFIX}")["id"]
+        cls.cust_b = c.call("base.save_party", name=f"Cliente Arq B {SUFFIX}")["id"]
+        cls.ext_a, cls.ext_a_token = cls.external(cls.cust_a)
+        cls.root = cls.folder(None, f"Repo {SUFFIX}")
+        cls.fa = cls.folder(cls.root, "Projeto A")
+        cls.fb = cls.folder(cls.root, "Projeto B")
+
+    EXTERNALS = {}
+
+    @classmethod
+    def external(cls, party):
+        if party in cls.EXTERNALS:                      # one portal account per customer in this run
+            return cls.EXTERNALS[party]
+        cls.EXTERNALS[party] = cls.make_external(party)
+        return cls.EXTERNALS[party]
+
+    @classmethod
+    def make_external(cls, party):
+        username = f"ext{SUFFIX}{party}"
+        CREATED_USERS.append(username)
+        s, c, _ = http("POST", "/api/admin/users", {"username": username, "role": "external", "party_id": party,
+                                                    "password": "Initial-pass-1"}, cls.token)
+        assert s == 200, c
+        t = login(username, "Initial-pass-1")
+        s, c, _ = http("POST", "/api/me/password", {"current": "Initial-pass-1", "new": "Changed-pass-1"}, t)
+        assert s == 200, c
+        return username, t
+
+    @classmethod
+    def folder(cls, parent, name, token=None):
+        s, c, _ = http("POST", "/api/files/folders", {"parent": parent, "name": name}, token or cls.token)
+        assert s == 200, c
+        return c["id"]
+
+    def upload(self, folder, name, data, token=None, comment=None):
+        q = urllib.parse.urlencode({"folder": folder, "name": name, **({"comment": comment} if comment else {})})
+        return http("POST", f"/api/files/upload?{q}", token=token or self.token, raw=data)
+
+    def fetch(self, url, method="GET", data=None, headers=None):
+        req = urllib.request.Request(URL + url, data=data, method=method, headers=headers or {})
+        try:
+            with urllib.request.urlopen(req, timeout=30) as r:
+                return r.status, r.read(), dict(r.headers)
+        except urllib.error.HTTPError as e:
+            return e.code, e.read(), dict(e.headers)
+
+    def download(self, file_id, token=None, version=None):
+        s, c, _ = http("POST", f"/api/files/files/{file_id}/download", {"version": version}, token or self.token)
+        if s != 200:
+            return s, c
+        st, body, headers = self.fetch(c["url"])
+        return st, body, headers
+
+    def grant(self, **body):
+        s, c, _ = http("POST", "/api/files/grants", body, self.token)
+        self.assertEqual(s, 200, c)
+        return c["id"]
+
+    def pdf(self, text="ok"):
+        return b"%PDF-1.4\n% " + text.encode() + b"\n%%EOF\n"
+
+    def test_ca_016_01_external_sees_only_what_was_granted(self):
+        s, c, _ = self.upload(self.fa, "entregavel.pdf", self.pdf("A"))
+        self.assertEqual(s, 200, c)
+        fa_file = c["file"]
+        s, c, _ = self.upload(self.fb, "outro.pdf", self.pdf("B"))
+        fb_file = c["file"]
+        self.grant(folder_id=self.fa, subject_kind="party", subject=str(self.cust_a), level="download")
+        st, body, headers = self.download(fa_file, self.ext_a_token)
+        self.assertEqual((st, body), (200, self.pdf("A")))
+        self.assertIn("attachment", headers.get("content-disposition", headers.get("Content-Disposition", "")))
+        self.assertEqual(headers.get("X-Content-Type-Options", headers.get("x-content-type-options")), "nosniff")
+        self.assertEqual(self.download(fb_file, self.ext_a_token)[0], 404)                 # another customer's: not found
+        s, c, _ = http("GET", f"/api/files/folders?parent={self.fb}", token=self.ext_a_token)
+        self.assertEqual(s, 404)
+        s, roots, _ = http("GET", "/api/files/folders", token=self.ext_a_token)
+        self.assertEqual([f["id"] for f in roots["folders"]], [self.fa])                    # starts at what was shared
+        # The external account cannot use anything else.
+        for method, path in (("GET", "/api/programs"), ("POST", "/api/sql"), ("GET", "/api/admin/users")):
+            st, _, _ = http(method, path, {"sql": "SELECT 1"} if method == "POST" else None, self.ext_a_token)
+            self.assertEqual(st, 403, path)
+        s, c, _ = self.run_program("demo.hello", {"name": "x"}, token=self.ext_a_token)
+        self.assertEqual(c["error"]["code"], "FORBIDDEN")
+        # An explicit deny on the file wins over the folder grant.
+        self.grant(file_id=fa_file, subject_kind="party", subject=str(self.cust_a), level="view", deny=True)
+        self.assertEqual(self.download(fa_file, self.ext_a_token)[0], 404)
+
+    def test_ca_016_02_new_version_keeps_the_previous(self):
+        s, c, _ = self.upload(self.fa, "esquema.pdf", self.pdf("v1"), comment="primeira")
+        fid = c["file"]
+        s, c, _ = self.upload(self.fa, "esquema.pdf", self.pdf("v2"), comment="revisão")
+        self.assertEqual((c["file"], c["version"]), (fid, 2))
+        self.assertEqual(self.download(fid)[1], self.pdf("v2"))
+        self.assertEqual(self.download(fid, version=1)[1], self.pdf("v1"))
+        s, d, _ = http("GET", f"/api/files/files/{fid}", token=self.token)
+        self.assertEqual([v["comment"] for v in d["versions"]], ["revisão", "primeira"])
+        # Range (RNF-016-04): a slice of the content, decrypted at the offset.
+        s, c, _ = http("POST", f"/api/files/files/{fid}/download", {}, self.token)
+        st, body, headers = self.fetch(c["url"], headers={"Range": "bytes=2-6"})
+        self.assertEqual((st, body), (206, self.pdf("v2")[2:7]))
+
+    def test_ca_016_03_share_link_validity_and_limit(self):
+        s, c, _ = self.upload(self.fa, "relatorio.pdf", self.pdf("link"))
+        fid = c["file"]
+        s, link, _ = http("POST", f"/api/files/files/{fid}/links", {"hours": 1, "max_downloads": 2}, self.token)
+        self.assertEqual(s, 200, link)
+        for _ in range(2):
+            st, body, _ = self.fetch(link["url"])
+            self.assertEqual((st, body), (200, self.pdf("link")))
+        self.assertEqual(self.fetch(link["url"])[0], 410)                                   # third download refused
+        s, protected, _ = http("POST", f"/api/files/files/{fid}/links", {"hours": 1, "password": "segredo123"}, self.token)
+        self.assertEqual(self.fetch(protected["url"])[0], 200)                              # asks for the password (form)
+        st, body, _ = self.fetch(protected["url"], "POST", b"password=errada",
+                                 {"Content-Type": "application/x-www-form-urlencoded"})
+        self.assertEqual(st, 401)
+        st, body, _ = self.fetch(protected["url"], "POST", b"password=segredo123",
+                                 {"Content-Type": "application/x-www-form-urlencoded"})
+        self.assertEqual((st, body), (200, self.pdf("link")))
+        # Expired (validity passed): simulated by moving the date back.
+        self.psql(f"UPDATE files.share_link SET expires_at = now() - interval '1 minute' WHERE id = {protected['id']}")
+        st, _, _ = self.fetch(protected["url"], "POST", b"password=segredo123", {"Content-Type": "application/x-www-form-urlencoded"})
+        self.assertEqual(st, 410)
+        s, c, _ = http("POST", f"/api/files/files/{fid}/download", {}, self.token)
+        self.assertEqual(self.fetch(c["url"] + "x")[0], 410)                                # tampered signed URL
+
+    def psql(self, sql):
+        import subprocess
+        r = subprocess.run(["docker", "compose", "-f", os.path.join(ROOT, "docker-compose.yml"), "exec", "-T", "db",
+                            "psql", "-U", "postgres", "-d", "ana", "-At", "-v", "ON_ERROR_STOP=1", "-c", sql],
+                           capture_output=True, text=True, timeout=60)
+        self.assertEqual(r.returncode, 0, r.stderr)
+
+    def test_ca_016_04_real_type_is_checked(self):
+        exe = b"MZ\x90\x00\x03\x00\x00\x00\x04\x00" + b"\x00" * 100
+        s, c, _ = self.upload(self.fa, "fatura.pdf", exe)
+        self.assertEqual(s, 400)
+        self.assertIn("executável", c["error"]["message"])
+        s, c, _ = self.upload(self.fa, "foto.png", b"not a png at all")
+        self.assertEqual(s, 400)
+        s, c, _ = self.upload(self.fa, "setup.exe", b"anything")
+        self.assertEqual(s, 400)
+        s, c, _ = self.upload(self.fa, "firmware.bin", bytes(range(256)) * 4)                 # firmware images are fine
+        self.assertEqual(s, 200, c)
+        s, c, _ = self.upload(self.fa, "placa.kicad_pcb", b"(kicad_pcb (version 20221018))\n")
+        self.assertEqual((s, c.get("mime")), (200, "text/plain"))
+
+    def test_ca_016_05_invoice_pdf_reaches_the_customer_portal(self):
+        employee = self.client.call("projects.save_employee", name=f"Eng Arq {SUFFIX}", profile="HW", hourly_cost="80")["id"]
+        project = f"AR{SUFFIX}"
+        self.client.call("projects.save_project", code=project, name="Projeto com fatura", customer=self.cust_a,
+                         manager="admin", status="active", billing="mixed", tasks=[{"code": "1", "name": "Trabalho"}],
+                         team=[{"employee": employee, "profile": "HW"}], rates={"HW": "200"})
+        m = self.client.call("projects.save_milestone", project=project, description="Entrega", amount="1500")["id"]
+        self.client.call("projects.complete_milestone", id=m)
+        inv = self.client.call("projects.invoice_project", project=project)
+        self.assertIsNotNone(inv["pdf"])
+        st, body, _ = self.download(inv["pdf"], self.ext_a_token)
+        self.assertEqual(st, 200)
+        self.assertTrue(body.startswith(b"%PDF-1.4"))
+        s, c, _ = self.run_program("files.my_invoices", {}, token=self.ext_a_token)
+        self.assertEqual(s, 200, c)
+        self.assertIn(f"Fatura {inv['number']}.pdf", c["result"]["pdfs"])
+        # Customer B's account sees nothing of A.
+        _, ext_b = self.external(self.cust_b)
+        self.assertEqual(self.download(inv["pdf"], ext_b)[0], 404)
+        s, c, _ = self.run_program("files.my_invoices", {"customer": self.cust_a}, token=ext_b)
+        self.assertEqual(c["error"]["code"], "FORBIDDEN")
+
+    def test_ca_021_07_status_report_on_the_customer_portal(self):
+        employee = self.client.call("projects.save_employee", name=f"Eng Portal {SUFFIX}", profile="HW", hourly_cost="80")["id"]
+        project = f"PO{SUFFIX}"
+        self.client.call("projects.save_project", code=project, name="Projeto acompanhado", customer=self.cust_a,
+                         manager="admin", status="active", billing="hourly", tasks=[{"code": "1", "name": "Trabalho"}],
+                         team=[{"employee": employee, "profile": "HW"}], rates={"HW": "200"})
+        self.client.call("projects.status_report", project=project, client_visible=True)
+        s, c, _ = self.run_program("projects.my_projects", {}, token=self.ext_a_token)
+        self.assertEqual(s, 200, c)
+        self.assertIn(project, c["result"]["projects"])
+        text = json.dumps(c).lower()
+        for word in ("hourly_cost", "hourly_rate", "margin", "custo", "cost"):
+            self.assertNotIn(word, text)                                    # never costs (RNF-021-02)
+        _, ext_b = self.external(self.cust_b)
+        s, c, _ = self.run_program("projects.my_projects", {}, token=ext_b)
+        self.assertNotIn(project, c["result"]["projects"])
+
+    def test_t_021_11_customer_accepts_deliverables_and_approves_changes(self):
+        employee = self.client.call("projects.save_employee", name=f"Eng Aceite {SUFFIX}", profile="HW", hourly_cost="80")["id"]
+        project = f"AC{SUFFIX}"
+        self.client.call("projects.save_project", code=project, name="Projeto com aceite", customer=self.cust_a,
+                         manager="admin", status="active", billing="mixed", budget_hours="100",
+                         tasks=[{"code": "1", "name": "Trabalho"}], team=[{"employee": employee, "profile": "HW"}],
+                         rates={"HW": "200"})
+        self.run_ok("projects.save_activity", project=project, code="E1", name="Ensaio de EMC",
+                    deliverable="Relatório de ensaio", acceptance_criteria="aprovado no laboratório", planned_hours=8)
+        self.run_ok("projects.update_progress", project=project, activity="E1", percent=100)
+        for action, extra in (("request", {"title": "Novo sensor"}), ("estimate", {"number": 1, "est_hours": 10, "est_amount": 2000}),
+                              ("approve_internal", {"number": 1})):
+            self.run_ok("projects.scope_change", project=project, action=action, **extra)
+        s, c, _ = self.run_program("projects.client_approvals", {}, token=self.ext_a_token)
+        self.assertEqual(s, 200, c)
+        self.assertIn(f"{project}/E1", c["result"]["deliverables"])
+        self.assertIn(f"{project}/1", c["result"]["changes"])
+        # Another customer cannot touch this project (and does not learn it exists).
+        _, ext_b = self.external(self.cust_b)
+        s, c, _ = self.run_program("projects.client_approvals", {"action": "approve_change", "project": project, "number": 1},
+                                   token=ext_b)
+        self.assertEqual(c["error"]["code"], "PROJECT_NOT_FOUND")
+        s, c, _ = self.run_program("projects.client_approvals", {"action": "accept_deliverable", "project": project,
+                                                                 "activity": "E1"}, token=self.ext_a_token)
+        self.assertEqual(c["result"]["decision"], "accepted")
+        s, c, _ = self.run_program("projects.client_approvals", {"action": "approve_change", "project": project, "number": 1},
+                                   token=self.ext_a_token)
+        self.assertEqual(c["result"]["status"], "approved", c)
+        self.assertEqual(self.scalar(f"SELECT c.customer_approver FROM projects.scope_change c JOIN projects.project p "
+                                     f"ON p.id = c.project_id WHERE p.code = '{project}'"), self.ext_a)
+        self.assertEqual(Decimal(self.scalar(f"SELECT budget_hours FROM projects.project WHERE code = '{project}'")), 110)
+        s, c, _ = self.run_program("projects.client_approvals", {}, token=self.ext_a_token)
+        self.assertNotIn(f"{project}/E1", c["result"]["deliverables"])
+        self.assertNotIn(f"{project}/1", c["result"]["changes"])
+
+    def run_ok(self, _program, **params):
+        s, c, _ = self.run_program(_program, params)
+        self.assertEqual(s, 200, c)
+        self.assertNotIn("error", c, c.get("error"))
+        return c["result"]
+
+    def test_ca_016_06_every_operation_is_audited(self):
+        s, c, _ = self.upload(self.fa, "auditado.pdf", self.pdf("au"))
+        fid = c["file"]
+        self.upload(self.fa, "auditado.pdf", self.pdf("au2"))
+        self.download(fid)
+        gid = self.grant(file_id=fid, subject_kind="user", subject=self.ext_a, level="view")
+        http("DELETE", f"/api/files/grants/{gid}", token=self.token)
+        s, link, _ = http("POST", f"/api/files/files/{fid}/links", {"hours": 1}, self.token)
+        self.fetch(link["url"])
+        http("DELETE", f"/api/files/links/{link['id']}", token=self.token)
+        s, d, _ = http("GET", f"/api/files/files/{fid}", token=self.token)
+        actions = {e["action"] for e in d["events"]}
+        self.assertTrue({"upload", "version", "download", "grant", "revoke", "link.create", "link.download",
+                         "link.revoke"} <= actions, actions)
+
+    def test_rf_016_06_resumable_upload_and_programs(self):
+        data = bytes(range(256)) * 300                                                       # 76 800 bytes
+        s, up, _ = http("POST", "/api/files/uploads", {"folder": self.fa, "name": "grande.bin", "size": len(data)}, self.token)
+        self.assertEqual(s, 200, up)
+        s, r, _ = http("PUT", f"/api/files/uploads/{up['id']}?offset=0", token=self.token, raw=data[:40000])
+        self.assertEqual(r["received"], 40000)
+        s, r, _ = http("PUT", f"/api/files/uploads/{up['id']}?offset=0", token=self.token, raw=data[:10])
+        self.assertEqual(s, 400)                                                             # wrong offset
+        s, st, _ = http("GET", f"/api/files/uploads/{up['id']}", token=self.token)
+        s, r, _ = http("PUT", f"/api/files/uploads/{up['id']}?offset={st['received']}", token=self.token,
+                       raw=data[st["received"]:])
+        s, done, _ = http("POST", f"/api/files/uploads/{up['id']}/complete", {}, self.token)
+        self.assertEqual(s, 200, done)
+        self.assertEqual(self.download(done["file"])[1], data)
+        # Same content again: deduplicated (same sha256), new file still readable.
+        s, again, _ = self.upload(self.fa, "copia.bin", data)
+        self.assertEqual(again["sha256"], done["sha256"])
+        # Programs use the same permissions.
+        name = f"test.files_{SUFFIX}"
+        self.save(name, "def main(folder):\n"
+                        "    r = ana.files.put('nota.txt', 'conteúdo ç', folder=folder)\n"
+                        "    back = ana.files.get(r['file'])\n"
+                        "    return {'text': back['data'].decode('utf-8'), 'mime': back['mime']}\n")
+        s, c, _ = self.run_program(name, {"folder": self.fa})
+        self.assertEqual(c["result"], {"text": "conteúdo ç", "mime": "text/plain"})
+        _, plain = new_user("user")
+        s, c, _ = self.run_program("files.my_invoices", {"customer": self.cust_a}, token=plain)   # internal user: allowed
+        self.assertEqual(s, 200, c)
+        # An internal user without a grant does not reach another user's folder.
+        s, c, _ = http("GET", f"/api/files/folders?parent={self.fa}", token=plain)
+        self.assertEqual(s, 404)
+
+
+# ---------------------------------------------------------------- spec 014
+class TestProduction(Base):
+    """Structures, planning (MRP), production orders, costs, capacity of resources and people."""
+
+    @classmethod
+    def setUpClass(cls):
+        super().setUpClass()
+        c = cls.client
+        cls.sfx = SUFFIX[-5:]
+        cls.supplier = c.call("base.save_party", kind="supplier", name=f"Fornecedor Prod {SUFFIX}")["id"]
+        for code, desc in (("PL", "Placa"), ("MD", "Módulo"), ("C1", "Componente 1"), ("C2", "Componente 2"),
+                           ("X", "Produto X"), ("Y", "Produto Y"), ("Z", "Produto Z")):
+            c.call("base.save_product", code=cls.code(code), description=f"{desc} {SUFFIX}", price="10")
+
+    @classmethod
+    def code(cls, k):
+        return f"P{cls.sfx}{k}"
+
+    def ok(self, _program, **params):
+        s, c, _ = self.run_program(_program, params)
+        self.assertEqual(s, 200, c)
+        self.assertNotIn("error", c, c.get("error"))
+        return c["result"]
+
+    def err(self, _program, **params):
+        s, c, _ = self.run_program(_program, params)
+        self.assertIn("error", c, c)
+        return c["error"]["code"]
+
+    def monday(self, weeks_ahead):
+        d = datetime.date.today()
+        return d - datetime.timedelta(days=d.weekday()) + datetime.timedelta(weeks=weeks_ahead)
+
+    def test_ca_014_01_02_mrp_two_levels_and_cycle(self):
+        pl, md, c1, c2 = (self.code(k) for k in ("PL", "MD", "C1", "C2"))
+        self.ok("production.save_item_plan", product=pl, make_or_buy="make", lead_time_days=5)
+        self.ok("production.save_item_plan", product=md, make_or_buy="make", lead_time_days=3)
+        self.ok("production.save_item_plan", product=c2, make_or_buy="buy", lead_time_days=7)
+        self.ok("supply.save_supplier_item", product=c1, supplier=self.supplier, price="2", lead_time_days=10, preferred=True)
+        self.ok("supply.save_supplier_item", product=c2, supplier=self.supplier, price="1", preferred=True)
+        self.ok("production.save_structure", product=pl, lines=[{"component": md, "quantity": 1}, {"component": c1, "quantity": 2}])
+        self.ok("production.save_structure", product=md, lines=[{"component": c2, "quantity": 4}])
+        self.ok("inventory.stock_in", product=c1, quantity=5)
+        need = self.monday(4)
+        self.ok("production.save_forecast", product=pl, weeks=[{"week": need.isoformat(), "quantity": 10}])
+        scen = f"t{self.sfx}"
+        r = self.ok("production.plan", scenario=scen, horizon_weeks=8)
+        mine = {s["product"]: s for s in r["suggestions"] if s["product"] in (pl, md, c1, c2)}
+        self.assertEqual({k: (v["kind"], Decimal(v["quantity"])) for k, v in mine.items()},
+                         {pl: ("make", 10), md: ("make", 10), c1: ("buy", 15), c2: ("buy", 40)})
+        pl_start = datetime.date.fromisoformat(mine[pl]["start"])
+        self.assertEqual(pl_start, need - datetime.timedelta(days=5))                    # shifted by the lead time
+        md_need = datetime.date.fromisoformat(mine[md]["need"])
+        self.assertEqual(md_need, pl_start - datetime.timedelta(days=pl_start.weekday()))  # needed when the board starts
+        self.assertEqual(datetime.date.fromisoformat(mine[c1]["start"]), md_need - datetime.timedelta(days=10))
+        # Idempotent: running again replaces the open suggestions of the scenario.
+        self.ok("production.plan", scenario=scen, horizon_weeks=8)
+        self.assertEqual(self.count("production.suggestion", f"scenario = '{scen}' AND status = 'open' AND product_id IN "
+                                    f"(SELECT id FROM base.product WHERE code IN ('{pl}', '{md}', '{c1}', '{c2}'))"), 4)
+        ids = [int(x) for x in self.scalar(
+            f"SELECT array_agg(s.id)::text FROM production.suggestion s JOIN base.product p ON p.id = s.product_id "
+            f"WHERE s.scenario = '{scen}' AND s.status = 'open' AND p.code IN ('{pl}', '{md}', '{c1}', '{c2}')").strip("{}").split(",")]
+        a = self.ok("production.approve_suggestions", scenario=scen, ids=ids)
+        self.assertEqual((len(a["orders"]), len(a["requests"])), (2, 1 if mine[c1]["need"] == mine[c2]["need"] else 2))
+        self.assertEqual(self.count("production.work_order w JOIN base.product p ON p.id = w.product_id",
+                                    f"p.code IN ('{pl}', '{md}') AND w.status = 'planned'"), 2)
+        # CA-014-02: the module containing the board would be a cycle.
+        self.assertEqual(self.err("production.save_structure", product=md, lines=[{"component": pl, "quantity": 1}]),
+                         "STRUCTURE_CYCLE")
+        self.assertEqual(self.err("production.save_structure", product=pl, lines=[{"component": pl, "quantity": 1}]),
+                         "STRUCTURE_CYCLE")
+
+    def test_ca_014_03_06_order_costs_stock_and_project(self):
+        x, c1, c2 = self.code("X"), self.code("C1"), self.code("C2")
+        self.ok("production.save_item_plan", product=c1, standard_cost="2.50")
+        self.ok("production.save_item_plan", product=c2, standard_cost="1.00")
+        self.ok("production.save_resource", code=f"R{self.sfx}", name="Bancada de montagem", cost_per_hour="60")
+        self.ok("production.save_structure", product=x, lines=[{"component": c1, "quantity": 1}, {"component": c2, "quantity": 2}])
+        self.ok("production.save_routing", product=x, operations=[{"resource": f"R{self.sfx}", "description": "montagem", "run_min": 6}])
+        self.ok("inventory.stock_in", product=c1, quantity=10)
+        self.ok("inventory.stock_in", product=c2, quantity=20)
+        o = self.ok("production.create_order", product=x, quantity=10, due_date=self.monday(1).isoformat())
+        self.assertEqual(Decimal(o["std_cost"]), Decimal("105.00"))                       # 25 + 20 + 1 h × 60
+        n = o["order"]
+        self.ok("production.release_order", order=n)
+        bal = lambda code: Decimal(self.scalar(f"SELECT COALESCE(sum(m.quantity), 0) FROM inventory.stock_movement m "
+                                               f"JOIN base.product p ON p.id = m.product_id WHERE p.code = '{code}'"))
+        c1_before, c2_before = bal(c1), bal(c2)
+        self.ok("production.issue_components", order=n)
+        self.assertEqual((c1_before - bal(c1), c2_before - bal(c2)), (10, 20))
+        self.assertEqual(self.err("production.issue_components", order=n, lines=[{"line": 1, "quantity": 5}]), "OVER_ISSUE")
+        self.ok("production.report_operation", order=n, seq=10, hours="1.5", good_qty=9, scrap_qty=1)
+        self.ok("production.deliver", order=n, good_qty=9, scrap_qty=1)
+        self.assertEqual(bal(x), 9)
+        r = self.ok("production.close_order", order=n)
+        self.assertEqual((Decimal(r["actual_cost"]), Decimal(r["components"]), Decimal(r["hours_cost"]), Decimal(r["variance"])),
+                         (Decimal("135.00"), Decimal("45.00"), Decimal("90.00"), Decimal("30.00")))
+        wip = self.scalar("SELECT COALESCE(sum(l.debit - l.credit), 0) FROM finance.journal_line l JOIN finance.journal_entry e "
+                          f"ON e.id = l.entry_id WHERE e.document LIKE 'OP-{n}%' AND l.account = '1.1.5'")
+        self.assertEqual(Decimal(wip), 0)                                                  # WIP cleared at closing
+        self.assertEqual(self.err("production.report_operation", order=n, seq=10, hours=1), "INVALID_STATE")
+        # CA-014-06: an order of a project sends its cost to the project, not to stock.
+        customer = self.client.call("base.save_party", name=f"Cliente Prod {SUFFIX}")["id"]
+        employee = self.client.call("projects.save_employee", name=f"Eng Prod {SUFFIX}", profile="HW", hourly_cost="80")["id"]
+        project = f"PP{self.sfx}"
+        self.client.call("projects.save_project", code=project, name="Protótipos", customer=customer, manager="admin",
+                         status="active", billing="mixed", tasks=[{"code": "1", "name": "Protótipo"}],
+                         team=[{"employee": employee, "profile": "HW"}], rates={"HW": "200"})
+        self.ok("inventory.stock_in", product=c1, quantity=2)
+        self.ok("inventory.stock_in", product=c2, quantity=4)
+        o = self.ok("production.create_order", product=x, quantity=2, due_date=self.monday(1).isoformat(), project=project)
+        before = bal(x)
+        for prog, extra in (("production.release_order", {}), ("production.issue_components", {}),
+                            ("production.deliver", {"good_qty": 2}), ("production.close_order", {})):
+            r = self.ok(prog, order=o["order"], **extra)
+        self.assertEqual(bal(x), before)                                                   # prototypes do not enter stock
+        self.assertEqual(Decimal(self.scalar(f"SELECT sum(e.quantity * e.unit_cost) FROM projects.expense e JOIN projects.project p "
+                                             f"ON p.id = e.project_id WHERE p.code = '{project}'")), Decimal(r["actual_cost"]))
+
+    def test_ca_014_04_overload_and_suggested_date(self):
+        y, z, c1 = self.code("Y"), self.code("Z"), self.code("C1")
+        res = f"RC{self.sfx}"
+        self.ok("production.save_resource", code=res, name="Bancada de teste", daily_hours=8)
+        for item, minutes in ((y, 180), (z, 120)):
+            self.ok("production.save_structure", product=item, lines=[{"component": c1, "quantity": 1}])
+            self.ok("production.save_routing", product=item, operations=[{"resource": res, "run_min": minutes}])
+        start = self.monday(2)
+        a = self.ok("production.create_order", product=y, quantity=10, start_date=start.isoformat(),
+                    due_date=(start + datetime.timedelta(days=4)).isoformat(), priority=1)          # 30 h
+        b = self.ok("production.create_order", product=z, quantity=10, start_date=start.isoformat(),
+                    due_date=(start + datetime.timedelta(days=4)).isoformat(), priority=5)          # 20 h
+        r = self.ok("production.capacity_load", weeks=4, resource=res)
+        week = [w for w in r["load"] if w["week"] == start.isoformat()][0]
+        self.assertEqual(Decimal(week["hours"]), 50)
+        self.assertEqual(week["pct"], str((Decimal(50) / Decimal(week["capacity"]) * 100).quantize(Decimal("1"))))
+        if Decimal(week["capacity"]) == 40:
+            self.assertEqual(week["pct"], "125")
+        late = [m for m in r["moves"] if m["ordem"] == b["order"]]
+        self.assertTrue(late and datetime.date.fromisoformat(late[0]["término possível"]) > start + datetime.timedelta(days=4), r["moves"])
+        self.assertFalse([m for m in r["moves"] if m["ordem"] == a["order"]])                 # the urgent one fits
+
+    def test_ca_014_05_service_capacity_overload(self):
+        customer = self.client.call("base.save_party", name=f"Cliente Serv {SUFFIX}")["id"]
+        eng = self.client.call("projects.save_employee", name=f"Engenheira Firmware {SUFFIX}", profile="FW", hourly_cost="90")["id"]
+        week = self.monday(3)
+        for k, hours in enumerate((20, 20, 12), start=1):
+            code = f"SC{self.sfx}{k}"
+            self.client.call("projects.save_project", code=code, name=f"Firmware {k}", customer=customer, manager="admin",
+                             status="active", billing="hourly", tasks=[{"code": "1", "name": "Firmware"}],
+                             team=[{"employee": eng, "profile": "FW"}], rates={"FW": "200"})
+            self.ok("projects.allocate", project=code, activity="1", employee=eng, hours=hours, week=week.isoformat())
+        r = self.ok("production.service_capacity", weeks=1, start=week.isoformat())
+        mine = [o for o in r["overloaded"] if o["employee"] == f"Engenheira Firmware {SUFFIX}"]
+        self.assertTrue(mine, r)
+        self.assertEqual(Decimal(mine[0]["allocated"]), 52)
+
+    def test_rnf_014_01_mrp_10k_items_5_levels(self):
+        tag = f"Q{self.sfx}"
+        build = f"test.mrp_build_{SUFFIX}"
+        self.save(build, "def main(tag):\n"
+                         "    per = [100, 400, 1500, 3000, 5000]\n"
+                         "    codes = [[f'{tag}L{l}N{i}' for i in range(n)] for l, n in enumerate(per)]\n"
+                         "    flat = [c for lvl in codes for c in lvl]\n"
+                         "    ana.sql('INSERT INTO base.product (code, description, price) SELECT c, c, 1 FROM unnest($1::text[]) c', flat)\n"
+                         "    ids = {r['code']: r['id'] for r in ana.sql('SELECT id, code FROM base.product WHERE code = ANY($1)', flat)}\n"
+                         "    parents = [c for lvl in codes[:-1] for c in lvl]\n"
+                         "    sids = {r['product_id']: r['id'] for r in ana.sql(\"INSERT INTO production.structure (product_id, version, created_by) \"\n"
+                         "        \"SELECT unnest($1::int[]), 1, 't' RETURNING id, product_id\", [ids[c] for c in parents])}\n"
+                         "    lines = []\n"
+                         "    for l in range(4):\n"
+                         "        kids = codes[l + 1]\n"
+                         "        for i, c in enumerate(codes[l]):\n"
+                         "            for k in range(3):\n"
+                         "                lines.append((sids[ids[c]], k + 1, ids[kids[(i * 3 + k) % len(kids)]]))\n"
+                         "    ana.sql('INSERT INTO production.structure_line (structure_id, line, component_id, quantity) '\n"
+                         "            'SELECT s, l, c, 1 FROM unnest($1::int[], $2::int[], $3::int[]) AS x(s, l, c)',\n"
+                         "            [x[0] for x in lines], [x[1] for x in lines], [x[2] for x in lines])\n"
+                         "    import datetime\n"
+                         "    d = datetime.date.today()\n"
+                         "    wk = d - datetime.timedelta(days=d.weekday()) + datetime.timedelta(weeks=3)\n"
+                         "    ana.sql('INSERT INTO production.forecast (product_id, week, quantity) SELECT unnest($1::int[]), $2, 5',\n"
+                         "            [ids[c] for c in codes[0]], wk)\n"
+                         "    return len(flat)\n", limits={"timeout_ms": 120000, "sql_timeout_ms": 120000})
+        timer = f"test.mrp_time_{SUFFIX}"
+        self.save(timer, "import time\ndef main(scen):\n    t0 = time.monotonic()\n"
+                         "    r = ana.call('production.plan', scenario=scen, horizon_weeks=8)\n"
+                         "    return {'seconds': time.monotonic() - t0, 'n': len(r['suggestions'])}\n",
+                  limits={"timeout_ms": 180000, "sql_timeout_ms": 120000, "output_kb": 65536})
+        try:
+            s, c, _ = self.run_program(build, {"tag": tag})                 # inside try: cleaned up even if it fails
+            self.assertEqual((s, c.get("result")), (200, 10000), c)
+            s, c, _ = self.run_program(timer, {"scen": f"perf{self.sfx}"})
+            self.assertEqual(s, 200, c)
+            self.assertLess(c["result"]["seconds"], 30, c["result"])
+            # 10 000 items in 5 levels; the tree hands demand to 100 + 300 + 900 + 2 700 + 5 000 of them.
+            self.assertGreaterEqual(c["result"]["n"], 9000)
+            print(f"\n  MRP 10k itens × 5 níveis: {c['result']['seconds']:.1f} s, {c['result']['n']} sugestões", file=sys.stderr)
+        finally:
+            purge = f"test.mrp_purge_{SUFFIX}"
+            self.save(purge, "def main(tag, scen):\n"
+                             "    like = tag + 'L%'\n"
+                             "    ana.sql_exec('DELETE FROM production.suggestion WHERE scenario = $1 OR product_id IN "
+                             "(SELECT id FROM base.product WHERE code LIKE $2)', scen, like)\n"
+                             "    ana.sql_exec('DELETE FROM production.forecast WHERE product_id IN (SELECT id FROM base.product WHERE code LIKE $1)', like)\n"
+                             "    ana.sql_exec('DELETE FROM production.structure WHERE product_id IN (SELECT id FROM base.product WHERE code LIKE $1)', like)\n"
+                             "    return ana.sql_exec('DELETE FROM base.product WHERE code LIKE $1', like)\n",
+                      limits={"timeout_ms": 120000, "sql_timeout_ms": 120000})
+            self.run_program(purge, {"tag": tag, "scen": f"perf{self.sfx}"})
+
+
+# ---------------------------------------------------------------- spec 015
+class TestLogisticsField(Base):
+    """Transfers, partial shipments, returns, field service orders, schedule, execution, invoicing, SLA."""
+
+    @classmethod
+    def setUpClass(cls):
+        super().setUpClass()
+        c = cls.client
+        cls.sfx = SUFFIX[-5:]
+        cls.item = f"L{cls.sfx}IT"
+        cls.part = f"L{cls.sfx}PC"
+        cls.svc = f"L{cls.sfx}SV"
+        c.call("base.save_product", code=cls.item, description=f"Item logística {SUFFIX}", price="25")
+        c.call("base.save_product", code=cls.part, description=f"Peça de campo {SUFFIX}", price="40")
+        c.call("base.save_product", code=cls.svc, description=f"Calibração {SUFFIX}", price="0", kind="service")
+        cls.customer = c.call("base.save_party", name=f"Cliente Campo {SUFFIX}", state="SP")["id"]
+        cls.tech = c.call("projects.save_employee", name=f"Técnica Campo {SUFFIX}", profile="TEC", hourly_cost="60")["id"]
+        cls.tech2 = c.call("projects.save_employee", name=f"Técnico Dois {SUFFIX}", profile="TEC", hourly_cost="60")["id"]
+
+    def ok(self, _program, **params):
+        s, c, _ = self.run_program(_program, params)
+        self.assertEqual(s, 200, c)
+        self.assertNotIn("error", c, c.get("error"))
+        return c["result"]
+
+    def err(self, _program, **params):
+        s, c, _ = self.run_program(_program, params)
+        self.assertIn("error", c, c)
+        return c["error"]["code"]
+
+    def balance(self, code, wh):
+        return Decimal(self.scalar(f"SELECT COALESCE(sum(m.quantity), 0) FROM inventory.stock_movement m JOIN base.product p "
+                                   f"ON p.id = m.product_id JOIN inventory.warehouse w ON w.id = m.warehouse_id "
+                                   f"WHERE p.code = '{code}' AND w.code = '{wh}'"))
+
+    def set_policy(self, **values):
+        name = f"test.lpolicy_{SUFFIX}"
+        if name not in CREATED_PROGRAMS:
+            self.save(name, "def main(stock_out_on='invoice', hour=0, km=0):\n"
+                            "    ana.sql_exec('UPDATE logistics.policy SET stock_out_on = $1, travel_hour_rate = $2, travel_km_rate = $3 "
+                            "WHERE id = 1', stock_out_on, hour, km)\n")
+        self.ok(name, **values)
+
+    def test_ca_015_01_transfer_through_transit(self):
+        self.ok("inventory.stock_in", product=self.item, quantity=10, warehouse="CENTRAL")
+        c0, l0, t0 = self.balance(self.item, "CENTRAL"), self.balance(self.item, "LAB"), self.balance(self.item, "TRANSITO")
+        r = self.ok("logistics.transfer", action="ship", from_wh="CENTRAL", to_wh="LAB", items=[{"product": self.item, "quantity": 10}])
+        self.assertEqual((c0 - self.balance(self.item, "CENTRAL"), self.balance(self.item, "TRANSITO") - t0), (10, 10))
+        self.ok("logistics.transfer", action="receive", number=r["number"])
+        self.assertEqual((self.balance(self.item, "LAB") - l0, self.balance(self.item, "TRANSITO") - t0), (10, 0))
+        self.assertEqual(self.err("logistics.transfer", action="receive", number=r["number"]), "INVALID_STATE")
+
+    def test_ca_015_02_partial_shipments_freight_and_stock_on_shipment(self):
+        carrier = self.ok("logistics.save_carrier", name=f"Transportes {SUFFIX}",
+                          rates=[{"region": "SP", "max_weight_kg": 5, "price": 30}, {"region": "*", "max_weight_kg": 5, "price": 55}])["id"]
+        self.ok("inventory.stock_in", product=self.item, quantity=20, warehouse="CENTRAL")
+        o = self.client.call("sales.create_order", customer=self.customer, items=[{"product": self.item, "quantity": 10}])
+        a = self.ok("logistics.ship", order=o["number"], lines=[{"line": 1, "quantity": 6}], carrier=carrier, tracking=f"T1{SUFFIX}",
+                    weight_kg=3)
+        self.assertEqual((a["order_state"], Decimal(a["freight_cost"])), ("partial", Decimal(30)))   # table: SP, up to 5 kg
+        b = self.ok("logistics.ship", order=o["number"], carrier=carrier, tracking=f"T2{SUFFIX}")
+        self.assertEqual(b["order_state"], "full")
+        self.assertNotEqual(a["shipment"], b["shipment"])
+        self.assertEqual(self.err("logistics.ship", order=o["number"], carrier=carrier), "NOTHING_TO_SHIP")
+        self.assertEqual(self.count("logistics.shipment s JOIN sales.sales_order o ON o.id = s.sales_order_id",
+                                    f"o.number = {o['number']} AND s.tracking IS NOT NULL"), 2)
+        self.ok("logistics.deliver", shipment=a["shipment"], received_by="Maria (portaria)")
+        # Stock leaving at shipment: the invoice does not take it again.
+        self.set_policy(stock_out_on="shipment")
+        try:
+            o2 = self.client.call("sales.create_order", customer=self.customer, items=[{"product": self.item, "quantity": 4}])
+            before = self.balance(self.item, "CENTRAL")
+            r = self.ok("logistics.ship", order=o2["number"], carrier=carrier, tracking=f"T3{SUFFIX}", freight_charged="12")
+            self.assertTrue(r["stock_moved"])
+            self.assertEqual(before - self.balance(self.item, "CENTRAL"), 4)
+            inv = self.client.call("sales.invoice_order", number=o2["number"])
+            self.assertEqual(before - self.balance(self.item, "CENTRAL"), 4)
+            self.assertEqual(Decimal(inv["total"]), Decimal(4 * 25 + 12))                  # freight charged goes to the invoice
+        finally:
+            self.set_policy(stock_out_on="invoice")
+
+    def test_rf_015_04_customer_return_with_credit(self):
+        r = self.ok("logistics.register_return", customer=self.customer, items=[{"product": self.item, "quantity": 2, "price": 25}],
+                    reason="avaria no transporte", quarantine=True)
+        self.assertEqual((r["warehouse"], Decimal(r["total"])), ("QUARENTENA", Decimal(50)))
+        self.assertEqual(self.scalar(f"SELECT kind FROM finance.bill WHERE id = {r['credit_bill']}"), "payable")
+
+    def test_ca_015_03_no_overlapping_schedule(self):
+        self.ok("field.save_technician", employee=self.tech, warehouse="LAB")
+        o1 = self.ok("field.open_order", customer=self.customer, description="Instalação do equipamento", priority="normal")
+        o2 = self.ok("field.open_order", customer=self.customer, description="Manutenção preventiva", priority="normal")
+        day = (datetime.date.today() + datetime.timedelta(days=30)).isoformat()
+        self.ok("field.schedule", order=o1["number"], technician=self.tech, start=f"{day} 09:00", hours=2)
+        self.assertEqual(self.err("field.schedule", order=o2["number"], technician=self.tech, start=f"{day} 10:00", hours=2),
+                         "SCHEDULE_CONFLICT")
+        self.ok("field.schedule", order=o2["number"], technician=self.tech, start=f"{day} 11:00", hours=1, travel_min=20)
+        r = self.ok("field.route", technician=self.tech, day=day)
+        self.assertEqual([s["OS"] for s in r["stops"]], [o1["number"], o2["number"]])
+        # Absence (spec 014/021 calendar): refused by the database.
+        far = datetime.date.today() + datetime.timedelta(days=60)
+        self.ok("projects.save_availability", employee=self.tech, absence_from=far.isoformat(), absence_to=far.isoformat())
+        self.assertEqual(self.err("field.schedule", order=o2["number"], technician=self.tech, start=f"{far} 09:00"), "TECHNICIAN_ABSENT")
+
+    def test_ca_015_04_execution_idempotent_and_invoice(self):
+        self.ok("field.save_technician", employee=self.tech2, warehouse="LAB")
+        self.ok("inventory.stock_in", product=self.part, quantity=5, warehouse="LAB")
+        self.set_policy(hour=80, km=0)
+        try:
+            o = self.ok("field.open_order", customer=self.customer, description="Calibração do analisador", service=self.svc)
+            n = o["number"]
+            self.ok("field.start_trip", order=n)
+            self.ok("field.log_work", order=n, kind="travel", hours=1, km=20, technician=self.tech2, client_key=f"tr-{SUFFIX}")
+            again = self.ok("field.log_work", order=n, kind="travel", hours=1, km=20, technician=self.tech2, client_key=f"tr-{SUFFIX}")
+            self.assertTrue(again["repeated"])                                              # intermittent connection: once
+            self.ok("field.log_work", order=n, kind="work", hours=3, technician=self.tech2, client_key=f"wk-{SUFFIX}")
+            before = self.balance(self.part, "LAB")
+            self.ok("field.use_part", order=n, product=self.part, quantity=2, technician=self.tech2, client_key=f"pt-{SUFFIX}")
+            self.ok("field.use_part", order=n, product=self.part, quantity=2, technician=self.tech2, client_key=f"pt-{SUFFIX}")
+            self.assertEqual(before - self.balance(self.part, "LAB"), 2)                    # from the technician's kit, once
+            self.ok("field.sign_off", order=n, signed_by="João Cliente")
+            inv = self.ok("field.invoice_orders", orders=[n])["orders"][0]
+            kinds = [r[0] for r in self.rows(f"SELECT l.kind FROM field.invoice_line l JOIN field.service_order o ON o.id = l.order_id "
+                                              f"WHERE o.number = {n} ORDER BY l.line")]
+            self.assertEqual(sorted(kinds), ["hours", "parts", "travel"])
+            rate = Decimal(self.scalar("SELECT hourly_rate FROM projects.rate_profile WHERE code = 'TEC'"))
+            self.assertEqual(Decimal(inv["total"]), 3 * rate + 80 + 2 * 40)
+            self.assertEqual(self.scalar(f"SELECT status FROM field.service_order WHERE number = {n}"), "invoiced")
+        finally:
+            self.set_policy()
+        # An order of a project: hours become approved time entries, parts become project expenses.
+        project = f"FP{self.sfx}"
+        self.client.call("projects.save_project", code=project, name="Campo no projeto", customer=self.customer, manager="admin",
+                         status="active", billing="hourly", tasks=[{"code": "1", "name": "Atendimento"}],
+                         team=[{"employee": self.tech2, "profile": "TEC"}], rates={"TEC": "150"})
+        o = self.ok("field.open_order", customer=self.customer, description="Suporte em campo do projeto", project=project, activity="1")
+        self.ok("field.log_work", order=o["number"], hours=2, technician=self.tech2)
+        self.ok("field.use_part", order=o["number"], product=self.part, quantity=1, technician=self.tech2)
+        self.ok("field.sign_off", order=o["number"], signed_by="Gestor do cliente")
+        self.ok("field.invoice_orders", orders=[o["number"]])
+        self.assertEqual(Decimal(self.scalar(f"SELECT sum(t.hours) FROM projects.time_entry t JOIN projects.project p ON p.id = t.project_id "
+                                             f"WHERE p.code = '{project}' AND t.status = 'approved'")), 2)
+        self.assertEqual(self.count("projects.expense e JOIN projects.project p ON p.id = e.project_id", f"p.code = '{project}'"), 1)
+
+    def rows(self, sql):
+        s, c, _ = http("POST", "/api/sql", {"sql": sql}, self.token)
+        self.assertEqual(s, 200, c)
+        return c["rows"]
+
+    def test_ca_015_05_sla_late_after_deadline(self):
+        now = datetime.datetime.now(datetime.timezone.utc)
+        late = self.ok("field.open_order", customer=self.customer, description="Parada de linha", priority="high",
+                       opened_at=(now - datetime.timedelta(hours=4, minutes=1)).isoformat())
+        fine = self.ok("field.open_order", customer=self.customer, description="Parada de linha 2", priority="high",
+                       opened_at=(now - datetime.timedelta(hours=3, minutes=59)).isoformat())
+        self.assertEqual(late["sla_hours"], 4)
+        r = self.ok("field.sla_report")
+        self.assertIn(late["number"], r["late_open"])
+        self.assertNotIn(fine["number"], r["late_open"])
+        # The customer opens calls on the portal, only for itself; a retried call creates one order.
+        username = f"exf{SUFFIX}"
+        CREATED_USERS.append(username)
+        http("POST", "/api/admin/users", {"username": username, "role": "external", "party_id": self.customer,
+                                          "password": "Initial-pass-1"}, self.token)
+        t = login(username, "Initial-pass-1")
+        http("POST", "/api/me/password", {"current": "Initial-pass-1", "new": "Changed-pass-1"}, t)
+        s, c, _ = self.run_program("field.open_order", {"description": "Equipamento não liga", "client_key": f"p-{SUFFIX}"}, token=t)
+        s2, c2, _ = self.run_program("field.open_order", {"description": "Equipamento não liga", "client_key": f"p-{SUFFIX}"}, token=t)
+        self.assertEqual(c2["result"]["number"], c["result"]["number"])
+        self.assertTrue(c2["result"]["repeated"])
+        s, c, _ = self.run_program("field.open_order", {"description": "outro cliente", "customer": self.customer + 999999}, token=t)
+        self.assertEqual(c["error"]["code"], "FORBIDDEN")
+
+    def test_rnf_015_03_week_agenda_100_technicians_under_1s(self):
+        build = f"test.agenda_build_{SUFFIX}"
+        self.save(build, "import datetime\n"
+                         "def main(tag, customer):\n"
+                         "    ids = [r['id'] for r in ana.sql(\"INSERT INTO projects.employee (name, profile) SELECT $1 || g, 'TEC' \"\n"
+                         "          \"FROM generate_series(1, 100) g RETURNING id\", tag)]\n"
+                         "    ana.sql('INSERT INTO field.technician (employee_id) SELECT unnest($1::int[])', ids)\n"
+                         "    o = ana.sql_value(\"INSERT INTO field.service_order (customer_id, description, due_at, created_by) \"\n"
+                         "                      \"VALUES ($1, 'carga da agenda', now() + interval '1 day', 't') RETURNING id\", customer)\n"
+                         "    d = datetime.date.today()\n"
+                         "    mon = d - datetime.timedelta(days=d.weekday())\n"
+                         "    ana.sql(\"INSERT INTO field.assignment (order_id, employee_id, period, created_by) \"\n"
+                         "            \"SELECT $1, e, tstzrange($2::date + k + time '09:00', $2::date + k + time '11:00'), 't' \"\n"
+                         "            \"FROM unnest($3::int[]) e, generate_series(0, 4) k\", o, mon, ids)\n"
+                         "    return {'ids': ids, 'order': o}\n")
+        s, c, _ = self.run_program(build, {"tag": f"AG{SUFFIX}-", "customer": self.customer})
+        self.assertEqual(s, 200, c)
+        ids, order_id = c["result"]["ids"], c["result"]["order"]
+        timer = f"test.agenda_time_{SUFFIX}"
+        self.save(timer, "import time\ndef main():\n    t0 = time.monotonic()\n    r = ana.call('field.agenda')\n"
+                         "    return {'seconds': time.monotonic() - t0, 'visits': r['visits']}\n", limits={"output_kb": 65536})
+        try:
+            s, c, _ = self.run_program(timer, {})
+            self.assertEqual(s, 200, c)
+            self.assertGreaterEqual(c["result"]["visits"], 500)
+            self.assertLess(c["result"]["seconds"], 1.0, c["result"])
+        finally:
+            purge = f"test.agenda_purge_{SUFFIX}"
+            self.save(purge, "def main(ids, order_id):\n"
+                             "    ana.sql_exec('DELETE FROM field.assignment WHERE order_id = $1', order_id)\n"
+                             "    ana.sql_exec('UPDATE field.service_order SET status = $2 WHERE id = $1', order_id, 'cancelled')\n"
+                             "    ana.sql_exec('UPDATE field.technician SET active = false WHERE employee_id = ANY($1)', ids)\n"
+                             "    return ana.sql_exec('UPDATE projects.employee SET active = false WHERE id = ANY($1)', ids)\n")
+            self.run_program(purge, {"ids": ids, "order_id": order_id})
 
 
 if __name__ == "__main__":

@@ -43,19 +43,23 @@ inglês, como no código (constituição, P2a).
 | 010 | [API pública](010-public-api/spec.md) | Chamadas pela internet por sites e sistemas de terceiros | especificada |
 | 011 | [Administração](011-administration/spec.md) | Usuários e robôs (chaves de API), grupos, parâmetros, monitor, auditoria pela UI; dono obrigatório em toda execução | implementada |
 | 012 | [Governança de execução](012-execution-governance/spec.md) | Limites finos de tempo, CPU, memória, SQL, concorrência e cotas | implementada |
-| 013 | [Cadeia de suprimentos](013-supply-chain/spec.md) | Fornecedores, compras, aprovação, recebimento, reposição | especificada |
-| 014 | [Produção e capacidade](014-production-planning/spec.md) | Estruturas, roteiros, necessidades, ordens, capacidade (bens e serviços) | especificada |
-| 015 | [Logística e campo](015-logistics-field-service/spec.md) | Transferências, expedição, devoluções, ordens de serviço, agenda, rotas | especificada |
-| 016 | [Repositório de arquivos](016-file-repository/spec.md) | Pastas, versões, permissões granulares, portal do cliente, links | especificada |
-| 017 | [Hub de integrações](017-integration-hub/spec.md) | Conectores, cofre, webhooks, extratos, conciliação, gateways | especificada |
+| 013 | [Cadeia de suprimentos](013-supply-chain/spec.md) | Fornecedores, compras, aprovação, recebimento, reposição | implementada |
+| 014 | [Produção e capacidade](014-production-planning/spec.md) | Estruturas, roteiros, necessidades, ordens, capacidade (bens e serviços) | implementada |
+| 015 | [Logística e campo](015-logistics-field-service/spec.md) | Transferências, expedição, devoluções, ordens de serviço, agenda, rotas | implementada |
+| 016 | [Repositório de arquivos](016-file-repository/spec.md) | Pastas, versões, permissões granulares, portal do cliente, links | implementada (faltam S3 e antivírus) |
+| 017 | [Hub de integrações](017-integration-hub/spec.md) | Conectores, cofre, webhooks, extratos, conciliação, gateways | implementada (faltam SFTP/pasta/e-mail, mTLS, CNAB e pacotes de modelos) |
 | 018 | [Agendamento](018-scheduler/spec.md) | Rotinas com cron/calendário, cluster, tentativas, dependências | implementada |
-| 019 | [Observabilidade](019-observability/spec.md) | Saúde, métricas, rastros, stack traces, perfilamento, dicas | especificada |
+| 019 | [Observabilidade](019-observability/spec.md) | Saúde, métricas, rastros, stack traces, perfilamento, dicas | implementada (faltam alertas configuráveis e OpenTelemetry) |
 | 020 | [Arquitetura da informação](020-information-architecture/spec.md) | Áreas por tarefa; fluxo coerente (próxima ação, fluxos guiados) | parcial |
-| 021 | [Consultoria](021-consulting-projects/spec.md) | Fases, alocação de pessoal, quadro/Gantt e caminho crítico, valor agregado, mudanças, riscos, viabilidade e lucro (base/otimista/pessimista), portfólio | implementada (portal: 016) |
+| 021 | [Consultoria](021-consulting-projects/spec.md) | Fases, alocação de pessoal, quadro/Gantt e caminho crítico, valor agregado, mudanças, riscos, viabilidade e lucro (base/otimista/pessimista), portfólio | implementada |
 | 022 | [Execução paralela](022-parallel-execution/spec.md) | `ana.parallel`/`ana.map`: dividir e juntar, atômico ou independente | implementada |
-| 023 | [Alta disponibilidade](023-high-availability/spec.md) | Operação 24/7, drenagem, rolling, banco HA, testes de caos | implementada (falta T-023-09) |
+| 023 | [Alta disponibilidade](023-high-availability/spec.md) | Operação 24/7, drenagem, rolling, banco HA, testes de caos | implementada |
 | 024 | [Trilha de auditoria e retenção](024-audit-trail-retention/spec.md) | Acessos, execuções, CPU e stack traces de pessoas e robôs; trilha por usuário; retenção configurável | implementada |
 | 025 | [Uso eficiente de disco](025-storage-efficiency/spec.md) | Amigo de SSD: só grava o que mudou, lotes, partições, HOT, WAL comprimido | implementada |
+| 026 | [Gráficos](026-charts/spec.md) | `ana.chart`: linha, área, colunas, empilhadas, barras, rosca; paleta validada para daltonismo, legenda, dicas e tabela | implementada |
+| 027 | [Centros de custo](027-cost-centers/spec.md) | Centro em cada lançamento (política por conta, garantida no banco), origem automática, hierarquia, orçado × realizado, rateio, lançamento manual, resultado gerencial | implementada |
+| 028 | [Atualização dos programas do produto](028-product-updates/spec.md) | Versão nova de programa do produto oferecida a instalações existentes; administrador compara lado a lado e aceita ou dispensa | implementada |
+| 029 | [Linguagem visual "Linha ANA"](029-visual-language/spec.md) | Barra superior compacta, rotinas como páginas analíticas (indicadores, gráficos em cartões, tabelas em cartão), início em blocos, ícones próprios, claro/escuro | implementada |
 
 ## Glossário
 

@@ -32,38 +32,53 @@ def main(number, payment_days=30):
     v.require(items, "EMPTY_ORDER", f"pedido {number} não tem itens")
 
     document = f"ORD-{number}"
-    goods = [i for i in items if i["kind"] == "goods"]
-    for item in goods:
-        # Ordered lock per product: prevents races and deadlocks.
-        ana.sql("SELECT id FROM base.product WHERE id = $1 FOR UPDATE", item["product_id"])
-        balance = ana.sql_value(
-            "SELECT COALESCE(sum(quantity), 0) FROM inventory.stock_movement "
-            "WHERE product_id = $1 AND warehouse_id = $2", item["product_id"], order["warehouse_id"])
-        if balance < item["quantity"]:
-            raise ana.Error("INSUFFICIENT_STOCK",
-                            f"{item['code']}: saldo {balance}, necessário {item['quantity']}",
-                            {"product": item["code"], "balance": balance, "required": item["quantity"]})
+    # Spec 015: what already left at shipment (stock_out_on = shipment) is not taken again; freight
+    # charged on the shipments goes into the invoice.
+    shipped = {r["product_id"]: r["q"] for r in ana.sql(
+        "SELECT l.product_id, sum(l.quantity) AS q FROM logistics.shipment_line l JOIN logistics.shipment s ON s.id = l.shipment_id "
+        "WHERE s.sales_order_id = $1 AND s.stock_moved AND s.status NOT IN ('returned', 'cancelled') GROUP BY 1", order["id"])}
+    freight = ana.sql_value("SELECT COALESCE(sum(freight_charged), 0) FROM logistics.shipment WHERE sales_order_id = $1 "
+                            "AND status NOT IN ('returned', 'cancelled')", order["id"])
+    items = [{**i, "quantity": i["quantity"] - shipped.get(i["product_id"], 0)} for i in items]
+    goods = [i for i in items if i["kind"] == "goods" and i["quantity"] > 0]
+    if goods:
+        # Ordered locks on the products (one statement): prevents races and deadlocks.
+        ana.sql("SELECT id FROM base.product WHERE id = ANY($1) ORDER BY id FOR UPDATE", [i["product_id"] for i in goods])
+        balances = {r["product_id"]: r["balance"] for r in ana.sql(
+            "SELECT product_id, sum(quantity) AS balance FROM inventory.stock_movement "
+            "WHERE product_id = ANY($1) AND warehouse_id = $2 GROUP BY product_id",
+            [i["product_id"] for i in goods], order["warehouse_id"])}
+        for item in goods:
+            balance = balances.get(item["product_id"], 0)
+            if balance < item["quantity"]:
+                raise ana.Error("INSUFFICIENT_STOCK",
+                                f"{item['code']}: saldo {balance}, necessário {item['quantity']}",
+                                {"product": item["code"], "balance": balance, "required": item["quantity"]})
 
     ana.sql_batch(
         "INSERT INTO inventory.stock_movement (product_id, warehouse_id, quantity, kind, document, created_by) "
         "VALUES ($1, $2, $3, 'out', $4, $5)",
         [[i["product_id"], order["warehouse_id"], -i["quantity"], document, ana.context.user] for i in goods])
 
+    # Spec 027: revenue goes to the order's cost center (or the warehouse's; the database falls back to the company's).
+    cc = ana.sql_value("SELECT COALESCE(o.cost_center, w.cost_center) FROM sales.sales_order o "
+                       "JOIN inventory.warehouse w ON w.id = o.warehouse_id WHERE o.id = $1", order["id"])
+    ana.sql("SELECT set_config('ana.cost_center', $1, true)", cc or "")
     entry = ana.sql_value(
         "INSERT INTO finance.journal_entry (memo, document, created_by) VALUES ($1, $2, $3) RETURNING id",
         f"Venda pedido {number}", document, ana.context.user)
     ana.sql_batch(
         "INSERT INTO finance.journal_line (entry_id, account, debit, credit) "
         "VALUES ($1, finance.account_for($2), $3, $4)",
-        [[entry, "customers", order["total"], 0], [entry, "sales_revenue", 0, order["total"]]])
+        [[entry, "customers", order["total"] + freight, 0], [entry, "sales_revenue", 0, order["total"] + freight]])
 
     due = datetime.date.today() + datetime.timedelta(days=payment_days)
     bill = ana.sql_value(
         "INSERT INTO finance.bill (kind, party_id, document, due_date, amount, entry_id) "
         "VALUES ('receivable', $1, $2, $3, $4, $5) RETURNING id",
-        order["customer_id"], document, due, order["total"], entry)
+        order["customer_id"], document, due, order["total"] + freight, entry)
 
     ana.sql_exec("UPDATE sales.sales_order SET status = 'INVOICED', invoiced_at = now() WHERE id = $1",
                  order["id"])
     ana.log(f"pedido {number} faturado: {money(order['total'])}, vencimento {due}")
-    return {"number": number, "total": order["total"], "bill": bill, "entry": entry, "due_date": due}
+    return {"number": number, "total": order["total"] + freight, "freight": freight, "bill": bill, "entry": entry, "due_date": due}

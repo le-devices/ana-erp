@@ -25,6 +25,11 @@ route(<<"POST">>, [<<"users">>, Name, <<"password">>], U, Req) ->
     reply(ana_admin:reset_password(Name, U), Req);
 route(<<"POST">>, [<<"users">>, Name, <<"sessions">>, <<"revoke">>], U, Req) ->
     reply(ana_admin:revoke_sessions(Name, U), Req);
+route(<<"POST">>, [<<"security">>, <<"unlock-ip">>], U, Req) ->
+    with_body(Req, fun(B, R) ->
+        Ip = case maps:get(<<"ip">>, B, <<"self">>) of <<"self">> -> ana_http:ip(R); V -> V end,
+        reply(ana_admin:unlock_ip(Ip, U), R)
+    end);
 route(<<"POST">>, [<<"users">>, Name, <<"unlock">>], U, Req) ->
     reply(ana_admin:unlock_user(Name, U), Req);
 
@@ -86,6 +91,43 @@ route(<<"PUT">>, [<<"remote-systems">>, Name], U, Req) ->
         (_, R) -> invalid(R)
     end);
 
+%% --- Integrations (spec 017) ----------------------------------------------
+route(<<"GET">>, [<<"connectors">>], _U, Req) ->
+    reply(ana_connectors:list(), Req);
+route(<<"PUT">>, [<<"connectors">>, Name], U, Req) ->
+    with_body(Req, fun(B, R) -> reply(ana_connectors:save(Name, B, U), R) end);
+route(<<"DELETE">>, [<<"connectors">>, Name], U, Req) ->
+    reply(ana_connectors:remove(Name, U), Req);
+route(<<"PUT">>, [<<"connectors">>, Name, <<"secrets">>, Key], U, Req) ->
+    with_body(Req, fun(B, R) -> reply(ana_connectors:put_secret(Name, Key, B, U), R) end);
+route(<<"DELETE">>, [<<"connectors">>, Name, <<"secrets">>, Key], U, Req) ->
+    reply(ana_connectors:delete_secret(Name, Key, U), Req);
+route(<<"GET">>, [<<"integrations">>, <<"stats">>], _U, Req) ->
+    reply(ana_integration:stats(), Req);
+route(<<"GET">>, [<<"integrations">>, <<"messages">>], _U, Req) ->
+    reply(ana_integration:messages(ana_http:qs_map(Req)), Req);
+route(<<"POST">>, [<<"integrations">>, Kind, Id, <<"reprocess">>], U, Req) ->
+    with_id(Id, Req, fun(N) -> reply(ana_integration:reprocess(Kind, N, U), Req) end);
+route(<<"POST">>, [<<"integrations">>, Kind, Id, <<"discard">>], U, Req) ->
+    with_id(Id, Req, fun(N) -> reply(ana_integration:discard(Kind, N, U), Req) end);
+
+%% --- Product updates (spec 028) -------------------------------------------
+route(<<"GET">>, [<<"product-updates">>], _U, Req) ->
+    {ok, Rows} = ana_product_updates:list(),
+    ana_http:json(200, #{updates => Rows, available => ana_product_updates:pending_count()}, Req);
+route(<<"POST">>, [<<"product-updates">>, <<"check">>], _U, Req) ->
+    reply(ana_product_updates:check(), Req);
+route(<<"POST">>, [<<"product-updates">>, <<"accept-unmodified">>], U, Req) ->
+    reply(ana_product_updates:accept_unmodified(U), Req);
+route(<<"GET">>, [<<"product-updates">>, Name], _U, Req) ->
+    reply(ana_product_updates:detail(Name), Req);
+route(<<"POST">>, [<<"product-updates">>, Name, <<"accept">>], U, Req) ->
+    with_body(Req, fun(B, R) ->
+        reply(ana_product_updates:accept(Name, maps:get(<<"overwrite">>, B, false) =:= true, U), R)
+    end);
+route(<<"POST">>, [<<"product-updates">>, Name, <<"dismiss">>], U, Req) ->
+    reply(ana_product_updates:dismiss(Name, U), Req);
+
 %% --- Limits and quotas (spec 012, RF-012-08) ------------------------------
 route(<<"GET">>, [<<"limit-profiles">>], _U, Req) ->
     reply(ana_limits:list_profiles(), Req);
@@ -141,6 +183,36 @@ route(<<"GET">>, [<<"audit">>, <<"access">>], _U, Req) ->
 route(<<"GET">>, [<<"audit">>, <<"trail">>], _U, Req) ->
     reply(ana_admin:audit_trail(ana_http:qs_map(Req)), Req);
 
+%% --- Observability (spec 019) ---------------------------------------------
+route(<<"GET">>, [<<"observability">>, <<"health">>], _U, Req) ->
+    reply(ana_observability:health(), Req);
+route(<<"POST">>, [<<"observability">>, <<"health">>, <<"check">>], _U, Req) ->
+    _ = ana_health:check_now(),
+    reply(ana_observability:health(), Req);
+route(<<"GET">>, [<<"observability">>, <<"sql">>], _U, Req) ->
+    reply(ana_observability:sql_top(ana_http:qs_map(Req)), Req);
+route(<<"GET">>, [<<"observability">>, <<"sql">>, Hash], _U, Req) ->
+    reply(ana_observability:sql_detail(Hash), Req);
+route(<<"POST">>, [<<"observability">>, <<"sql">>, <<"flush">>], _U, Req) ->
+    ok = ana_sql_stats:flush(),
+    reply({ok, #{flushed => true}}, Req);
+route(<<"GET">>, [<<"observability">>, <<"samples">>], _U, Req) ->
+    reply(ana_observability:samples(ana_http:qs_int(<<"hours">>, Req, 24)), Req);
+route(<<"GET">>, [<<"observability">>, <<"advice">>], _U, Req) ->
+    Status = case ana_http:qs_map(Req) of #{<<"status">> := S} when S =/= <<>> -> S; _ -> null end,
+    reply(ana_advisor:list(#{status => Status}), Req);
+route(<<"POST">>, [<<"observability">>, <<"advice">>, <<"run">>], U = #{username := Who}, Req) ->
+    _ = U,
+    ok = ana_sql_stats:flush(),
+    R = ana_advisor:run(),
+    ana_admin:log(Who, <<"advice.run">>, <<"manual">>, null, null),
+    reply(R, Req);
+route(<<"POST">>, [<<"observability">>, <<"advice">>, Id, <<"dismiss">>], U, Req) ->
+    with_body(Req, fun(B, R) ->
+        Days = case maps:get(<<"days">>, B, 30) of D when is_integer(D), D >= 0 -> D; _ -> 30 end,
+        reply(ana_advisor:dismiss(binary_to_integer(Id), Days, U), R)
+    end);
+
 %% --- Retention (spec 024, RF-024-08..10) ----------------------------------
 route(<<"GET">>, [<<"retention">>], _U, Req) ->
     reply(ana_retention:overview(), Req);
@@ -181,3 +253,9 @@ with_body(Req, Fun) ->
     end.
 
 invalid(Req) -> ana_http:reply_error(400, <<"INVALID">>, <<"requisição inválida"/utf8>>, Req).
+
+with_id(Id, Req, Fun) ->
+    case catch binary_to_integer(Id) of
+        N when is_integer(N), N > 0 -> Fun(N);
+        _ -> invalid(Req)
+    end.

@@ -22,7 +22,9 @@ def main(project=None, days=7, client_visible=True):
     if project:
         projects = [access.project(project)]
     else:
-        projects = ana.sql("SELECT * FROM projects.project WHERE status = 'active' AND ($1 OR manager = $2) "
+        projects = ana.sql("SELECT id, code, name, customer_id, manager, billing, status, start_date, due_date, budget_hours, "
+                           "budget_amount, service_tax_rate, service_tax_withheld, description, created_at, "
+                           "cost_center FROM projects.project WHERE status = 'active' AND ($1 OR manager = $2) "
                            "ORDER BY code", access.is_admin(), ana.context.user)
     out = []
     for p in projects:

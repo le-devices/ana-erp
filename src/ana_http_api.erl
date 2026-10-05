@@ -6,13 +6,20 @@
 -define(ADMIN, <<"admin">>).
 -define(USER, <<"user">>).
 -define(BUSINESS_SCHEMAS, [<<"base">>, <<"inventory">>, <<"sales">>, <<"finance">>,
-                           <<"projects">>, <<"analytics">>]).
+                           <<"projects">>, <<"supply">>, <<"production">>, <<"logistics">>, <<"field">>, <<"analytics">>]).
 
 init(Req, health) ->
     {ok, health(Req), health};
 %% RF-023-01
 init(Req, live) ->
     {ok, ana_http:json(200, ana_ha:live(), Req), live};
+%% RF-019-02, CA-019-06: Prometheus text; admin/developer session or a robot key.
+init(Req, metrics) ->
+    Req2 = ana_http:require(Req, ?DEV, fun(_) ->
+        cowboy_req:reply(200, #{<<"content-type">> => <<"text/plain; version=0.0.4; charset=utf-8">>},
+                         ana_metrics:prometheus(), Req)
+    end),
+    {ok, Req2, metrics};
 init(Req, ready) ->
     {Ok, Body} = ana_ha:ready(),
     {ok, ana_http:json(case Ok of true -> 200; false -> 503 end, Body, Req), ready};
@@ -127,6 +134,13 @@ route(<<"GET">>, [<<"programs">>], Req) ->
     ana_http:require(Req, ?DEV, fun(_) ->
         ok_json(ana_program:list(ana_http:qs_int(<<"inactive">>, Req, 0) =:= 1), Req)
     end);
+route(<<"GET">>, [<<"programs">>, Name, <<"performance">>], Req) ->
+    ana_http:require(Req, ?DEV, fun(_) ->
+        case ana_observability:program_performance(Name) of
+            {ok, R} -> ana_http:json(200, R, Req);
+            {error, not_found} -> ana_http:reply_error(404, <<"NOT_FOUND">>, <<"programa não encontrado"/utf8>>, Req)
+        end
+    end);
 route(<<"GET">>, [<<"programs">>, Name], Req) ->
     ana_http:require(Req, ?DEV, fun(_) -> one_json(ana_program:get(Name), Req) end);
 route(<<"PUT">>, [<<"programs">>, Name], Req) ->
@@ -162,7 +176,23 @@ route(<<"POST">>, [<<"programs">>, Name, <<"versions">>, V, <<"restore">>], Req)
         with_integer(V, Req, fun(N) -> save_reply(ana_program:restore(Name, N, U), Req) end)
     end);
 route(<<"POST">>, [<<"programs">>, Name, <<"run">>], Req) ->
-    ana_http:require(Req, ?USER, fun(U) -> run(Name, U, Req) end);
+    %% Spec 016: external portal accounts reach this route too; the execution only lets
+    %% them run programs marked for the portal (ana_execution:load/2).
+    ana_http:require_any(Req, fun
+        (#{must_change_password := true}) ->
+            ana_http:reply_error(403, <<"PASSWORD_CHANGE_REQUIRED">>, <<"troque sua senha para continuar">>, Req);
+        (U = #{role := <<"external">>}) -> run(Name, U, Req);
+        (U) ->
+            case ana_security:has_role(U, ?USER) of
+                true -> run(Name, U, Req);
+                false -> ana_http:reply_error(403, <<"FORBIDDEN">>, <<"papel insuficiente">>, Req)
+            end
+    end);
+route(<<"GET">>, [<<"portal">>, <<"programs">>], Req) ->
+    ana_http:require_any(Req, fun(_) ->
+        ok_json(ana_db:rows("SELECT name, description, params, docs FROM ana_system.program "
+                            "WHERE portal AND active AND kind = 'program' ORDER BY description, name", []), Req)
+    end);
 
 %% --- Executions and debugger (specs 002, 004) -----------------------------
 route(<<"GET">>, [<<"executions">>], Req) ->
@@ -252,14 +282,16 @@ run(Name, U, Req) ->
                     P when is_map(P) -> P;
                     _ -> #{}
                 end,
+                External = maps:get(role, U) =:= <<"external">>,
                 Options = #{origin => <<"studio">>,
                             debug => Debug,
-                            async => maps:get(<<"async">>, B, false) =:= true,
+                            async => not External andalso maps:get(<<"async">>, B, false) =:= true,
                             breakpoints => as_list(maps:get(<<"breakpoints">>, B, [])),
                             stop_on_entry => maps:get(<<"stop_on_entry">>, B, false) =:= true,
                             commit => maps:get(<<"commit">>, B, false) =:= true,
-                            timeout_ms => maps:get(<<"timeout_ms">>, B, undefined)},
-                case ana_execution:run(Name, Params, U, Options) of
+                            timeout_ms => case External of true -> undefined; false -> maps:get(<<"timeout_ms">>, B, undefined) end,
+                            profile => not External andalso maps:get(<<"profile">>, B, false) =:= true},
+                case developer_view(U, ana_execution:run(Name, Params, U, Options)) of
                     {ok, Res} -> ana_http:json(200, Res, R);
                     {error, #{<<"code">> := C} = E} when C =:= <<"OVERLOAD">>; C =:= <<"DRAINING">>;
                                                          C =:= <<"DB_UNAVAILABLE">> ->
@@ -337,13 +369,9 @@ table(Schema, Table, Req) ->
 %% RF-005-05: own connection as ana_read, read-only transaction.
 sql_console(Sql, Req) ->
     %% RF-023-05: replicas for reading when ANA_DB_READ_HOSTS is set.
-    Config = ana_config:db_role(read),
     Conn = case ana_config:text("ANA_DB_READ_HOSTS", "") of
-        "" -> ana_db:connect(Config);
-        Replicas -> case ana_db:connect(Config#{host => Replicas}, any) of
-                        {ok, _} = Ok -> Ok;
-                        {error, _} -> ana_db:connect(Config)      % replicas down: the primary answers
-                    end
+        "" -> ana_db:connect(ana_config:db_role(read));
+        Replicas -> ana_db:connect_read(ana_config:db_role(read), Replicas)   % replicas down: the primary answers
     end,
     case Conn of
         {ok, C} ->
@@ -365,6 +393,26 @@ sql_console(Sql, Req) ->
 %% Helpers
 %% ==========================================================================
 
+%% RF-019-04: frames and local variables of an error are for developers only.
+developer_view(U, R) ->
+    case ana_security:has_role(U, ?DEV) of
+        true -> R;
+        false -> strip(R)
+    end.
+
+strip({error, E}) when is_map(E) ->
+    E2 = maps:without([<<"frames">>, <<"locals">>, <<"trace">>], E),
+    {error, case maps:find(<<"events">>, E2) of
+        {ok, Evs} when is_list(Evs) -> E2#{<<"events">> => [strip_event(Ev) || Ev <- Evs]};
+        _ -> E2
+    end};
+strip({ok, #{events := Evs} = Res}) when is_list(Evs) -> {ok, Res#{events => [strip_event(Ev) || Ev <- Evs]}};
+strip(R) -> R.
+
+strip_event(#{<<"error">> := E} = Ev) when is_map(E) ->
+    Ev#{<<"error">> => maps:without([<<"frames">>, <<"locals">>, <<"trace">>], E)};
+strip_event(Ev) -> Ev.
+
 validate_program(F) ->
     Checks = [
         {<<"source">>, fun(V) -> is_binary(V) andalso byte_size(V) =< 1024 * 1024 end},
@@ -372,6 +420,7 @@ validate_program(F) ->
         {<<"kind">>, fun(V) -> lists:member(V, [<<"program">>, <<"library">>]) end},
         {<<"exposed">>, fun is_boolean/1},
         {<<"in_menu">>, fun is_boolean/1},
+        {<<"portal">>, fun is_boolean/1},
         {<<"restricted">>, fun is_boolean/1},
         {<<"active">>, fun is_boolean/1},
         {<<"min_role">>, fun(V) -> lists:member(V, [?ADMIN, ?DEV, ?USER]) end},

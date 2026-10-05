@@ -12,6 +12,7 @@ from decimal import Decimal, ROUND_HALF_UP
 
 from ana_lib.projects import access
 from ana_lib.util.format import money
+from ana_lib.util.pdf import Pdf
 
 PARAMS = {
     "project": {"type": "str", "required": True},
@@ -75,6 +76,8 @@ def main(project, through=None, payment_days=30):
         [[inv["id"], n, *l] for n, l in enumerate(lines, start=1)])
 
     document = f"INV-{inv['number']}"
+    # Spec 027: the project's cost center (the database falls back to the company's).
+    ana.sql("SELECT set_config('ana.cost_center', $1, true)", p.get("cost_center") or "")
     entry = ana.sql_value(
         "INSERT INTO finance.journal_entry (memo, document, created_by) VALUES ($1, $2, $3) RETURNING id",
         f"Fatura de serviços {inv['number']} — projeto {p['code']}", document, ana.context.user)
@@ -102,5 +105,41 @@ def main(project, through=None, payment_days=30):
 
     ana.table([{"origem": l[0], "descrição": l[1], "qtd": l[2], "unitário": money(l[3]), "valor": money(l[4])}
                for l in lines], title=f"Fatura {inv['number']}")
+    pdf = store_pdf(p, inv["number"], lines, total, tax, withheld, net, payment_days)
     return {"number": inv["number"], "total": total, "service_tax": tax, "withheld": withheld,
-            "net_amount": net, "bill": bill, "entry": entry, "lines": len(lines)}
+            "net_amount": net, "bill": bill, "entry": entry, "lines": len(lines), "pdf": pdf}
+
+
+def store_pdf(p, number, lines, total, tax, withheld, net, payment_days):
+    """Spec 016 (CA-016-05): the invoice as PDF in the customer's folder (Faturas is shared
+    with the customer's portal accounts). A storage problem never undoes the invoice."""
+    company = ana.sql_one("SELECT legal_name, tax_id FROM base.company ORDER BY id LIMIT 1") or {}
+    customer = ana.sql_one("SELECT name, tax_id FROM base.party WHERE id = $1", p["customer_id"])
+    doc = Pdf(title=f"Fatura {number}")
+    doc.text(50, 790, company.get("legal_name") or "Fatura de serviços", size=14, bold=True)
+    if company.get("tax_id"):
+        doc.text(50, 774, f"CNPJ {company['tax_id']}", size=9)
+    doc.text(400, 790, f"Fatura nº {number}", size=12, bold=True)
+    doc.text(400, 774, f"Emissão {datetime.date.today():%d/%m/%Y}", size=9)
+    doc.text(50, 745, f"Cliente: {customer['name']}" + (f" — {customer['tax_id']}" if customer.get("tax_id") else ""), size=10)
+    doc.text(50, 730, f"Projeto: {p['code']} — {p['name']}", size=10)
+    y = doc.table(50, 700, ["Descrição", "Qtd", "Unitário", "Valor"],
+                  [[l[1], l[2], money(l[3]), money(l[4])] for l in lines], widths=[300, 50, 80, 80])
+    y -= 10
+    doc.line(50, y, 560, y)
+    doc.text(380, y - 16, "Total", bold=True)
+    doc.text(480, y - 16, money(total), bold=True)
+    if withheld:
+        doc.text(380, y - 30, "Imposto retido")
+        doc.text(480, y - 30, money(tax))
+        doc.text(380, y - 44, "Líquido a pagar", bold=True)
+        doc.text(480, y - 44, money(net), bold=True)
+    venc = datetime.date.today() + datetime.timedelta(days=payment_days)
+    doc.text(50, y - 70, f"Vencimento: {venc:%d/%m/%Y}", size=10)
+    try:
+        r = ana.files.put(f"Fatura {number}.pdf", doc.build(), entity=("party", p["customer_id"]), subfolder="Faturas",
+                          comment=f"Fatura de serviços {number} — projeto {p['code']}")
+        return r["file"]
+    except ana.Error as e:
+        ana.log(f"fatura {number} sem PDF no repositório: {e.message}", "warning")
+        return None

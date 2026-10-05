@@ -9,11 +9,13 @@
 <script src="studio/editor.js" defer></script>
 <script src="studio/api.js" defer></script>
 <script src="studio/ui.js" defer></script>
+<script src="studio/charts.js" defer></script>
 <script src="studio/runner.js" defer></script>
 <script src="studio/scheduler.js" defer></script>
 <script src="studio/ops.js" defer></script>
 <script src="studio/dev.js" defer></script>
 <script src="studio/admin.js" defer></script>
+<script src="studio/files.js" defer></script>
 <script src="studio/studio.js" defer></script>
 </head>
 <body>
@@ -21,7 +23,7 @@
 <!-- Login -->
 <section id="login-screen" class="screen" hidden>
   <form id="login-form" class="login-card" autocomplete="on">
-    <div class="brand big">ANA<span>ERP</span></div>
+    <div class="brand big"><svg class="logo" viewBox="0 0 24 24" width="24" height="24" aria-hidden="true"><rect x="1" y="1" width="22" height="22" rx="6" fill="currentColor"/><path d="M6.5 18L12 5.5 17.5 18M8.6 13.4h6.8" fill="none" stroke="#fff" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg><b>ANA</b><span>ERP</span></div>
     <label>Login <input name="username" autocomplete="username" required></label>
     <label>Senha <input name="password" type="password" autocomplete="current-password" required></label>
     <button type="submit" class="primary">Entrar</button>
@@ -32,7 +34,7 @@
 <!-- Password change (RF-011-03) -->
 <section id="password-screen" class="screen" hidden>
   <form id="password-form" class="login-card">
-    <div class="brand">ANA<span>ERP</span></div>
+    <div class="brand"><svg class="logo" viewBox="0 0 24 24" width="24" height="24" aria-hidden="true"><rect x="1" y="1" width="22" height="22" rx="6" fill="currentColor"/><path d="M6.5 18L12 5.5 17.5 18M8.6 13.4h6.8" fill="none" stroke="#fff" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg><b>ANA</b><span>ERP</span></div>
     <h2 id="password-title">Troque sua senha</h2>
     <p id="password-hint" class="muted">Sua senha foi definida por um administrador. Escolha uma nova para continuar.</p>
     <label>Senha atual <input name="current" type="password" autocomplete="current-password" required></label>
@@ -48,24 +50,35 @@
 
 <!-- Application -->
 <section id="app-screen" class="screen" hidden>
-  <header class="topbar">
-    <button id="back" class="back" type="button" title="Voltar à tela anterior (F3)" hidden>◀ Voltar</button>
-    <div class="brand">ANA<span id="brand-company"></span></div>
-    <nav class="area-switch" aria-label="Áreas">
-      <button class="area" data-area="home">Início</button>
-      <button class="area" data-area="ops">Operação</button>
-      <button class="area" data-area="dev" data-min-role="developer">Desenvolvimento</button>
-      <button class="area" data-area="admin" data-min-role="admin">Administração</button>
-    </nav>
-    <form id="command-form" class="command" role="search">
-      <input id="command" list="command-list" placeholder="Ir para… (rotina, comando, programa, tabela ou seção)"
-             autocomplete="off" spellcheck="false" aria-label="Ir para">
-      <datalist id="command-list"></datalist>
-    </form>
-    <div class="user-box">
-      <span id="user-name"></span>
-      <button id="change-password" class="quiet">Trocar senha</button>
-      <button id="logout" class="quiet">Sair</button>
+  <header class="topbar shellbar">
+    <div class="shell-left">
+      <button id="user-avatar" class="avatar" type="button" aria-haspopup="menu" aria-expanded="false" title="Minha conta"><span id="avatar-initials">?</span></button>
+      <button id="back" class="icon-btn back" type="button" title="Voltar à tela anterior (F3)" aria-label="Voltar" hidden><svg class="icon" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M15 5l-7 7 7 7"/></svg></button>
+      <div class="brand"><svg class="logo" viewBox="0 0 24 24" width="24" height="24" aria-hidden="true"><rect x="1" y="1" width="22" height="22" rx="6" fill="currentColor"/><path d="M6.5 18L12 5.5 17.5 18M8.6 13.4h6.8" fill="none" stroke="#fff" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg><b>ANA</b><span id="brand-company"></span></div>
+    </div>
+    <div class="shell-center">
+      <nav id="area-menu" class="area-switch shell-tabs" aria-label="Áreas">
+        <button class="area" data-area="home">Início</button>
+        <button class="area" data-area="ops">Operação</button>
+        <button class="area" data-area="files">Arquivos</button>
+        <button class="area" data-area="portal" data-only="external">Portal</button>
+        <button class="area" data-area="dev" data-min-role="developer">Desenvolvimento</button>
+        <button class="area" data-area="admin" data-min-role="admin">Administração</button>
+      </nav>
+    </div>
+    <div class="shell-right">
+      <form id="command-form" class="command" role="search">
+        <svg class="icon" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M10.5 4.5a6 6 0 1 1 0 12 6 6 0 0 1 0-12zM15 15l5 5"/></svg>
+        <input id="command" list="command-list" placeholder="Ir para… rotina, comando, programa, tabela"
+               autocomplete="off" spellcheck="false" aria-label="Ir para">
+        <datalist id="command-list"></datalist>
+      </form>
+      <button id="notices-btn" class="icon-btn" type="button" title="Avisos das rotinas agendadas" aria-label="Avisos"><svg class="icon" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6.5 16.5V11a5.5 5.5 0 0 1 11 0v5.5l1.5 2H5zM10 20.5a2 2 0 0 0 4 0"/></svg><span id="notices-dot" class="dot" hidden></span></button>
+    </div>
+    <div id="user-menu" class="popover user-box" role="menu" hidden>
+      <div class="popover-head"><span class="avatar big" id="avatar-initials-big">?</span><div><strong id="user-name"></strong><div class="muted small" id="user-role"></div></div></div>
+      <button id="change-password" class="menu-item" type="button" role="menuitem">Trocar senha</button>
+      <button id="logout" class="menu-item" type="button" role="menuitem">Sair</button>
     </div>
   </header>
 
@@ -121,6 +134,7 @@
         <button class="tab" data-ptab="versions">Versões</button>
         <button class="tab" data-ptab="executions">Execuções</button>
         <button class="tab" data-ptab="schedules">Agendamentos</button>
+        <button class="tab" data-ptab="perf">Desempenho</button>
         <span class="run-state" id="run-state"></span>
       </nav>
       <div id="notice" class="notice" hidden></div>
@@ -198,6 +212,9 @@
       <!-- Schedules of this program (spec 018) -->
       <div id="ptab-schedules" class="ptab page-pad" hidden></div>
 
+      <!-- Performance of this program (spec 019) -->
+      <div id="ptab-perf" class="ptab page-pad" hidden></div>
+
       <!-- Executions of this program -->
       <div id="ptab-executions" class="ptab split page-pad" hidden>
         <ul id="execution-list" class="list"></ul>
@@ -217,6 +234,11 @@
     </section>
   </div>
 
+  <!-- File repository (spec 016) -->
+  <div id="area-files" class="area-page" hidden><main id="files-main" class="page-main"></main></div>
+  <!-- External portal (spec 016, RF-016-04) -->
+  <div id="area-portal" class="area-page" hidden><main id="portal-main" class="page-main"></main></div>
+
   <!-- Administration (RF-020-06) -->
   <div id="area-admin" class="area-page two-col" hidden>
     <nav class="side-nav" aria-label="Administração">
@@ -230,12 +252,18 @@
       <button class="nav-link" data-section="accounts">Contas padrão</button>
       <button class="nav-link" data-section="commands">Comandos</button>
       <button class="nav-link" data-section="remote">Sistemas remotos</button>
+      <button class="nav-link" data-section="updates">Atualizações do produto <span class="nav-count" id="updates-count" hidden></span></button>
       <div class="nav-group">Operação do sistema</div>
       <button class="nav-link" data-section="scheduler">Agendamento</button>
       <button class="nav-link" data-section="monitor">Monitor</button>
       <button class="nav-link" data-section="consumption">Consumo</button>
       <button class="nav-link" data-section="audit">Auditoria</button>
       <button class="nav-link" data-section="retention">Retenção</button>
+      <button class="nav-link" data-section="integrations">Integrações</button>
+      <div class="nav-group">Observabilidade</div>
+      <button class="nav-link" data-section="health">Saúde</button>
+      <button class="nav-link" data-section="sqlperf">Desempenho do SQL</button>
+      <button class="nav-link" data-section="advice">Dicas de otimização</button>
     </nav>
     <main id="admin-main" class="page-main"></main>
   </div>

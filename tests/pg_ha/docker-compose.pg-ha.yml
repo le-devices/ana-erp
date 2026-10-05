@@ -1,0 +1,38 @@
+# Real primary failover (spec 023, T-023-09): db (primary) + db2 (streaming replica),
+# on top of the cluster and chaos compose files. Usage: tests/pg_ha/run.sh
+services:
+  db2:
+    image: citusdata/citus:12.1
+    hostname: db2
+    environment:
+      PGPASSWORD: ${ANA_TEST_REPL_PASSWORD:-repl-test-password}
+    # Data in memory: a throwaway replica (and no SSD wear, P15).
+    tmpfs:
+      - /var/lib/postgresql/data:size=1g,mode=0700,uid=999,gid=999
+    user: postgres
+    entrypoint: ["sh", "-c"]
+    command:
+      - |
+        set -e
+        if [ ! -s /var/lib/postgresql/data/PG_VERSION ]; then
+          until pg_basebackup -h db -U replicator -D /var/lib/postgresql/data -R -X stream; do
+            echo "waiting for the primary"; sleep 2; done
+        fi
+        exec postgres -D /var/lib/postgresql/data -c shared_preload_libraries=citus,pg_prewarm \
+             -c max_connections=300 -c max_prepared_transactions=600 -c hot_standby=on
+    depends_on:
+      db:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -U postgres"]
+      interval: 3s
+      timeout: 3s
+      retries: 60
+  ana:
+    environment:
+      ANA_DB_HOST: "db,db2"
+      ANA_DB_READ_HOSTS: "db2"
+  ana2:
+    environment:
+      ANA_DB_HOST: "db,db2"
+      ANA_DB_READ_HOSTS: "db2"

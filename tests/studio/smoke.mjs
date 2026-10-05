@@ -45,13 +45,13 @@ const go = async (w, hash) => { w.location.hash = hash; await sleep(50); };
 // ---------------------------------------------------------------- admin/developer
 const { w, d, jsErrors } = await open("admin", PASSWORD);
 const text = (s) => (d.querySelector(s) || {}).textContent || "";
-await until(() => text("#area-home").includes("Favoritos"), "home");
+await until(() => text("#area-home").includes("Favoritas"), "home");
 ok(!d.querySelector("#area-home").hidden, "Início é a área inicial");
-ok(d.querySelectorAll(".area:not([hidden])").length === 4, "admin vê as quatro áreas");
+ok([...d.querySelectorAll(".area:not([hidden])")].map((b) => b.dataset.area).join(",") === "home,ops,files,dev,admin", "admin vê as cinco áreas (Portal é só para contas externas)");
 
 // Operation: routine with form, result and history together (RF-020-03)
 await go(w, "#/ops/demo/demo.hello");
-await until(() => text("#ops-main").includes("Parâmetros") && d.querySelector("#ops-main form"), "routine page", jsErrors);
+await until(() => text("#ops-main").includes("Filtros") && d.querySelector("#ops-main form"), "routine page", jsErrors);
 ok(text("#ops-nav").includes("Demonstração") && text("#ops-nav").includes("Projetos"), "módulos agrupados na navegação");
 const form = d.querySelector("#ops-main form");
 form.querySelector("[name=name]").value = "Operador";
@@ -70,12 +70,15 @@ ok(true, "favorito aparece no Início (CA-020-05)");
 await go(w, "#/dev/program/demo.hello");
 await until(() => text("#program-name") === "demo.hello", "program", jsErrors);
 ok(d.querySelector("#editor textarea").value.includes("def main"), "código no editor");
-ok([...d.querySelectorAll("[data-ptab]")].map((b) => b.textContent).join("|") === "Código|Propriedades e limites|Versões|Execuções|Agendamentos", "abas do programa");
+ok([...d.querySelectorAll("[data-ptab]")].map((b) => b.textContent).join("|") === "Código|Propriedades e limites|Versões|Execuções|Agendamentos|Desempenho", "abas do programa");
 ok([...d.querySelectorAll("[data-panel]")].map((b) => b.textContent).join("|") === "Saída|Resultado", "painel inferior só com Saída e Resultado (CA-020-02)");
 d.querySelector('[data-ptab="props"]').click();
 await until(() => d.querySelectorAll("#limits-box input").length === 10, "limits", jsErrors);
 await until(() => text("#program-commands").includes("hello"), "commands", jsErrors);
 ok(text("#ptab-props").includes("Comandos") && text("#program-commands").includes("hello"), "propriedades, comandos e limites juntos");
+d.querySelector('[data-ptab="perf"]').click();
+await until(() => text("#ptab-perf").includes("Análise do SQL do código"), "perf tab", jsErrors);
+ok(true, "aba Desempenho do programa (spec 019)");
 d.querySelector('[data-ptab="versions"]').click();
 await until(() => text("#version-list").includes("v1"), "versions", jsErrors);
 ok(true, "versões na aba do programa");
@@ -159,11 +162,14 @@ ok(d.querySelectorAll("#ops-main .gantt-bar.critical").length > 0, "linha do tem
 [...d.querySelectorAll("#ops-main .output-tabs button")].find((b) => b.textContent === "Viabilidade").click();
 await until(() => text("#ops-main").includes("pessimista"), "viability", jsErrors);
 ok(text("#ops-main").includes("otimista") && text("#ops-main").includes("Mês a mês"), "viabilidade com cenários base, otimista e pessimista");
+ok(d.querySelectorAll("#ops-main .chart svg .line").length >= 3 && d.querySelector("#ops-main .chart-legend"), "gráficos com legenda na viabilidade (spec 026)");
+d.querySelector("#ops-main .chart .chart-tools button").click();
+ok(!d.querySelector("#ops-main .chart .chart-table").hidden, "gráfico tem visão em tabela");
 
 // Administration grouped (RF-020-06)
 await go(w, "#/admin/users");
 await until(() => d.querySelectorAll("#admin-main tbody tr").length > 0, "users", jsErrors);
-ok([...d.querySelectorAll("#area-admin .nav-group")].map((g) => g.textContent).join("|") === "Pessoas e acesso|Sistema|Operação do sistema", "administração em três grupos (CA-020-03)");
+ok([...d.querySelectorAll("#area-admin .nav-group")].map((g) => g.textContent).join("|") === "Pessoas e acesso|Sistema|Operação do sistema|Observabilidade", "administração em grupos (CA-020-03)");
 d.querySelector("#admin-main tbody tr").click();
 await until(() => text("#admin-main .form-card").includes("Cota de execução"), "user card", jsErrors);
 ok(text("#admin-main .form-card").includes("Redefinir senha") && text("#admin-main .form-card").includes("Grupos"), "ficha do usuário reúne grupos, cota e acesso");
@@ -193,9 +199,28 @@ ok([...d.querySelectorAll("#admin-main .form-card option")].some((o) => o.value 
 for (const [section, marker] of [["groups", "Grupos de acesso"], ["limits", "Perfil de limite"], ["company", "Razão social"],
                                  ["settings", "ceiling_cpu_ms"], ["accounts", "service_revenue"], ["commands", "hello"],
                                  ["remote", "Sistemas remotos"], ["scheduler", "Feriados"], ["monitor", "Execuções ativas"], ["consumption", "CPU total"],
-                                 ["retention", "Expurgos recentes"], ["audit", "Auditoria"]]) {
+                                 ["retention", "Expurgos recentes"], ["health", "Mudanças de estado"], ["sqlperf", "Desempenho do SQL"],
+                                 ["advice", "Dicas de otimização"], ["updates", "Atualizações do produto"], ["integrations", "Chamadas 24 h"], ["audit", "Auditoria"]]) {
   await go(w, `#/admin/${section}`);
   await until(() => text("#admin-main").includes(marker), section, jsErrors);
+  if (section === "integrations") {
+    [...d.querySelectorAll("#admin-main .sub-tabs button")].find((b) => b.textContent === "Conectores").click();
+    await until(() => text("#admin-main").includes("Segredos (só escrita)"), "connectors", jsErrors);
+    [...d.querySelectorAll("#admin-main .sub-tabs button")].find((b) => b.textContent === "Saída").click();
+    await until(() => text("#admin-main").includes("Último erro"), "outbox", jsErrors);
+    ok(true, "integrações: painel, conectores com segredos só de escrita e mensagens (spec 017)");
+  }
+  if (section === "updates") {
+    // Spec 028: an update row opens the side-by-side comparison (demo.hello is used by the integration suite).
+    const view = [...d.querySelectorAll("#admin-main tbody button")][0];
+    if (view) {
+      view.click();
+      await until(() => text("#admin-main").includes("Instalado × produto"), "product update detail", jsErrors);
+      ok(true, "atualização do produto abre a comparação lado a lado (spec 028)");
+    }
+    const ops = w.AnaAdmin.lineDiff(["a", "b", "c", "d"], ["a", "x", "c", "d", "e"]).map((o) => o.t).join(",");
+    ok(ops === "same,add,del,same,same,add" || ops === "same,del,add,same,same,add", "comparação linha a linha: " + ops);
+  }
 }
 [...d.querySelectorAll("#admin-main .sub-tabs button")].find((b) => b.textContent === "Tarefas internas").click();
 await until(() => text("#admin-main tbody").includes("seed.programs"), "internal tasks", jsErrors);
@@ -230,18 +255,50 @@ await fetch(ANA_URL + "/api/admin/users", { method: "POST", headers: { "Content-
   body: JSON.stringify({ username: uname, password: "Operator-pass-1", role: "user", must_change_password: false }) });
 const u = await open(uname, "Operator-pass-1");
 const utext = (s) => (u.d.querySelector(s) || {}).textContent || "";
-await until(() => utext("#area-home").includes("Favoritos"), "user home", u.jsErrors);
-ok([...u.d.querySelectorAll(".area")].filter((b) => !b.hidden).map((b) => b.dataset.area).join(",") === "home,ops", "usuário vê só Início e Operação");
+await until(() => utext("#area-home").includes("Favoritas"), "user home", u.jsErrors);
+ok([...u.d.querySelectorAll(".area")].filter((b) => !b.hidden).map((b) => b.dataset.area).join(",") === "home,ops,files", "usuário vê Início, Operação e Arquivos");
 u.w.location.hash = "#/dev";
 await sleep(300);
 ok(!u.d.querySelector("#area-home").hidden, "acesso direto a #/dev volta ao Início");
 u.w.location.hash = "#/ops";
 await until(() => utext("#ops-nav").includes("Vendas"), "user ops", u.jsErrors);
 ok(!utext("#ops-nav").includes("Utilidades"), "bibliotecas não aparecem como rotinas");
+u.w.location.hash = "#/files";
+await until(() => utext("#area-files").includes("Arraste arquivos"), "user files", u.jsErrors);
+ok(true, "área Arquivos abre para o usuário (spec 016)");
 ok(u.jsErrors.length === 0, "nenhum erro de JavaScript (usuário)");
 await fetch(`${ANA_URL}/api/admin/users/${uname}`, { method: "PUT", headers: { "Content-Type": "application/json", Authorization: "Bearer " + token },
   body: JSON.stringify({ active: false }) });
 u.w.close();
+
+// ---------------------------------------------------------------- external portal account (spec 016)
+const auth = { "Content-Type": "application/json", Authorization: "Bearer " + token };
+const sql = await (await fetch(ANA_URL + "/api/sql", { method: "POST", headers: auth,
+  body: JSON.stringify({ sql: "SELECT id FROM base.party WHERE active ORDER BY id LIMIT 1" }) })).json();
+const xname = "ex" + Date.now().toString().slice(-7);
+await fetch(ANA_URL + "/api/admin/users", { method: "POST", headers: auth,
+  body: JSON.stringify({ username: xname, password: "Portal-pass-1", role: "external", party_id: sql.rows[0][0] }) });
+const xt = (await (await fetch(ANA_URL + "/api/session", { method: "POST", headers: { "Content-Type": "application/json" },
+  body: JSON.stringify({ username: xname, password: "Portal-pass-1" }) })).json()).token;
+await fetch(ANA_URL + "/api/me/password", { method: "POST", headers: { "Content-Type": "application/json", Authorization: "Bearer " + xt },
+  body: JSON.stringify({ current: "Portal-pass-1", new: "Portal-pass-2" }) });
+const x = await open(xname, "Portal-pass-2");
+const xtext = (s) => (x.d.querySelector(s) || {}).textContent || "";
+await until(() => xtext("#area-portal").includes("Consultas liberadas"), "portal", x.jsErrors);
+ok([...x.d.querySelectorAll(".area")].filter((b) => !b.hidden).map((b) => b.dataset.area).join(",") === "files,portal",
+   "conta externa vê só Arquivos e Portal");
+[...x.d.querySelectorAll("#portal-main button")].find((b) => b.textContent.startsWith("Minhas faturas")).click();
+await until(() => [...x.d.querySelectorAll("#portal-main h3, #portal-main .table-title, #portal-main caption")]
+  .some((n) => n.textContent.includes("Faturas")) || xtext("#portal-main .output").includes("Faturas"), "my invoices", x.jsErrors);
+ok(true, "portal executa Minhas faturas");
+ok([...x.d.querySelectorAll("#portal-main button")].some((b) => b.textContent.startsWith("Aprovações do cliente")),
+   "portal oferece as aprovações do cliente (T-021-11)");
+x.w.location.hash = "#/dev";
+await sleep(300);
+ok(!x.d.querySelector("#area-portal").hidden, "conta externa não entra no Desenvolvimento");
+ok(x.jsErrors.length === 0, "nenhum erro de JavaScript (portal)" + (x.jsErrors.length ? ": " + x.jsErrors.join("; ") : ""));
+await fetch(`${ANA_URL}/api/admin/users/${xname}`, { method: "PUT", headers: auth, body: JSON.stringify({ active: false }) });
+x.w.close();
 process.exit(0);
 
 function location_hash(win) { return win.location.hash; }

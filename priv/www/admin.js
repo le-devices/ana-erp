@@ -52,7 +52,14 @@
       ...header("Usuários", "Inclua pessoas, defina papel e grupos, bloqueie acessos e redefina senhas."),
       el("div", { class: "admin-toolbar" }, searchInput,
         el("button", { text: "Buscar", onclick: () => users(searchInput.value) }),
-        el("button", { class: "primary", text: "+ Novo usuário", onclick: () => showForm(null) })),
+        el("button", { class: "primary", text: "+ Novo usuário", onclick: () => showForm(null) }),
+        el("button", { class: "quiet", text: "Desbloquear endereço IP", title: "Após muitas senhas erradas, um endereço fica bloqueado por alguns minutos",
+          onclick: () => guard(async () => {
+            const ip = prompt("Endereço IP a desbloquear (vazio = o seu):", "");
+            if (ip === null) return;
+            const r = await API.admin.unlockIp(ip.trim() || "self");
+            toast(`Endereço ${r.ip} desbloqueado.`);
+          }) })),
       el("div", { class: "admin-columns" }, el("div", {}, t), side));
     showForm(null);
   }
@@ -423,6 +430,9 @@
     main().replaceChildren(
       ...header("Consumo", "Programas que mais consomem CPU, tempo e memória no período — ponto de partida para otimizar ou ajustar limites."),
       el("div", { class: "sub-tabs" }, [1, 7, 30].map((d) => el("button", { class: d === days ? "active" : "", text: `${d} dias`, onclick: () => consumption(d) }))),
+      usage.length ? window.AnaCharts.render({ type: "bar", title: "CPU total por programa", subtitle: `últimos ${days} dia(s)`,
+        x: usage.slice(0, 12).map((r) => r.program), series: [{ name: "CPU (ms)", values: usage.slice(0, 12).map((r) => Number(r.total_cpu_ms) || 0) }],
+        format: "number", unit: "ms" }) : null,
       table([
         { label: "Programa", value: (r) => r.program },
         { label: "Execuções", value: (r) => r.runs, class: "num" },
@@ -583,10 +593,43 @@
         ], x.parts, { onRow: (p) => showExecution(p.id, target) })) : null,
       block("Erro", x.error && { code: x.error.code, message: x.error.message, line: x.error.line }),
       block("Stack trace", x.error && x.error.trace),
+      x.error && x.error.frames && x.error.frames.length ? el("div", {}, el("h4", { text: "Quadros (do mais externo ao do erro)" }),
+        table([{ label: "Programa", value: (f) => f.where }, { label: "Linha", value: (f) => f.line, class: "num" },
+               { label: "Função", value: (f) => f.function }, { label: "Código", value: (f) => el("code", { text: f.code }) }], x.error.frames)) : null,
+      x.error && x.error.locals && Object.keys(x.error.locals).length ? el("div", {}, el("h4", { text: "Variáveis no ponto do erro" }),
+        table([{ label: "Nome", value: (v) => v[0] }, { label: "Valor", value: (v) => el("code", { text: v[1] }) }], Object.entries(x.error.locals))) : null,
+      traceView(x.trace),
       block("Trace interno do núcleo", x.internal_trace),
       block("Limites aplicados", x.limits), block("Parâmetros", x.params),
       block("Resultado", x.result), block("Saída", x.output)));
     target.scrollIntoView?.({ block: "nearest" });
+  }
+
+  // RF-019-03/05: SQL timeline (where the time went) and profile of a traced execution.
+  function traceView(t) {
+    if (!t) return el("p", { class: "muted small", text: "Sem rastro detalhado (execuções rápidas e sem erro são amostradas)." });
+    const evs = t.events || [];
+    const byHash = {};
+    for (const e of evs) { const k = e.hash; byHash[k] = byHash[k] || { sql: e.sql, ms: 0, n: 0 }; byHash[k].ms += e.ms; byHash[k].n += 1; }
+    const top = Object.values(byHash).sort((a, b) => b.ms - a.ms).slice(0, 8);
+    const prof = t.profile && t.profile.functions ? t.profile : null;
+    return el("div", {},
+      el("h4", { text: `Rastro (${({ error: "erro", slow: "execução lenta", sample: "amostra", profile: "perfil" })[t.reason] || t.reason}) · ${evs.length} comando(s) SQL · ${Number(t.sql_ms).toLocaleString("pt-BR")} ms em SQL` }),
+      top.length > 1 ? window.AnaCharts.render({ type: "bar", title: "Tempo por comando nesta execução", format: "number", unit: "ms",
+        x: top.map((h) => `${h.sql.slice(0, 50)}${h.sql.length > 50 ? "…" : ""} (${h.n}×)`), series: [{ name: "Tempo", values: top.map((h) => h.ms) }] }) : null,
+      evs.length ? table([
+        { label: "Aos (ms)", value: (e) => e.t_ms, class: "num" },
+        { label: "Duração (ms)", value: (e) => Number(e.ms).toLocaleString("pt-BR", { maximumFractionDigits: 2 }), class: "num" },
+        { label: "Linhas", value: (e) => e.rows, class: "num" },
+        { label: "Onde", value: (e) => e.at ? `${e.at[0]}:${e.at[1]}` : "" },
+        { label: "Comando", value: (e) => el("code", { class: e.error ? "status-error" : "", text: e.sql.length > 120 ? e.sql.slice(0, 120) + "…" : e.sql, title: e.sql }) },
+      ], evs.slice(0, 500)) : null,
+      prof ? el("div", {}, el("h4", { text: `Perfil · ${Number(prof.sql_wait_ms).toLocaleString("pt-BR")} ms esperando SQL` }),
+        window.AnaCharts.render({ type: "bar", title: "Funções com mais tempo (total)", format: "number", unit: "ms",
+          x: prof.functions.slice(0, 10).map((f) => `${f.function} (${f.where}:${f.line})`), series: [{ name: "Tempo total", values: prof.functions.slice(0, 10).map((f) => f.total_ms) }] }),
+        table([{ label: "Função", value: (f) => f.function }, { label: "Onde", value: (f) => `${f.where}:${f.line}` },
+               { label: "Chamadas", value: (f) => f.calls, class: "num" }, { label: "Próprio (ms)", value: (f) => f.self_ms, class: "num" },
+               { label: "Total (ms)", value: (f) => f.total_ms, class: "num" }], prof.functions)) : null);
   }
 
   // ------------------------------------------------------------------ retention (RF-024-08..10)
@@ -639,6 +682,404 @@
       out);
   }
 
+  // ------------------------------------------------------------------ observability (spec 019)
+  const STATE = { green: ["●", "normal", "ok"], yellow: ["▲", "atenção", "warn"], red: ["■", "falha", "off"] };
+  const SEVERITY = { info: ["ℹ", "informação", ""], warning: ["▲", "atenção", "warn"], serious: ["◆", "sério", "off"], critical: ["■", "crítico", "off"] };
+  const COMPONENT = { database: "Banco de dados", pool_core: "Conexões do núcleo", pool_programs: "Conexões dos programas",
+    python: "Processos Python", scheduler: "Agendamento", access_log: "Registro de acessos", remote_systems: "Sistemas remotos", integrations: "Integrações" };
+  const stateChip = (s) => { const [icon, label, cls] = STATE[s] || ["?", s, ""]; return pill(`${icon} ${label}`, cls); };
+  const sevChip = (s) => { const [icon, label, cls] = SEVERITY[s] || ["", s, ""]; return pill(`${icon} ${label}`, cls); };
+  const n2 = (v) => (v === null || v === undefined ? "—" : Number(v).toLocaleString("pt-BR", { maximumFractionDigits: 1 }));
+
+  async function health() {
+    const [h, samples] = await Promise.all([API.admin.obsHealth(), API.admin.obsSamples(24).catch(() => [])]);
+    const stat = (c) => el("div", { class: "stat" }, el("div", { class: "label", text: COMPONENT[c.component] || c.component }),
+      el("div", { class: "value" }, stateChip(c.state)), el("div", { class: "sub", text: `${c.message} · ${n2(c.latency_ms)} ms` }));
+    // Executions per 5 min from the cumulative samples (one node at a time keeps it simple: sum by sample time).
+    const byAt = new Map();
+    for (const smp of samples) {
+      const m = smp.metrics || {};
+      const t = smp.at.slice(0, 16);
+      const prev = byAt.get(t) || { ok: 0, bad: 0, mem: 0 };
+      const ex = m.executions || {};
+      prev.ok += ex.success || 0;
+      prev.bad += (ex.error || 0) + (ex.timeout || 0) + (ex.aborted || 0);
+      prev.mem += m.memory_mb || 0;
+      byAt.set(t, prev);
+    }
+    const ats = [...byAt.keys()];
+    const deltas = ats.slice(1).map((t, i) => {
+      const a = byAt.get(ats[i]), b = byAt.get(t);
+      return { t, ok: Math.max(0, b.ok - a.ok), bad: Math.max(0, b.bad - a.bad), mem: b.mem };
+    });
+    main().replaceChildren(
+      ...header("Saúde", "Estado de cada componente (verificado a cada 10 s), incidentes e o que mudou. Só as mudanças ficam gravadas."),
+      el("div", { class: "row-buttons" }, el("button", { text: "Verificar agora", onclick: () => guard(async () => { await API.admin.obsCheck(); health(); }) })),
+      el("div", { class: "stat-grid" }, h.components.map(stat)),
+      deltas.length >= 2 ? window.AnaCharts.render({ type: "stacked", title: "Execuções a cada 5 minutos", subtitle: "últimas 24 h",
+        x: deltas.map((d) => d.t.replace("T", " ")), series: [{ name: "Concluídas", values: deltas.map((d) => d.ok) },
+                                                               { name: "Com falha", values: deltas.map((d) => d.bad) }] }) : null,
+      deltas.length >= 2 ? window.AnaCharts.render({ type: "line", title: "Memória do núcleo", format: "number", unit: "MB",
+        x: deltas.map((d) => d.t.replace("T", " ")), series: [{ name: "Memória", values: deltas.map((d) => d.mem) }] }) : null,
+      el("h3", { text: "Incidentes" }),
+      table([
+        { label: "Componente", value: (i) => COMPONENT[i.component] || i.component },
+        { label: "Nó", value: (i) => i.node },
+        { label: "Início", value: (i) => fmtDate(i.opened_at) },
+        { label: "Fim", value: (i) => i.closed_at ? fmtDate(i.closed_at) : pill("■ aberto", "off") },
+        { label: "Duração", value: (i) => `${Math.round(i.seconds / 60)} min`, class: "num" },
+        { label: "Mensagem", value: (i) => i.message },
+      ], h.incidents, { empty: "Nenhum incidente." }),
+      el("h3", { text: "Mudanças de estado (72 h)" }),
+      table([
+        { label: "Quando", value: (e) => fmtDate(e.at) },
+        { label: "Componente", value: (e) => COMPONENT[e.component] || e.component },
+        { label: "Estado", value: (e) => stateChip(e.state) },
+        { label: "Mensagem", value: (e) => e.message },
+        { label: "Nó", value: (e) => e.node },
+      ], h.events, { empty: "Nenhuma mudança." }));
+  }
+
+  async function sqlperf(filters = { order: "total" }) {
+    const rows = await API.admin.obsSql(filters);
+    const detail = el("div");
+    const program = el("input", { placeholder: "Programa (opcional)", value: filters.program || "" });
+    const order = el("select", {}, [["total", "Tempo total"], ["mean", "Tempo médio"], ["max", "Tempo máximo"], ["calls", "Chamadas"]]
+      .map(([v, l]) => el("option", { value: v, text: "Ordenar por " + l.toLowerCase() })));
+    order.value = filters.order || "total";
+    const apply = () => sqlperf({ program: program.value.trim(), order: order.value });
+    const short = (q) => q.length > 90 ? q.slice(0, 90) + "…" : q;
+    const top = rows.slice(0, 10);
+    main().replaceChildren(
+      ...header("Desempenho do SQL", "Cada comando SQL dos programas, medido e agregado. Os lentos ganham plano de execução e sugestão; veja também as Dicas."),
+      el("div", { class: "admin-toolbar" }, program, order, el("button", { text: "Filtrar", onclick: apply }),
+        el("button", { class: "quiet", text: "Atualizar agora", title: "Grava as medições do último minuto", onclick: () => guard(async () => { await API.admin.obsFlush(); apply(); }) })),
+      top.length ? window.AnaCharts.render({ type: "bar", title: "Comandos com mais tempo total", format: "number", unit: "ms",
+        x: top.map((r) => short(r.sql).slice(0, 48)), series: [{ name: "Tempo total", values: top.map((r) => Number(r.total_ms)) }] }) : null,
+      table([
+        { label: "Comando", value: (r) => el("code", { text: short(r.sql), title: r.sql }) },
+        { label: "Chamadas", value: (r) => n2(r.calls), class: "num" },
+        { label: "Total (ms)", value: (r) => n2(r.total_ms), class: "num" },
+        { label: "Médio (ms)", value: (r) => n2(r.mean_ms), class: "num" },
+        { label: "Máx. (ms)", value: (r) => n2(r.max_ms), class: "num" },
+        { label: "Lentas", value: (r) => r.slow_calls ? pill(`▲ ${r.slow_calls}`, "warn") : "0", class: "num" },
+        { label: "Varredura completa", value: (r) => (r.plan_summary && r.plan_summary.seq_scans && r.plan_summary.seq_scans.length)
+            ? r.plan_summary.seq_scans.map((s) => `${s.table} (${n2(s.table_rows)} linhas)`).join(", ") : "" },
+        { label: "Programas", value: (r) => (r.programs || []).join(", ") },
+      ], rows, { empty: "Ainda sem medições — execute programas e clique em Atualizar agora.", onRow: (r) => sqlDetail(r.hash, detail) }),
+      detail);
+  }
+
+  async function sqlDetail(hash, target) {
+    const r = await API.admin.obsSqlDetail(hash);
+    const scans = (r.plan_summary && r.plan_summary.seq_scans) || [];
+    target.replaceChildren(el("div", { class: "form-card" },
+      el("h3", { text: "Comando SQL" }), el("pre", { class: "code-view", text: r.sql }),
+      el("div", { class: "stat-grid" },
+        ...[["Chamadas", n2(r.calls)], ["Tempo total", n2(r.total_ms) + " ms"], ["Médio", n2(r.total_ms / Math.max(r.calls, 1)) + " ms"],
+            ["Máximo", n2(r.max_ms) + " ms"], ["Linhas", n2(r.rows)], ["Custo estimado", r.plan_summary ? n2(r.plan_summary.cost) : "—"]]
+          .map(([l, v]) => el("div", { class: "stat" }, el("div", { class: "label", text: l }), el("div", { class: "value", text: v })))),
+      scans.length ? el("div", {}, el("h4", { text: "Varreduras completas no plano" }),
+        table([{ label: "Tabela", value: (s) => s.table }, { label: "Linhas na tabela", value: (s) => n2(s.table_rows), class: "num" },
+               { label: "Filtro", value: (s) => el("code", { text: s.filter || "—" }) }, { label: "Colunas do filtro", value: (s) => (s.columns || []).join(", ") }], scans)) : null,
+      (r.advice || []).length ? el("div", {}, el("h4", { text: "Dicas" }), r.advice.map(adviceCard)) : null,
+      r.plan ? el("details", {}, el("summary", { text: "Plano completo (EXPLAIN, sem executar)" }), el("pre", { class: "code-view", text: JSON.stringify(r.plan, null, 2) })) : null));
+    target.scrollIntoView?.({ block: "nearest" });
+  }
+
+  function adviceCard(a) {
+    const copy = el("button", { type: "button", class: "quiet small", text: "Copiar", onclick: () => {
+      try { navigator.clipboard.writeText(a.suggestion); toast("Sugestão copiada."); } catch (_) { toast("Não foi possível copiar.", true); }
+    } });
+    return el("div", { class: "advice-card" },
+      el("div", { class: "advice-head" }, sevChip(a.severity), el("strong", { text: a.title })),
+      a.detail ? el("p", { class: "muted", text: a.detail }) : null,
+      a.suggestion ? el("div", { class: "advice-suggestion" }, el("code", { text: a.suggestion }), copy) : null);
+  }
+
+  async function advice(status = "open") {
+    const rows = await API.admin.advice(status);
+    const counts = rows.reduce((acc, a) => ({ ...acc, [a.severity]: (acc[a.severity] || 0) + 1 }), {});
+    main().replaceChildren(
+      ...header("Dicas de otimização", "Problemas atuais e futuros encontrados no SQL, nos programas e no banco, com a correção sugerida. Analisadas a cada 15 minutos."),
+      el("div", { class: "sub-tabs" }, [["open", "Abertas"], ["dismissed", "Dispensadas"], ["resolved", "Resolvidas"]].map(([k, l]) =>
+        el("button", { class: k === status ? "active" : "", text: l, onclick: () => advice(k) }))),
+      el("div", { class: "row-buttons" }, el("button", { text: "Analisar agora", onclick: () => guard(async () => {
+        const r = await API.admin.adviceRun(); toast(`${r.found} dica(s) encontrada(s), ${r.resolved} resolvida(s).`); advice(status);
+      }) })),
+      status === "open" ? el("div", { class: "stat-grid" }, ["critical", "serious", "warning", "info"].map((s) =>
+        el("div", { class: "stat" }, el("div", { class: "label" }, sevChip(s)), el("div", { class: "value", text: String(counts[s] || 0) })))) : null,
+      rows.length ? el("div", {}, rows.map((a) => {
+        const card = adviceCard(a);
+        if (status === "open") card.append(el("div", { class: "row-buttons" },
+          el("button", { type: "button", class: "quiet small", text: "Dispensar por 30 dias", onclick: () => guard(async () => { await API.admin.adviceDismiss(a.id, 30); advice(status); }) }),
+          el("button", { type: "button", class: "quiet small", text: "Dispensar sempre", onclick: () => guard(async () => { await API.admin.adviceDismiss(a.id, 0); advice(status); }) })));
+        card.append(el("details", {}, el("summary", { text: "evidência" }), el("pre", { class: "code-view", text: JSON.stringify(a.evidence, null, 2) })),
+          el("div", { class: "muted small", text: `${a.rule} · visto pela primeira vez ${fmtDate(a.first_seen)} · última ${fmtDate(a.last_seen)}` }));
+        return card;
+      })) : el("p", { class: "muted", text: status === "open" ? "Nenhuma dica aberta. Bom sinal." : "Nada aqui." }));
+  }
+
+  // ------------------------------------------------------------------ integrations (spec 017)
+  const MSG_STATUS = { pending: "pendente", processing: "processando", done: "entregue", dead: "esgotada", discarded: "descartada" };
+  const SECRET_KEYS = { none: [], basic: ["username", "password"], bearer: ["token"], api_key: ["api_key"],
+                        oauth2_client: ["client_id", "client_secret"] };
+
+  async function integrations(tab = "panel", filter = {}) {
+    const tabs = el("div", { class: "sub-tabs" }, [["panel", "Painel"], ["connectors", "Conectores"], ["outbox", "Saída"], ["inbox", "Entrada"]]
+      .map(([k, l]) => el("button", { class: k === tab ? "active" : "", text: l, onclick: () => guard(() => integrations(k)) })));
+    const body = el("div");
+    main().replaceChildren(...header("Integrações", "Conectores com bancos, gateways e serviços externos. Programas usam o conector (ana.http, ana.send); segredos ficam no cofre e nunca chegam aos programas. Mensagens são entregues pelo menos uma vez, com novas tentativas."), tabs, body);
+    if (tab === "panel") {
+      const rows = await API.admin.integrationStats();
+      body.replaceChildren(table([
+        { label: "Conector", value: (c) => c.name },
+        { label: "Tipo", value: (c) => (c.kind === "http_api" ? "saída HTTP" : "webhook de entrada") },
+        { label: "Situação", value: (c) => (c.active ? pill("ativo", "ok") : pill("inativo", "off")) },
+        { label: "Chamadas 24 h", value: (c) => c.calls },
+        { label: "Erro %", value: (c) => (c.error_pct === null ? "—" : c.error_pct) },
+        { label: "p95 (ms)", value: (c) => c.p95_ms ?? "—" },
+        { label: "Fila de saída", value: (c) => `${c.out_pending}` + (c.out_dead ? ` · ${c.out_dead} esgotada(s)` : "") },
+        { label: "Fila de entrada", value: (c) => `${c.in_pending}` + (c.in_dead ? ` · ${c.in_dead} esgotada(s)` : "") },
+      ], rows, { empty: "Nenhum conector cadastrado.", onRow: (c) => guard(() => integrations(c.kind === "http_api" ? "outbox" : "inbox", { connector: c.name })) }));
+    } else if (tab === "connectors") {
+      body.replaceChildren(await connectorsView());
+    } else {
+      body.replaceChildren(await messagesView(tab, filter));
+    }
+  }
+
+  async function connectorsView() {
+    const data = await API.admin.connectors();
+    const side = el("div");
+    const form = (c = {}) => {
+      const f = {
+        name: el("input", { value: c.name || "", placeholder: "ex.: banco_x", disabled: !!c.name }),
+        description: el("input", { value: c.description || "" }),
+        kind: el("select", {}, [["http_api", "Saída HTTP (API)"], ["webhook_in", "Webhook de entrada"]].map(([v, l]) => el("option", { value: v, text: l, selected: c.kind === v }))),
+        base_url: el("input", { value: c.base_url || "", placeholder: "https://api.exemplo.com" }),
+        auth: el("select", {}, [["none", "Nenhuma"], ["basic", "Usuário e senha"], ["bearer", "Token"], ["api_key", "Chave de API"], ["oauth2_client", "OAuth2 (client credentials)"]].map(([v, l]) => el("option", { value: v, text: l, selected: (c.auth || "none") === v }))),
+        token_url: el("input", { value: c.token_url || "", placeholder: "https://… (OAuth2)" }),
+        allowed_hosts: el("input", { value: (c.allowed_hosts || []).join(", "), placeholder: "outros hosts além do da URL base" }),
+        outbound_program: el("input", { value: c.outbound_program || "", placeholder: "programa que entrega a caixa de saída" }),
+        inbound_program: el("input", { value: c.inbound_program || "", placeholder: "programa que processa os webhooks" }),
+        run_as: el("input", { value: c.run_as || "system" }),
+        max_attempts: el("input", { type: "number", min: 1, max: 50, value: c.max_attempts || 8 }),
+        timeout_ms: el("input", { type: "number", min: 100, max: 120000, value: c.timeout_ms || 15000 }),
+        rate_per_min: el("input", { type: "number", min: 1, value: c.rate_per_min || 600 }),
+        options: el("textarea", { rows: 3, class: "params-json", value: JSON.stringify(c.options || {}, null, 1) }),
+        active: el("input", { type: "checkbox", checked: c.active !== false }),
+      };
+      const secrets = el("div");
+      const drawSecrets = () => {
+        const have = new Map((c.secrets || []).map((x) => [x.key, x]));
+        const keys = [...new Set([...(SECRET_KEYS[f.auth.value] || []), ...(f.kind.value === "webhook_in" ? ["hmac_key"] : []), ...have.keys()])];
+        secrets.replaceChildren(el("h4", { text: "Segredos (só escrita)" }), ...keys.map((k) => {
+          const input = el("input", { type: "password", autocomplete: "new-password", placeholder: have.has(k) ? "definido — digite para trocar" : "não definido" });
+          const exp = el("input", { type: "date", value: (have.get(k) || {}).expires_at || "" });
+          return el("div", { class: "row-buttons" }, el("code", { text: k }), input, exp,
+            have.get(k) && have.get(k).expiring ? pill("vence em breve", "warn") : null,
+            el("button", { type: "button", class: "small", text: "Gravar", disabled: !c.name, onclick: () => guard(async () => {
+              if (!input.value) return;
+              await API.admin.saveSecret(c.name, k, input.value, exp.value); input.value = ""; toast("Segredo gravado no cofre.");
+              integrations("connectors");
+            }) }));
+        }), c.name ? null : el("p", { class: "muted small", text: "Salve o conector antes de gravar segredos." }),
+          data.vault ? null : el("p", { class: "muted small", text: "Cofre desligado: defina ANA_MASTER_KEY em todos os nós." }));
+      };
+      f.auth.addEventListener("change", drawSecrets);
+      f.kind.addEventListener("change", drawSecrets);
+      drawSecrets();
+      side.replaceChildren(el("form", { class: "form-card", onsubmit: (e) => { e.preventDefault(); guard(async () => {
+        let options;
+        try { options = JSON.parse(f.options.value || "{}"); } catch (_) { toast("Opções devem ser um JSON de objeto.", true); return; }
+        const name = f.name.value.trim();
+        await API.admin.saveConnector(name, { description: f.description.value, kind: f.kind.value, base_url: f.base_url.value.trim() || null,
+          auth: f.auth.value, token_url: f.token_url.value.trim() || null,
+          allowed_hosts: f.allowed_hosts.value.split(",").map((h) => h.trim()).filter(Boolean),
+          outbound_program: f.outbound_program.value.trim() || null, inbound_program: f.inbound_program.value.trim() || null,
+          run_as: f.run_as.value.trim() || "system", max_attempts: Number(f.max_attempts.value), timeout_ms: Number(f.timeout_ms.value),
+          rate_per_min: Number(f.rate_per_min.value), options, active: f.active.checked });
+        toast("Conector salvo."); integrations("connectors");
+      }); } },
+        el("h3", { text: c.name ? `Conector ${c.name}` : "Novo conector" }),
+        field("Nome", f.name), field("Descrição", f.description), field("Tipo", f.kind), field("URL base", f.base_url),
+        field("Autenticação", f.auth), field("URL do token (OAuth2)", f.token_url), field("Hosts permitidos", f.allowed_hosts),
+        field("Programa de entrega (saída)", f.outbound_program), field("Programa de processamento (entrada)", f.inbound_program),
+        field("Roda como (usuário dono)", f.run_as), field("Tentativas", f.max_attempts), field("Tempo máximo (ms)", f.timeout_ms),
+        field("Chamadas por minuto", f.rate_per_min), field("Opções para os programas (JSON)", f.options), check("Ativo", f.active),
+        el("div", { class: "row-buttons" }, el("button", { class: "primary", type: "submit", text: "Salvar" })),
+        secrets,
+        c.kind === "webhook_in" ? el("p", { class: "muted small", text: `Endereço: POST /hooks/${c.name} com cabeçalhos ${c.timestamp_header} (segundos), ${c.signature_header} = sha256=<HMAC-SHA256 hex de "carimbo.corpo"> e ${c.event_id_header}.` }) : null));
+    };
+    form();
+    return el("div", { class: "admin-columns" },
+      el("div", {}, el("div", { class: "row-buttons" }, el("button", { text: "Novo conector", onclick: () => form() })),
+        table([
+          { label: "Nome", value: (c) => c.name },
+          { label: "Tipo", value: (c) => (c.kind === "http_api" ? "saída HTTP" : "webhook") },
+          { label: "Destino", value: (c) => c.base_url || `/hooks/${c.name}` },
+          { label: "Segredos", value: (c) => (c.secrets.length ? c.secrets.map((x) => x.key).join(", ") : "—") },
+          { label: "Situação", value: (c) => (c.active ? pill("ativo", "ok") : pill("inativo", "off")) },
+        ], data.connectors, { empty: "Nenhum conector.", onRow: (c) => form(c) })),
+      side);
+  }
+
+  async function messagesView(kind, filter = {}) {
+    const status = el("select", {}, [["", "Todas"], ...Object.entries(MSG_STATUS)].map(([v, l]) => el("option", { value: v, text: l, selected: (filter.status || "") === v })));
+    const connector = el("input", { value: filter.connector || "", placeholder: "conector" });
+    const reload = () => guard(() => integrations(kind, { status: status.value || undefined, connector: connector.value.trim() || undefined }));
+    status.addEventListener("change", reload);
+    connector.addEventListener("keydown", (e) => { if (e.key === "Enter") reload(); });
+    const rows = await API.admin.integrationMessages({ kind, ...filter });
+    const detail = el("div");
+    return el("div", {},
+      el("div", { class: "row-buttons" }, field("Situação", status), field("Conector", connector), el("button", { text: "Atualizar", onclick: reload })),
+      table([
+        { label: "#", value: (m) => m.id },
+        { label: "Conector", value: (m) => m.connector },
+        { label: kind === "outbox" ? "Tipo" : "Evento", value: (m) => (kind === "outbox" ? m.kind : m.event_id) },
+        { label: "Situação", value: (m) => pill(MSG_STATUS[m.status] || m.status, m.status === "done" ? "ok" : m.status === "dead" ? "warn" : "") },
+        { label: "Tentativas", value: (m) => m.attempts },
+        { label: "Último erro", value: (m) => m.last_error || "" },
+        { label: "Criada", value: (m) => fmtDate(m.created_at) },
+        { label: "", value: (m) => el("div", { class: "row-buttons" },
+            ["dead", "discarded"].includes(m.status) ? el("button", { class: "small", text: "Reprocessar", onclick: () => guard(async () => {
+              await API.admin.integrationAction(kind, m.id, "reprocess"); toast("Mensagem voltou para a fila."); reload(); }) }) : null,
+            ["dead", "pending"].includes(m.status) ? el("button", { class: "small quiet", text: "Descartar", onclick: () => guard(async () => {
+              if (!confirm(`Descartar a mensagem ${m.id}? Ela não será entregue.`)) return;
+              await API.admin.integrationAction(kind, m.id, "discard"); reload(); }) }) : null) },
+      ], rows, { empty: "Nenhuma mensagem.", onRow: (m) => detail.replaceChildren(el("h4", { text: `Mensagem ${m.id}` }),
+        el("pre", { class: "code-view", text: JSON.stringify({ payload: m.payload, result: m.result, headers: m.headers }, null, 2) })) }),
+      detail);
+  }
+
+  // ------------------------------------------------------------------ product updates (spec 028)
+  /** Line diff (LCS) for the side-by-side comparison: [{t: "same"|"del"|"add", a, b}]. */
+  function lineDiff(a, b) {
+    const n = a.length, m = b.length;
+    if (n * m > 4000000) return null;                       // too big to compare here
+    const w = m + 1, len = new Uint32Array((n + 1) * w);
+    for (let i = n - 1; i >= 0; i--) {
+      for (let j = m - 1; j >= 0; j--) {
+        len[i * w + j] = a[i] === b[j] ? len[(i + 1) * w + j + 1] + 1 : Math.max(len[(i + 1) * w + j], len[i * w + j + 1]);
+      }
+    }
+    const out = [];
+    let i = 0, j = 0;
+    while (i < n || j < m) {
+      if (i < n && j < m && a[i] === b[j]) { out.push({ t: "same", a: a[i++], b: b[j++] }); }
+      else if (j < m && (i >= n || len[i * w + j + 1] >= len[(i + 1) * w + j])) { out.push({ t: "add", b: b[j++] }); }
+      else { out.push({ t: "del", a: a[i++] }); }
+    }
+    return out;
+  }
+
+  function diffView(leftTitle, left, rightTitle, right) {
+    const ops = lineDiff((left || "").split("\n"), (right || "").split("\n"));
+    if (!ops) return el("p", { class: "muted", text: "Programa grande demais para comparar aqui." });
+    const changed = ops.filter((o) => o.t !== "same").length;
+    if (!changed) return el("p", { class: "muted", text: "Sem diferenças." });
+    const rows = [];
+    let la = 0, lb = 0;
+    const keep = new Set();                                  // 3 lines of context around each change
+    ops.forEach((o, k) => { if (o.t !== "same") for (let d = -3; d <= 3; d++) keep.add(k + d); });
+    let skipped = 0;
+    const flushSkip = () => {
+      if (skipped) rows.push(el("tr", { class: "diff-skip" }, el("td", { colspan: "4", text: `… ${skipped} linha(s) iguais …` })));
+      skipped = 0;
+    };
+    ops.forEach((o, k) => {
+      if (o.t !== "add") la++;
+      if (o.t !== "del") lb++;
+      if (!keep.has(k)) { skipped++; return; }
+      flushSkip();
+      rows.push(el("tr", { class: "diff-" + o.t },
+        el("td", { class: "diff-n", text: o.t === "add" ? "" : String(la) }),
+        el("td", { class: "diff-code", text: o.t === "add" ? "" : o.a }),
+        el("td", { class: "diff-n", text: o.t === "del" ? "" : String(lb) }),
+        el("td", { class: "diff-code", text: o.t === "del" ? "" : o.b })));
+    });
+    flushSkip();
+    return el("div", { class: "diff-box" },
+      el("p", { class: "muted small", text: `${changed} linha(s) diferente(s)` }),
+      el("table", { class: "diff" },
+        el("thead", {}, el("tr", {}, el("th", { colspan: "2", text: leftTitle }), el("th", { colspan: "2", text: rightTitle }))),
+        el("tbody", {}, rows)));
+  }
+
+  async function refreshUpdatesCount() {
+    const badge = $("#updates-count");
+    if (!badge) return;
+    try {
+      const r = await API.admin.productUpdates();
+      badge.textContent = String(r.available);
+      badge.hidden = !r.available;
+    } catch (_) { badge.hidden = true; }
+  }
+
+  const UPDATE_STATUS = { available: "disponível", accepted: "aceita", dismissed: "dispensada" };
+
+  async function updates() {
+    const r = await API.admin.productUpdates();
+    refreshUpdatesCount();
+    const available = r.updates.filter((u) => u.status === "available");
+    const unmodified = available.filter((u) => !u.locally_modified).length;
+    main().replaceChildren(
+      ...header("Atualizações do produto", "Versões novas dos programas que vêm com o ANA. Nada muda sozinho: você compara e decide. Programas alterados nesta instalação pedem confirmação; a versão atual sempre fica no histórico."),
+      el("div", { class: "row-buttons" },
+        el("button", { text: "Verificar agora", onclick: () => guard(async () => {
+          const c = await API.admin.productUpdatesCheck(); toast(`${c.available} atualização(ões) disponível(is).`); updates();
+        }) }),
+        unmodified ? el("button", { class: "primary", text: `Aceitar as ${unmodified} não alteradas aqui`, onclick: () => guard(async () => {
+          if (!confirm(`Atualizar ${unmodified} programa(s) que não foram alterados nesta instalação?`)) return;
+          const a = await API.admin.productUpdatesAcceptUnmodified();
+          toast(`${a.accepted.length} atualizado(s)` + (a.failed.length ? `, ${a.failed.length} com problema` : "") + ".", a.failed.length > 0);
+          updates();
+        }) }) : null),
+      table([
+        { label: "Programa", value: (u) => u.name },
+        { label: "Tipo", value: (u) => (u.kind === "library" ? "biblioteca" : "programa") },
+        { label: "Situação", value: (u) => UPDATE_STATUS[u.status] || u.status },
+        { label: "Alterado aqui", value: (u) => (u.locally_modified ? pill("sim", "warn") : "não") },
+        { label: "Detectada em", value: (u) => fmtDate(u.detected_at) },
+        { label: "", value: (u) => el("button", { class: "quiet small", text: u.status === "available" ? "Comparar e decidir" : "Ver",
+                                                   onclick: () => guard(() => updateDetail(u.name)) }) },
+      ], r.updates, { empty: "Todos os programas do produto estão em dia." }));
+  }
+
+  async function updateDetail(name) {
+    const d = await API.admin.productUpdate(name);
+    const pending = d.status === "available";
+    const compare = el("div");
+    const views = [["installed", "Instalado × produto"]].concat(d.base ? [["local", "O que foi alterado aqui"], ["product", "O que o produto mudou"]] : []);
+    const showView = (k) => {
+      for (const b of tabs.children) b.classList.toggle("active", b.dataset.k === k);
+      compare.replaceChildren(
+        k === "installed" ? diffView(`Instalado (versão ${d.version})`, d.installed, "Produto (nova)", d.seed_source)
+        : k === "local" ? diffView("Base do produto", d.base, "Instalado", d.installed)
+        : diffView("Base do produto", d.base, "Produto (nova)", d.seed_source));
+    };
+    const tabs = el("div", { class: "sub-tabs" }, views.map(([k, l]) => el("button", { "data-k": k, text: l, onclick: () => showView(k) })));
+    main().replaceChildren(
+      ...header(`Atualização de ${name}`, d.locally_modified
+        ? "Este programa foi alterado nesta instalação. Aceitar substitui as alterações pela versão do produto (a atual fica no histórico e pode ser restaurada)."
+        : "Este programa não foi alterado nesta instalação: aceitar só traz a versão nova do produto."),
+      el("div", { class: "row-buttons" },
+        el("button", { class: "quiet", text: "← Voltar à lista", onclick: () => guard(updates) }),
+        pending ? el("button", { class: d.locally_modified ? "danger" : "primary", text: d.locally_modified ? "Sobrescrever com a versão do produto" : "Aceitar", onclick: () => guard(async () => {
+          if (d.locally_modified && !confirm(`Substituir as alterações feitas aqui em ${name} pela versão do produto?`)) return;
+          const a = await API.admin.productUpdateAccept(name, d.locally_modified);
+          toast(`${name} atualizado para a versão ${a.version}.`);
+          updates();
+        }) }) : null,
+        pending ? el("button", { class: "quiet", text: "Dispensar", onclick: () => guard(async () => {
+          await API.admin.productUpdateDismiss(name); toast("Dispensada: só volta quando o produto mudar de novo."); updates();
+        }) }) : null),
+      tabs, compare);
+    showView("installed");
+  }
+
   // ------------------------------------------------------------------ navigation
   // ------------------------------------------------------------------ scheduler (spec 018)
   async function scheduler() {
@@ -652,9 +1093,10 @@
                        window.AnaScheduler.holidays(hol)]);
   }
 
-  const SECTIONS = { users, groups, settings, company, commands, remote, accounts, limits, consumption, scheduler, monitor, audit, retention };
+  const SECTIONS = { users, groups, settings, company, commands, remote, accounts, limits, consumption, scheduler, monitor, audit, retention, health, sqlperf, advice, updates, integrations };
 
   function show(section) {
+    refreshUpdatesCount();
     current = section;
     if (!SECTIONS[section]) section = "users";
     current = section;
@@ -667,5 +1109,5 @@
     for (const b of $$("#area-admin .nav-link")) b.addEventListener("click", () => window.AnaStudio.go("#/admin/" + b.dataset.section));
   }
 
-  window.AnaAdmin = { wire, show, current: () => current };
+  window.AnaAdmin = { wire, show, current: () => current, lineDiff };
 })();

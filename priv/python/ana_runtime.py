@@ -8,6 +8,7 @@ credentials: every data access is requested from the core.
 Each process serves a single execution (or inspection) and exits.
 """
 
+import base64
 import bdb
 import builtins
 import datetime
@@ -18,9 +19,11 @@ import io
 import json
 import linecache
 import os
+import re
 import signal
 import struct
 import sys
+import time
 import traceback
 import types
 
@@ -159,6 +162,7 @@ class Channel:
         self._out = stream_out
         self._seq = 0
         self.usage_baseline = None
+        self.sql_seconds = 0.0          # time waiting for SQL answers (profile, spec 019)
 
     def send(self, msg):
         if msg.get("type") == "end" and self.usage_baseline is not None:
@@ -186,6 +190,14 @@ class Channel:
         """Synchronous request to the core; returns the value or raises Error."""
         self._seq += 1
         my_id = self._seq
+        t0 = time.perf_counter() if op in ("sql", "sql_batch") else None
+        try:
+            return self._request(my_id, op, args)
+        finally:
+            if t0 is not None:
+                self.sql_seconds += time.perf_counter() - t0
+
+    def _request(self, my_id, op, args):
         self.send({"type": "request", "id": my_id, "op": op, "args": args})
         while True:
             msg = self.receive()
@@ -219,9 +231,18 @@ class Error(Exception):
         return m
 
 
+# Business rules enforced by the database raise "CODE: message" (check_violation or
+# raise_exception): the code reaches the caller like any business error.
+_DB_RULE = re.compile(r"([A-Z][A-Z0-9_]{2,40}): (.+)", re.S)
+
+
 class SqlError(Error):
     def __init__(self, message, sqlstate=None, detail=None):
-        super().__init__("SQL", message, {"sqlstate": sqlstate, "detail": detail})
+        rule = _DB_RULE.fullmatch(message or "") if sqlstate in ("23514", "P0001") else None
+        if rule:
+            super().__init__(rule.group(1), rule.group(2), {"sqlstate": sqlstate, "detail": detail})
+        else:
+            super().__init__("SQL", message, {"sqlstate": sqlstate, "detail": detail})
         self.sqlstate = sqlstate
 
 
@@ -331,6 +352,7 @@ class Context:
     def __init__(self, d):
         self.user = d.get("user")
         self.role = d.get("role")
+        self.party = d.get("party")          # external portal accounts (spec 016)
         self.execution_id = d.get("execution_id")
         self.program = d.get("program")
         self.version = d.get("version")
@@ -371,9 +393,19 @@ class _Savepoint:
 def make_ana_module(channel, output, context):
     m = types.ModuleType("ana", "ANA ERP API for programs.")
 
+    def where():
+        """Program and line that issued the SQL (spec 019: SQL measured per call site)."""
+        f = sys._getframe(2)
+        while f is not None:
+            name = f.f_code.co_filename
+            if name.startswith(FILE_PREFIX):
+                return [name[len(FILE_PREFIX):-1], f.f_lineno]
+            f = f.f_back
+        return None
+
     def sql(query, *params):
         """Run SQL and return a list of dicts. Parameters: $1, $2, ..."""
-        return build_rows(channel.request("sql", {"sql": query, "params": list(params)}))
+        return build_rows(channel.request("sql", {"sql": query, "params": list(params), "at": where()}))
 
     def sql_one(query, *params):
         rows = sql(query, *params)
@@ -386,14 +418,14 @@ def make_ana_module(channel, output, context):
         return next(iter(rows[0].values()), None)
 
     def sql_exec(query, *params):
-        return channel.request("sql", {"sql": query, "params": list(params)}).get("affected", 0)
+        return channel.request("sql", {"sql": query, "params": list(params), "at": where()}).get("affected", 0)
 
     def sql_batch(query, rows):
         """Run the same statement for each parameter list (P12)."""
         batch = [list(p) for p in rows]
         if not batch:
             return 0
-        return channel.request("sql_batch", {"sql": query, "batch": batch}).get("affected", 0)
+        return channel.request("sql_batch", {"sql": query, "batch": batch, "at": where()}).get("affected", 0)
 
     def call(program, **params):
         """Run another program in the same execution transaction (RF-002-08)."""
@@ -402,6 +434,80 @@ def make_ana_module(channel, output, context):
     def remote(system, function, **params):
         """Call an exposed program on a registered remote system (RF-003-08)."""
         return channel.request("remote", {"system": system, "function": function, "params": params})
+
+    class HttpResponse(dict):
+        """Answer of ana.http: status, headers, json (when JSON) or text; .ok for 2xx."""
+        @property
+        def ok(self):
+            return 200 <= self.get("status", 0) < 300
+
+    def http(connector, method, path="", json=None, body=None, headers=None, params=None):
+        """HTTP call through a connector (spec 017): the core adds credentials, checks the
+        allowed hosts and applies limits. Programs never see secrets nor open sockets."""
+        options = {}
+        if json is not None:
+            options["json"] = json
+        elif body is not None:
+            options["body"] = str(body)
+        if headers:
+            options["headers"] = {str(k): str(v) for k, v in dict(headers).items()}
+        if params:
+            options["params"] = {str(k): v for k, v in dict(params).items()}
+        r = channel.request("http", {"connector": str(connector), "method": str(method), "path": str(path),
+                                     "options": options})
+        return HttpResponse(r)
+
+    def send(connector, kind, payload, key=None):
+        """Queue a message for the connector in this same transaction (outbox, spec 017):
+        delivered after the commit, with retries; nothing is sent if the execution fails."""
+        return sql_value("SELECT integration.enqueue($1, $2, $3::text::jsonb, $4) AS id", str(connector), str(kind),
+                         to_json(payload), key)
+
+    class Files:
+        """Repository (spec 016), with the permissions of the execution's user.
+        Writes are immediate (like ana.remote), not part of the execution transaction."""
+
+        @staticmethod
+        def _where(folder=None, entity=None, subfolder=None):
+            w = {}
+            if entity is not None:
+                kind, ident = entity
+                w["entity"] = {"kind": str(kind), "id": int(ident)}
+            elif folder is not None:
+                w["folder"] = folder if isinstance(folder, int) else str(folder)
+            if subfolder:
+                w["subfolder"] = str(subfolder)
+            return w
+
+        def put(self, name, data, folder=None, entity=None, subfolder=None, comment=None):
+            """Stores bytes (or text, as UTF-8) as a new file or a new version: {file, version, size, mime}."""
+            raw = data.encode("utf-8") if isinstance(data, str) else bytes(data)
+            return channel.request("files", {"action": "put", "name": str(name), "comment": comment,
+                                             "data": base64.b64encode(raw).decode("ascii"),
+                                             **self._where(folder, entity, subfolder)})
+
+        def get(self, file, version=None):
+            """{name, mime, version, data: bytes}."""
+            r = channel.request("files", {"action": "get", "file": int(file), "version": version})
+            r["data"] = base64.b64decode(r["data"])
+            return r
+
+        def list(self, folder=None):
+            return channel.request("files", {"action": "list", "folder": folder})
+
+        def folder(self, folder=None, entity=None, subfolder=None, create=True):
+            """Id of a folder by path ("/Clientes/ACME") or entity (("party", 7)), created if missing."""
+            return channel.request("files", {"action": "folder", "create": bool(create),
+                                             **self._where(folder, entity, subfolder)})
+
+        def grant(self, subject_kind, subject, level, folder_id=None, file_id=None, expires_at=None, deny=False):
+            body = {"action": "grant", "subject_kind": subject_kind, "subject": str(subject), "level": level,
+                    "deny": bool(deny), "expires_at": expires_at}
+            if folder_id is not None:
+                body["folder_id"] = int(folder_id)
+            if file_id is not None:
+                body["file_id"] = int(file_id)
+            return channel.request("files", body)
 
     def log(message, level="info"):
         output.flush()
@@ -452,6 +558,60 @@ def make_ana_module(channel, output, context):
         "baseline_start"?, "baseline_finish"?, "kind"?}]."""
         output.flush()
         output.emit("gantt", {"title": title, "today": today, "items": list(items)})
+
+    CHART_TYPES = ("line", "area", "column", "stacked", "bar", "donut")
+    CHART_FORMATS = ("number", "money", "percent", "hours")
+
+    def chart(spec=None, **kw):
+        """Chart (spec 026): {"type", "title"?, "subtitle"?, "x": [...], "series": [{"name", "values"}],
+        "format"?: number|money|percent|hours, "unit"?}. More than 8 series fold into "Outros";
+        a donut keeps at most 6 slices (the rest is "Outros")."""
+        spec = {**(spec or {}), **kw}
+        kind = spec.get("type", "line")
+        if kind not in CHART_TYPES:
+            raise ParamError(f"tipo de gráfico desconhecido: {kind} (use {', '.join(CHART_TYPES)})")
+        fmt = spec.get("format", "number")
+        if fmt not in CHART_FORMATS:
+            raise ParamError(f"formato desconhecido: {fmt}")
+        x = list(spec.get("x") or [])
+        series = []
+        for s in spec.get("series") or []:
+            if not isinstance(s, dict) or "values" not in s:
+                raise ParamError("cada série precisa de name e values")
+            vals = []
+            for v in s["values"]:
+                if v is None:
+                    vals.append(None)
+                    continue
+                try:
+                    vals.append(float(v))
+                except (TypeError, ValueError):
+                    raise ParamError(f"valor não numérico na série {s.get('name')!r}: {v!r}") from None
+            if len(vals) != len(x):
+                raise ParamError(f"a série {s.get('name')!r} tem {len(vals)} valores e o eixo x tem {len(x)}")
+            series.append({"name": str(s.get("name", f"série {len(series) + 1}")), "values": vals})
+        if not series:
+            raise ParamError("o gráfico precisa de pelo menos uma série")
+        if kind == "donut":
+            if len(series) != 1:
+                raise ParamError("a rosca usa uma série (as fatias são o eixo x)")
+            pairs = sorted(zip(x, series[0]["values"]), key=lambda p: -(p[1] or 0))
+            if len(pairs) > 6:
+                rest = sum(v or 0 for _, v in pairs[5:])
+                pairs = pairs[:5] + [("Outros", rest)]
+            x = [p[0] for p in pairs]
+            series = [{"name": series[0]["name"], "values": [p[1] for p in pairs]}]
+        elif len(series) > 8:
+            # Never a 9th color: the smallest series fold into "Outros" (by total).
+            ranked = sorted(series, key=lambda s: -sum(abs(v or 0) for v in s["values"]))
+            keep, rest = ranked[:7], ranked[7:]
+            other = [sum((s["values"][i] or 0) for s in rest) for i in range(len(x))]
+            order = {id(s): i for i, s in enumerate(series)}
+            series = sorted(keep, key=lambda s: order[id(s)]) + [{"name": "Outros", "values": other}]
+        output.flush()
+        output.emit("chart", {"type": kind, "title": spec.get("title"), "subtitle": spec.get("subtitle"),
+                              "x": [x_.isoformat() if hasattr(x_, "isoformat") else x_ for x_ in x],
+                              "series": series, "format": fmt, "unit": spec.get("unit")})
 
     def tabs(items, current=None):
         """Tab bar; each item is an action with `open`: the routine reruns in place."""
@@ -519,9 +679,13 @@ def make_ana_module(channel, output, context):
     m.sql_batch = sql_batch
     m.call = call
     m.remote = remote
+    m.http = http
+    m.send = send
+    m.files = Files()
     m.log = log
     m.table = table
     m.metrics = metrics
+    m.chart = chart
     m.board = board
     m.gantt = gantt
     m.tabs = tabs
@@ -841,6 +1005,31 @@ def _program_trace(exc):
     return "\n".join(lines)
 
 
+SENSITIVE = re.compile(r"pass(word|wd)?|senha|secret|token|key|cpf|cnpj|card|cartao", re.I)
+
+
+def _error_frames(exc):
+    """RF-019-04: program/library frames (where, line, function, code) and the locals of
+    the frame where the error happened — sensitive names masked, reprs truncated."""
+    frames, last = [], None
+    tb = exc.__traceback__
+    while tb is not None:
+        f = tb.tb_frame
+        name = f.f_code.co_filename
+        if name.startswith(FILE_PREFIX):
+            frames.append({"where": name[len(FILE_PREFIX):-1], "line": tb.tb_lineno, "function": f.f_code.co_name,
+                           "code": (linecache.getline(name, tb.tb_lineno) or "").strip()})
+            last = f
+        tb = tb.tb_next
+    local_vars = {}
+    if last is not None:
+        for k, v in list(last.f_locals.items())[:MAX_VARIABLES]:
+            if k.startswith("__") or isinstance(v, types.ModuleType) or callable(v) and not isinstance(v, (int, float, str)):
+                continue
+            local_vars[k] = "***" if SENSITIVE.search(k) else _short_repr(v)
+    return frames, local_vars
+
+
 def _error_line(exc, filename):
     tb = traceback.extract_tb(exc.__traceback__)
     for f in reversed(tb):
@@ -874,6 +1063,7 @@ def run(channel, msg, output_limit):
     if msg.get("debug"):
         debugger = AnaDebugger(channel, filename, msg.get("breakpoints") or [])
 
+    profiler = None
     module_globals = {"__name__": "__ana__", "__file__": filename,
                       "__builtins__": builtins, "ana": ana_mod}
     channel.usage_baseline = apply_execution_limits(limits)
@@ -890,13 +1080,21 @@ def run(channel, msg, output_limit):
         if debugger:
             result = debugger.run_debugged(lambda: main(**params), bool(msg.get("stop_on_entry")))
         else:
-            result = main(**params)
+            if msg.get("profile"):
+                import cProfile
+                profiler = cProfile.Profile()
+                profiler.enable()
+            try:
+                result = main(**params)
+            finally:
+                if profiler:
+                    profiler.disable()
         output.flush()
         try:
             to_json(result)
         except (TypeError, ValueError) as e:
             raise Error("INVALID_RESULT", str(e)) from None
-        channel.send({"type": "end", "ok": True, "result": result})
+        channel.send({"type": "end", "ok": True, "result": result, "profile": profile_of(profiler, channel)})
     except CpuLimitExceeded:
         signal.setitimer(signal.ITIMER_PROF, 0)
         output.flush()
@@ -911,7 +1109,8 @@ def run(channel, msg, output_limit):
         error = e.as_map()
         error["line"] = _error_line(e, filename)
         error["trace"] = _program_trace(e)
-        channel.send({"type": "end", "ok": False, "error": error})
+        error["frames"], error["locals"] = _error_frames(e)
+        channel.send({"type": "end", "ok": False, "error": error, "profile": profile_of(profiler, channel)})
     except ChannelClosed:
         raise
     except SyntaxError as e:
@@ -924,11 +1123,29 @@ def run(channel, msg, output_limit):
                       "error": {"code": "MEMORY", "message": "limite de memória excedido"}})
     except BaseException as e:  # noqa: BLE001 - everything becomes a structured error
         output.flush()
+        frames, local_vars = _error_frames(e)
         channel.send({"type": "end", "ok": False, "error": {
             "code": "EXCEPTION",
             "message": f"{type(e).__name__}: {e}",
             "line": _error_line(e, filename),
-            "trace": _program_trace(e)}})
+            "trace": _program_trace(e),
+            "frames": frames, "locals": local_vars}, "profile": profile_of(profiler, channel)})
+
+
+def profile_of(profiler, channel):
+    """RF-019-05: where the time went — program/library functions (calls, own and total ms)
+    and the time spent waiting for SQL answers."""
+    if profiler is None:
+        return None
+    import pstats
+    stats = pstats.Stats(profiler).stats
+    rows = []
+    for (filename, line, func), (_cc, ncalls, tottime, cumtime, _callers) in stats.items():
+        if filename.startswith(FILE_PREFIX):
+            rows.append({"where": filename[len(FILE_PREFIX):-1], "line": line, "function": func, "calls": ncalls,
+                         "self_ms": round(tottime * 1000, 3), "total_ms": round(cumtime * 1000, 3)})
+    rows.sort(key=lambda r: -r["total_ms"])
+    return {"functions": rows[:30], "sql_wait_ms": round(channel.sql_seconds * 1000, 3)}
 
 
 def with_order(params):
@@ -962,7 +1179,194 @@ def inspect(channel, msg):
                 resp["params"] = with_order(ast.literal_eval(node.value))
             except ValueError:
                 resp["error"] = {"line": node.lineno, "message": "PARAMS deve ser um literal"}
+    resp["lint"] = lint_sql(tree, source)
     channel.send(resp)
+
+
+# ---------------------------------------------------------------------------
+# Static analysis of the program's SQL (spec 019, RF-019-07b)
+# ---------------------------------------------------------------------------
+
+SQL_CALLS = {"sql", "sql_one", "sql_value", "sql_exec", "sql_batch"}
+TABLE_RE = re.compile(r"\b(?:FROM|JOIN|UPDATE|INTO)\s+([a-z_][a-z0-9_]*\.[a-z_][a-z0-9_]*)", re.I)
+SQL_RULES = [
+    ("select_star", "info", re.compile(r"\bSELECT\s+(DISTINCT\s+)?([A-Z_][A-Z0-9_]*\.)?\*", re.I),
+     "SELECT * traz colunas que o programa não usa e quebra quando a tabela muda.",
+     "Liste só as colunas usadas."),
+    ("leading_wildcard", "warning", re.compile(r"\bI?LIKE\s+'%", re.I),
+     "LIKE '%…' (curinga no início) não usa índice: lê a tabela inteira.",
+     "Use índice trigram (CREATE EXTENSION pg_trgm; CREATE INDEX … USING gin (coluna gin_trgm_ops)) ou busca textual."),
+    ("not_in_subquery", "warning", re.compile(r"\bNOT\s+IN\s*\(\s*SELECT\b", re.I),
+     "NOT IN (SELECT …) costuma ser lento e não encontra nada se a subconsulta tiver NULL.",
+     "Use NOT EXISTS (SELECT 1 FROM … WHERE …)."),
+    ("order_random", "warning", re.compile(r"\bORDER\s+BY\s+RANDOM\s*\(\s*\)", re.I),
+     "ORDER BY random() ordena a tabela inteira a cada chamada.",
+     "Para amostras use TABLESAMPLE SYSTEM (n) ou sorteie pela chave."),
+    ("offset_pagination", "info", re.compile(r"\bOFFSET\b", re.I),
+     "Paginação por OFFSET lê e descarta todas as linhas anteriores: cada página fica mais lenta que a outra.",
+     "Pagine pela chave: WHERE id > $1 ORDER BY id LIMIT n."),
+]
+WHERE_FUNC_RE = re.compile(r"\b(LOWER|UPPER|DATE_TRUNC|DATE|TO_CHAR|COALESCE|TRIM|SUBSTRING|EXTRACT|CAST)\s*\(\s*[A-Z_][A-Z0-9_.]*", re.I)
+CLAUSE_END_RE = re.compile(r"\b(GROUP\s+BY|ORDER\s+BY|LIMIT|RETURNING|HAVING|UNION)\b", re.I)
+
+
+def _where_clauses(sql):
+    """Each WHERE clause up to the end of its own parenthesis level; FILTER (WHERE …) of
+    aggregates is not a row filter and is skipped."""
+    out = []
+    for m in re.finditer(r"\bWHERE\b", sql, re.I):
+        if re.search(r"\bFILTER\s*\(\s*$", sql[:m.start()], re.I):
+            continue
+        depth, i, rest = 0, m.end(), sql[m.end():]
+        end = len(rest)
+        for i, ch in enumerate(rest):
+            if ch == "(":
+                depth += 1
+            elif ch == ")":
+                depth -= 1
+                if depth < 0:
+                    end = i
+                    break
+            elif depth == 0 and CLAUSE_END_RE.match(rest, i) and (i == 0 or not rest[i - 1].isalnum()):
+                end = i
+                break
+        out.append(rest[:end])
+    return out
+
+
+def _check_sql(text):
+    out = []
+    for rule, severity, rx, message, suggestion in SQL_RULES:
+        if rx.search(text):
+            out.append((rule, severity, message, suggestion))
+    head = text.lstrip().split(None, 1)[0].upper() if text.strip() else ""
+    wheres = _where_clauses(text)
+    if head in ("UPDATE", "DELETE") and not wheres:
+        out.append(("no_where", "critical", f"{head} sem WHERE altera a tabela inteira.",
+                    "Confirme que é isso mesmo; senão, filtre com WHERE."))
+    if any(WHERE_FUNC_RE.search(w) for w in wheres):
+        out.append(("function_on_column", "info",
+                    "Função sobre coluna no filtro impede o índice comum dessa coluna.",
+                    "Crie um índice de expressão (ex.: CREATE INDEX … ON t (lower(col))) ou compare com o valor já transformado."))
+    # Only a real table read whole counts (not unnest(…), generate_series(…) or no table at all).
+    if head == "SELECT" and not wheres and re.search(r"\bFROM\s+[a-z_][a-z0-9_]*\.[a-z_]", text, re.I) \
+            and not re.search(r"\bLIMIT\b", text, re.I):
+        out.append(("unbounded_select", "info",
+                    "Consulta sem filtro nem LIMIT: o tempo cresce junto com a tabela.",
+                    "Filtre (WHERE), pagine (LIMIT) ou leia de uma visão resumida."))
+    return out
+
+
+LINT_OK_RE = re.compile(r"#\s*ana:lint-ok\s+([a-z_,\s]+?)\s*(?:[—-]|$)")
+
+
+def lint_sql(tree, source=""):
+    """Findings: [{line, rule, severity, message, suggestion, sql, tables}].
+
+    `# ana:lint-ok rule[, rule] — reason` on the call's lines (or the line above) accepts a
+    finding on purpose (e.g. LIKE '%x%' backed by a trigram index)."""
+    import ast
+    findings = []
+    accepted = {}
+    for n, text in enumerate(source.splitlines(), start=1):
+        m = LINT_OK_RE.search(text)
+        if m:
+            accepted[n] = {r.strip() for r in m.group(1).split(",") if r.strip()}
+    loops = (ast.For, ast.AsyncFor, ast.While)
+    comps = (ast.ListComp, ast.SetComp, ast.DictComp, ast.GeneratorExp)
+
+    def add(node, rule, severity, message, suggestion, text=""):
+        span = range(node.lineno - 1, (getattr(node, "end_lineno", None) or node.lineno) + 1)
+        if any(rule in accepted.get(n, ()) for n in span):
+            return
+        findings.append({"line": node.lineno, "rule": rule, "severity": severity, "message": message,
+                         "suggestion": suggestion, "sql": " ".join(text.split())[:200],
+                         "tables": sorted({t.lower() for t in TABLE_RE.findall(text)})})
+
+    def visit(node, in_loop, params=frozenset()):
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda)):
+            a = node.args
+            params = frozenset(x.arg for x in a.posonlyargs + a.args + a.kwonlyargs) \
+                | ({a.vararg.arg} if a.vararg else set()) | ({a.kwarg.arg} if a.kwarg else set())
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute) and node.func.attr in SQL_CALLS \
+                and isinstance(node.func.value, ast.Name) and node.func.value.id == "ana" and node.args:
+            arg = node.args[0]
+            text = ""
+            if isinstance(arg, ast.Constant) and isinstance(arg.value, str):
+                text = arg.value
+            elif isinstance(arg, ast.JoinedStr) and any(isinstance(v, ast.FormattedValue) for v in arg.values) \
+                    or isinstance(arg, ast.BinOp) and isinstance(arg.op, (ast.Add, ast.Mod)) and not _all_literal(arg) \
+                    or isinstance(arg, ast.Call) and isinstance(arg.func, ast.Attribute) and arg.func.attr == "format":
+                text = _literal_parts(arg)
+                used = {n.id for n in ast.walk(arg) if isinstance(n, ast.Name)}
+                if used & params:
+                    add(node, "dynamic_sql", "serious",
+                        "Valor recebido pela função entra no texto do SQL: risco de injeção de SQL e o plano não é reaproveitado.",
+                        "Passe os valores como parâmetros ($1, $2…); para nomes de colunas, escolha de uma lista fixa.", text)
+                else:
+                    add(node, "dynamic_sql", "warning",
+                        "SQL montado a partir de valores do próprio código (ex.: lista de colunas): seguro só se nada vier do usuário.",
+                        "Confirme a origem dos valores; quando der, prefira texto fixo com parâmetros ($1, $2…).", text)
+            elif isinstance(arg, ast.BinOp):
+                text = _literal_parts(arg)
+            if in_loop and node.func.attr != "sql_batch":
+                add(node, "sql_in_loop", "warning",
+                    "Consulta dentro de laço: uma ida ao banco por item (N+1) — fica lenta com volume.",
+                    "Use ana.sql_batch para gravar em lote, ou leia tudo de uma vez com WHERE id = ANY($1) / JOIN.", text)
+            for rule, severity, message, suggestion in _check_sql(text) if text else []:
+                add(node, rule, severity, message, suggestion, text)
+        if isinstance(node, loops):
+            for field, value in ast.iter_fields(node):
+                inner = in_loop or field in ("body", "orelse", "test") and not (isinstance(node, (ast.For, ast.AsyncFor)) and field == "orelse")
+                for child in (value if isinstance(value, list) else [value]):
+                    if isinstance(child, ast.AST):
+                        visit(child, inner, params)
+            return
+        if isinstance(node, comps):
+            # The first iterable is evaluated once, outside the loop: {r["id"]: r for r in ana.sql(...)}.
+            first = node.generators[0]
+            visit(first.iter, in_loop, params)
+            for child in ast.iter_child_nodes(node):
+                if child is first:
+                    visit(first.target, True, params)
+                    for cond in first.ifs:
+                        visit(cond, True, params)
+                elif isinstance(child, ast.AST):
+                    visit(child, True, params)
+            return
+        for child in ast.iter_child_nodes(node):
+            visit(child, in_loop, params)
+
+    visit(tree, False)
+    return sorted(findings, key=lambda f: (f["line"], f["rule"]))
+
+
+def _all_literal(node):
+    """Text built only from fixed pieces ("a" + "b", "x" if flag else "") is still fixed text."""
+    import ast
+    if isinstance(node, ast.Constant):
+        return True
+    if isinstance(node, ast.BinOp) and isinstance(node.op, ast.Add):
+        return _all_literal(node.left) and _all_literal(node.right)
+    if isinstance(node, ast.IfExp):
+        return _all_literal(node.body) and _all_literal(node.orelse)
+    return False
+
+
+def _literal_parts(node):
+    """The literal text of a SQL built from pieces (enough to apply the text rules)."""
+    import ast
+    if isinstance(node, ast.Constant) and isinstance(node.value, str):
+        return node.value
+    if isinstance(node, ast.JoinedStr):
+        return "".join(v.value if isinstance(v, ast.Constant) else " ? " for v in node.values)
+    if isinstance(node, ast.BinOp):
+        return _literal_parts(node.left) + " " + _literal_parts(node.right)
+    if isinstance(node, ast.IfExp):
+        return _literal_parts(node.body)
+    if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute):
+        return _literal_parts(node.func.value)
+    return " ? "
 
 
 def entry_point():

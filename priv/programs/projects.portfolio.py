@@ -85,6 +85,10 @@ def main(status="active"):
                  {"label": "Atenção", "value": sum(1 for d in data if d["health"] == "🟡"), "status": "warn"},
                  {"label": "Críticos", "value": sum(1 for d in data if d["health"] == "🔴"), "status": "bad"}],
                 title="Portfólio")
+    ranked = sorted([d for d in data if d["forecast_profit"]], key=lambda d: -d["forecast_profit"]["base"])[:15]
+    if ranked:
+        ana.chart(type="bar", title="Lucro previsto por projeto", subtitle="cenário base", format="money",
+                  x=[d["code"] for d in ranked], series=[{"name": "Lucro previsto", "values": [d["forecast_profit"]["base"] for d in ranked]}])
     ana.table(out, title="Projetos")
     team = [r["employee_id"] for r in ana.sql(
         "SELECT DISTINCT pm.employee_id FROM projects.project_member pm JOIN projects.project p ON p.id = pm.project_id "

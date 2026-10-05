@@ -12,7 +12,7 @@
          hash_password/1, verify_password/2, check_policy/2,
          login/3, logout/1, validate/1, validate_key/2, new_api_key/0, owner/1,
          create_user/5, set_password/3, change_password/3,
-         revoke_sessions/1, unlock/1, clear_cache/0,
+         revoke_sessions/1, unlock/1, unlock_ip/1, clear_cache/0,
          level/1, has_role/2]).
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2]).
 
@@ -116,6 +116,12 @@ revoke_sessions(Username) ->
     clear_cache(),
     R.
 
+%% Clears the failed-attempt counter of an address (e.g. an office behind one IP).
+-spec unlock_ip(binary()) -> ok.
+unlock_ip(Ip) ->
+    ets:delete(?ATTEMPTS, {ip, Ip}),
+    ok.
+
 unlock(Username) ->
     ets:delete(?ATTEMPTS, {login, Username}),
     ok.
@@ -137,7 +143,7 @@ login(Username, Password, Ip) ->
             {error, locked};
         false ->
             {ok, Rec} = ana_db:one(
-                "SELECT username, name, password_hash, role, must_change_password, kind "
+                "SELECT username, name, password_hash, role, must_change_password, kind, party_id "
                 "FROM ana_system.app_user WHERE username = $1 AND active", [Username]),
             Hash = case Rec of undefined -> ?DUMMY_HASH; #{<<"password_hash">> := H} -> H end,
             Valid = verify_password(Password, Hash) andalso Rec =/= undefined,
@@ -183,7 +189,7 @@ validate(Token) when byte_size(Token) > 20, byte_size(Token) < 100 ->
         [{_, User, Until}] when Until > Now -> {ok, User};
         _ ->
             case ana_db:one(
-                   "SELECT u.username, u.name, u.role, u.must_change_password, u.kind "
+                   "SELECT u.username, u.name, u.role, u.must_change_password, u.kind, u.party_id "
                    "FROM ana_system.session s JOIN ana_system.app_user u USING (username) "
                    "WHERE s.token_hash = $1 AND s.expires_at > now() AND u.active", [H]) of
                 {ok, #{} = Rec} ->
@@ -216,7 +222,9 @@ owner(_) -> {error, no_owner}.
 user(#{<<"username">> := U, <<"role">> := R} = Rec) ->
     #{username => U, role => R, name => maps:get(<<"name">>, Rec, <<>>),
       kind => maps:get(<<"kind">>, Rec, <<"human">>),
-      must_change_password => maps:get(<<"must_change_password">>, Rec, false)}.
+      must_change_password => maps:get(<<"must_change_password">>, Rec, false),
+      %% Spec 016: external portal accounts belong to a party (customer/supplier).
+      party_id => maps:get(<<"party_id">>, Rec, null)}.
 
 %% RF-011-13/14: robot API keys. The IP check is done by PostgreSQL (`<<=` on
 %% cidr), and cached per (key, ip) for 30 s; revocation clears the cache.

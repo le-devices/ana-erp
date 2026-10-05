@@ -21,36 +21,49 @@
   async function home() {
     const main = $("#area-home");
     main.replaceChildren(el("p", { class: "muted", text: "Carregando…" }));
-    const [routines, executions] = await Promise.all([loadRoutines(), API.executions(null, true).catch(() => [])]);
+    let [routines, executions] = await Promise.all([loadRoutines(), API.executions(null, true).catch(() => [])]);
     const favs = routines.filter((r) => state.favorites.has(r.name));
     const recentNames = [...new Set(executions.map((x) => x.program))].filter((n) => routine(n)).slice(0, 8);
+    // Only routines of the menu: helpers (lookups of forms, libraries) are not something the user ran.
+    executions = executions.filter((x) => routine(x.program));
 
-    const routineLink = (r) => el("li", {}, el("button", { class: "link", onclick: () => window.AnaStudio.go(`#/ops/${R.moduleOf(r.name)}/${r.name}`) },
-      el("strong", { text: title(r) }), el("span", { class: "muted", text: ` ${R.moduleLabel(R.moduleOf(r.name))}${r.command ? " · " + r.command : ""}` })));
-
+    const user = window.AnaStudio.user();
     main.replaceChildren(
-      el("h1", { text: `Olá, ${window.AnaStudio.user().name || window.AnaStudio.user().username}` }),
-      el("div", { class: "cards" },
-        el("section", { class: "card" }, el("h2", { text: "Favoritos" }),
-          favs.length ? el("ul", { class: "link-list" }, favs.map(routineLink))
-                      : el("p", { class: "muted", text: "Fixe rotinas com ☆ na área de Operação para vê-las aqui." })),
-        el("section", { class: "card" }, el("h2", { text: "Usadas recentemente" }),
-          recentNames.length ? el("ul", { class: "link-list" }, recentNames.map((n) => routineLink(routine(n))))
-                             : el("p", { class: "muted", text: "Nada ainda." })),
-        el("section", { class: "card wide", id: "home-warnings", hidden: true }, el("h2", { text: "Avisos das minhas rotinas agendadas" }), el("div")),
-        el("section", { class: "card wide" }, el("h2", { text: "Minhas últimas execuções" }),
-          table([
-            { label: "Quando", value: (x) => fmtDate(x.started_at) },
-            { label: "Rotina", value: (x) => (routine(x.program) ? title(routine(x.program)) : x.program) },
-            { label: "Status", value: (x) => el("span", { class: "status-" + x.status, text: x.status + (x.error ? ` (${x.error})` : "") }) },
-            { label: "ms", value: (x) => x.duration_ms ?? "…", class: "num" },
-          ], executions.slice(0, 10), { empty: "Nenhuma execução ainda.",
-            onRow: (x) => routine(x.program) && window.AnaStudio.go(`#/ops/${R.moduleOf(x.program)}/${x.program}`) }))));
+      el("div", { class: "home-head" },
+        el("h1", { text: `Olá, ${user.name || user.username}` }),
+        el("p", { class: "lead", text: "Suas rotinas favoritas e as usadas há pouco. Fixe novas com ☆ na própria rotina." })),
+      tileGroup("Favoritas", favs, "Fixe rotinas com ☆ para vê-las aqui."),
+      tileGroup("Usadas recentemente", recentNames.map(routine), "Nada ainda."),
+      el("section", { class: "card wide", id: "home-warnings", hidden: true }, el("h2", { text: "Avisos das minhas rotinas agendadas" }), el("div")),
+      el("section", { class: "card wide table-card" }, el("h2", {}, "Minhas últimas execuções ", el("span", { class: "table-count", text: `(${Math.min(executions.length, 10)})` })),
+        table([
+          { label: "Quando", value: (x) => fmtDate(x.started_at) },
+          { label: "Rotina", value: (x) => (routine(x.program) ? title(routine(x.program)) : x.program) },
+          { label: "Situação", value: (x) => el("span", { class: "status-chip status-" + x.status, text: STATUS_LABEL[x.status] || x.status }) },
+          { label: "Duração (ms)", value: (x) => x.duration_ms ?? "…", class: "num" },
+        ], executions.slice(0, 10), { empty: "Nenhuma execução ainda.",
+          onRow: (x) => routine(x.program) && window.AnaStudio.go(`#/ops/${R.moduleOf(x.program)}/${x.program}`) })));
     const warn = $("#home-warnings");
     if (warn && window.AnaScheduler) {
       const n = await window.AnaScheduler.notifications(warn.lastChild, true);
       warn.hidden = !n;
     }
+  }
+
+  const STATUS_LABEL = { success: "concluída", error: "erro", timeout: "tempo esgotado", aborted: "interrompida", running: "executando" };
+
+  /** Launch tile of a routine (spec 029, RF-029-06). */
+  function tile(r) {
+    return el("button", { class: "tile", title: r.name, onclick: () => window.AnaStudio.go(`#/ops/${R.moduleOf(r.name)}/${r.name}`) },
+      el("span", { class: "tile-title", text: title(r) }),
+      el("span", { class: "tile-sub", text: R.moduleLabel(R.moduleOf(r.name)) }),
+      el("span", { class: "tile-foot" }, window.AnaUI.icon("chart", 20),
+        el("span", { class: "tile-cmd", text: r.command || "" })));
+  }
+
+  function tileGroup(name, routines, empty) {
+    return el("section", { class: "tile-group" }, el("h2", { text: name }),
+      routines.length ? el("div", { class: "tiles" }, routines.map(tile)) : el("p", { class: "muted", text: empty }));
   }
 
   // ------------------------------------------------------------------ operation
@@ -61,11 +74,11 @@
     if (name && routine(name)) return openRoutine(routine(name), query);
     const list = state.routines.filter((r) => !module || R.moduleOf(r.name) === module);
     $("#ops-main").replaceChildren(
-      el("h1", { text: module ? R.moduleLabel(module) : "Operação" }),
-      el("p", { class: "lead", text: module ? "Rotinas disponíveis neste módulo." : "Escolha um módulo ou uma rotina à esquerda." }),
-      el("div", { class: "routine-grid" }, list.map((r) => el("button", { class: "routine-card",
-        onclick: () => window.AnaStudio.go(`#/ops/${R.moduleOf(r.name)}/${r.name}`) },
-        el("strong", { text: title(r) }), el("span", { class: "muted", text: r.command ? `comando: ${r.command}` : r.name })))));
+      el("section", { class: "page-band" },
+        el("div", { class: "breadcrumb", text: "Operação" }),
+        el("h1", { text: module ? R.moduleLabel(module) : "Todas as rotinas" }),
+        el("p", { class: "lead", text: module ? `${list.length} rotina(s) neste módulo.` : "Escolha um módulo à esquerda ou uma rotina abaixo." })),
+      el("div", { class: "page-body" }, el("div", { class: "tiles routine-grid" }, list.map(tile))));
   }
 
   function drawNav(activeModule, activeName) {
@@ -141,12 +154,12 @@
         drawNav(R.moduleOf(r.name), r.name);
       } catch (e) { toast(errorText(e), true); }
     });
-    const output = el("div", { class: "output result-box resizable" });
+    const output = el("div", { class: "output analytic-output" });
     const resultJson = el("pre", { class: "json" });
     const status = el("span", { class: "run-state" });
     const historyBox = el("div");
     const detail = el("pre", { class: "preview json" });
-    const form = R.paramsForm(r.params, { submitLabel: "▶ Executar (F8)", onSubmit: () => execute(), initial, lookup });
+    const form = R.paramsForm(r.params, { submitLabel: "Executar (F8)", onSubmit: () => execute(), initial, lookup });
     const summaryText = el("span", { class: "summary-text" });
     const layout = el("div", { class: "routine-layout" });
     let lastRun = null;
@@ -226,25 +239,30 @@
         onRow: async (x) => { detail.textContent = JSON.stringify(await API.execution(x.id), null, 2); } }));
     }
 
+    const I = window.AnaUI.icon;
     layout.append(
-      el("section", { class: "card params-card" }, el("h2", { text: "Parâmetros" }), form.node),
-      window.AnaUI.splitter(layout, "--params-w", { min: 240, max: 720, key: "routine-params" }),
-      el("section", { class: "card result-card" },
-        el("div", { class: "params-summary" }, el("button", { type: "button", class: "quiet small", text: "✎ Parâmetros", onclick: expand,
-                                                              title: "Alterar os parâmetros" }), summaryText,
-          el("button", { type: "button", class: "quiet small", text: "↻ Executar de novo", onclick: () => lastRun && run(lastRun) })),
-        el("h2", {}, "Resultado ", status), output,
-        el("details", {}, el("summary", { text: "dados retornados (JSON)" }), resultJson)));
+      el("section", { class: "page-band" },
+        el("div", { class: "page-header" },
+          el("div", { class: "page-title" }, el("div", { class: "breadcrumb", text: R.moduleLabel(R.moduleOf(r.name)) }),
+            el("h1", {}, title(r), " ", fav)),
+          el("div", { class: "page-meta" }, status,
+            el("span", { class: "muted small", text: `${r.command ? "comando " + r.command + " · " : ""}${r.exposed ? "integração · " : ""}F8 executa · F3 volta` }))),
+        el("section", { class: "params-card filter-bar" },
+          el("div", { class: "filter-head" }, I("filter", 16), el("strong", { text: "Filtros" })), form.node),
+        el("div", { class: "params-summary" },
+          el("button", { type: "button", class: "quiet small icon-text", onclick: expand, title: "Alterar os filtros" }, I("edit", 16), el("span", { text: "Filtros" })),
+          summaryText,
+          el("button", { type: "button", class: "quiet small icon-text", onclick: () => lastRun && run(lastRun) }, I("refresh", 16), el("span", { text: "Executar de novo" })))),
+      el("section", { class: "result-card page-body" }, output,
+        el("details", { class: "json-box" }, el("summary", { text: "dados retornados (JSON)" }), resultJson)));
     $("#ops-main").replaceChildren(
-      el("div", { class: "page-header" },
-        el("div", {}, el("div", { class: "breadcrumb", text: R.moduleLabel(R.moduleOf(r.name)) }),
-          el("h1", {}, title(r), " ", fav)),
-        el("div", { class: "muted small", text: `${r.command ? "comando " + r.command + " · " : ""}${r.exposed ? "disponível para integração · " : ""}F8 executa · F3 volta` })),
       layout,
-      el("details", { class: "history-box" }, el("summary", { text: "Minhas execuções desta rotina" }),
+      el("details", { class: "history-box page-body" }, el("summary", { text: "Minhas execuções desta rotina" }),
         el("div", { class: "routine-layout plain" },
           el("section", { class: "card" }, historyBox),
           el("section", { class: "card" }, el("h2", { text: "Detalhe" }), detail))));
+    output.append(el("div", { class: "empty-state" }, window.AnaUI.icon("chart", 40),
+      el("span", { text: "Defina os filtros e execute (F8) para ver o resultado." })));
     loadHistory();
     if (Object.keys(given).length && !formOnly) run(given);
     else form.focus();
