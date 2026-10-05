@@ -3084,14 +3084,14 @@ class TestProduction(Base):
                          "    ana.sql('INSERT INTO production.forecast (product_id, week, quantity) SELECT unnest($1::int[]), $2, 5',\n"
                          "            [ids[c] for c in codes[0]], wk)\n"
                          "    return len(flat)\n", limits={"timeout_ms": 120000, "sql_timeout_ms": 120000})
-        s, c, _ = self.run_program(build, {"tag": tag})
-        self.assertEqual((s, c.get("result")), (200, 10000), c)
         timer = f"test.mrp_time_{SUFFIX}"
         self.save(timer, "import time\ndef main(scen):\n    t0 = time.monotonic()\n"
                          "    r = ana.call('production.plan', scenario=scen, horizon_weeks=8)\n"
                          "    return {'seconds': time.monotonic() - t0, 'n': len(r['suggestions'])}\n",
                   limits={"timeout_ms": 180000, "sql_timeout_ms": 120000, "output_kb": 65536})
         try:
+            s, c, _ = self.run_program(build, {"tag": tag})                 # inside try: cleaned up even if it fails
+            self.assertEqual((s, c.get("result")), (200, 10000), c)
             s, c, _ = self.run_program(timer, {"scen": f"perf{self.sfx}"})
             self.assertEqual(s, 200, c)
             self.assertLess(c["result"]["seconds"], 30, c["result"])
@@ -3109,6 +3109,214 @@ class TestProduction(Base):
                              "    return ana.sql_exec('DELETE FROM base.product WHERE code LIKE $1', like)\n",
                       limits={"timeout_ms": 120000, "sql_timeout_ms": 120000})
             self.run_program(purge, {"tag": tag, "scen": f"perf{self.sfx}"})
+
+
+# ---------------------------------------------------------------- spec 015
+class TestLogisticsField(Base):
+    """Transfers, partial shipments, returns, field service orders, schedule, execution, invoicing, SLA."""
+
+    @classmethod
+    def setUpClass(cls):
+        super().setUpClass()
+        c = cls.client
+        cls.sfx = SUFFIX[-5:]
+        cls.item = f"L{cls.sfx}IT"
+        cls.part = f"L{cls.sfx}PC"
+        cls.svc = f"L{cls.sfx}SV"
+        c.call("base.save_product", code=cls.item, description=f"Item logística {SUFFIX}", price="25")
+        c.call("base.save_product", code=cls.part, description=f"Peça de campo {SUFFIX}", price="40")
+        c.call("base.save_product", code=cls.svc, description=f"Calibração {SUFFIX}", price="0", kind="service")
+        cls.customer = c.call("base.save_party", name=f"Cliente Campo {SUFFIX}", state="SP")["id"]
+        cls.tech = c.call("projects.save_employee", name=f"Técnica Campo {SUFFIX}", profile="TEC", hourly_cost="60")["id"]
+        cls.tech2 = c.call("projects.save_employee", name=f"Técnico Dois {SUFFIX}", profile="TEC", hourly_cost="60")["id"]
+
+    def ok(self, _program, **params):
+        s, c, _ = self.run_program(_program, params)
+        self.assertEqual(s, 200, c)
+        self.assertNotIn("error", c, c.get("error"))
+        return c["result"]
+
+    def err(self, _program, **params):
+        s, c, _ = self.run_program(_program, params)
+        self.assertIn("error", c, c)
+        return c["error"]["code"]
+
+    def balance(self, code, wh):
+        return Decimal(self.scalar(f"SELECT COALESCE(sum(m.quantity), 0) FROM inventory.stock_movement m JOIN base.product p "
+                                   f"ON p.id = m.product_id JOIN inventory.warehouse w ON w.id = m.warehouse_id "
+                                   f"WHERE p.code = '{code}' AND w.code = '{wh}'"))
+
+    def set_policy(self, **values):
+        name = f"test.lpolicy_{SUFFIX}"
+        if name not in CREATED_PROGRAMS:
+            self.save(name, "def main(stock_out_on='invoice', hour=0, km=0):\n"
+                            "    ana.sql_exec('UPDATE logistics.policy SET stock_out_on = $1, travel_hour_rate = $2, travel_km_rate = $3 "
+                            "WHERE id = 1', stock_out_on, hour, km)\n")
+        self.ok(name, **values)
+
+    def test_ca_015_01_transfer_through_transit(self):
+        self.ok("inventory.stock_in", product=self.item, quantity=10, warehouse="CENTRAL")
+        c0, l0, t0 = self.balance(self.item, "CENTRAL"), self.balance(self.item, "LAB"), self.balance(self.item, "TRANSITO")
+        r = self.ok("logistics.transfer", action="ship", from_wh="CENTRAL", to_wh="LAB", items=[{"product": self.item, "quantity": 10}])
+        self.assertEqual((c0 - self.balance(self.item, "CENTRAL"), self.balance(self.item, "TRANSITO") - t0), (10, 10))
+        self.ok("logistics.transfer", action="receive", number=r["number"])
+        self.assertEqual((self.balance(self.item, "LAB") - l0, self.balance(self.item, "TRANSITO") - t0), (10, 0))
+        self.assertEqual(self.err("logistics.transfer", action="receive", number=r["number"]), "INVALID_STATE")
+
+    def test_ca_015_02_partial_shipments_freight_and_stock_on_shipment(self):
+        carrier = self.ok("logistics.save_carrier", name=f"Transportes {SUFFIX}",
+                          rates=[{"region": "SP", "max_weight_kg": 5, "price": 30}, {"region": "*", "max_weight_kg": 5, "price": 55}])["id"]
+        self.ok("inventory.stock_in", product=self.item, quantity=20, warehouse="CENTRAL")
+        o = self.client.call("sales.create_order", customer=self.customer, items=[{"product": self.item, "quantity": 10}])
+        a = self.ok("logistics.ship", order=o["number"], lines=[{"line": 1, "quantity": 6}], carrier=carrier, tracking=f"T1{SUFFIX}",
+                    weight_kg=3)
+        self.assertEqual((a["order_state"], Decimal(a["freight_cost"])), ("partial", Decimal(30)))   # table: SP, up to 5 kg
+        b = self.ok("logistics.ship", order=o["number"], carrier=carrier, tracking=f"T2{SUFFIX}")
+        self.assertEqual(b["order_state"], "full")
+        self.assertNotEqual(a["shipment"], b["shipment"])
+        self.assertEqual(self.err("logistics.ship", order=o["number"], carrier=carrier), "NOTHING_TO_SHIP")
+        self.assertEqual(self.count("logistics.shipment s JOIN sales.sales_order o ON o.id = s.sales_order_id",
+                                    f"o.number = {o['number']} AND s.tracking IS NOT NULL"), 2)
+        self.ok("logistics.deliver", shipment=a["shipment"], received_by="Maria (portaria)")
+        # Stock leaving at shipment: the invoice does not take it again.
+        self.set_policy(stock_out_on="shipment")
+        try:
+            o2 = self.client.call("sales.create_order", customer=self.customer, items=[{"product": self.item, "quantity": 4}])
+            before = self.balance(self.item, "CENTRAL")
+            r = self.ok("logistics.ship", order=o2["number"], carrier=carrier, tracking=f"T3{SUFFIX}", freight_charged="12")
+            self.assertTrue(r["stock_moved"])
+            self.assertEqual(before - self.balance(self.item, "CENTRAL"), 4)
+            inv = self.client.call("sales.invoice_order", number=o2["number"])
+            self.assertEqual(before - self.balance(self.item, "CENTRAL"), 4)
+            self.assertEqual(Decimal(inv["total"]), Decimal(4 * 25 + 12))                  # freight charged goes to the invoice
+        finally:
+            self.set_policy(stock_out_on="invoice")
+
+    def test_rf_015_04_customer_return_with_credit(self):
+        r = self.ok("logistics.register_return", customer=self.customer, items=[{"product": self.item, "quantity": 2, "price": 25}],
+                    reason="avaria no transporte", quarantine=True)
+        self.assertEqual((r["warehouse"], Decimal(r["total"])), ("QUARENTENA", Decimal(50)))
+        self.assertEqual(self.scalar(f"SELECT kind FROM finance.bill WHERE id = {r['credit_bill']}"), "payable")
+
+    def test_ca_015_03_no_overlapping_schedule(self):
+        self.ok("field.save_technician", employee=self.tech, warehouse="LAB")
+        o1 = self.ok("field.open_order", customer=self.customer, description="Instalação do equipamento", priority="normal")
+        o2 = self.ok("field.open_order", customer=self.customer, description="Manutenção preventiva", priority="normal")
+        day = (datetime.date.today() + datetime.timedelta(days=30)).isoformat()
+        self.ok("field.schedule", order=o1["number"], technician=self.tech, start=f"{day} 09:00", hours=2)
+        self.assertEqual(self.err("field.schedule", order=o2["number"], technician=self.tech, start=f"{day} 10:00", hours=2),
+                         "SCHEDULE_CONFLICT")
+        self.ok("field.schedule", order=o2["number"], technician=self.tech, start=f"{day} 11:00", hours=1, travel_min=20)
+        r = self.ok("field.route", technician=self.tech, day=day)
+        self.assertEqual([s["OS"] for s in r["stops"]], [o1["number"], o2["number"]])
+        # Absence (spec 014/021 calendar): refused by the database.
+        far = datetime.date.today() + datetime.timedelta(days=60)
+        self.ok("projects.save_availability", employee=self.tech, absence_from=far.isoformat(), absence_to=far.isoformat())
+        self.assertEqual(self.err("field.schedule", order=o2["number"], technician=self.tech, start=f"{far} 09:00"), "TECHNICIAN_ABSENT")
+
+    def test_ca_015_04_execution_idempotent_and_invoice(self):
+        self.ok("field.save_technician", employee=self.tech2, warehouse="LAB")
+        self.ok("inventory.stock_in", product=self.part, quantity=5, warehouse="LAB")
+        self.set_policy(hour=80, km=0)
+        try:
+            o = self.ok("field.open_order", customer=self.customer, description="Calibração do analisador", service=self.svc)
+            n = o["number"]
+            self.ok("field.start_trip", order=n)
+            self.ok("field.log_work", order=n, kind="travel", hours=1, km=20, technician=self.tech2, client_key=f"tr-{SUFFIX}")
+            again = self.ok("field.log_work", order=n, kind="travel", hours=1, km=20, technician=self.tech2, client_key=f"tr-{SUFFIX}")
+            self.assertTrue(again["repeated"])                                              # intermittent connection: once
+            self.ok("field.log_work", order=n, kind="work", hours=3, technician=self.tech2, client_key=f"wk-{SUFFIX}")
+            before = self.balance(self.part, "LAB")
+            self.ok("field.use_part", order=n, product=self.part, quantity=2, technician=self.tech2, client_key=f"pt-{SUFFIX}")
+            self.ok("field.use_part", order=n, product=self.part, quantity=2, technician=self.tech2, client_key=f"pt-{SUFFIX}")
+            self.assertEqual(before - self.balance(self.part, "LAB"), 2)                    # from the technician's kit, once
+            self.ok("field.sign_off", order=n, signed_by="João Cliente")
+            inv = self.ok("field.invoice_orders", orders=[n])["orders"][0]
+            kinds = [r[0] for r in self.rows(f"SELECT l.kind FROM field.invoice_line l JOIN field.service_order o ON o.id = l.order_id "
+                                              f"WHERE o.number = {n} ORDER BY l.line")]
+            self.assertEqual(sorted(kinds), ["hours", "parts", "travel"])
+            rate = Decimal(self.scalar("SELECT hourly_rate FROM projects.rate_profile WHERE code = 'TEC'"))
+            self.assertEqual(Decimal(inv["total"]), 3 * rate + 80 + 2 * 40)
+            self.assertEqual(self.scalar(f"SELECT status FROM field.service_order WHERE number = {n}"), "invoiced")
+        finally:
+            self.set_policy()
+        # An order of a project: hours become approved time entries, parts become project expenses.
+        project = f"FP{self.sfx}"
+        self.client.call("projects.save_project", code=project, name="Campo no projeto", customer=self.customer, manager="admin",
+                         status="active", billing="hourly", tasks=[{"code": "1", "name": "Atendimento"}],
+                         team=[{"employee": self.tech2, "profile": "TEC"}], rates={"TEC": "150"})
+        o = self.ok("field.open_order", customer=self.customer, description="Suporte em campo do projeto", project=project, activity="1")
+        self.ok("field.log_work", order=o["number"], hours=2, technician=self.tech2)
+        self.ok("field.use_part", order=o["number"], product=self.part, quantity=1, technician=self.tech2)
+        self.ok("field.sign_off", order=o["number"], signed_by="Gestor do cliente")
+        self.ok("field.invoice_orders", orders=[o["number"]])
+        self.assertEqual(Decimal(self.scalar(f"SELECT sum(t.hours) FROM projects.time_entry t JOIN projects.project p ON p.id = t.project_id "
+                                             f"WHERE p.code = '{project}' AND t.status = 'approved'")), 2)
+        self.assertEqual(self.count("projects.expense e JOIN projects.project p ON p.id = e.project_id", f"p.code = '{project}'"), 1)
+
+    def rows(self, sql):
+        s, c, _ = http("POST", "/api/sql", {"sql": sql}, self.token)
+        self.assertEqual(s, 200, c)
+        return c["rows"]
+
+    def test_ca_015_05_sla_late_after_deadline(self):
+        now = datetime.datetime.now(datetime.timezone.utc)
+        late = self.ok("field.open_order", customer=self.customer, description="Parada de linha", priority="high",
+                       opened_at=(now - datetime.timedelta(hours=4, minutes=1)).isoformat())
+        fine = self.ok("field.open_order", customer=self.customer, description="Parada de linha 2", priority="high",
+                       opened_at=(now - datetime.timedelta(hours=3, minutes=59)).isoformat())
+        self.assertEqual(late["sla_hours"], 4)
+        r = self.ok("field.sla_report")
+        self.assertIn(late["number"], r["late_open"])
+        self.assertNotIn(fine["number"], r["late_open"])
+        # The customer opens calls on the portal, only for itself; a retried call creates one order.
+        username = f"exf{SUFFIX}"
+        CREATED_USERS.append(username)
+        http("POST", "/api/admin/users", {"username": username, "role": "external", "party_id": self.customer,
+                                          "password": "Initial-pass-1"}, self.token)
+        t = login(username, "Initial-pass-1")
+        http("POST", "/api/me/password", {"current": "Initial-pass-1", "new": "Changed-pass-1"}, t)
+        s, c, _ = self.run_program("field.open_order", {"description": "Equipamento não liga", "client_key": f"p-{SUFFIX}"}, token=t)
+        s2, c2, _ = self.run_program("field.open_order", {"description": "Equipamento não liga", "client_key": f"p-{SUFFIX}"}, token=t)
+        self.assertEqual(c2["result"]["number"], c["result"]["number"])
+        self.assertTrue(c2["result"]["repeated"])
+        s, c, _ = self.run_program("field.open_order", {"description": "outro cliente", "customer": self.customer + 999999}, token=t)
+        self.assertEqual(c["error"]["code"], "FORBIDDEN")
+
+    def test_rnf_015_03_week_agenda_100_technicians_under_1s(self):
+        build = f"test.agenda_build_{SUFFIX}"
+        self.save(build, "import datetime\n"
+                         "def main(tag, customer):\n"
+                         "    ids = [r['id'] for r in ana.sql(\"INSERT INTO projects.employee (name, profile) SELECT $1 || g, 'TEC' \"\n"
+                         "          \"FROM generate_series(1, 100) g RETURNING id\", tag)]\n"
+                         "    ana.sql('INSERT INTO field.technician (employee_id) SELECT unnest($1::int[])', ids)\n"
+                         "    o = ana.sql_value(\"INSERT INTO field.service_order (customer_id, description, due_at, created_by) \"\n"
+                         "                      \"VALUES ($1, 'carga da agenda', now() + interval '1 day', 't') RETURNING id\", customer)\n"
+                         "    d = datetime.date.today()\n"
+                         "    mon = d - datetime.timedelta(days=d.weekday())\n"
+                         "    ana.sql(\"INSERT INTO field.assignment (order_id, employee_id, period, created_by) \"\n"
+                         "            \"SELECT $1, e, tstzrange($2::date + k + time '09:00', $2::date + k + time '11:00'), 't' \"\n"
+                         "            \"FROM unnest($3::int[]) e, generate_series(0, 4) k\", o, mon, ids)\n"
+                         "    return {'ids': ids, 'order': o}\n")
+        s, c, _ = self.run_program(build, {"tag": f"AG{SUFFIX}-", "customer": self.customer})
+        self.assertEqual(s, 200, c)
+        ids, order_id = c["result"]["ids"], c["result"]["order"]
+        timer = f"test.agenda_time_{SUFFIX}"
+        self.save(timer, "import time\ndef main():\n    t0 = time.monotonic()\n    r = ana.call('field.agenda')\n"
+                         "    return {'seconds': time.monotonic() - t0, 'visits': r['visits']}\n", limits={"output_kb": 65536})
+        try:
+            s, c, _ = self.run_program(timer, {})
+            self.assertEqual(s, 200, c)
+            self.assertGreaterEqual(c["result"]["visits"], 500)
+            self.assertLess(c["result"]["seconds"], 1.0, c["result"])
+        finally:
+            purge = f"test.agenda_purge_{SUFFIX}"
+            self.save(purge, "def main(ids, order_id):\n"
+                             "    ana.sql_exec('DELETE FROM field.assignment WHERE order_id = $1', order_id)\n"
+                             "    ana.sql_exec('UPDATE field.service_order SET status = $2 WHERE id = $1', order_id, 'cancelled')\n"
+                             "    ana.sql_exec('UPDATE field.technician SET active = false WHERE employee_id = ANY($1)', ids)\n"
+                             "    return ana.sql_exec('UPDATE projects.employee SET active = false WHERE id = ANY($1)', ids)\n")
+            self.run_program(purge, {"ids": ids, "order_id": order_id})
 
 
 if __name__ == "__main__":

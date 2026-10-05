@@ -20,7 +20,7 @@ Você trabalha no projeto ANA ERP em /home/andre/ana-erp: um ERP com núcleo Erl
 7. 017 — hub de integrações (`specs/017-integration-hub`) — implementada; T-017-02b/02c/05b/08b ficam para o fim da fila
 8. 016 — repositório de arquivos (`specs/016-file-repository`) — implementada; T-016-02b/04b ficam para o fim da fila
 9. 014 — produção e capacidade (`specs/014-production-planning`) — implementada
-10. 015 — logística e campo (`specs/015-logistics-field-service`)
+10. 015 — logística e campo (`specs/015-logistics-field-service`) — implementada
 11. 010 — API pública (`specs/010-public-api`)
 12. 009 — licenciamento (`specs/009-licensing`): é rascunho com decisões em aberto; NÃO implemente — liste as decisões necessárias no relatório e pare.
 13. 020 — tarefas restantes da arquitetura da informação: próxima ação sugerida, fluxos guiados, continuidade (T-020-09..11) e auditoria de acessibilidade (T-020-07). Itens de fluxo podem ser adiantados quando a spec em andamento precisar deles.
