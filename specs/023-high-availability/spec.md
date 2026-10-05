@@ -1,6 +1,6 @@
 # 023 — Alta disponibilidade e tolerância a falhas (operação 24/7)
 
-Situação: implementada; falta o teste de troca real de primário (T-023-09)
+Situação: implementada (reintegração do primário antigo com pg_rewind não automatizada)
 
 ## Problema
 Um ERP é usado o dia inteiro, todos os dias. O ANA já isola programas,

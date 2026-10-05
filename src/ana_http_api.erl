@@ -352,13 +352,9 @@ table(Schema, Table, Req) ->
 %% RF-005-05: own connection as ana_read, read-only transaction.
 sql_console(Sql, Req) ->
     %% RF-023-05: replicas for reading when ANA_DB_READ_HOSTS is set.
-    Config = ana_config:db_role(read),
     Conn = case ana_config:text("ANA_DB_READ_HOSTS", "") of
-        "" -> ana_db:connect(Config);
-        Replicas -> case ana_db:connect(Config#{host => Replicas}, any) of
-                        {ok, _} = Ok -> Ok;
-                        {error, _} -> ana_db:connect(Config)      % replicas down: the primary answers
-                    end
+        "" -> ana_db:connect(ana_config:db_role(read));
+        Replicas -> ana_db:connect_read(ana_config:db_role(read), Replicas)   % replicas down: the primary answers
     end,
     case Conn of
         {ok, C} ->
