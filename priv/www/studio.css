@@ -465,13 +465,14 @@ input:focus, select:focus, textarea:focus, button:focus-visible { outline: 2px s
 
 /* Shell bar (RF-029-01) */
 .shellbar {
-  position: relative; display: grid; grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr); align-items: center;
+  position: relative; display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: stretch;
   gap: 12px; height: 52px; padding: 0 12px; background: var(--shell); border-bottom: 1px solid var(--border);
   box-shadow: 0 1px 2px rgba(30, 42, 57, .05); z-index: 20;
 }
 .shell-left, .shell-right { display: flex; align-items: center; gap: 4px; min-width: 0; }
+.shell-left { padding-right: 12px; }
 .shell-right { justify-content: flex-end; gap: 8px; }
-.shell-center { position: relative; display: flex; justify-content: center; }
+.shell-center { position: relative; display: flex; justify-content: flex-start; min-width: 0; }
 .icon-btn { display: inline-grid; place-items: center; width: 34px; height: 34px; min-height: 0; padding: 0; border: 0; border-radius: 8px;
             background: transparent; color: var(--text-2); position: relative; }
 .icon-btn:hover:not(:disabled) { background: var(--surface-2); color: var(--accent); border: 0; }
@@ -487,17 +488,15 @@ input:focus, select:focus, textarea:focus, button:focus-visible { outline: 2px s
 .brand span { font-weight: 400; color: var(--text-2); margin-left: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .brand.big { justify-content: center; font-size: 28px; margin-bottom: 12px; }
 .brand.big .logo { width: 34px; height: 34px; }
-.shell-title { display: inline-flex; align-items: center; gap: 6px; border: 0; background: transparent; color: var(--text);
-               font-size: 15px; font-weight: 600; padding: 6px 10px; border-radius: 8px; }
-.shell-title:hover:not(:disabled) { background: var(--surface-2); color: var(--accent); border: 0; }
-.area-menu { display: none; position: absolute; top: calc(100% + 8px); left: 50%; transform: translateX(-50%); min-width: 230px;
-             flex-direction: column; gap: 2px; padding: 6px; background: var(--surface); border: 1px solid var(--border);
-             border-radius: var(--r); box-shadow: var(--shadow-2); }
-.area-menu.open { display: flex; }
-.area-menu .area { justify-content: flex-start; text-align: left; border: 0; background: transparent; color: var(--text);
-                   font-weight: 400; padding: 8px 12px; border-radius: var(--r-sm); box-shadow: none; }
-.area-menu .area:hover { background: var(--accent-soft); color: var(--accent); }
-.area-menu .area.active { background: var(--accent-soft); color: var(--accent); font-weight: 600; box-shadow: inset 3px 0 0 var(--accent); }
+/* Areas as tabs, always visible (no hidden menu: one click, current area at a glance). */
+.shell-tabs { background: transparent; padding: 0; border-radius: 0;
+              display: flex; align-self: stretch; align-items: stretch; gap: 2px; min-width: 0; overflow-x: auto; scrollbar-width: none; }
+.shell-tabs::-webkit-scrollbar { display: none; }
+.shell-tabs .area { display: inline-flex; align-items: center; height: auto; min-height: 0; padding: 0 14px; border: 0;
+                    border-bottom: 3px solid transparent; border-top: 3px solid transparent; border-radius: 0;
+                    background: transparent; color: var(--text-2); font-weight: 500; white-space: nowrap; box-shadow: none; }
+.shell-tabs .area:hover:not(:disabled) { background: var(--surface-2); color: var(--accent); border-bottom-color: var(--border-strong); }
+.shell-tabs .area.active { color: var(--text); font-weight: 600; border-bottom-color: var(--accent); background: transparent; box-shadow: none; }
 .command { position: relative; flex: 0 1 300px; max-width: 300px; }
 .command .icon { position: absolute; left: 9px; top: 50%; transform: translateY(-50%); color: var(--text-2); pointer-events: none; }
 .command input { width: 100%; padding-left: 32px; border-radius: 16px; background: var(--surface-2); border-color: var(--surface-2); }
@@ -649,15 +648,19 @@ input:focus, select:focus, textarea:focus, button:focus-visible { outline: 2px s
 /* Toast */
 .toast { border-radius: var(--r); background: #23303f; color: #fff; }
 
-@media (max-width: 1000px) {
+@media (max-width: 1200px) {
   .brand span { display: none; }
+}
+@media (max-width: 1000px) {
   .command { flex-basis: 200px; }
 }
 @media (max-width: 760px) {
-  .shellbar { grid-template-columns: auto minmax(0, 1fr) auto; height: auto; min-height: 52px; padding: 6px 8px; gap: 6px; }
-  .brand { display: none; }
-  .shell-center { justify-content: center; min-width: 0; }
-  .shell-title { max-width: 100%; overflow: hidden; }
+  .shellbar { grid-template-columns: auto minmax(0, 1fr) auto; grid-template-areas: "left . right" "tabs tabs tabs";
+              height: auto; min-height: 52px; padding: 6px 8px 0; gap: 4px 6px; }
+  .shell-left { grid-area: left; padding-right: 0; }
+  .shell-right { grid-area: right; }
+  .shell-center { grid-area: tabs; margin: 0 -8px; padding: 0 4px; border-top: 1px solid var(--border); }
+  .shell-tabs .area { padding: 10px 12px 8px; }
   .command { flex: 0 1 140px; }
   .command input { padding-left: 30px; }
   .page-band, .page-body { padding-left: 16px; padding-right: 16px; }

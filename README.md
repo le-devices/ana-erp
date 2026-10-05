@@ -41,8 +41,8 @@ eletrônica/firmware (projeto `PRJ-001`). Em produção, defina `ANA_DEMO=false`
 
 Identidade própria (logotipo, ícones em SVG, paleta, fonte do sistema),
 inspirada em páginas analíticas de ERPs corporativos sem usar fonte, ícones,
-temas ou marcas de terceiros. Barra superior compacta (conta, voltar, início,
-título da área com menu ▾, busca e avisos); cada rotina é uma página
+temas ou marcas de terceiros. Barra superior compacta (conta, voltar, marca,
+áreas como abas sempre visíveis, busca e avisos); cada rotina é uma página
 analítica — faixa de cabeçalho com filtros em linha, indicadores como chips
 de estado, gráficos lado a lado em cartões e tabelas em cartão com
 "Título (N)" e exportação; início em blocos. Tema claro e escuro, sem

@@ -21,9 +21,11 @@
   async function home() {
     const main = $("#area-home");
     main.replaceChildren(el("p", { class: "muted", text: "Carregando…" }));
-    const [routines, executions] = await Promise.all([loadRoutines(), API.executions(null, true).catch(() => [])]);
+    let [routines, executions] = await Promise.all([loadRoutines(), API.executions(null, true).catch(() => [])]);
     const favs = routines.filter((r) => state.favorites.has(r.name));
     const recentNames = [...new Set(executions.map((x) => x.program))].filter((n) => routine(n)).slice(0, 8);
+    // Only routines of the menu: helpers (lookups of forms, libraries) are not something the user ran.
+    executions = executions.filter((x) => routine(x.program));
 
     const user = window.AnaStudio.user();
     main.replaceChildren(
