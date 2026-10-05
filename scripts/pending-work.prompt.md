@@ -16,7 +16,7 @@ Você trabalha no projeto ANA ERP em /home/andre/ana-erp: um ERP com núcleo Erl
 3. 023 — alta disponibilidade e testes de caos (`specs/023-high-availability`) — implementada; a tarefa pendente T-023-09 é o item 5
 4. 019 — observabilidade (`specs/019-observability`) — implementada; T-019-08b e T-019-09b ficam para o fim da fila
 5. 023 — T-023-09: troca real de primário com cluster PostgreSQL local — implementada
-6. 013 — cadeia de suprimentos (`specs/013-supply-chain`)
+6. 013 — cadeia de suprimentos (`specs/013-supply-chain`) — implementada
 7. 017 — hub de integrações (`specs/017-integration-hub`)
 8. 016 — repositório de arquivos (`specs/016-file-repository`)
 9. 014 — produção e capacidade (`specs/014-production-planning`)

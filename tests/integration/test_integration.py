@@ -1534,7 +1534,7 @@ class TestConsulting(Base):
         self.assertEqual(phase["cpi"], "0.67")
         self.assertTrue(any("IDC" in a for a in phase["alerts"]), phase["alerts"])
         self.assertEqual(self.prog_err("projects.log_time", project=p, task="F", hours=1, employee=emp,
-                                       description="na fase")["code"], "SQL")
+                                       description="na fase")["code"], "PHASE_NOT_LOGGABLE")
 
     def test_ca_021_05_scope_change_new_baseline(self):
         p = self.project(billing="mixed", budget_hours="100")
@@ -2023,7 +2023,7 @@ class TestCostCenters(Base):
         self.save(name, "def main():\n    e = ana.sql_value(\"INSERT INTO finance.journal_entry (memo, created_by) VALUES ('x', 't') RETURNING id\")\n"
                         "    ana.sql_exec(\"INSERT INTO finance.journal_line (entry_id, account, debit, cost_center) VALUES ($1, '1.1.1', 5, 'GERAL')\", e)\n")
         s, c, _ = self.run_program(name)
-        self.assertIn("COST_CENTER_NOT_ALLOWED", c["error"]["message"])
+        self.assertEqual(c["error"]["code"], "COST_CENTER_NOT_ALLOWED")
 
     def test_ca_027_06_manual_entry_must_balance(self):
         self.assertEqual(self.err("finance.post_entry", memo="x", lines=[{"account": "5.1.1", "debit": 10},
@@ -2091,6 +2091,157 @@ class TestCostCenters(Base):
         got = {l["cost_center"]: (Decimal(l["debit"]) - Decimal(l["credit"])) for l in self.lines(done["entries"][0]["document"])}
         self.assertEqual(got, {a: Decimal("600.01"), b: Decimal("400.00"), src: Decimal("-1000.01")})
         self.assertEqual(self.err("finance.allocate_costs", month=today, rule=rule, execute=True), "ALREADY_ALLOCATED")
+
+
+# ---------------------------------------------------------------- spec 013
+class TestSupplyChain(Base):
+    @classmethod
+    def setUpClass(cls):
+        super().setUpClass()
+        c = cls.client
+        cls.supplier = c.call("base.save_party", kind="supplier", name=f"Fornecedor SC {SUFFIX}")["id"]
+        cls.other = c.call("base.save_party", kind="supplier", name=f"Outro SC {SUFFIX}")["id"]
+        cls.mcu, cls.lab, cls.repl = f"MCU{SUFFIX}", f"EMC{SUFFIX}", f"REP{SUFFIX}"
+        c.call("base.save_product", code=cls.mcu, description="MCU de teste", price="40")
+        c.call("base.save_product", code=cls.lab, description="Ensaio de laboratório", price="0", kind="service")
+        c.call("base.save_product", code=cls.repl, description="Item com reposição", price="10")
+        c.call("supply.save_supplier_item", product=cls.mcu, supplier=cls.other, price="25.00", lead_time_days=3)
+        c.call("supply.save_supplier_item", product=cls.mcu, supplier=cls.supplier, price="21.40", lead_time_days=10,
+               preferred=True, supplier_code="STM-F411")
+        c.call("supply.save_supplier_item", product=cls.lab, supplier=cls.supplier, price="4200", lead_time_days=20, preferred=True)
+        c.call("supply.save_supplier_item", product=cls.repl, supplier=cls.supplier, price="2", multiple="10", preferred=True)
+        cls.requester, cls.req_token = new_user("user")
+        cls.req_client = Ana(URL, token=cls.req_token)
+
+    def err(self, function, client=None, **params):
+        with self.assertRaises(AnaRemoteError) as ctx:
+            (client or self.client).call(function, **params)
+        return ctx.exception
+
+    def ordered(self, product, quantity, **extra):
+        """Request by the plain user, approved by admin, turned into an order. Returns the order number."""
+        r = self.req_client.call("supply.request_purchase", reason="teste", product=product, quantity=quantity, **extra)
+        self.client.call("supply.approve_request", request=r["number"])
+        return self.client.call("supply.create_orders", requests=[r["number"]])["orders"][0]
+
+    def test_ca_013_01_approved_request_becomes_order_of_preferred_supplier(self):
+        r = self.req_client.call("supply.request_purchase", reason="protótipo", product=self.mcu, quantity=10)
+        self.assertEqual((r["status"], Decimal(r["total"])), ("submitted", Decimal("214.00")))
+        self.client.call("supply.approve_request", request=r["number"])
+        o = self.client.call("supply.create_orders", requests=[r["number"]])["orders"]
+        self.assertEqual(len(o), 1)
+        s, c, _ = http("POST", "/api/sql", {"sql": "SELECT o.supplier_id, o.status, l.price, l.quantity, l.promised_date - current_date "
+                                                  "FROM supply.purchase_order o JOIN supply.purchase_order_line l ON l.order_id = o.id "
+                                                  f"WHERE o.number = {o[0]}"}, self.token)
+        self.assertEqual(c["rows"][0][0:2], [self.supplier, "sent"])
+        self.assertEqual((Decimal(c["rows"][0][2]), Decimal(c["rows"][0][3]), c["rows"][0][4]), (Decimal("21.40"), Decimal(10), 10))
+        self.assertEqual(self.scalar(f"SELECT status FROM supply.purchase_request WHERE number = {r['number']}"), "ordered")
+        self.assertEqual(self.err("supply.create_orders", requests=[r["number"]]).code, "INVALID_STATE")
+
+    def test_ca_013_02_self_approval_and_limits(self):
+        own = self.client.call("supply.request_purchase", reason="minha", product=self.mcu, quantity=1)
+        self.assertEqual(self.err("supply.approve_request", request=own["number"]).code, "SELF_APPROVAL")
+        group = f"compras{SUFFIX}"
+        http("PUT", f"/api/admin/groups/{group}", {"description": "aprovadores", "program_patterns": []}, self.token)
+        self.client.call("supply.settings", limit_kind="group", limit_target=group, limit_amount="100")
+        try:
+            _, t = new_user("user", groups=[group])
+            approver = Ana(URL, token=t)
+            big = self.req_client.call("supply.request_purchase", reason="grande", product=self.mcu, quantity=10)
+            e = self.err("supply.approve_request", client=approver, request=big["number"])
+            self.assertEqual(e.code, "ABOVE_APPROVAL_LIMIT")
+            small = self.req_client.call("supply.request_purchase", reason="pequena", product=self.mcu, quantity=2)
+            self.assertEqual(approver.call("supply.approve_request", request=small["number"])["status"], "approved")
+            # Without a limit (plain user, no group) nobody approves anything.
+            self.assertEqual(self.err("supply.approve_request", client=self.req_client, request=own["number"]).code,
+                             "ABOVE_APPROVAL_LIMIT")
+            self.client.call("supply.approve_request", request=big["number"])          # admin: unlimited
+        finally:
+            self.client.call("supply.settings", limit_kind="group", limit_target=group, remove_limit=True)
+            http("DELETE", f"/api/admin/groups/{group}", token=self.token)
+
+    def test_ca_013_03_06_partial_receipt_and_tolerance(self):
+        number = self.ordered(self.mcu, 10, warehouse="CENTRAL")
+        before = Decimal(self.scalar(f"SELECT COALESCE(sum(m.quantity), 0) FROM inventory.stock_movement m JOIN base.product p "
+                                     f"ON p.id = m.product_id JOIN inventory.warehouse w ON w.id = m.warehouse_id "
+                                     f"WHERE p.code = '{self.mcu}' AND w.code = 'CENTRAL'"))
+        r = self.client.call("supply.receive", order=number, line=1, quantity=6, document="NF-1")
+        self.assertEqual((r["order_status"], Decimal(r["total"])), ("partially_received", Decimal("128.40")))
+        after = Decimal(self.scalar(f"SELECT sum(m.quantity) FROM inventory.stock_movement m JOIN base.product p "
+                                    f"ON p.id = m.product_id JOIN inventory.warehouse w ON w.id = m.warehouse_id "
+                                    f"WHERE p.code = '{self.mcu}' AND w.code = 'CENTRAL'"))
+        self.assertEqual(after - before, 6)
+        s, c, _ = http("POST", "/api/sql", {"sql": "SELECT kind, amount, party_id FROM finance.bill WHERE id = " + str(r["bill"])}, self.token)
+        self.assertEqual((c["rows"][0][0], Decimal(c["rows"][0][1]), c["rows"][0][2]), ("payable", Decimal("128.40"), self.supplier))
+        s, c, _ = http("POST", "/api/sql", {"sql": "SELECT account, debit, credit FROM finance.journal_line WHERE entry_id = "
+                                                  f"{r['entry']} ORDER BY account"}, self.token)
+        lines = {row[0]: (Decimal(row[1]), Decimal(row[2])) for row in c["rows"]}
+        self.assertEqual(lines, {"1.1.3": (Decimal("128.40"), 0), "2.1.1": (0, Decimal("128.40"))})
+        # CA-013-06: 6 + 5 > 10 (tolerance 0) → refused by the database, nothing changes.
+        e = self.err("supply.receive", order=number, line=1, quantity=5)
+        self.assertEqual(e.code, "OVER_RECEIPT")
+        self.assertEqual(Decimal(self.scalar(f"SELECT l.received_qty FROM supply.purchase_order_line l JOIN supply.purchase_order o "
+                                             f"ON o.id = l.order_id WHERE o.number = {number}")), 6)
+        name = f"test.over_receipt_{SUFFIX}"
+        self.save(name, "def main(n):\n    ana.sql_exec(\"UPDATE supply.purchase_order_line l SET received_qty = 11 FROM supply.purchase_order o "
+                        "WHERE o.id = l.order_id AND o.number = $1\", n)\n")
+        s, c, _ = self.run_program(name, {"n": number})
+        self.assertEqual(c["error"]["code"], "OVER_RECEIPT")                     # even writing SQL directly
+        done = self.client.call("supply.receive", order=number)                    # the remaining 4
+        self.assertEqual(done["order_status"], "received")
+        self.assertEqual(self.err("supply.receive", order=number).code, "INVALID_STATE")
+        s, c, _ = self.run_program(name, {"n": number})
+        self.assertEqual(c["error"]["code"], "ORDER_CLOSED")                     # received order is immutable
+
+    def test_ca_013_04_service_acceptance_becomes_project_expense(self):
+        customer = self.client.call("base.save_party", name=f"Cliente SC {SUFFIX}")["id"]
+        employee = self.client.call("projects.save_employee", name=f"Eng SC {SUFFIX}", profile="HW", hourly_cost="80")["id"]
+        project = f"SC{SUFFIX}"
+        self.client.call("projects.save_project", code=project, name="Projeto suprimentos", customer=customer, manager="admin",
+                         status="active", billing="mixed", cost_center="GERAL", tasks=[{"code": "1", "name": "Ensaios"}],
+                         team=[{"employee": employee, "profile": "HW"}], rates={"HW": "200"})
+        moves = self.count("inventory.stock_movement")
+        number = self.ordered(self.lab, 1, project=project, rebillable=True)
+        r = self.client.call("supply.receive", order=number, note="ensaio aprovado")
+        self.assertEqual(r["order_status"], "received")
+        self.assertEqual(self.count("inventory.stock_movement"), moves)
+        s, c, _ = http("POST", "/api/sql", {"sql": "SELECT e.kind, e.unit_cost, e.rebillable FROM projects.expense e JOIN projects.project p "
+                                                  f"ON p.id = e.project_id WHERE p.code = '{project}'"}, self.token)
+        self.assertEqual((c["rows"][0][0], Decimal(c["rows"][0][1]), c["rows"][0][2]), ("subcontract", Decimal(4200), True))
+        s, c, _ = http("POST", "/api/sql", {"sql": "SELECT account, debit, cost_center FROM finance.journal_line WHERE entry_id = "
+                                                  f"{r['entry']} AND debit > 0"}, self.token)
+        self.assertEqual((c["rows"][0][0], Decimal(c["rows"][0][1]), c["rows"][0][2]), ("5.1.3", Decimal(4200), "GERAL"))
+
+    def test_ca_013_05_replenishment_suggestion(self):
+        self.client.call("supply.save_replenishment_rule", product=self.repl, warehouse="CENTRAL", min_qty=20, max_qty=50)
+        self.client.call("inventory.stock_in", product=self.repl, quantity=5, warehouse="CENTRAL")
+        s, c, _ = self.run_program("supply.suggest_replenishment", {"warehouse": "CENTRAL"})
+        self.assertEqual(s, 200, c)
+        mine = [x for x in c["result"]["suggestions"] if x["product"] == self.repl]
+        self.assertEqual(Decimal(mine[0]["quantity"]), 50)                       # 50 − 5 = 45 → multiple of 10
+        self.assertTrue(any(e.get("kind") == "chart" for e in c["events"]))
+        made = self.req_client.call("supply.suggest_replenishment", warehouse="CENTRAL", create=True)["requests"]
+        self.assertEqual(len(made), 1)
+        self.assertEqual(self.scalar(f"SELECT origin FROM supply.purchase_request WHERE number = {made[0]}"), "replenishment")
+        # A request is not stock on order yet; once ordered, the item leaves the suggestion.
+        self.client.call("supply.approve_request", request=made[0])
+        self.client.call("supply.create_orders", requests=[made[0]])
+        again = self.client.call("supply.suggest_replenishment", warehouse="CENTRAL")["suggestions"]
+        self.assertFalse([x for x in again if x["product"] == self.repl])
+
+    def test_rf_013_09_10_performance_confirm_date_and_workbench(self):
+        number = self.ordered(self.mcu, 3)
+        new_date = (datetime.date.today() + datetime.timedelta(days=30)).isoformat()
+        self.assertEqual(self.client.call("supply.confirm_delivery_date", order=number, promised_date=new_date)["lines"], 1)
+        self.client.call("supply.receive", order=number)
+        s, c, _ = self.run_program("supply.supplier_performance", {"supplier": self.supplier})
+        self.assertEqual(s, 200, c)
+        row = c["result"]["suppliers"][0]
+        self.assertEqual(Decimal(row["no prazo %"]), 100)
+        for view in ("approve", "buy", "receive", "late"):
+            s, c, _ = self.run_program("supply.workbench", {"view": view})
+            self.assertEqual(s, 200, c)
+            self.assertTrue(any(e.get("kind") == "metrics" for e in c["events"]))
 
 
 if __name__ == "__main__":

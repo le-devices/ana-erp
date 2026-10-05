@@ -230,9 +230,18 @@ class Error(Exception):
         return m
 
 
+# Business rules enforced by the database raise "CODE: message" (check_violation or
+# raise_exception): the code reaches the caller like any business error.
+_DB_RULE = re.compile(r"([A-Z][A-Z0-9_]{2,40}): (.+)", re.S)
+
+
 class SqlError(Error):
     def __init__(self, message, sqlstate=None, detail=None):
-        super().__init__("SQL", message, {"sqlstate": sqlstate, "detail": detail})
+        rule = _DB_RULE.fullmatch(message or "") if sqlstate in ("23514", "P0001") else None
+        if rule:
+            super().__init__(rule.group(1), rule.group(2), {"sqlstate": sqlstate, "detail": detail})
+        else:
+            super().__init__("SQL", message, {"sqlstate": sqlstate, "detail": detail})
         self.sqlstate = sqlstate
 
 
@@ -1205,8 +1214,16 @@ def lint_sql(tree):
                         visit(child, inner, params)
             return
         if isinstance(node, comps):
+            # The first iterable is evaluated once, outside the loop: {r["id"]: r for r in ana.sql(...)}.
+            first = node.generators[0]
+            visit(first.iter, in_loop, params)
             for child in ast.iter_child_nodes(node):
-                visit(child, True, params)
+                if child is first:
+                    visit(first.target, True, params)
+                    for cond in first.ifs:
+                        visit(cond, True, params)
+                elif isinstance(child, ast.AST):
+                    visit(child, True, params)
             return
         for child in ast.iter_child_nodes(node):
             visit(child, in_loop, params)

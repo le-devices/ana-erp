@@ -56,7 +56,8 @@ class FakeCore:
                     self.send({"type": "response", "id": m["id"], "ok": True, "value": value})
                 except Exception as e:  # noqa: BLE001
                     self.send({"type": "response", "id": m["id"], "ok": False,
-                               "error": {"code": "SQL", "message": str(e), "sqlstate": "42501"}})
+                               "error": {"code": "SQL", "message": str(e),
+                                         "sqlstate": getattr(e, "sqlstate", "42501")}})
                 continue
             if m["type"] in types:
                 return m
@@ -182,6 +183,20 @@ class TestExecution(unittest.TestCase):
                   "        return e.sqlstate\n")
         end, _ = run(source, handler=handler)
         self.assertEqual(end["result"], "42501")
+
+    def test_database_rule_keeps_its_code(self):
+        class Violation(Exception):
+            sqlstate = "23514"
+
+        def handler(op, args):
+            raise Violation("OVER_RECEIPT: recebido 11 acima do pedido 10")
+        end, _ = run("def main():\n    ana.sql_exec('update x set y = 1')\n", handler=handler)
+        self.assertEqual((end["error"]["code"], end["error"]["message"]),
+                         ("OVER_RECEIPT", "recebido 11 acima do pedido 10"))
+        source = ("def main():\n    try:\n        ana.sql('x')\n    except ana.SqlError as e:\n"
+                  "        return [e.code, e.sqlstate]\n")
+        end, _ = run(source, handler=handler)
+        self.assertEqual(end["result"], ["OVER_RECEIPT", "23514"])           # still an ana.SqlError
 
     def test_python_exception_becomes_structured_error(self):
         end, _ = run("def main():\n    return 1/0\n")
@@ -341,6 +356,13 @@ class TestInspection(unittest.TestCase):
         self.assertEqual(r["params"], {"a": {"type": "int", "order": 0}})   # declared order kept
         self.assertEqual(r["docs"], "Doc.")
         self.assertTrue(r["has_main"])
+
+    def test_lint_comprehension_source_runs_once(self):
+        r = self.inspect("def main(ids):\n"
+                         "    a = {x['id']: x for x in ana.sql('SELECT id FROM t WHERE id = ANY($1)', ids)}\n"
+                         "    b = [ana.sql_one('SELECT id FROM t WHERE id = $1', i) for i in ids]\n")
+        loops = [f["line"] for f in r["lint"] if f["rule"] == "sql_in_loop"]
+        self.assertEqual(loops, [3])
 
 
 DEBUGGABLE = ("def main():\n"      # 1
