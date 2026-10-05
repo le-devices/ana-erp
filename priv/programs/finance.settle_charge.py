@@ -13,7 +13,7 @@ PARAMS = {
     "external_id": {"type": "str", "required": True, "label": "identificador no gateway"},
     "amount": {"type": "decimal", "label": "valor pago"},
     "fee": {"type": "decimal", "default": 0, "label": "tarifa do gateway"},
-    "bank_account": {"type": "str", "default": "CAIXA", "label": "conta que recebe"},
+    "bank_account": {"type": "str", "default": "CAIXA", "label": "conta que recebe", "lookup": {"program": "finance.lookup", "params": {"kind": "bank_accounts"}}},
     "event_id": {"type": "str", "label": "evento"},
     "paid_on": {"type": "date", "label": "data do pagamento"},
 }

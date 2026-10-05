@@ -48,6 +48,12 @@ de estado, gráficos lado a lado em cartões e tabelas em cartão com
 "Título (N)" e exportação; início em blocos. Tema claro e escuro, sem
 rolagem horizontal no celular.
 
+Formulários (spec 031): cliente, depósito, OS, técnico, conta, condição etc.
+são listas; linhas (itens de pedido, componentes, operações, faixas de frete,
+lançamentos) são grades com "Adicionar linha"; datas e horas têm botão de
+calendário/relógio e "hoje"/"agora"; números aceitam vírgula decimal. Todo
+campo tem rótulo em português (verificado por teste).
+
 ## Áreas da interface (spec 020)
 
 | Área | Para quem | O que tem |
@@ -348,6 +354,25 @@ ou comprar, prazo, lote, segurança, custo padrão).
   indicadores (`sla`): SLA cumprido, atrasadas, resposta, horas em campo,
   visitas e retornos.
 
+## Condições de pagamento e crédito (spec 031)
+
+- **Condições** (`condicao`): forma (PIX, boleto, cartão de crédito/débito,
+  crédito direto, dinheiro, transferência), prazos "30/60/90" ou parcelas com
+  percentuais (o banco confere a soma de 100 %), entrada, desconto/acréscimo,
+  taxa da operadora, valor mínimo e conector de cobrança (spec 017). O
+  faturamento gera um título por parcela (centavos na última) e, com
+  conector, a cobrança de cada parcela. Condições permitidas e padrão por
+  cliente.
+- **Crédito** (`credito`): limite por cliente, tolerância de atraso e
+  bloqueio automático por inadimplência — **desligado de fábrica** (ligar de
+  saída bloquearia clientes com títulos antigos); bloqueio manual com motivo
+  e validade; liberação pontual de um pedido ou faturamento, usada uma vez.
+  O bloqueio impede novos pedidos, faturamentos e ordens de serviço
+  (`CUSTOMER_BLOCKED`); tudo registra quem, quando e por quê.
+- **Tela de venda** (`order`): itens numa grade com saldo no depósito e nos
+  outros; se faltar, só avisa (com "Transferir de X"), pede a transferência
+  ou recusa; mostra as parcelas e leva a "Faturar agora" ou "Expedir".
+
 ## Repositório de arquivos e portal do cliente (spec 016)
 
 **Arquivos** guarda documentos de projetos, clientes e fornecedores em pastas
@@ -473,8 +498,11 @@ correspondentes são só o valor inicial).
 
 ## Situação das specs
 
-Implementadas: 001–008, 011 (com usuários robô e dono obrigatório), 012, 018, 021, 019 (faltam alertas configuráveis e OpenTelemetry), 013, 014, 015, 016 (faltam S3 e antivírus), 017 (faltam SFTP/pasta/e-mail, mTLS, CNAB e pacotes de modelos), 022, 023, 024, 025, 026, 027, 028, 029; 020 parcial (falta próxima ação
+Implementadas: 001–008, 011 (com usuários robô e dono obrigatório), 012, 018, 021, 019 (faltam alertas configuráveis e OpenTelemetry), 013, 014, 015, 016 (faltam S3 e antivírus), 017 (faltam SFTP/pasta/e-mail, mTLS, CNAB e pacotes de modelos), 022, 023, 024, 025, 026, 027, 028, 029, 031; 020 parcial (falta próxima ação
 sugerida, fluxos guiados e auditoria de acessibilidade).
 Na fila (ordem em [scripts/pending-work.prompt.md](scripts/pending-work.prompt.md)):
-010 API pública; 009 licenciamento
-aguarda decisões.
+033 verificações periódicas (segurança, bibliotecas vulneráveis, robustez e
+desempenho); 034 ambiente de desenvolvimento e testes com transporte para
+produção e cópia mascarada de dados; 030 esteiras automáticas (venda →
+estoque → expedição → faturamento → cobrança); 032 distâncias por
+coordenadas; 010 API pública; 009 licenciamento aguarda decisões.

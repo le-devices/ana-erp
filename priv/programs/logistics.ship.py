@@ -14,8 +14,10 @@ from ana_lib.logistics import common
 PARAMS = {
     "order": {"type": "int", "required": True, "label": "pedido de venda", "order": 1,
               "lookup": {"program": "logistics.lookup", "params": {"kind": "orders"}}},
-    "lines": {"type": "list", "label": "linhas e quantidades (vazio = tudo o que falta)", "order": 2,
-              "help": '[{"line": 1, "quantity": 6}]'},
+    "lines": {"type": "list", "label": "linhas e quantidades (vazio = tudo o que falta)", "order": 2, "columns": {
+        "line": {"type": "int", "required": True, "label": "linha do pedido",
+                 "lookup": {"program": "sales.lookup", "params": {"kind": "order_lines"}, "depends": ["order"]}},
+        "quantity": {"type": "decimal", "required": True, "label": "quantidade a expedir"}}},
     "carrier": {"type": "int", "label": "transportadora", "order": 3, "lookup": {"program": "logistics.lookup", "params": {"kind": "carriers"}}},
     "tracking": {"type": "str", "label": "código de rastreio", "order": 4},
     "packages": {"type": "int", "default": 1, "label": "volumes", "order": 5},

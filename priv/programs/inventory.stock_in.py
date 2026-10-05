@@ -6,10 +6,10 @@
 from ana_lib.util import validation as v
 
 PARAMS = {
-    "product": {"type": "str", "required": True},
-    "quantity": {"type": "decimal", "required": True},
-    "warehouse": {"type": "str", "default": "CENTRAL"},
-    "document": {"type": "str"},
+    "product": {"type": "str", "required": True, "label": "item", "lookup": {"program": "sales.lookup", "params": {"kind": "products"}}},
+    "quantity": {"type": "decimal", "required": True, "label": "quantidade"},
+    "warehouse": {"type": "str", "default": "CENTRAL", "label": "depósito", "lookup": {"program": "sales.lookup", "params": {"kind": "warehouses"}}},
+    "document": {"type": "str", "label": "documento"},
 }
 
 

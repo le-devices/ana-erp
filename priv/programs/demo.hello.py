@@ -4,8 +4,8 @@
 """Greets and does a little math — set a breakpoint and debug it!"""
 
 PARAMS = {
-    "name": {"type": "str", "default": "mundo"},
-    "times": {"type": "int", "default": 3},
+    "name": {"type": "str", "default": "mundo", "label": "seu nome"},
+    "times": {"type": "int", "default": 3, "label": "repetições"},
 }
 
 

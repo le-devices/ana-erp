@@ -8,10 +8,10 @@ from ana_lib.field import common
 from ana_lib.logistics import common as stock
 
 PARAMS = {
-    "order": {"type": "int", "required": True, "label": "OS"},
-    "product": {"type": "str", "required": True, "label": "peça"},
+    "order": {"type": "int", "required": True, "label": "OS", "lookup": {"program": "logistics.lookup", "params": {"kind": "service_orders"}}},
+    "product": {"type": "str", "required": True, "label": "peça", "lookup": {"program": "supply.lookup", "params": {"kind": "products"}}},
     "quantity": {"type": "decimal", "default": 1, "label": "quantidade"},
-    "technician": {"type": "int", "label": "técnico (vazio = eu)"},
+    "technician": {"type": "int", "label": "técnico (vazio = eu)", "lookup": {"program": "logistics.lookup", "params": {"kind": "technicians"}}},
     "client_key": {"type": "str", "label": "chave do app (idempotência)"},
 }
 

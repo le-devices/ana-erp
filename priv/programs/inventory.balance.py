@@ -6,8 +6,8 @@
 from ana_lib.util.format import quantity as fmt_qty
 
 PARAMS = {
-    "product": {"type": "str"},
-    "warehouse": {"type": "str"},
+    "product": {"type": "str", "label": "item", "lookup": {"program": "sales.lookup", "params": {"kind": "products"}}},
+    "warehouse": {"type": "str", "label": "depósito", "lookup": {"program": "sales.lookup", "params": {"kind": "warehouses"}}},
 }
 
 

@@ -4,7 +4,9 @@
 
 from ana_lib.util.format import money
 
-PARAMS = {"days": {"type": "int", "default": 30}}
+PARAMS = {
+    "days": {"type": "int", "default": 30, "label": "período (dias)"},
+}
 
 
 def main(days=30):

@@ -24,5 +24,13 @@ def quantity(value, places=3):
     return f"{sign}{_thousands(int(integer))},{frac}" if places else f"{sign}{_thousands(int(integer))}"
 
 
+def compact(value):
+    """compact(Decimal('82.000')) -> '82'; compact(Decimal('1234.50')) -> '1.234,5' (no trailing zeros)."""
+    v = Decimal(str(value)).normalize()
+    sign = "-" if v < 0 else ""
+    integer, _, frac = f"{abs(v):f}".partition(".")
+    return f"{sign}{_thousands(int(integer))}" + (f",{frac}" if frac else "")
+
+
 def date_br(d):
     return d.strftime("%d/%m/%Y") if d else ""

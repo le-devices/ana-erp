@@ -9,17 +9,17 @@ import datetime
 from ana_lib.projects import access
 
 PARAMS = {
-    "project": {"type": "str", "required": True},
-    "kind": {"type": "str", "required": True},
-    "description": {"type": "str", "required": True},
-    "unit_cost": {"type": "decimal", "required": True},
-    "quantity": {"type": "decimal", "default": 1},
-    "rebillable": {"type": "bool", "default": False},
-    "markup_pct": {"type": "decimal", "default": 0},
-    "supplier": {"type": "int"},
-    "product": {"type": "str"},
-    "warehouse": {"type": "str", "default": "LAB"},
-    "expense_date": {"type": "date"},
+    "project": {"type": "str", "required": True, "label": "projeto", "lookup": {"program": "projects.lookup", "params": {"kind": "projects"}}},
+    "kind": {"type": "str", "required": True, "label": "tipo", "choices": [["component", "Componente"], ["pcb", "Placa (PCB)"], ["supplies", "Insumos"], ["subcontract", "Serviço contratado"], ["travel", "Viagem"], ["other", "Outro"]]},
+    "description": {"type": "str", "required": True, "label": "descrição"},
+    "unit_cost": {"type": "decimal", "required": True, "label": "custo unitário"},
+    "quantity": {"type": "decimal", "default": 1, "label": "quantidade"},
+    "rebillable": {"type": "bool", "default": False, "label": "refaturável ao cliente"},
+    "markup_pct": {"type": "decimal", "default": 0, "label": "acréscimo na refatura (%)"},
+    "supplier": {"type": "int", "label": "fornecedor", "lookup": {"program": "supply.lookup", "params": {"kind": "suppliers"}}},
+    "product": {"type": "str", "label": "item do estoque (material)", "lookup": {"program": "sales.lookup", "params": {"kind": "products"}}},
+    "warehouse": {"type": "str", "default": "LAB", "label": "depósito", "lookup": {"program": "sales.lookup", "params": {"kind": "warehouses"}}},
+    "expense_date": {"type": "date", "label": "data da despesa"},
 }
 
 KINDS = ("component", "pcb", "supplies", "subcontract", "travel", "other")

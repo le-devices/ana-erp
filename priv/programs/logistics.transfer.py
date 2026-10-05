@@ -13,11 +13,17 @@ PARAMS = {
     "action": {"type": "str", "default": "ship", "label": "ação",
                "choices": [["create", "Criar (rascunho)"], ["ship", "Criar e despachar"], ["dispatch", "Despachar rascunho"],
                            ["receive", "Receber"]]},
-    "number": {"type": "int", "label": "transferência (despachar/receber)"},
+    "number": {"type": "int", "label": "transferência (despachar/receber)", "lookup": {"program": "logistics.lookup", "params": {"kind": "transfers"}}},
     "from_wh": {"type": "str", "label": "depósito de origem", "lookup": {"program": "logistics.lookup", "params": {"kind": "warehouses"}}},
     "to_wh": {"type": "str", "label": "depósito de destino", "lookup": {"program": "logistics.lookup", "params": {"kind": "warehouses"}}},
-    "items": {"type": "list", "label": "itens", "help": '[{"product": "MCU-ARM-M4", "quantity": 10}]'},
-    "received": {"type": "list", "label": "recebido (vazio = tudo)", "help": '[{"line": 1, "quantity": 9, "note": "1 avariada"}]'},
+    "items": {"type": "list", "label": "itens", "add_label": "Adicionar item", "columns": {
+        "product": {"type": "str", "required": True, "label": "item",
+                    "lookup": {"program": "sales.lookup", "params": {"kind": "products"}, "depends": ["from_wh"]}},
+        "quantity": {"type": "decimal", "required": True, "default": 1, "label": "quantidade"}}},
+    "received": {"type": "list", "label": "recebido (vazio = tudo)", "columns": {
+        "line": {"type": "int", "required": True, "label": "linha"},
+        "quantity": {"type": "decimal", "required": True, "label": "quantidade recebida"},
+        "note": {"type": "str", "label": "observação (ex.: 1 avariada)"}}},
     "notes": {"type": "str", "label": "observação"},
 }
 

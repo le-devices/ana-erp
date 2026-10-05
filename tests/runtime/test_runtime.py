@@ -336,6 +336,14 @@ class TestParams(unittest.TestCase):
         end, _ = run(self.SOURCE, {"a": "abc"})
         self.assertEqual(end["error"]["code"], "INVALID_PARAMETER")
 
+    def test_decimal_accepts_brazilian_notation(self):
+        # Spec 031 usability: operators type "4,79" or "1.234,56" in money/quantity fields.
+        source = ('PARAMS = {"v": {"type": "decimal"}}\n'
+                  'def main(v):\n    return str(v)\n')
+        for typed, expected in (("4,79", "4.79"), ("1.234,56", "1234.56"), ("12.5", "12.5"), (3, "3")):
+            end, _ = run(source, {"v": typed})
+            self.assertEqual(end["result"], expected, typed)
+
 
 class TestInspection(unittest.TestCase):
     def inspect(self, source):
@@ -356,6 +364,13 @@ class TestInspection(unittest.TestCase):
         self.assertEqual(r["params"], {"a": {"type": "int", "order": 0}})   # declared order kept
         self.assertEqual(r["docs"], "Doc.")
         self.assertTrue(r["has_main"])
+
+    def test_grid_columns_keep_declared_order(self):
+        # JSON objects lose order on storage: the items grid needs "order" per column too.
+        r = self.inspect('PARAMS = {"items": {"type": "list", "columns": {"product": {}, "quantity": {}, "price": {}}}}\n'
+                         'def main(items): pass\n')
+        cols = r["params"]["items"]["columns"]
+        self.assertEqual([cols[c]["order"] for c in ("product", "quantity", "price")], [0, 1, 2])
 
     def test_lint_ok_marker_accepts_a_finding_on_purpose(self):
         r = self.inspect("def main(q):\n"

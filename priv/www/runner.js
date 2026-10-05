@@ -15,6 +15,160 @@
   const moduleOf = (name) => name.split(".")[0];
   const moduleLabel = (m) => MODULES[m] || m;
 
+  /** Calendar / clock button beside date and time fields: opens the browser's picker (no typing). */
+  function pickerButton(input, type) {
+    if (!["date", "datetime", "time"].includes(type)) return null;
+    const iconName = type === "time" ? "clock" : "calendar";
+    const b = el("button", { type: "button", class: "picker-btn", title: type === "time" ? "Escolher a hora" : "Escolher no calendário",
+                             "aria-label": type === "time" ? "Escolher a hora" : "Escolher a data" }, window.AnaUI.icon(iconName, 16));
+    b.addEventListener("click", () => {
+      try { input.showPicker(); } catch (_) { input.focus(); }
+    });
+    const today = el("button", { type: "button", class: "picker-btn", title: type === "date" ? "Hoje" : "Agora",
+                                 text: type === "date" ? "hoje" : "agora" });
+    today.addEventListener("click", () => {
+      const now = new Date();
+      const pad = (n) => String(n).padStart(2, "0");
+      const d = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`;
+      const t = `${pad(now.getHours())}:${pad(now.getMinutes())}`;
+      input.value = type === "date" ? d : type === "time" ? t : `${d}T${t}`;
+      input.dispatchEvent(new Event("change", { bubbles: true }));
+    });
+    return el("span", { class: "picker-btns" }, b, today);
+  }
+
+  /** Typed number in Brazilian notation ("1.234,56") or plain ("1234.56"). */
+  const brNumber = (t) => parseFloat(String(t).includes(",") ? String(t).replace(/\./g, "").replace(",", ".") : t);
+
+  /** Editable rows for list PARAMS with "columns" (e.g. order items). */
+  function rowsEditor(columns, startRows, hidden, options, topInputs, addLabel, optional) {
+    // Declared order ("order", kept by the core): JSON objects have no order.
+    const cols = Object.entries(columns).map(([c, cs], i) => [c, cs || {}, cs && cs.order !== undefined ? cs.order : i])
+      .sort((a, b) => a[2] - b[2]).map(([c, cs]) => [c, cs]);
+    const body = el("tbody");
+    const optionsCache = {};
+    const sync = () => {
+      const rows = [];
+      for (const tr of body.children) {
+        const r = {};
+        let any = false;
+        for (const [c, cs] of cols) {
+          const inp = tr.querySelector(`[data-col="${c}"]`);
+          if (inp && inp.type === "checkbox") { r[c] = inp.checked; continue; }   // a yes/no alone does not make a line
+          if (!inp || inp.value === "") continue;
+          // Decimals travel in plain notation ("1.234,56" typed → "1234.56").
+          r[c] = cs.type === "int" ? parseInt(inp.value, 10)
+            : cs.type === "decimal" && inp.value.includes(",") ? inp.value.replace(/\./g, "").replace(",", ".") : inp.value;
+          if (cs.default === undefined || String(cs.default) !== inp.value) any = true;   // an untouched line (defaults only) is not sent
+        }
+        if (any) rows.push(r);
+      }
+      hidden.value = rows.length ? JSON.stringify(rows) : "";
+      total.textContent = lineTotalsText(rows.length);
+    };
+    const lineTotalsText = (filled) => {
+      const lines = filled === 0 ? "nenhuma linha" : `${filled} linha(s)`;
+      if (!columns.quantity || !columns.price) return lines;
+      let sum = 0, known = true;
+      for (const tr of body.children) {
+        const q = brNumber((tr.querySelector('[data-col="quantity"]') || {}).value || "0");
+        const pIn = tr.querySelector('[data-col="price"]');
+        const p = brNumber((pIn && (pIn.value || pIn.placeholder)) || "");
+        if (isNaN(p)) { known = false; continue; }
+        sum += (isNaN(q) ? 0 : q) * p;
+      }
+      return `${lines} · total ${known ? "" : "≈ "}R$ ${sum.toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+    };
+    const loadOptions = async (c, cs) => {
+      const lk = cs.lookup;
+      const params = { ...(lk.params || {}) };
+      for (const d of lk.depends || []) if (topInputs[d] && topInputs[d].value !== "") params[d] = topInputs[d].value;
+      const key = c + JSON.stringify(params);
+      if (!optionsCache[key]) optionsCache[key] = options.lookup ? options.lookup(lk.program, params).catch(() => []) : Promise.resolve([]);
+      return optionsCache[key];
+    };
+    const fillSelect = async (sel, c, cs, keep) => {
+      const opts = cs.choices ? cs.choices.map((x) => Array.isArray(x) ? { value: x[0], label: x[1] } : { value: x, label: String(x) })
+                              : await loadOptions(c, cs);
+      sel.replaceChildren(el("option", { value: "", text: "— escolha —" }), ...opts.map((o) => {
+        const op = el("option", { value: String(o.value), text: o.label });
+        if (o.price !== undefined) op.dataset.price = String(o.price);
+        if (o.stock !== undefined) op.dataset.stock = String(o.stock);
+        if (o.kind) op.dataset.kind = o.kind;
+        return op;
+      }));
+      if (keep !== undefined && keep !== "") {
+        if (![...sel.options].some((o) => o.value === String(keep))) sel.append(el("option", { value: String(keep), text: String(keep) }));
+        sel.value = String(keep);
+      }
+    };
+    const addRow = (values = {}) => {
+      const tr = el("tr");
+      const status = el("span", { class: "row-status muted small" });
+      for (const [c, cs] of cols) {
+        let inp;
+        if (cs.type === "bool") {
+          inp = el("input", { "data-col": c, type: "checkbox", "aria-label": cs.label || c,
+                              checked: values[c] !== undefined ? values[c] === true : cs.default === true });
+        } else if (cs.lookup || cs.choices) {
+          inp = el("select", { "data-col": c, "aria-label": cs.label || c });
+          fillSelect(inp, c, cs, values[c]).then(() => { inp.dispatchEvent(new Event("refresh")); });
+        } else {
+          inp = el("input", { "data-col": c, type: cs.type === "int" ? "number" : cs.type === "date" ? "date" : "text",
+                              inputmode: cs.type === "decimal" ? "decimal" : undefined, "aria-label": cs.label || c,
+                              value: values[c] !== undefined ? values[c] : (cs.default !== undefined ? cs.default : "") });
+        }
+        inp.addEventListener("change", sync);
+        inp.addEventListener("input", sync);
+        tr.append(el("td", { "data-label": cs.label || c }, inp));
+      }
+      // Item chosen: list price as a hint and stock of the warehouse beside the quantity.
+      const prodSel = tr.querySelector('[data-col="product"]');
+      const priceIn = tr.querySelector('[data-col="price"]');
+      const qtyIn = tr.querySelector('[data-col="quantity"]');
+      const showStock = () => {
+        const op = prodSel && prodSel.options[prodSel.selectedIndex];
+        if (!op || !op.value) { status.textContent = ""; status.className = "row-status muted small"; return; }
+        if (priceIn) priceIn.placeholder = op.dataset.price ? op.dataset.price.replace(".", ",") : "";
+        if (op.dataset.kind === "service") { status.textContent = "serviço"; status.className = "row-status muted small"; }
+        else if (op.dataset.stock !== undefined) {
+          const stock = parseFloat(op.dataset.stock);
+          const q = brNumber((qtyIn && qtyIn.value) || "0");
+          status.textContent = `saldo ${stock.toLocaleString("pt-BR")}`;
+          status.className = "row-status small " + (q > stock ? "warn" : "ok");
+        }
+        sync();
+      };
+      if (prodSel) { prodSel.addEventListener("change", showStock); prodSel.addEventListener("refresh", showStock); }
+      if (qtyIn) qtyIn.addEventListener("input", showStock);
+      tr.append(el("td", {}, status), el("td", { class: "row-remove" }, el("button", { type: "button", class: "quiet small", title: "Remover a linha",
+        "aria-label": "Remover a linha", onclick: () => { tr.remove(); sync(); } }, window.AnaUI.icon("close", 14))));
+      body.append(tr);
+      sync();
+      return tr;
+    };
+    const total = el("span", { class: "muted small" });
+    const table = el("table", { class: "rows-editor" },
+      el("thead", {}, el("tr", {}, cols.map(([c, cs]) => el("th", { class: cs.required ? "required" : "", text: cs.label || c })),
+        el("th", { text: "" }), el("th", { text: "" }))), body);
+    // An optional grid ("vazio = tudo") starts empty: an untouched line would look mandatory.
+    (startRows.length ? startRows : optional ? [] : [{}]).forEach((r) => addRow(r));
+    if (!body.children.length) sync();
+    // Options that depend on top-level fields (warehouse) are reloaded when those change.
+    for (const [c, cs] of cols) {
+      for (const d of (cs.lookup && cs.lookup.depends) || []) {
+        const top = topInputs[d];
+        if (top) top.addEventListener("change", () => {
+          for (const tr of body.children) { const sel = tr.querySelector(`[data-col="${c}"]`); if (sel) fillSelect(sel, c, cs, sel.value).then(() => sel.dispatchEvent(new Event("refresh"))); }
+        });
+      }
+    }
+    return el("div", { class: "rows-box" }, table,
+      el("div", { class: "rows-foot" }, el("button", { type: "button", class: "small icon-text", onclick: () => {
+        const tr = addRow(); const f = tr.querySelector("select, input"); if (f) f.focus(); } }, window.AnaUI.icon("plus", 14), el("span", { text: addLabel || "Adicionar linha" })),
+        total));
+  }
+
   /** Builds a form from PARAMS; returns {node, read(), summary()}; read() throws when invalid.
    *  options: initial (values), onSubmit, submitLabel, showTypes (development),
    *  lookup(program, params) → Promise<[{value, label}]> for fields with "lookup". */
@@ -36,7 +190,11 @@
     const lookups = [];
     for (const [name, spec] of entries) {
       const type = spec.type || "str";
-      const labelText = spec.label || name;
+      let labelText = spec.label || name;
+      // A list with "(vazio = X)" in its label shows X as the empty option instead (shorter label).
+      let emptyText = spec.empty;
+      const vazio = (spec.choices || spec.lookup) && !emptyText && /\s*\(vazio = ([^)]+)\)$/.exec(labelText);
+      if (vazio) { emptyText = vazio[1]; labelText = labelText.slice(0, vazio.index); }
       const label = el("span", { class: spec.required ? "required" : "", text: labelText });
       const hint = options.showTypes ? el("span", { class: "hint", text: type }) : null;
       const init = initial[name];
@@ -52,7 +210,7 @@
         input = el("select", { name });
         const fill = (opts, keep) => {
           const current = keep !== undefined ? keep : input.value;
-          input.replaceChildren(el("option", { value: "", text: spec.required ? "— escolha —" : "—" }),
+          input.replaceChildren(el("option", { value: "", text: spec.required ? "— escolha —" : emptyText ? `— ${emptyText} —` : "—" }),
             ...opts.map((o) => el("option", { value: String(o.value), text: o.label })));
           if (current !== "" && current !== undefined && current !== null) {
             if (![...input.options].some((o) => o.value === String(current))) input.append(el("option", { value: String(current), text: String(current) }));
@@ -66,22 +224,37 @@
           fill([], start);
           lookups.push({ input, spec, fill, start });
         }
+      } else if (type === "list" && spec.columns) {
+        // Rows editor (spec 029): one line per item, columns typed like fields, lookups that follow
+        // other fields (e.g. stock of the chosen warehouse); the value travels as JSON in a hidden input.
+        input = el("input", { type: "hidden", name });
+        const startRows = Array.isArray(init) ? init : (typeof init === "string" && init ? JSON.parse(init) : (spec.default || []));
+        const grid = rowsEditor(spec.columns, startRows, input, options, inputs, spec.add_label, !spec.required);
+        input.dataset.type = type;
+        input.dataset.label = labelText;
+        if (spec.required) input.dataset.required = "1";
+        inputs[name] = input;
+        form.append(el("div", { class: "rows-field" }, el("span", { class: "label-line" }, label, hint), grid, input,
+                       spec.help ? el("span", { class: "help", text: spec.help }) : null));
+        continue;
       } else if (type === "list" || type === "dict") {
         input = el("textarea", { name, rows: 3, spellcheck: "false" });
         input.value = init !== undefined ? (typeof init === "string" ? init : JSON.stringify(init))
           : spec.default !== undefined && spec.default !== null ? JSON.stringify(spec.default) : (type === "list" ? "[]" : "{}");
       } else {
-        const types = { int: "number", float: "number", decimal: "text", date: "date" };
+        const types = { int: "number", float: "number", decimal: "text", date: "date", datetime: "datetime-local", time: "time" };
         input = el("input", { name, type: types[type] || "text", step: type === "float" ? "any" : undefined,
                               inputmode: type === "decimal" ? "decimal" : undefined });
-        if (init !== undefined && init !== null) input.value = init;
+        if (init !== undefined && init !== null) input.value = type === "datetime" ? String(init).slice(0, 16).replace(" ", "T") : init;
         else if (spec.default !== undefined && spec.default !== null) input.value = spec.default;
       }
+      const picker = pickerButton(input, type);
       input.dataset.type = type;
       input.dataset.label = labelText;
       if (spec.required) input.dataset.required = "1";
       inputs[name] = input;
-      form.append(el("label", { title: spec.help || "" }, el("span", { class: "label-line" }, label, hint), input,
+      form.append(el("label", { title: spec.help || "", class: type === "datetime" ? "wide" : undefined }, el("span", { class: "label-line" }, label, hint),
+                     picker ? el("span", { class: "picker-wrap" }, input, picker) : input,
                      spec.help ? el("span", { class: "help", text: spec.help }) : null));
     }
     // Lookups (e.g. activities follow the chosen project): loaded now and again when a dependency changes.
@@ -133,6 +306,7 @@
         if (!input) continue;
         let v = input.type === "checkbox" ? (input.checked ? "sim" : "") : input.tagName === "SELECT"
           ? (input.value !== "" ? input.options[input.selectedIndex].text : "") : input.value;
+        if (spec.columns && v) { try { v = `${JSON.parse(v).length} linha(s)`; } catch (_) { /* keep */ } }
         if (v && v !== "[]" && v !== "{}") parts.push(`${spec.label || name}: ${v}`);
       }
       return parts.join(" · ") || "sem parâmetros";

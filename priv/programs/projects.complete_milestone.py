@@ -5,8 +5,8 @@ import datetime
 from ana_lib.projects import access
 
 PARAMS = {
-    "id": {"type": "int", "required": True},
-    "completed_on": {"type": "date"},
+    "id": {"type": "int", "required": True, "label": "marco (id)"},
+    "completed_on": {"type": "date", "label": "concluído em"},
 }
 
 

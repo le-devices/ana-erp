@@ -7,8 +7,8 @@
 from ana_lib.projects import access
 
 PARAMS = {
-    "number": {"type": "int", "required": True},
-    "reason": {"type": "str", "required": True},
+    "number": {"type": "int", "required": True, "label": "fatura (número)"},
+    "reason": {"type": "str", "required": True, "label": "motivo"},
 }
 
 

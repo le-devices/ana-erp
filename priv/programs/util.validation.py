@@ -13,11 +13,21 @@ def require(condition, code, message):
         raise ana.Error(code, message)
 
 
-def positive_decimal(value, field):
+def decimal(value, field):
+    """Decimal from a number or typed text; Brazilian notation ("1.234,56", "4,79") accepted."""
     try:
-        d = Decimal(str(value))
+        if isinstance(value, (int, float, Decimal)) and not isinstance(value, bool):
+            return Decimal(str(value))
+        s = str(value).strip()
+        if "," in s:
+            s = s.replace(".", "").replace(",", ".")
+        return Decimal(s)
     except (InvalidOperation, ValueError):
         raise ana.Error("INVALID_VALUE", f"{field} não é um número") from None
+
+
+def positive_decimal(value, field):
+    d = decimal(value, field)
     require(d > 0, "INVALID_VALUE", f"{field} deve ser positivo")
     return d
 

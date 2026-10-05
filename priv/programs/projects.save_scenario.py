@@ -6,15 +6,15 @@ for this project; custom scenarios are compared side by side."""
 from ana_lib.projects import access
 
 PARAMS = {
-    "project": {"type": "str", "required": True},
-    "name": {"type": "str"},
+    "project": {"type": "str", "required": True, "label": "projeto", "lookup": {"program": "projects.lookup", "params": {"kind": "projects"}}},
+    "name": {"type": "str", "label": "nome"},
     "kind": {"type": "str", "default": "custom", "label": "tipo", "choices": [["custom", "Cenário próprio"], ["optimistic", "Otimista deste projeto"], ["pessimistic", "Pessimista deste projeto"]]},
-    "rate_pct": {"type": "decimal", "default": 0},
-    "hours_pct": {"type": "decimal", "default": 0},
-    "cost_pct": {"type": "decimal", "default": 0},
-    "delay_weeks": {"type": "int", "default": 0},
-    "notes": {"type": "str", "default": ""},
-    "remove": {"type": "bool", "default": False},
+    "rate_pct": {"type": "decimal", "default": 0, "label": "valor-hora (%)"},
+    "hours_pct": {"type": "decimal", "default": 0, "label": "horas (%)"},
+    "cost_pct": {"type": "decimal", "default": 0, "label": "custo (%)"},
+    "delay_weeks": {"type": "int", "default": 0, "label": "atraso (semanas)"},
+    "notes": {"type": "str", "default": "", "label": "observações"},
+    "remove": {"type": "bool", "default": False, "label": "remover"},
 }
 
 

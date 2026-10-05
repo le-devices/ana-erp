@@ -60,6 +60,7 @@ inglês, como no código (constituição, P2a).
 | 027 | [Centros de custo](027-cost-centers/spec.md) | Centro em cada lançamento (política por conta, garantida no banco), origem automática, hierarquia, orçado × realizado, rateio, lançamento manual, resultado gerencial | implementada |
 | 028 | [Atualização dos programas do produto](028-product-updates/spec.md) | Versão nova de programa do produto oferecida a instalações existentes; administrador compara lado a lado e aceita ou dispensa | implementada |
 | 029 | [Linguagem visual "Linha ANA"](029-visual-language/spec.md) | Barra superior compacta, rotinas como páginas analíticas (indicadores, gráficos em cartões, tabelas em cartão), início em blocos, ícones próprios, claro/escuro | implementada |
+| 031 | [Condições de pagamento e crédito](031-payment-terms-credit/spec.md) | PIX, boleto, cartão, crédito direto e vários prazos; títulos por parcela; limite de crédito, bloqueio por inadimplência e liberação pontual; tela de venda com grade de itens e saldo por depósito | implementada |
 
 ## Glossário
 

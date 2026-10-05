@@ -10,10 +10,13 @@ from decimal import Decimal, ROUND_HALF_UP
 from ana_lib.logistics import common
 
 PARAMS = {
-    "customer": {"type": "int", "required": True, "label": "cliente"},
-    "items": {"type": "list", "required": True, "label": "itens", "help": '[{"product": "CAFE-500", "quantity": 2, "price": 18.9}]'},
+    "customer": {"type": "int", "required": True, "label": "cliente", "lookup": {"program": "sales.lookup", "params": {"kind": "customers"}}},
+    "items": {"type": "list", "required": True, "label": "itens devolvidos", "add_label": "Adicionar item", "columns": {
+        "product": {"type": "str", "required": True, "label": "item", "lookup": {"program": "supply.lookup", "params": {"kind": "products"}}},
+        "quantity": {"type": "decimal", "required": True, "default": 1, "label": "quantidade"},
+        "price": {"type": "decimal", "required": True, "label": "valor unitário do crédito"}}},
     "reason": {"type": "str", "required": True, "label": "motivo"},
-    "order": {"type": "int", "label": "pedido de origem"},
+    "order": {"type": "int", "label": "pedido de origem", "lookup": {"program": "sales.lookup", "params": {"kind": "invoiced"}, "depends": ["customer"]}},
     "warehouse": {"type": "str", "default": "CENTRAL", "label": "depósito", "lookup": {"program": "logistics.lookup", "params": {"kind": "warehouses"}}},
     "quarantine": {"type": "bool", "default": False, "label": "para inspeção (quarentena)"},
 }

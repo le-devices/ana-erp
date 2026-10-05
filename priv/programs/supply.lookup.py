@@ -5,8 +5,7 @@
 kind: suppliers | products | warehouses | projects | requests | orders | order_lines."""
 
 PARAMS = {
-    "kind": {"type": "str", "required": True,
-             "choices": ["suppliers", "products", "warehouses", "projects", "requests", "orders", "order_lines"]},
+    "kind": {"type": "str", "required": True, "label": "tipo", "choices": ["suppliers", "products", "warehouses", "projects", "requests", "orders", "order_lines"]},
     "order": {"type": "int", "label": "ordem"},
 }
 

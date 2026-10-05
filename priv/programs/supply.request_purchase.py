@@ -21,7 +21,12 @@ PARAMS = {
                 "lookup": {"program": "supply.lookup", "params": {"kind": "projects"}}},
     "rebillable": {"type": "bool", "default": False, "label": "refaturável ao cliente", "order": 7},
     "submit": {"type": "bool", "default": True, "label": "enviar para aprovação", "order": 8},
-    "items": {"type": "list", "label": "vários itens (integração)", "order": 9},
+    "items": {"type": "list", "label": "vários itens de uma vez", "order": 9, "add_label": "Adicionar item", "columns": {
+        "product": {"type": "str", "required": True, "label": "item", "lookup": {"program": "supply.lookup", "params": {"kind": "products"}}},
+        "quantity": {"type": "decimal", "required": True, "default": 1, "label": "quantidade"},
+        "price": {"type": "decimal", "label": "preço estimado (vazio = catálogo)"},
+        "supplier": {"type": "int", "label": "fornecedor (vazio = o preferido)", "lookup": {"program": "supply.lookup", "params": {"kind": "suppliers"}}},
+        "rebillable": {"type": "bool", "label": "refaturável"}}},
     "origin": {"type": "str", "default": "manual", "label": "origem", "order": 10,
                "choices": [["manual", "Manual"], ["replenishment", "Reposição"], ["planning", "Planejamento"], ["project", "Projeto"]]},
     "cost_center": {"type": "str", "label": "centro de custo (vazio = do projeto ou do depósito)", "order": 11,

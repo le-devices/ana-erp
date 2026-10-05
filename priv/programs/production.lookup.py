@@ -3,7 +3,9 @@
 # ana:menu no
 """Lookup for forms: [{"value", "label"}]. kind: products | made | resources | warehouses | orders."""
 
-PARAMS = {"kind": {"type": "str", "required": True, "choices": ["products", "made", "resources", "warehouses", "orders"]}}
+PARAMS = {
+    "kind": {"type": "str", "required": True, "label": "tipo", "choices": ["products", "made", "resources", "warehouses", "orders"]},
+}
 
 STATUS = {"planned": "planejada", "released": "liberada", "in_progress": "em andamento", "completed": "concluída"}
 

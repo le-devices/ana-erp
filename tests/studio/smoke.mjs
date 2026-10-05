@@ -166,6 +166,37 @@ ok(d.querySelectorAll("#ops-main .chart svg .line").length >= 3 && d.querySelect
 d.querySelector("#ops-main .chart .chart-tools button").click();
 ok(!d.querySelector("#ops-main .chart .chart-table").hidden, "gráfico tem visão em tabela");
 
+// Sales order screen (spec 031): lists for customer/warehouse/term, items grid with stock, Brazilian decimals
+await go(w, "#/ops/sales/sales.create_order?_form=1");
+await until(() => d.querySelector("#ops-main .rows-editor select[data-col=product]"), "items grid", jsErrors);
+ok([...d.querySelectorAll("#ops-main .rows-editor th")].map((th) => th.textContent).slice(0, 3).join("|") === "item|quantidade|preço unitário (vazio = tabela)",
+   "grade de itens com colunas na ordem declarada e rótulos em português");
+await until(() => [...d.querySelector("#ops-main select[name=warehouse]").options].some((o) => o.value === "CENTRAL"), "warehouse list", jsErrors);
+ok(![...d.querySelector("#ops-main select[name=warehouse]").options].some((o) => o.value === "TRANSITO"), "depósito é uma lista (sem trânsito/quarentena)");
+ok(d.querySelector("#ops-main select[name=payment_term]").options[0].textContent === "— a do cliente —", "condição vazia explica o padrão");
+const prod = d.querySelector("#ops-main .rows-editor select[data-col=product]");
+await until(() => [...prod.options].some((o) => o.dataset.stock !== undefined), "products with stock", jsErrors);
+prod.selectedIndex = [...prod.options].findIndex((o) => o.dataset.stock !== undefined && o.dataset.kind !== "service");
+prod.dispatchEvent(new w.Event("change", { bubbles: true }));
+const qty = d.querySelector("#ops-main .rows-editor input[data-col=quantity]");
+qty.value = "999999";
+qty.dispatchEvent(new w.Event("input", { bubbles: true }));
+ok(d.querySelector("#ops-main .rows-editor .row-status.warn").textContent.startsWith("saldo"), "saldo do depósito ao lado da linha, alerta quando falta");
+d.querySelector("#ops-main .rows-editor input[data-col=price]").value = "1,50";
+d.querySelector("#ops-main .rows-editor input[data-col=price]").dispatchEvent(new w.Event("input", { bubbles: true }));
+ok(text("#ops-main .rows-foot").includes("1.499.998,50"), "total da grade com vírgula decimal");
+[...d.querySelectorAll("#ops-main .rows-foot button")].find((b) => b.textContent.includes("Adicionar item")).click();
+ok(d.querySelectorAll("#ops-main .rows-editor tbody tr").length === 2, "botão Adicionar item cria nova linha");
+ok(JSON.parse(d.querySelector("#ops-main input[type=hidden][name=items]").value)[0].price === "1.50", "linhas viajam como lista de itens, decimal sem vírgula");
+
+// Date/time pickers beside date fields (no typing needed)
+await go(w, "#/ops/field/field.schedule?_form=1");
+await until(() => d.querySelector("#ops-main input[name=start]"), "datetime field", jsErrors);
+ok(d.querySelector("#ops-main input[name=start]").type === "datetime-local" && d.querySelector("#ops-main .picker-wrap .picker-btn"),
+   "campo data e hora com botão de calendário");
+[...d.querySelectorAll("#ops-main .picker-btn")].find((b) => b.textContent === "agora").click();
+ok(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/.test(d.querySelector("#ops-main input[name=start]").value), "botão agora preenche data e hora");
+
 // Administration grouped (RF-020-06)
 await go(w, "#/admin/users");
 await until(() => d.querySelectorAll("#admin-main tbody tr").length > 0, "users", jsErrors);

@@ -544,6 +544,8 @@ input:focus, select:focus, textarea:focus, button:focus-visible { outline: 2px s
 .filter-bar .params-form { grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); align-items: end; gap: 10px 16px; }
 .filter-bar .params-form > label { font-size: 12px; min-width: 0; }
 .filter-bar .params-form > label > input, .filter-bar .params-form > label > select { width: 100%; min-width: 0; }
+.filter-bar .params-form > label.check { min-height: 32px; justify-content: flex-start; }
+.filter-bar .params-form > label.check > input { width: auto; flex: none; margin: 0; }
 .filter-bar .params-form .run-button { margin-left: 0; }
 .filter-bar .params-form .params-json { grid-column: 1 / -1; }
 .filter-bar .params-form .run-button { justify-self: start; min-width: 150px; height: 32px; }
@@ -692,3 +694,38 @@ input:focus, select:focus, textarea:focus, button:focus-visible { outline: 2px s
 .empty-state .icon { color: var(--border-strong); }
 button.linkish.icon-text { display: inline-flex; align-items: center; gap: 8px; min-height: 0; }
 button.linkish.icon-text .icon { color: var(--text-2); }
+
+/* Date/time pickers and rows editor (spec 029) */
+.picker-wrap { display: flex; gap: 4px; align-items: center; }
+.picker-wrap > input { flex: 1 1 auto; min-width: 0; }
+/* Our button replaces the browser's own indicator (one way to open the picker). */
+.picker-wrap > input::-webkit-calendar-picker-indicator { display: none; }
+.params-form > label.wide { grid-column: span 2; }
+@media (max-width: 640px) { .params-form > label.wide { grid-column: auto; } }
+.picker-btns { display: inline-flex; gap: 2px; flex: none; }
+.picker-btn { min-height: 32px; padding: 0 8px; font-size: 12px; display: inline-flex; align-items: center; }
+.rows-field { grid-column: 1 / -1; display: grid; gap: 4px; font-size: 12px; color: var(--text-2); }
+.rows-box { background: var(--surface); border: 1px solid var(--border); border-radius: var(--r-sm); overflow-x: auto; }
+.rows-editor { width: 100%; border-collapse: collapse; font-size: 13px; color: var(--text); }
+.rows-editor th { text-align: left; font-weight: 600; font-size: 12px; color: var(--text-2); padding: 6px 8px; border-bottom: 1px solid var(--border); white-space: nowrap; }
+.rows-editor th.required::after { content: " *"; color: var(--danger); }
+.rows-editor td { padding: 4px 6px; border-bottom: 1px solid var(--border); vertical-align: middle; }
+.rows-editor td select, .rows-editor td input { width: 100%; min-width: 90px; }
+.rows-editor td:first-child { min-width: 260px; }
+.rows-editor td:first-child select { min-width: 240px; }
+.rows-editor .row-status { white-space: nowrap; }
+.rows-editor .row-status.ok { color: var(--ok); }
+.rows-editor .row-status.warn { color: var(--warn); font-weight: 600; }
+.rows-foot { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 6px 8px; }
+.rows-editor td input[type=checkbox] { width: auto; min-width: 0; }
+/* Phone: each line becomes a card with its labels (no sideways scrolling). */
+@media (max-width: 640px) {
+  .rows-editor thead { display: none; }
+  .rows-editor, .rows-editor tbody, .rows-editor tr, .rows-editor td { display: block; width: 100%; }
+  .rows-editor tr { position: relative; padding: 6px 36px 6px 6px; border-bottom: 1px solid var(--border); }
+  .rows-editor td { border: 0; padding: 2px 0; min-width: 0 !important; }
+  .rows-editor td select, .rows-editor td input { min-width: 0 !important; }
+  .rows-editor td[data-label]::before { content: attr(data-label); display: block; font-size: 12px; color: var(--text-2); }
+  .rows-editor td.row-remove { position: absolute; top: 4px; right: 4px; width: auto; }
+  .rows-foot { flex-wrap: wrap; }
+}

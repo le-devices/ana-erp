@@ -5,8 +5,11 @@
 Expected event: {"id", "type": "charge.paid", "charge_id", "amount", "fee"?, "paid_at"?}.
 Other types are acknowledged and ignored. Settling is idempotent (finance.settle_charge)."""
 
-PARAMS = {"event": {"type": "dict", "required": True}, "connector": {"type": "dict", "required": True},
-          "attempt": {"type": "int"}}
+PARAMS = {
+    "event": {"type": "dict", "required": True, "label": "evento"},
+    "connector": {"type": "dict", "required": True, "label": "conector"},
+    "attempt": {"type": "int", "label": "tentativa"},
+}
 
 
 def main(event, connector, attempt=1):

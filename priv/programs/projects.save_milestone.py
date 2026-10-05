@@ -4,11 +4,11 @@
 from ana_lib.projects import access
 
 PARAMS = {
-    "project": {"type": "str", "required": True},
-    "description": {"type": "str", "required": True},
-    "amount": {"type": "decimal", "required": True},
-    "due_date": {"type": "date"},
-    "id": {"type": "int"},
+    "project": {"type": "str", "required": True, "label": "projeto", "lookup": {"program": "projects.lookup", "params": {"kind": "projects"}}},
+    "description": {"type": "str", "required": True, "label": "descrição"},
+    "amount": {"type": "decimal", "required": True, "label": "valor"},
+    "due_date": {"type": "date", "label": "vencimento/prazo"},
+    "id": {"type": "int", "label": "marco (id; vazio = novo)"},
 }
 
 

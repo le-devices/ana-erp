@@ -4,10 +4,10 @@
 from ana_lib.projects import access
 
 PARAMS = {
-    "code": {"type": "str", "required": True},
-    "description": {"type": "str", "required": True},
-    "hourly_rate": {"type": "decimal", "required": True},
-    "active": {"type": "bool", "default": True},
+    "code": {"type": "str", "required": True, "label": "código"},
+    "description": {"type": "str", "required": True, "label": "descrição"},
+    "hourly_rate": {"type": "decimal", "required": True, "label": "valor por hora"},
+    "active": {"type": "bool", "default": True, "label": "ativo"},
 }
 
 

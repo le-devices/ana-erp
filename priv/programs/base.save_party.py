@@ -6,13 +6,13 @@
 from ana_lib.util import validation as v
 
 PARAMS = {
-    "id": {"type": "int"},
-    "kind": {"type": "str", "default": "customer"},
-    "name": {"type": "str", "required": True},
-    "tax_id": {"type": "str"},
-    "email": {"type": "str"},
-    "city": {"type": "str"},
-    "state": {"type": "str"},
+    "id": {"type": "int", "label": "cadastro (id; vazio = novo)"},
+    "kind": {"type": "str", "default": "customer", "label": "tipo", "choices": [["customer", "Cliente"], ["supplier", "Fornecedor"], ["both", "Cliente e fornecedor"]]},
+    "name": {"type": "str", "required": True, "label": "nome"},
+    "tax_id": {"type": "str", "label": "CNPJ/CPF"},
+    "email": {"type": "str", "label": "e-mail"},
+    "city": {"type": "str", "label": "cidade"},
+    "state": {"type": "str", "label": "UF"},
 }
 
 
