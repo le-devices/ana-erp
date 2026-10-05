@@ -19,7 +19,8 @@ RUN apt-get update \
 COPY --from=build /app/_build/default/rel/ana /opt/ana
 COPY bin/ana-start /opt/ana/bin/ana-start
 # Core code belongs to root and is read-only for the process (P10).
-RUN chmod -R a-w /opt/ana && chmod 0555 /opt/ana/bin/ana-start
+RUN chmod -R a-w /opt/ana && chmod 0555 /opt/ana/bin/ana-start \
+ && mkdir -p /var/lib/ana/files && chown ana:ana /var/lib/ana/files && chmod 0700 /var/lib/ana/files
 USER ana
 ENV HOME=/home/ana ANA_PY_DIR=/tmp LANG=C.UTF-8
 EXPOSE 8080

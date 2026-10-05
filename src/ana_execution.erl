@@ -431,7 +431,12 @@ prepare_run(P, L, St) ->
 load(Name, User) ->
     case ana_program:valid_name(Name) andalso ana_program:for_execution(Name) of
         {ok, #{<<"active">> := true, <<"kind">> := <<"program">>, <<"min_role">> := Min} = P} ->
-            case ana_security:has_role(User, Min) andalso ana_access:allowed(User, P) of
+            %% Spec 016: an external portal account runs only programs marked for the portal.
+            Allowed = case User of
+                #{role := <<"external">>} -> maps:get(<<"portal">>, P, false) =:= true;
+                _ -> ana_security:has_role(User, Min) andalso ana_access:allowed(User, P)
+            end,
+            case Allowed of
                 true -> {ok, P};
                 false -> {error, err(<<"FORBIDDEN">>, <<"sem permissão para o programa"/utf8>>)}
             end;
@@ -455,6 +460,7 @@ open_frame(P, RequestId, Savepoint, St = #st{stack = Stack}) ->
                     params => Params,
                     context => #{user => maps:get(username, St#st.user),
                                  role => maps:get(role, St#st.user),
+                                 party => maps:get(party_id, St#st.user, null),
                                  execution_id => St#st.id,
                                  origin => St#st.origin,
                                  depth => length(Stack)},
@@ -515,6 +521,8 @@ request(<<"remote">>, Id, #{<<"system">> := S, <<"function">> := F} = A, St) ->
 request(<<"http">>, Id, #{<<"connector">> := C, <<"method">> := M, <<"path">> := P} = A, St) ->
     ExecId = St#st.id,
     async(Id, fun(_C) -> ana_connector:http(C, M, P, maps:get(<<"options">>, A, #{}), ExecId) end, St);
+request(<<"files">>, Id, A, St = #st{user = User}) when is_map(A) ->
+    async(Id, fun(_C) -> files_reply(ana_files:program(User, A)) end, St);
 request(<<"library_source">>, Id, #{<<"name">> := Name}, St) ->
     respond(Id, {ok, ana_program:library_source(Name)}, St),
     St;
@@ -533,6 +541,12 @@ request(<<"cancel">>, Id, #{<<"handles">> := Hs}, St) when is_list(Hs) ->
 request(Op, Id, _, St) ->
     respond(Id, {error, err(<<"INVALID_OPERATION">>, Op)}, St),
     St.
+
+files_reply({ok, V}) -> {ok, V};
+files_reply({error, not_found}) -> {error, err(<<"FILE_NOT_FOUND">>, <<"arquivo ou pasta não encontrado"/utf8>>)};
+files_reply({error, forbidden}) -> {error, err(<<"FORBIDDEN">>, <<"sem permissão no repositório"/utf8>>)};
+files_reply({error, M}) when is_binary(M) -> {error, err(<<"FILES_REFUSED">>, M)};
+files_reply({error, #{} = E}) -> {error, E}.
 
 %% Runs outside this process so deadlines and commands are still served.
 async(Id, Fun, St = #st{conn = C}) ->

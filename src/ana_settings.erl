@@ -98,6 +98,9 @@ definitions() ->
       <<"Retenção: eventos de saúde e amostras de métricas (dias)"/utf8>>},
      {retention_integration_days, integer, 7, 36500, "ANA_RETENTION_INTEGRATION_DAYS", 90,
       <<"Retenção: chamadas e mensagens de integração concluídas (dias)"/utf8>>},
+     %% Spec 016.
+     {files_max_file_mb, integer, 1, 102400, "ANA_FILES_MAX_FILE_MB", 512,
+      <<"Repositório: tamanho máximo de um arquivo (MB)"/utf8>>},
      %% Spec 019: observability.
      {slow_sql_ms, integer, 1, 600000, "ANA_SLOW_SQL_MS", 200,
       <<"Comando SQL lento a partir de (ms): registra o plano e gera dicas"/utf8>>},

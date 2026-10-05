@@ -2619,5 +2619,287 @@ class TestIntegrationHub(Base):
         self.run_program(purge, {"tag": f"B{SUFFIX}"})
 
 
+# ---------------------------------------------------------------- spec 016
+class TestFileRepository(Base):
+    """Folders, versions, grants, external portal accounts, links, real type, invoices, audit."""
+
+    @classmethod
+    def setUpClass(cls):
+        super().setUpClass()
+        c = cls.client
+        cls.cust_a = c.call("base.save_party", name=f"Cliente Arq A {SUFFIX}")["id"]
+        cls.cust_b = c.call("base.save_party", name=f"Cliente Arq B {SUFFIX}")["id"]
+        cls.ext_a, cls.ext_a_token = cls.external(cls.cust_a)
+        cls.root = cls.folder(None, f"Repo {SUFFIX}")
+        cls.fa = cls.folder(cls.root, "Projeto A")
+        cls.fb = cls.folder(cls.root, "Projeto B")
+
+    EXTERNALS = {}
+
+    @classmethod
+    def external(cls, party):
+        if party in cls.EXTERNALS:                      # one portal account per customer in this run
+            return cls.EXTERNALS[party]
+        cls.EXTERNALS[party] = cls.make_external(party)
+        return cls.EXTERNALS[party]
+
+    @classmethod
+    def make_external(cls, party):
+        username = f"ext{SUFFIX}{party}"
+        CREATED_USERS.append(username)
+        s, c, _ = http("POST", "/api/admin/users", {"username": username, "role": "external", "party_id": party,
+                                                    "password": "Initial-pass-1"}, cls.token)
+        assert s == 200, c
+        t = login(username, "Initial-pass-1")
+        s, c, _ = http("POST", "/api/me/password", {"current": "Initial-pass-1", "new": "Changed-pass-1"}, t)
+        assert s == 200, c
+        return username, t
+
+    @classmethod
+    def folder(cls, parent, name, token=None):
+        s, c, _ = http("POST", "/api/files/folders", {"parent": parent, "name": name}, token or cls.token)
+        assert s == 200, c
+        return c["id"]
+
+    def upload(self, folder, name, data, token=None, comment=None):
+        q = urllib.parse.urlencode({"folder": folder, "name": name, **({"comment": comment} if comment else {})})
+        return http("POST", f"/api/files/upload?{q}", token=token or self.token, raw=data)
+
+    def fetch(self, url, method="GET", data=None, headers=None):
+        req = urllib.request.Request(URL + url, data=data, method=method, headers=headers or {})
+        try:
+            with urllib.request.urlopen(req, timeout=30) as r:
+                return r.status, r.read(), dict(r.headers)
+        except urllib.error.HTTPError as e:
+            return e.code, e.read(), dict(e.headers)
+
+    def download(self, file_id, token=None, version=None):
+        s, c, _ = http("POST", f"/api/files/files/{file_id}/download", {"version": version}, token or self.token)
+        if s != 200:
+            return s, c
+        st, body, headers = self.fetch(c["url"])
+        return st, body, headers
+
+    def grant(self, **body):
+        s, c, _ = http("POST", "/api/files/grants", body, self.token)
+        self.assertEqual(s, 200, c)
+        return c["id"]
+
+    def pdf(self, text="ok"):
+        return b"%PDF-1.4\n% " + text.encode() + b"\n%%EOF\n"
+
+    def test_ca_016_01_external_sees_only_what_was_granted(self):
+        s, c, _ = self.upload(self.fa, "entregavel.pdf", self.pdf("A"))
+        self.assertEqual(s, 200, c)
+        fa_file = c["file"]
+        s, c, _ = self.upload(self.fb, "outro.pdf", self.pdf("B"))
+        fb_file = c["file"]
+        self.grant(folder_id=self.fa, subject_kind="party", subject=str(self.cust_a), level="download")
+        st, body, headers = self.download(fa_file, self.ext_a_token)
+        self.assertEqual((st, body), (200, self.pdf("A")))
+        self.assertIn("attachment", headers.get("content-disposition", headers.get("Content-Disposition", "")))
+        self.assertEqual(headers.get("X-Content-Type-Options", headers.get("x-content-type-options")), "nosniff")
+        self.assertEqual(self.download(fb_file, self.ext_a_token)[0], 404)                 # another customer's: not found
+        s, c, _ = http("GET", f"/api/files/folders?parent={self.fb}", token=self.ext_a_token)
+        self.assertEqual(s, 404)
+        s, roots, _ = http("GET", "/api/files/folders", token=self.ext_a_token)
+        self.assertEqual([f["id"] for f in roots["folders"]], [self.fa])                    # starts at what was shared
+        # The external account cannot use anything else.
+        for method, path in (("GET", "/api/programs"), ("POST", "/api/sql"), ("GET", "/api/admin/users")):
+            st, _, _ = http(method, path, {"sql": "SELECT 1"} if method == "POST" else None, self.ext_a_token)
+            self.assertEqual(st, 403, path)
+        s, c, _ = self.run_program("demo.hello", {"name": "x"}, token=self.ext_a_token)
+        self.assertEqual(c["error"]["code"], "FORBIDDEN")
+        # An explicit deny on the file wins over the folder grant.
+        self.grant(file_id=fa_file, subject_kind="party", subject=str(self.cust_a), level="view", deny=True)
+        self.assertEqual(self.download(fa_file, self.ext_a_token)[0], 404)
+
+    def test_ca_016_02_new_version_keeps_the_previous(self):
+        s, c, _ = self.upload(self.fa, "esquema.pdf", self.pdf("v1"), comment="primeira")
+        fid = c["file"]
+        s, c, _ = self.upload(self.fa, "esquema.pdf", self.pdf("v2"), comment="revisão")
+        self.assertEqual((c["file"], c["version"]), (fid, 2))
+        self.assertEqual(self.download(fid)[1], self.pdf("v2"))
+        self.assertEqual(self.download(fid, version=1)[1], self.pdf("v1"))
+        s, d, _ = http("GET", f"/api/files/files/{fid}", token=self.token)
+        self.assertEqual([v["comment"] for v in d["versions"]], ["revisão", "primeira"])
+        # Range (RNF-016-04): a slice of the content, decrypted at the offset.
+        s, c, _ = http("POST", f"/api/files/files/{fid}/download", {}, self.token)
+        st, body, headers = self.fetch(c["url"], headers={"Range": "bytes=2-6"})
+        self.assertEqual((st, body), (206, self.pdf("v2")[2:7]))
+
+    def test_ca_016_03_share_link_validity_and_limit(self):
+        s, c, _ = self.upload(self.fa, "relatorio.pdf", self.pdf("link"))
+        fid = c["file"]
+        s, link, _ = http("POST", f"/api/files/files/{fid}/links", {"hours": 1, "max_downloads": 2}, self.token)
+        self.assertEqual(s, 200, link)
+        for _ in range(2):
+            st, body, _ = self.fetch(link["url"])
+            self.assertEqual((st, body), (200, self.pdf("link")))
+        self.assertEqual(self.fetch(link["url"])[0], 410)                                   # third download refused
+        s, protected, _ = http("POST", f"/api/files/files/{fid}/links", {"hours": 1, "password": "segredo123"}, self.token)
+        self.assertEqual(self.fetch(protected["url"])[0], 200)                              # asks for the password (form)
+        st, body, _ = self.fetch(protected["url"], "POST", b"password=errada",
+                                 {"Content-Type": "application/x-www-form-urlencoded"})
+        self.assertEqual(st, 401)
+        st, body, _ = self.fetch(protected["url"], "POST", b"password=segredo123",
+                                 {"Content-Type": "application/x-www-form-urlencoded"})
+        self.assertEqual((st, body), (200, self.pdf("link")))
+        # Expired (validity passed): simulated by moving the date back.
+        self.psql(f"UPDATE files.share_link SET expires_at = now() - interval '1 minute' WHERE id = {protected['id']}")
+        st, _, _ = self.fetch(protected["url"], "POST", b"password=segredo123", {"Content-Type": "application/x-www-form-urlencoded"})
+        self.assertEqual(st, 410)
+        s, c, _ = http("POST", f"/api/files/files/{fid}/download", {}, self.token)
+        self.assertEqual(self.fetch(c["url"] + "x")[0], 410)                                # tampered signed URL
+
+    def psql(self, sql):
+        import subprocess
+        r = subprocess.run(["docker", "compose", "-f", os.path.join(ROOT, "docker-compose.yml"), "exec", "-T", "db",
+                            "psql", "-U", "postgres", "-d", "ana", "-At", "-v", "ON_ERROR_STOP=1", "-c", sql],
+                           capture_output=True, text=True, timeout=60)
+        self.assertEqual(r.returncode, 0, r.stderr)
+
+    def test_ca_016_04_real_type_is_checked(self):
+        exe = b"MZ\x90\x00\x03\x00\x00\x00\x04\x00" + b"\x00" * 100
+        s, c, _ = self.upload(self.fa, "fatura.pdf", exe)
+        self.assertEqual(s, 400)
+        self.assertIn("executável", c["error"]["message"])
+        s, c, _ = self.upload(self.fa, "foto.png", b"not a png at all")
+        self.assertEqual(s, 400)
+        s, c, _ = self.upload(self.fa, "setup.exe", b"anything")
+        self.assertEqual(s, 400)
+        s, c, _ = self.upload(self.fa, "firmware.bin", bytes(range(256)) * 4)                 # firmware images are fine
+        self.assertEqual(s, 200, c)
+        s, c, _ = self.upload(self.fa, "placa.kicad_pcb", b"(kicad_pcb (version 20221018))\n")
+        self.assertEqual((s, c.get("mime")), (200, "text/plain"))
+
+    def test_ca_016_05_invoice_pdf_reaches_the_customer_portal(self):
+        employee = self.client.call("projects.save_employee", name=f"Eng Arq {SUFFIX}", profile="HW", hourly_cost="80")["id"]
+        project = f"AR{SUFFIX}"
+        self.client.call("projects.save_project", code=project, name="Projeto com fatura", customer=self.cust_a,
+                         manager="admin", status="active", billing="mixed", tasks=[{"code": "1", "name": "Trabalho"}],
+                         team=[{"employee": employee, "profile": "HW"}], rates={"HW": "200"})
+        m = self.client.call("projects.save_milestone", project=project, description="Entrega", amount="1500")["id"]
+        self.client.call("projects.complete_milestone", id=m)
+        inv = self.client.call("projects.invoice_project", project=project)
+        self.assertIsNotNone(inv["pdf"])
+        st, body, _ = self.download(inv["pdf"], self.ext_a_token)
+        self.assertEqual(st, 200)
+        self.assertTrue(body.startswith(b"%PDF-1.4"))
+        s, c, _ = self.run_program("files.my_invoices", {}, token=self.ext_a_token)
+        self.assertEqual(s, 200, c)
+        self.assertIn(f"Fatura {inv['number']}.pdf", c["result"]["pdfs"])
+        # Customer B's account sees nothing of A.
+        _, ext_b = self.external(self.cust_b)
+        self.assertEqual(self.download(inv["pdf"], ext_b)[0], 404)
+        s, c, _ = self.run_program("files.my_invoices", {"customer": self.cust_a}, token=ext_b)
+        self.assertEqual(c["error"]["code"], "FORBIDDEN")
+
+    def test_ca_021_07_status_report_on_the_customer_portal(self):
+        employee = self.client.call("projects.save_employee", name=f"Eng Portal {SUFFIX}", profile="HW", hourly_cost="80")["id"]
+        project = f"PO{SUFFIX}"
+        self.client.call("projects.save_project", code=project, name="Projeto acompanhado", customer=self.cust_a,
+                         manager="admin", status="active", billing="hourly", tasks=[{"code": "1", "name": "Trabalho"}],
+                         team=[{"employee": employee, "profile": "HW"}], rates={"HW": "200"})
+        self.client.call("projects.status_report", project=project, client_visible=True)
+        s, c, _ = self.run_program("projects.my_projects", {}, token=self.ext_a_token)
+        self.assertEqual(s, 200, c)
+        self.assertIn(project, c["result"]["projects"])
+        text = json.dumps(c).lower()
+        for word in ("hourly_cost", "hourly_rate", "margin", "custo", "cost"):
+            self.assertNotIn(word, text)                                    # never costs (RNF-021-02)
+        _, ext_b = self.external(self.cust_b)
+        s, c, _ = self.run_program("projects.my_projects", {}, token=ext_b)
+        self.assertNotIn(project, c["result"]["projects"])
+
+    def test_t_021_11_customer_accepts_deliverables_and_approves_changes(self):
+        employee = self.client.call("projects.save_employee", name=f"Eng Aceite {SUFFIX}", profile="HW", hourly_cost="80")["id"]
+        project = f"AC{SUFFIX}"
+        self.client.call("projects.save_project", code=project, name="Projeto com aceite", customer=self.cust_a,
+                         manager="admin", status="active", billing="mixed", budget_hours="100",
+                         tasks=[{"code": "1", "name": "Trabalho"}], team=[{"employee": employee, "profile": "HW"}],
+                         rates={"HW": "200"})
+        self.run_ok("projects.save_activity", project=project, code="E1", name="Ensaio de EMC",
+                    deliverable="Relatório de ensaio", acceptance_criteria="aprovado no laboratório", planned_hours=8)
+        self.run_ok("projects.update_progress", project=project, activity="E1", percent=100)
+        for action, extra in (("request", {"title": "Novo sensor"}), ("estimate", {"number": 1, "est_hours": 10, "est_amount": 2000}),
+                              ("approve_internal", {"number": 1})):
+            self.run_ok("projects.scope_change", project=project, action=action, **extra)
+        s, c, _ = self.run_program("projects.client_approvals", {}, token=self.ext_a_token)
+        self.assertEqual(s, 200, c)
+        self.assertIn(f"{project}/E1", c["result"]["deliverables"])
+        self.assertIn(f"{project}/1", c["result"]["changes"])
+        # Another customer cannot touch this project (and does not learn it exists).
+        _, ext_b = self.external(self.cust_b)
+        s, c, _ = self.run_program("projects.client_approvals", {"action": "approve_change", "project": project, "number": 1},
+                                   token=ext_b)
+        self.assertEqual(c["error"]["code"], "PROJECT_NOT_FOUND")
+        s, c, _ = self.run_program("projects.client_approvals", {"action": "accept_deliverable", "project": project,
+                                                                 "activity": "E1"}, token=self.ext_a_token)
+        self.assertEqual(c["result"]["decision"], "accepted")
+        s, c, _ = self.run_program("projects.client_approvals", {"action": "approve_change", "project": project, "number": 1},
+                                   token=self.ext_a_token)
+        self.assertEqual(c["result"]["status"], "approved", c)
+        self.assertEqual(self.scalar(f"SELECT c.customer_approver FROM projects.scope_change c JOIN projects.project p "
+                                     f"ON p.id = c.project_id WHERE p.code = '{project}'"), self.ext_a)
+        self.assertEqual(Decimal(self.scalar(f"SELECT budget_hours FROM projects.project WHERE code = '{project}'")), 110)
+        s, c, _ = self.run_program("projects.client_approvals", {}, token=self.ext_a_token)
+        self.assertNotIn(f"{project}/E1", c["result"]["deliverables"])
+        self.assertNotIn(f"{project}/1", c["result"]["changes"])
+
+    def run_ok(self, _program, **params):
+        s, c, _ = self.run_program(_program, params)
+        self.assertEqual(s, 200, c)
+        self.assertNotIn("error", c, c.get("error"))
+        return c["result"]
+
+    def test_ca_016_06_every_operation_is_audited(self):
+        s, c, _ = self.upload(self.fa, "auditado.pdf", self.pdf("au"))
+        fid = c["file"]
+        self.upload(self.fa, "auditado.pdf", self.pdf("au2"))
+        self.download(fid)
+        gid = self.grant(file_id=fid, subject_kind="user", subject=self.ext_a, level="view")
+        http("DELETE", f"/api/files/grants/{gid}", token=self.token)
+        s, link, _ = http("POST", f"/api/files/files/{fid}/links", {"hours": 1}, self.token)
+        self.fetch(link["url"])
+        http("DELETE", f"/api/files/links/{link['id']}", token=self.token)
+        s, d, _ = http("GET", f"/api/files/files/{fid}", token=self.token)
+        actions = {e["action"] for e in d["events"]}
+        self.assertTrue({"upload", "version", "download", "grant", "revoke", "link.create", "link.download",
+                         "link.revoke"} <= actions, actions)
+
+    def test_rf_016_06_resumable_upload_and_programs(self):
+        data = bytes(range(256)) * 300                                                       # 76 800 bytes
+        s, up, _ = http("POST", "/api/files/uploads", {"folder": self.fa, "name": "grande.bin", "size": len(data)}, self.token)
+        self.assertEqual(s, 200, up)
+        s, r, _ = http("PUT", f"/api/files/uploads/{up['id']}?offset=0", token=self.token, raw=data[:40000])
+        self.assertEqual(r["received"], 40000)
+        s, r, _ = http("PUT", f"/api/files/uploads/{up['id']}?offset=0", token=self.token, raw=data[:10])
+        self.assertEqual(s, 400)                                                             # wrong offset
+        s, st, _ = http("GET", f"/api/files/uploads/{up['id']}", token=self.token)
+        s, r, _ = http("PUT", f"/api/files/uploads/{up['id']}?offset={st['received']}", token=self.token,
+                       raw=data[st["received"]:])
+        s, done, _ = http("POST", f"/api/files/uploads/{up['id']}/complete", {}, self.token)
+        self.assertEqual(s, 200, done)
+        self.assertEqual(self.download(done["file"])[1], data)
+        # Same content again: deduplicated (same sha256), new file still readable.
+        s, again, _ = self.upload(self.fa, "copia.bin", data)
+        self.assertEqual(again["sha256"], done["sha256"])
+        # Programs use the same permissions.
+        name = f"test.files_{SUFFIX}"
+        self.save(name, "def main(folder):\n"
+                        "    r = ana.files.put('nota.txt', 'conteúdo ç', folder=folder)\n"
+                        "    back = ana.files.get(r['file'])\n"
+                        "    return {'text': back['data'].decode('utf-8'), 'mime': back['mime']}\n")
+        s, c, _ = self.run_program(name, {"folder": self.fa})
+        self.assertEqual(c["result"], {"text": "conteúdo ç", "mime": "text/plain"})
+        _, plain = new_user("user")
+        s, c, _ = self.run_program("files.my_invoices", {"customer": self.cust_a}, token=plain)   # internal user: allowed
+        self.assertEqual(s, 200, c)
+        # An internal user without a grant does not reach another user's folder.
+        s, c, _ = http("GET", f"/api/files/folders?parent={self.fa}", token=plain)
+        self.assertEqual(s, 404)
+
+
 if __name__ == "__main__":
     unittest.main()

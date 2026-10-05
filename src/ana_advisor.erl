@@ -11,7 +11,7 @@
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2]).
 
 -define(EVERY_MS, 15 * 60 * 1000).
--define(RULES, [<<"slow_seq_scan">>, <<"growth_risk">>, <<"lint">>, <<"fk_without_index">>, <<"unused_index">>,
+-define(RULES, [<<"file_integrity">>, <<"slow_seq_scan">>, <<"growth_risk">>, <<"lint">>, <<"fk_without_index">>, <<"unused_index">>,
                 <<"bloat">>, <<"near_limit">>, <<"recurring_timeouts">>]).
 
 start_link() ->
@@ -46,7 +46,7 @@ analyze() ->
     Growth = growth(),
     Found = lists:append([safe(fun() -> sql_rules(Growth) end), safe(fun() -> lint_rules(Growth) end),
                           safe(fun fk_rule/0), safe(fun unused_index_rule/0), safe(fun bloat_rule/0),
-                          safe(fun near_limit_rule/0), safe(fun timeouts_rule/0)]),
+                          safe(fun near_limit_rule/0), safe(fun timeouts_rule/0), safe(fun files_rule/0)]),
     _ = [upsert(R, T, Sev, Ti, D, Su, E) || {R, T, Sev, Ti, D, Su, E} <- Found],
     Keys = [<<R/binary, "|", T/binary>> || {R, T, _, _, _, _, _} <- Found],
     {ok, Resolved} = ana_db:exec(
@@ -57,6 +57,13 @@ analyze() ->
                     "AND (a.last_seen < now() - interval '7 days' OR NOT EXISTS (SELECT 1 FROM ana_system.program p "
                     "     WHERE p.active AND p.name = split_part(a.target, ':', 1)))", []),
     {ok, #{found => length(Found), resolved => Resolved}}.
+
+%% Spec 016 (RNF-016-03): a sample of stored files is re-checked every run.
+files_rule() ->
+    [{<<"file_integrity">>, Sha, <<"critical">>, <<"Arquivo do repositório corrompido ou ausente"/utf8>>,
+      fmt("O conteúdo ~ts não confere com a assinatura gravada (ou sumiu do disco).", [Sha]),
+      <<"Restaure o diretório de arquivos (ANA_FILES_DIR) do backup e verifique o disco."/utf8>>, #{sha256 => Sha}}
+     || Sha <- ana_files:verify_sample(20)].
 
 safe(F) ->
     try F()

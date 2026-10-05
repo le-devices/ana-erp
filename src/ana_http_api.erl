@@ -176,7 +176,23 @@ route(<<"POST">>, [<<"programs">>, Name, <<"versions">>, V, <<"restore">>], Req)
         with_integer(V, Req, fun(N) -> save_reply(ana_program:restore(Name, N, U), Req) end)
     end);
 route(<<"POST">>, [<<"programs">>, Name, <<"run">>], Req) ->
-    ana_http:require(Req, ?USER, fun(U) -> run(Name, U, Req) end);
+    %% Spec 016: external portal accounts reach this route too; the execution only lets
+    %% them run programs marked for the portal (ana_execution:load/2).
+    ana_http:require_any(Req, fun
+        (#{must_change_password := true}) ->
+            ana_http:reply_error(403, <<"PASSWORD_CHANGE_REQUIRED">>, <<"troque sua senha para continuar">>, Req);
+        (U = #{role := <<"external">>}) -> run(Name, U, Req);
+        (U) ->
+            case ana_security:has_role(U, ?USER) of
+                true -> run(Name, U, Req);
+                false -> ana_http:reply_error(403, <<"FORBIDDEN">>, <<"papel insuficiente">>, Req)
+            end
+    end);
+route(<<"GET">>, [<<"portal">>, <<"programs">>], Req) ->
+    ana_http:require_any(Req, fun(_) ->
+        ok_json(ana_db:rows("SELECT name, description, params, docs FROM ana_system.program "
+                            "WHERE portal AND active AND kind = 'program' ORDER BY description, name", []), Req)
+    end);
 
 %% --- Executions and debugger (specs 002, 004) -----------------------------
 route(<<"GET">>, [<<"executions">>], Req) ->
@@ -266,14 +282,15 @@ run(Name, U, Req) ->
                     P when is_map(P) -> P;
                     _ -> #{}
                 end,
+                External = maps:get(role, U) =:= <<"external">>,
                 Options = #{origin => <<"studio">>,
                             debug => Debug,
-                            async => maps:get(<<"async">>, B, false) =:= true,
+                            async => not External andalso maps:get(<<"async">>, B, false) =:= true,
                             breakpoints => as_list(maps:get(<<"breakpoints">>, B, [])),
                             stop_on_entry => maps:get(<<"stop_on_entry">>, B, false) =:= true,
                             commit => maps:get(<<"commit">>, B, false) =:= true,
-                            timeout_ms => maps:get(<<"timeout_ms">>, B, undefined),
-                            profile => maps:get(<<"profile">>, B, false) =:= true},
+                            timeout_ms => case External of true -> undefined; false -> maps:get(<<"timeout_ms">>, B, undefined) end,
+                            profile => not External andalso maps:get(<<"profile">>, B, false) =:= true},
                 case developer_view(U, ana_execution:run(Name, Params, U, Options)) of
                     {ok, Res} -> ana_http:json(200, Res, R);
                     {error, #{<<"code">> := C} = E} when C =:= <<"OVERLOAD">>; C =:= <<"DRAINING">>;
@@ -403,6 +420,7 @@ validate_program(F) ->
         {<<"kind">>, fun(V) -> lists:member(V, [<<"program">>, <<"library">>]) end},
         {<<"exposed">>, fun is_boolean/1},
         {<<"in_menu">>, fun is_boolean/1},
+        {<<"portal">>, fun is_boolean/1},
         {<<"restricted">>, fun is_boolean/1},
         {<<"active">>, fun is_boolean/1},
         {<<"min_role">>, fun(V) -> lists:member(V, [?ADMIN, ?DEV, ?USER]) end},
