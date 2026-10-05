@@ -5,8 +5,7 @@
 preferred one) and delivery warehouse; price and promised date come from the catalog."""
 
 import datetime
-
-from ana_lib.supply import common
+from decimal import Decimal, ROUND_HALF_UP
 
 PARAMS = {
     "requests": {"type": "list", "label": "solicitações (vazio = todas as aprovadas)"},
@@ -42,32 +41,42 @@ def main(requests=None, send=True, notes=None):
     groups = {}
     for l in lines:
         groups.setdefault((l["supplier_id"], l["warehouse_id"]), []).append(l)
+    keys = sorted(groups)
+    suppliers = {r["id"]: r["name"] for r in ana.sql(
+        "SELECT id, name FROM base.party WHERE id = ANY($1) AND active AND kind IN ('supplier', 'both')",
+        sorted({k[0] for k in keys}))}
+    inactive = sorted({str(k[0]) for k in keys if k[0] not in suppliers})
+    if inactive:
+        raise ana.Error("SUPPLIER_NOT_FOUND", "fornecedor(es) inativo(s) ou inexistente(s): " + ", ".join(inactive))
     payment_days = ana.sql_value("SELECT default_payment_days FROM supply.policy WHERE id = 1") or 30
     today = datetime.date.today()
-    created = []
-    for (supplier_id, warehouse_id), group in sorted(groups.items()):
-        s = common.supplier(supplier_id)
-        order = ana.sql_one("INSERT INTO supply.purchase_order (supplier_id, warehouse_id, payment_days, notes, created_by) "
-                            "VALUES ($1, $2, $3, $4, $5) RETURNING id, number",
-                            supplier_id, warehouse_id, payment_days, notes, ana.context.user)
+    rows = {}
+    for key in keys:
         batch = []
-        for n, l in enumerate(group, start=1):
+        for n, l in enumerate(groups[key], start=1):
             price = l["catalog_price"] if l["catalog_price"] is not None else l["est_price"]
             promised = today + datetime.timedelta(days=l["lead_time_days"]) if l["lead_time_days"] is not None else l["need_date"]
-            batch.append([order["id"], n, l["product_id"], l["quantity"], price, promised, l["request_id"], l["line"],
+            batch.append([n, l["product_id"], l["quantity"], price, promised, l["request_id"], l["line"],
                           l["project_id"], l["cost_center"], l["rebillable"]])
-        ana.sql_batch("INSERT INTO supply.purchase_order_line (order_id, line, product_id, quantity, price, promised_date, "
-                      "  request_id, request_line, project_id, cost_center, rebillable) "
-                      "VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)", batch)
-        total = ana.sql_value("UPDATE supply.purchase_order SET total = (SELECT round(sum(quantity * price), 2) "
-                              "FROM supply.purchase_order_line WHERE order_id = $1) WHERE id = $1 RETURNING total",
-                              order["id"])
-        if send:
-            ana.sql_exec("UPDATE supply.purchase_order SET status = 'sent', sent_at = now() WHERE id = $1", order["id"])
-        created.append({"ordem": order["number"], "fornecedor": s["name"], "linhas": len(batch), "total": total,
-                        "situação": "enviada" if send else "rascunho",
-                        "_actions": [{"label": "Receber", "program": "supply.receive", "params": {"order": order["number"]},
-                                      "confirm": f"Receber tudo o que está pendente na ordem {order['number']}?"}]})
+        rows[key] = batch
+    totals = [sum((b[2] * b[3] for b in rows[k]), Decimal(0)).quantize(Decimal("0.01"), ROUND_HALF_UP) for k in keys]
+    # All orders in one statement, then all lines in one batch (no round trip per supplier).
+    orders = ana.sql(
+        "INSERT INTO supply.purchase_order (supplier_id, warehouse_id, payment_days, notes, created_by, total, status, sent_at) "
+        "SELECT s, w, $3, $4, $5, t::numeric, CASE WHEN $6 THEN 'sent' ELSE 'draft' END, CASE WHEN $6 THEN now() END "
+        "FROM unnest($1::int[], $2::int[], $7::text[]) WITH ORDINALITY AS x(s, w, t, n) ORDER BY n "
+        "RETURNING id, number, supplier_id, warehouse_id",
+        [k[0] for k in keys], [k[1] for k in keys], payment_days, notes, ana.context.user, send, [str(t) for t in totals])
+    ids = {(o["supplier_id"], o["warehouse_id"]): o for o in orders}
+    ana.sql_batch("INSERT INTO supply.purchase_order_line (order_id, line, product_id, quantity, price, promised_date, "
+                  "  request_id, request_line, project_id, cost_center, rebillable) "
+                  "VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)",
+                  [[ids[k]["id"], *b] for k in keys for b in rows[k]])
+    created = [{"ordem": ids[k]["number"], "fornecedor": suppliers[k[0]], "linhas": len(rows[k]), "total": t,
+                "situação": "enviada" if send else "rascunho",
+                "_actions": [{"label": "Receber", "program": "supply.receive", "params": {"order": ids[k]["number"]},
+                              "confirm": f"Receber tudo o que está pendente na ordem {ids[k]['number']}?"}] if send else []}
+               for k, t in zip(keys, totals)]
     ana.sql_exec("UPDATE supply.purchase_request SET status = 'ordered' WHERE id = ANY($1)", [r["id"] for r in reqs])
     ana.table(created, title="Ordens de compra geradas")
     return {"orders": [c["ordem"] for c in created], "requests": [r["number"] for r in reqs]}

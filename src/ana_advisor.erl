@@ -52,8 +52,10 @@ analyze() ->
     {ok, Resolved} = ana_db:exec(
         "UPDATE ana_system.advice SET status = 'resolved' WHERE status = 'open' AND rule = ANY($1::text[]) "
         "AND NOT (rule || '|' || target = ANY($2::text[]))", [?RULES, Keys]),
-    _ = ana_db:exec("UPDATE ana_system.advice SET status = 'resolved' WHERE status = 'open' AND rule = 'n_plus_one' "
-                    "AND last_seen < now() - interval '7 days'", []),
+    %% N+1 seen at run time: quiet for a week, or its program was removed/deactivated.
+    _ = ana_db:exec("UPDATE ana_system.advice a SET status = 'resolved' WHERE a.status = 'open' AND a.rule = 'n_plus_one' "
+                    "AND (a.last_seen < now() - interval '7 days' OR NOT EXISTS (SELECT 1 FROM ana_system.program p "
+                    "     WHERE p.active AND p.name = split_part(a.target, ':', 1)))", []),
     {ok, #{found => length(Found), resolved => Resolved}}.
 
 safe(F) ->
@@ -220,6 +222,9 @@ unused_index_rule() ->
         "  pg_relation_size(s.indexrelid) AS bytes "
         "FROM pg_stat_user_indexes s JOIN pg_index i ON i.indexrelid = s.indexrelid "
         "WHERE s.idx_scan = 0 AND NOT i.indisunique AND NOT i.indisprimary "
+        %% An index that backs a foreign key is used by deletes/updates of the referenced row.
+        "  AND NOT EXISTS (SELECT 1 FROM pg_constraint c WHERE c.contype = 'f' AND c.conrelid = i.indrelid "
+        "                  AND c.conkey[1] = i.indkey[0]) "
         "  AND pg_relation_size(s.indexrelid) > 1048576", []),
     [{<<"unused_index">>, I, <<"info">>, fmt("Índice nunca usado: ~ts", [I]),
       fmt("Ocupa ~b KB em ~ts e custa em cada gravação (contagem desde o último reinício das estatísticas).", [B div 1024, T]),

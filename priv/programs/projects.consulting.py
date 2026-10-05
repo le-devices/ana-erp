@@ -93,7 +93,10 @@ class Calendar:
 
 def load_plan(project_id):
     tasks = ana.sql(
-        "SELECT t.*, e.name AS owner_name FROM projects.task t "
+        "SELECT t.id, t.project_id, t.code, t.name, t.planned_hours, t.billable, t.active, t.kind, t.parent_id, t.seq, "
+        "  t.owner_employee_id, t.profile, t.duration_days, t.planned_start, t.planned_finish, t.status, "
+        "  t.percent_complete, t.actual_start, t.actual_finish, t.deliverable, t.acceptance_criteria, t.notes, "
+        "  t.client_visible, t.updated_at, e.name AS owner_name FROM projects.task t "
         "LEFT JOIN projects.employee e ON e.id = t.owner_employee_id "
         "WHERE t.project_id = $1 AND t.active ORDER BY t.seq, t.code", project_id)
     deps = ana.sql(

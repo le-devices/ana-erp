@@ -39,11 +39,14 @@ def main(project, id=None, **f):
             "  COALESCE($5::smallint, 3), $6, COALESCE($7, ''), $8, COALESCE($9, 'open'), COALESCE($10::boolean, false), "
             "  $11) RETURNING id", p["id"], *[f.get(k) for k in FIELDS], ana.context.user)
         return {"id": new_id}
-    r = ana.sql_one("SELECT * FROM projects.risk WHERE id = $1 AND project_id = $2 FOR UPDATE", id, p["id"])
+    r = ana.sql_one("SELECT owner, created_by FROM projects.risk WHERE id = $1 AND project_id = $2 FOR UPDATE", id, p["id"])
     if not r:
         raise ana.Error("RISK_NOT_FOUND", f"risco {id} não encontrado")
     if not (access.can_manage(p) or r["owner"] == ana.context.user or r["created_by"] == ana.context.user):
         raise ana.Error("FORBIDDEN", "só o gestor, o dono ou quem registrou")
-    sets = [f"{k} = COALESCE(${n + 2}, {k})" for n, k in enumerate(FIELDS)]
-    ana.sql_exec(f"UPDATE projects.risk SET {', '.join(sets)} WHERE id = $1", id, *[f.get(k) for k in FIELDS])
+    ana.sql_exec("UPDATE projects.risk SET kind = COALESCE($2, kind), title = COALESCE($3, title), probability = "
+                 "COALESCE($4, probability), impact = COALESCE($5, impact), owner = COALESCE($6, owner), action_plan = "
+                 "COALESCE($7, action_plan), due_date = COALESCE($8, due_date), status = COALESCE($9, status), "
+                 "client_visible = COALESCE($10, client_visible) WHERE id = $1",
+                 id, *[f.get(k) for k in FIELDS])
     return {"id": id}

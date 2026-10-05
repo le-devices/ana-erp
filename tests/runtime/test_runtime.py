@@ -357,6 +357,13 @@ class TestInspection(unittest.TestCase):
         self.assertEqual(r["docs"], "Doc.")
         self.assertTrue(r["has_main"])
 
+    def test_lint_ok_marker_accepts_a_finding_on_purpose(self):
+        r = self.inspect("def main(q):\n"
+                         "    # ana:lint-ok leading_wildcard — trigram index\n"
+                         "    a = ana.sql(\"SELECT id FROM t WHERE name ILIKE '%' || $1 || '%' LIMIT 10\", q)\n"
+                         "    b = ana.sql(\"SELECT id FROM t WHERE name ILIKE '%' || $1 || '%' LIMIT 10\", q)\n")
+        self.assertEqual([(f["line"], f["rule"]) for f in r["lint"]], [(4, "leading_wildcard")])
+
     def test_lint_comprehension_source_runs_once(self):
         r = self.inspect("def main(ids):\n"
                          "    a = {x['id']: x for x in ana.sql('SELECT id FROM t WHERE id = ANY($1)', ids)}\n"

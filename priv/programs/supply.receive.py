@@ -52,7 +52,7 @@ def main(order, line=None, quantity=None, price=None, document=None, note=None, 
     receipt = ana.sql_value("INSERT INTO supply.receipt (order_id, document, received_by) VALUES ($1, $2, $3) RETURNING id",
                             o["id"], document, ana.context.user)
     doc = f"OC-{o['number']}/{receipt}"
-    rows, journal, total = [], {}, Decimal(0)
+    rows, journal, total, todo = [], {}, Decimal(0), []
     for item in lines:
         n = int(item.get("line") or 0)
         l = current.get(n)
@@ -63,32 +63,46 @@ def main(order, line=None, quantity=None, price=None, document=None, note=None, 
             raise ana.Error("INVALID_VALUE", f"quantidade da linha {n} deve ser positiva")
         unit = Decimal(str(item["price"])) if item.get("price") is not None else l["price"]
         amount = (qty * unit).quantize(CENT, rounding=ROUND_HALF_UP)
-        movement = expense = None
-        if l["project_id"]:
-            expense = ana.sql_value(
-                "INSERT INTO projects.expense (project_id, kind, description, supplier_id, product_id, quantity, unit_cost, "
-                "  rebillable, created_by) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) RETURNING id",
-                l["project_id"], KIND_OF_EXPENSE[l["kind"]], f"{l['description']} ({doc})", o["supplier_id"],
-                l["product_id"], qty, unit, l["rebillable"], ana.context.user)
-            key = ("project_costs", l["cost_center"])
-        elif l["kind"] == "goods":
-            movement = ana.sql_value(
-                "INSERT INTO inventory.stock_movement (product_id, warehouse_id, quantity, kind, document, created_by) "
-                "VALUES ($1, $2, $3, 'in', $4, $5) RETURNING id",
-                l["product_id"], o["warehouse_id"], qty, doc, ana.context.user)
-            key = ("inventory", None)
-        else:
-            key = ("purchased_services", l["cost_center"])
+        dest = "project" if l["project_id"] else ("stock" if l["kind"] == "goods" else "service")
+        key = {"project": ("project_costs", l["cost_center"]), "stock": ("inventory", None),
+               "service": ("purchased_services", l["cost_center"])}[dest]
         journal[key] = journal.get(key, Decimal(0)) + amount
         total += amount
-        # The guard trigger refuses more than ordered × (1 + tolerance).
-        ana.sql_exec("UPDATE supply.purchase_order_line SET received_qty = received_qty + $3 WHERE order_id = $1 AND line = $2",
-                     o["id"], n, qty)
-        ana.sql_exec("INSERT INTO supply.receipt_line (receipt_id, order_line, quantity, price, note, stock_movement_id, "
-                     "  project_expense_id) VALUES ($1, $2, $3, $4, $5, $6, $7)",
-                     receipt, n, qty, unit, item.get("note"), movement, expense)
+        todo.append((n, l, qty, unit, amount, dest, item.get("note")))
+
+    # Ids reserved up front so every write below is a single batch (no round trip per line).
+    n_moves = sum(1 for t in todo if t[5] == "stock")
+    n_exp = sum(1 for t in todo if t[5] == "project")
+    ids = ana.sql_one("SELECT ARRAY(SELECT nextval('inventory.stock_movement_id_seq') FROM generate_series(1, $1)) AS moves, "
+                      "ARRAY(SELECT nextval('projects.expense_id_seq') FROM generate_series(1, $2)) AS expenses",
+                      n_moves, n_exp)
+    moves, expenses = iter(ids["moves"]), iter(ids["expenses"])
+    move_rows, exp_rows, receipt_rows = [], [], []
+    for n, l, qty, unit, amount, dest, note in todo:
+        movement = expense = None
+        if dest == "stock":
+            movement = next(moves)
+            move_rows.append([movement, l["product_id"], o["warehouse_id"], qty, doc, ana.context.user])
+        elif dest == "project":
+            expense = next(expenses)
+            exp_rows.append([expense, l["project_id"], KIND_OF_EXPENSE[l["kind"]], f"{l['description']} ({doc})",
+                             o["supplier_id"], l["product_id"], qty, unit, l["rebillable"], ana.context.user])
+        receipt_rows.append([receipt, n, qty, unit, note, movement, expense])
         rows.append({"linha": n, "item": l["code"], "quantidade": qty, "unitário": unit, "valor": amount,
-                     "destino": "projeto" if expense else ("estoque" if movement else "aceite de serviço")})
+                     "destino": {"project": "projeto", "stock": "estoque", "service": "aceite de serviço"}[dest]})
+    if move_rows:
+        ana.sql_batch("INSERT INTO inventory.stock_movement (id, product_id, warehouse_id, quantity, kind, document, created_by) "
+                      "VALUES ($1, $2, $3, $4, 'in', $5, $6)", move_rows)
+    if exp_rows:
+        ana.sql_batch("INSERT INTO projects.expense (id, project_id, kind, description, supplier_id, product_id, quantity, "
+                      "  unit_cost, rebillable, created_by) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)", exp_rows)
+    # The guard trigger refuses more than ordered × (1 + tolerance), line by line.
+    ana.sql_exec("UPDATE supply.purchase_order_line l SET received_qty = l.received_qty + x.qty "
+                 "FROM (SELECT line, sum(qty::numeric) AS qty FROM unnest($2::int[], $3::text[]) AS u(line, qty) GROUP BY line) x "
+                 "WHERE l.order_id = $1 AND l.line = x.line",
+                 o["id"], [t[0] for t in todo], [str(t[2]) for t in todo])
+    ana.sql_batch("INSERT INTO supply.receipt_line (receipt_id, order_line, quantity, price, note, stock_movement_id, "
+                  "  project_expense_id) VALUES ($1, $2, $3, $4, $5, $6, $7)", receipt_rows)
 
     entry = bill = None
     if total > 0:

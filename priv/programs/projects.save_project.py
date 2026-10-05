@@ -44,7 +44,7 @@ def main(code, tasks=(), team=(), rates=None, customer=None, **fields):
     fields["customer_id"] = customer
     if fields.get("cost_center"):
         fields["cost_center"] = fields["cost_center"].strip().upper()
-    current = ana.sql_one("SELECT * FROM projects.project WHERE code = $1 FOR UPDATE", code)
+    current = ana.sql_one("SELECT id, code, manager FROM projects.project WHERE code = $1 FOR UPDATE", code)
     if current is None:
         access.require_admin()
         missing = [c for c in ("name", "customer_id", "manager") if fields.get(c) is None]
@@ -60,8 +60,13 @@ def main(code, tasks=(), team=(), rates=None, customer=None, **fields):
     else:
         access.require_manager(current)
         project_id = current["id"]
-        sets = [f"{c} = COALESCE(${i + 2}, {c})" for i, c in enumerate(COLUMNS)]
-        ana.sql_exec(f"UPDATE projects.project SET {', '.join(sets)} WHERE id = $1",
+        ana.sql_exec("UPDATE projects.project SET name = COALESCE($2, name), customer_id = COALESCE($3, customer_id), "
+                     "manager = COALESCE($4, manager), billing = COALESCE($5, billing), status = COALESCE($6, status), "
+                     "start_date = COALESCE($7, start_date), due_date = COALESCE($8, due_date), "
+                     "budget_hours = COALESCE($9, budget_hours), budget_amount = COALESCE($10, budget_amount), "
+                     "service_tax_rate = COALESCE($11, service_tax_rate), "
+                     "service_tax_withheld = COALESCE($12, service_tax_withheld), "
+                     "description = COALESCE($13, description), cost_center = COALESCE($14, cost_center) WHERE id = $1",
                      project_id, *[fields.get(c) for c in COLUMNS])
         created = False
 
@@ -73,22 +78,25 @@ def main(code, tasks=(), team=(), rates=None, customer=None, **fields):
             "billable = EXCLUDED.billable, active = EXCLUDED.active",
             [[project_id, str(t["code"]), t["name"], t.get("planned_hours"), t.get("billable", True),
               t.get("active", True)] for t in tasks])
-    for m in team:
-        if m.get("remove"):
-            ana.sql_exec("DELETE FROM projects.project_member WHERE project_id = $1 AND employee_id = $2",
-                         project_id, m["employee"])
-            continue
-        profile = m.get("profile") or ana.sql_value(
-            "SELECT profile FROM projects.employee WHERE id = $1", m["employee"])
-        if profile is None:
-            raise ana.Error("EMPLOYEE_NOT_FOUND", f"colaborador {m['employee']} não existe")
-        ana.sql_exec(
+    team = [{**m, "employee": int(m["employee"])} for m in team]
+    removed = [m["employee"] for m in team if m.get("remove")]
+    if removed:
+        ana.sql_exec("DELETE FROM projects.project_member WHERE project_id = $1 AND employee_id = ANY($2)",
+                     project_id, removed)
+    members = [m for m in team if not m.get("remove")]
+    if members:
+        profiles = {r["id"]: r["profile"] for r in ana.sql("SELECT id, profile FROM projects.employee WHERE id = ANY($1)",
+                                                         [m["employee"] for m in members])}
+        missing = [str(m["employee"]) for m in members if m["employee"] not in profiles]
+        if missing:
+            raise ana.Error("EMPLOYEE_NOT_FOUND", "colaborador(es) inexistente(s): " + ", ".join(missing))
+        ana.sql_batch(
             "INSERT INTO projects.project_member (project_id, employee_id, profile) VALUES ($1, $2, $3) "
             "ON CONFLICT (project_id, employee_id) DO UPDATE SET profile = EXCLUDED.profile",
-            project_id, m["employee"], str(profile).upper())
-    for profile, rate in (rates or {}).items():
-        ana.sql_exec(
+            [[project_id, m["employee"], str(m.get("profile") or profiles[m["employee"]]).upper()] for m in members])
+    if rates:
+        ana.sql_batch(
             "INSERT INTO projects.project_rate (project_id, profile, hourly_rate) VALUES ($1, $2, $3) "
             "ON CONFLICT (project_id, profile) DO UPDATE SET hourly_rate = EXCLUDED.hourly_rate",
-            project_id, profile.upper(), Decimal(str(rate)))
+            [[project_id, profile.upper(), Decimal(str(rate))] for profile, rate in rates.items()])
     return {"id": project_id, "code": code, "created": created}

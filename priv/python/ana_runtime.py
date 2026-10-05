@@ -1100,7 +1100,7 @@ def inspect(channel, msg):
                 resp["params"] = with_order(ast.literal_eval(node.value))
             except ValueError:
                 resp["error"] = {"line": node.lineno, "message": "PARAMS deve ser um literal"}
-    resp["lint"] = lint_sql(tree)
+    resp["lint"] = lint_sql(tree, source)
     channel.send(resp)
 
 
@@ -1162,14 +1162,28 @@ def _check_sql(text):
     return out
 
 
-def lint_sql(tree):
-    """Findings: [{line, rule, severity, message, suggestion, sql, tables}]."""
+LINT_OK_RE = re.compile(r"#\s*ana:lint-ok\s+([a-z_,\s]+?)\s*(?:[—-]|$)")
+
+
+def lint_sql(tree, source=""):
+    """Findings: [{line, rule, severity, message, suggestion, sql, tables}].
+
+    `# ana:lint-ok rule[, rule] — reason` on the call's lines (or the line above) accepts a
+    finding on purpose (e.g. LIKE '%x%' backed by a trigram index)."""
     import ast
     findings = []
+    accepted = {}
+    for n, text in enumerate(source.splitlines(), start=1):
+        m = LINT_OK_RE.search(text)
+        if m:
+            accepted[n] = {r.strip() for r in m.group(1).split(",") if r.strip()}
     loops = (ast.For, ast.AsyncFor, ast.While)
     comps = (ast.ListComp, ast.SetComp, ast.DictComp, ast.GeneratorExp)
 
     def add(node, rule, severity, message, suggestion, text=""):
+        span = range(node.lineno - 1, (getattr(node, "end_lineno", None) or node.lineno) + 1)
+        if any(rule in accepted.get(n, ()) for n in span):
+            return
         findings.append({"line": node.lineno, "rule": rule, "severity": severity, "message": message,
                          "suggestion": suggestion, "sql": " ".join(text.split())[:200],
                          "tables": sorted({t.lower() for t in TABLE_RE.findall(text)})})

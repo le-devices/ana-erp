@@ -1488,12 +1488,30 @@ class TestConsulting(Base):
                                     f"pr.code = '{p}' AND pm.employee_id = {self.pricey}"), 1)
         week2 = str(self.MON + datetime.timedelta(weeks=1))
         self.prog("projects.allocate", project=p, activity="1", profile="HW", hours=16, week=week2)
+        self.prog("projects.allocate", project=p, activity="1", employee=self.cheap, hours=4, week=week2)
         self.prog("projects.allocate", project=p, activity="1", employee=self.cheap, replace_profile="HW")
         detail = self.prog("projects.workspace", project=p, view="activity", activity="1")["data"]
         people = {x["who"]: x["allocated"] for x in detail["people"]}
-        self.assertEqual(people[f"Consultor A {SUFFIX}"], "16.00")
+        self.assertEqual(people[f"Consultor A {SUFFIX}"], "20.00")              # 4 already there + 16 of the profile
         self.assertEqual(people[f"Consultor B {SUFFIX}"], "60.00")
         self.assertFalse(any(k.startswith("perfil") for k in people), people)
+
+    def test_ca_021_policy_profile_costs_in_one_statement(self):
+        name = f"test.hw_cost_{SUFFIX}"         # the console (ana_read) does not see standard costs
+        self.save(name, "def main(v=None, restore=False):\n    if restore:\n"
+                        "        ana.sql_exec(\"UPDATE projects.rate_profile SET standard_cost = $1::numeric WHERE code = 'HW'\", v)\n"
+                        "    return ana.sql_value(\"SELECT standard_cost FROM projects.rate_profile WHERE code = 'HW'\")\n")
+        cost = lambda: self.prog(name)
+        before = cost()
+        try:
+            self.prog("projects.save_policy", profile_costs={"hw": 95})
+            self.assertEqual(Decimal(cost()), 95)
+            e = self.prog_err("projects.save_policy", profile_costs={"HW": 70, "ZZ9": 1})
+            self.assertEqual(e["code"], "PROFILE_NOT_FOUND")
+            self.assertIn("ZZ9", e["message"])
+            self.assertEqual(Decimal(cost()), 95)                                # all or nothing
+        finally:
+            self.prog(name, v=before, restore=True)
 
     def test_ca_021_03_critical_path(self):
         p = self.project()
