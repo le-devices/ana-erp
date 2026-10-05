@@ -18,6 +18,9 @@ x-ana-env: &ana-env
   ANA_HTTP_PORT: "8080"
   ANA_DEMO: ${ANA_DEMO:-true}
   ANA_TIMEZONE: ${ANA_TIMEZONE:-America/Sao_Paulo}
+  # Vault of connector secrets (spec 017): 32 bytes in base64, the same on every node.
+  # The default is for development only; generate one with: openssl rand -base64 32
+  ANA_MASTER_KEY: ${ANA_MASTER_KEY:-ZGV2LW9ubHktbWFzdGVyLWtleS1jaGFuZ2UtbWUhISE=}
 
 services:
   db:

@@ -92,7 +92,8 @@ components() ->
      {<<"python">>, fun python/0},
      {<<"scheduler">>, fun scheduler/0},
      {<<"access_log">>, fun access_log/0},
-     {<<"remote_systems">>, fun breakers/0}].
+     {<<"remote_systems">>, fun breakers/0},
+     {<<"integrations">>, fun integrations/0}].
 
 database() ->
     T0 = erlang:monotonic_time(millisecond),
@@ -148,7 +149,17 @@ breakers() ->
         _ -> {yellow, fmt("disjuntor aberto: ~ts", [lists:join(", ", [name(K) || K <- Open])])}
     end.
 
+%% Spec 017: messages out of attempts wait for an administrator.
+integrations() ->
+    case catch ana_db:one("SELECT (SELECT count(*) FROM integration.outbox WHERE status = 'dead') + "
+                          "(SELECT count(*) FROM integration.inbox WHERE status = 'dead') AS dead", []) of
+        {ok, #{<<"dead">> := 0}} -> {green, <<"nenhuma mensagem parada"/utf8>>};
+        {ok, #{<<"dead">> := N}} -> {yellow, fmt("~b mensagem(ns) de integração esgotaram as tentativas", [N])};
+        _ -> {yellow, <<"não foi possível verificar"/utf8>>}
+    end.
+
 name({remote, S}) -> S;
+name({connector, S}) -> S;
 name(K) -> io_lib:format("~0p", [K]).
 
 transition(Component, Before, #{state := State, message := Msg, at := At}, Node) ->

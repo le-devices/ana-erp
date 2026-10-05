@@ -301,6 +301,27 @@ clients/python/     cliente JSON-RPC        tests/          runtime, integration
 - **Métricas** em `/metrics` (Prometheus, autenticado) e logs JSON com
   `ANA_LOG_FORMAT=json`.
 
+## Integrações e conciliação bancária (spec 017)
+
+Programas nunca fazem rede nem veem segredos. Em **Administração → Operação
+do sistema → Integrações** o administrador cadastra **conectores** (URL base,
+hosts permitidos, autenticação, limite por minuto, programa de entrega e de
+processamento, usuário dono); os segredos vão para um **cofre** cifrado
+(AES-256-GCM, `ANA_MASTER_KEY` igual em todos os nós) e são só de escrita.
+
+- `ana.http("banco_x", "GET", "/extratos", params={...})` — o núcleo põe a
+  credencial, confere o host, aplica prazo, limite, disjuntor e registra.
+- `ana.send("gateway", "charge.create", dados)` — caixa de saída na mesma
+  transação: só sai se a execução confirmar; entrega com novas tentativas
+  (10 s × 2ⁿ) e fila de mortos com reprocessar.
+- Webhooks em `POST /hooks/<conector>` com HMAC-SHA256 de `carimbo.corpo`,
+  janela anti-repetição e idempotência pelo id do evento.
+- Extratos OFX/CSV sem duplicar (`extrato`), conciliação automática por
+  cobrança, documento e valor + data, e bancada manual (`conciliar`) com
+  baixa agrupada, juros/tarifas e estorno; cobrança por gateway
+  (`finance.create_charge`) liquidada pelo aviso de pagamento.
+- Modelo de conector de gateway: `integration.generic_gateway_out` / `_in`.
+
 ## Atualização dos programas do produto (spec 028)
 
 As sementes (`priv/programs`) nunca sobrescrevem um programa instalado. Ao
@@ -379,9 +400,9 @@ correspondentes são só o valor inicial).
 
 ## Situação das specs
 
-Implementadas: 001–008, 011 (com usuários robô e dono obrigatório), 012, 018, 021 (portal do cliente depende da 016), 019 (faltam alertas configuráveis e OpenTelemetry), 013, 022, 023, 024, 025, 026, 027, 028; 020 parcial (falta próxima ação
+Implementadas: 001–008, 011 (com usuários robô e dono obrigatório), 012, 018, 021 (portal do cliente depende da 016), 019 (faltam alertas configuráveis e OpenTelemetry), 013, 017 (faltam SFTP/pasta/e-mail, mTLS, CNAB e pacotes de modelos), 022, 023, 024, 025, 026, 027, 028; 020 parcial (falta próxima ação
 sugerida, fluxos guiados e auditoria de acessibilidade).
 Na fila (ordem em [scripts/pending-work.prompt.md](scripts/pending-work.prompt.md)):
-017 integrações, 016 repositório de
+016 repositório de
 arquivos, 014 produção, 015 logística, 010 API pública; 009 licenciamento
 aguarda decisões.

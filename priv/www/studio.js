@@ -12,6 +12,7 @@
     settings: "Parâmetros", accounts: "Contas padrão", commands: "Comandos", remote: "Sistemas remotos",
     scheduler: "Agendamento", monitor: "Monitor", consumption: "Consumo", audit: "Auditoria", retention: "Retenção",
     health: "Saúde", sqlperf: "Desempenho do SQL", advice: "Dicas de otimização", updates: "Atualizações do produto",
+    integrations: "Integrações",
   };
   const state = { user: null, targets: new Map(), trail: [] };
 

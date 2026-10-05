@@ -91,6 +91,26 @@ route(<<"PUT">>, [<<"remote-systems">>, Name], U, Req) ->
         (_, R) -> invalid(R)
     end);
 
+%% --- Integrations (spec 017) ----------------------------------------------
+route(<<"GET">>, [<<"connectors">>], _U, Req) ->
+    reply(ana_connectors:list(), Req);
+route(<<"PUT">>, [<<"connectors">>, Name], U, Req) ->
+    with_body(Req, fun(B, R) -> reply(ana_connectors:save(Name, B, U), R) end);
+route(<<"DELETE">>, [<<"connectors">>, Name], U, Req) ->
+    reply(ana_connectors:remove(Name, U), Req);
+route(<<"PUT">>, [<<"connectors">>, Name, <<"secrets">>, Key], U, Req) ->
+    with_body(Req, fun(B, R) -> reply(ana_connectors:put_secret(Name, Key, B, U), R) end);
+route(<<"DELETE">>, [<<"connectors">>, Name, <<"secrets">>, Key], U, Req) ->
+    reply(ana_connectors:delete_secret(Name, Key, U), Req);
+route(<<"GET">>, [<<"integrations">>, <<"stats">>], _U, Req) ->
+    reply(ana_integration:stats(), Req);
+route(<<"GET">>, [<<"integrations">>, <<"messages">>], _U, Req) ->
+    reply(ana_integration:messages(ana_http:qs_map(Req)), Req);
+route(<<"POST">>, [<<"integrations">>, Kind, Id, <<"reprocess">>], U, Req) ->
+    with_id(Id, Req, fun(N) -> reply(ana_integration:reprocess(Kind, N, U), Req) end);
+route(<<"POST">>, [<<"integrations">>, Kind, Id, <<"discard">>], U, Req) ->
+    with_id(Id, Req, fun(N) -> reply(ana_integration:discard(Kind, N, U), Req) end);
+
 %% --- Product updates (spec 028) -------------------------------------------
 route(<<"GET">>, [<<"product-updates">>], _U, Req) ->
     {ok, Rows} = ana_product_updates:list(),
@@ -233,3 +253,9 @@ with_body(Req, Fun) ->
     end.
 
 invalid(Req) -> ana_http:reply_error(400, <<"INVALID">>, <<"requisição inválida"/utf8>>, Req).
+
+with_id(Id, Req, Fun) ->
+    case catch binary_to_integer(Id) of
+        N when is_integer(N), N > 0 -> Fun(N);
+        _ -> invalid(Req)
+    end.

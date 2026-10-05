@@ -5,6 +5,7 @@ x-cluster-env: &cluster-env
   # In a cluster the restricted-role passwords must be shared (README).
   ANA_DB_EXEC_PASSWORD: ${ANA_TEST_EXEC_PASSWORD:-cluster-exec-test-password}
   ANA_DB_READ_PASSWORD: ${ANA_TEST_READ_PASSWORD:-cluster-read-test-password}
+  ANA_MASTER_KEY: ${ANA_MASTER_KEY:-ZGV2LW9ubHktbWFzdGVyLWtleS1jaGFuZ2UtbWUhISE=}
 
 services:
   ana:

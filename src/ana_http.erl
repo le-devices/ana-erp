@@ -16,6 +16,7 @@ start() ->
         {"/api/scheduler/[...]", ana_http_scheduler, scheduler},
         {"/api/[...]", ana_http_api, api},
         {"/rpc", ana_http_rpc, rpc},
+        {"/hooks/:connector", ana_http_hooks, hooks},
         {"/rpc/functions", ana_http_rpc, functions}
     ]}]),
     Port = ana_config:integer("ANA_HTTP_PORT", 8080),

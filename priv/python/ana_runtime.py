@@ -433,6 +433,34 @@ def make_ana_module(channel, output, context):
         """Call an exposed program on a registered remote system (RF-003-08)."""
         return channel.request("remote", {"system": system, "function": function, "params": params})
 
+    class HttpResponse(dict):
+        """Answer of ana.http: status, headers, json (when JSON) or text; .ok for 2xx."""
+        @property
+        def ok(self):
+            return 200 <= self.get("status", 0) < 300
+
+    def http(connector, method, path="", json=None, body=None, headers=None, params=None):
+        """HTTP call through a connector (spec 017): the core adds credentials, checks the
+        allowed hosts and applies limits. Programs never see secrets nor open sockets."""
+        options = {}
+        if json is not None:
+            options["json"] = json
+        elif body is not None:
+            options["body"] = str(body)
+        if headers:
+            options["headers"] = {str(k): str(v) for k, v in dict(headers).items()}
+        if params:
+            options["params"] = {str(k): v for k, v in dict(params).items()}
+        r = channel.request("http", {"connector": str(connector), "method": str(method), "path": str(path),
+                                     "options": options})
+        return HttpResponse(r)
+
+    def send(connector, kind, payload, key=None):
+        """Queue a message for the connector in this same transaction (outbox, spec 017):
+        delivered after the commit, with retries; nothing is sent if the execution fails."""
+        return sql_value("SELECT integration.enqueue($1, $2, $3::text::jsonb, $4) AS id", str(connector), str(kind),
+                         to_json(payload), key)
+
     def log(message, level="info"):
         output.flush()
         output.emit("log", {"level": str(level), "message": str(message)})
@@ -603,6 +631,8 @@ def make_ana_module(channel, output, context):
     m.sql_batch = sql_batch
     m.call = call
     m.remote = remote
+    m.http = http
+    m.send = send
     m.log = log
     m.table = table
     m.metrics = metrics

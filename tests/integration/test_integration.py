@@ -2351,5 +2351,273 @@ class TestProductUpdates(Base):
             self.assertEqual(s, 403)
 
 
+# ---------------------------------------------------------------- spec 017
+class TestIntegrationHub(Base):
+    """Connectors, vault, reliable delivery, webhooks, statements, reconciliation, charges."""
+
+    @classmethod
+    def setUpClass(cls):
+        super().setUpClass()
+        c = cls.client
+        cls.api = f"t{SUFFIX}_api"
+        cls.hooks = f"t{SUFFIX}_hooks"
+        cls.out_prog = f"test.int_out_{SUFFIX}"
+        CREATED_PROGRAMS.add(cls.out_prog)
+        # Delivery program: GET <options.path> on the connector; anything but 2xx fails (retried).
+        s, r, _ = http("PUT", f"/api/programs/{cls.out_prog}", {"source":
+            "def main(message, connector, attempt=1):\n"
+            "    r = ana.http(connector['name'], 'GET', connector['options'].get('path', '/nope'))\n"
+            "    if not r.ok:\n"
+            "        raise ana.Error('DELIVERY_FAILED', f\"HTTP {r['status']}\")\n"
+            "    return {'status': r['status'], 'got': message['payload']}\n"}, cls.token)
+        assert s == 200, r
+        cls.connector(cls.api, {"kind": "http_api", "base_url": "http://localhost:8080", "auth": "bearer",
+                                "outbound_program": cls.out_prog, "max_attempts": 2, "options": {"path": "/nope"}})
+        cls.secret(cls.api, "token", "super-secret-token-value")
+        cls.connector(cls.hooks, {"kind": "webhook_in", "inbound_program": "integration.generic_gateway_in"})
+        cls.hmac_key = f"hook-key-{SUFFIX}"
+        cls.secret(cls.hooks, "hmac_key", cls.hmac_key)
+        cls.customer = c.call("base.save_party", name=f"Cliente Banco {SUFFIX}")["id"]
+        cls.service = f"SV{SUFFIX}BK"
+        c.call("base.save_product", code=cls.service, description="Serviço conciliação", price="1", kind="service")
+
+    @classmethod
+    def tearDownClass(cls):
+        # Connectors point to test programs (the FK blocks purging them): detach first.
+        for name in (cls.api, cls.hooks, f"t{SUFFIX}_gw"):
+            http("PUT", f"/api/admin/connectors/{name}", {"kind": "webhook_in", "active": False}, cls.token)
+
+    @classmethod
+    def connector(cls, name, body):
+        s, c, _ = http("PUT", f"/api/admin/connectors/{name}", body, cls.token)
+        assert s == 200, c
+
+    @classmethod
+    def secret(cls, name, key, value):
+        s, c, _ = http("PUT", f"/api/admin/connectors/{name}/secrets/{key}", {"value": value}, cls.token)
+        assert s == 200, c
+
+    def bill(self, amount):
+        """A receivable bill of exactly `amount` (service order, invoiced)."""
+        o = self.client.call("sales.create_order", customer=self.customer,
+                             items=[{"product": self.service, "quantity": 1, "price": str(amount)}])
+        self.client.call("sales.invoice_order", number=o["number"])
+        return int(self.scalar(f"SELECT id FROM finance.bill WHERE document = 'ORD-{o['number']}' AND kind = 'receivable'"))
+
+    def ofx(self, *trns):
+        body = "".join(f"<STMTTRN><TRNTYPE>CREDIT<DTPOSTED>{d}120000<TRNAMT>{a}<FITID>{f}<MEMO>{m}</STMTTRN>\n"
+                       for d, a, f, m in trns)
+        return f"OFXHEADER:100\nDATA:OFXSGML\n<OFX><BANKMSGSRSV1><STMTTRNRS><STMTRS><BANKTRANLIST>\n{body}</BANKTRANLIST></STMTRS></STMTTRNRS></BANKMSGSRSV1></OFX>"
+
+    def wait(self, sql, expected, seconds=40):
+        end = time.time() + seconds
+        while time.time() < end:
+            v = self.scalar(sql)
+            if v == expected:
+                return v
+            time.sleep(1)
+        self.fail(f"{sql} → {v!r}, esperado {expected!r}")
+
+    def run_ok(self, name, params=None):
+        s, c, _ = self.run_program(name, params or {})
+        self.assertEqual(s, 200, c)
+        self.assertNotIn("error", c, c.get("error"))
+        return c["result"]
+
+    def test_ca_017_01_ofx_import_twice_does_not_duplicate(self):
+        today = datetime.date.today().strftime("%Y%m%d")
+        content = self.ofx((today, "10.00", f"F1{SUFFIX}", "tarifa"), (today, "-3.50", f"F2{SUFFIX}", "pacote"))
+        first = self.client.call("finance.import_statement", bank_account="CAIXA", content=content)
+        again = self.client.call("finance.import_statement", bank_account="CAIXA", content=content)
+        self.assertEqual((first["lines"], first["duplicates"]), (2, 0))
+        self.assertEqual((again["lines"], again["duplicates"]), (0, 2))
+        csv = "data;histórico;valor\n05/10/2026;PIX recebido;1.234,56\n05/10/2026;PIX recebido;1.234,56\n"
+        r1 = self.client.call("finance.import_statement", bank_account="CAIXA", format="csv",
+                              content=csv.replace("PIX", f"PIX {SUFFIX}"))
+        r2 = self.client.call("finance.import_statement", bank_account="CAIXA", format="csv",
+                              content=csv.replace("PIX", f"PIX {SUFFIX}"))
+        self.assertEqual((r1["lines"], r2["lines"], r2["duplicates"]), (2, 0, 2))   # two equal lines are both kept once
+
+    def test_ca_017_02_charge_id_in_statement_settles_automatically(self):
+        amount = Decimal(f"{300 + int(SUFFIX[-3:])}.17")
+        bill = self.bill(amount)
+        ext = f"PIX{SUFFIX}AUTO"
+        self.run_ok(self.charge_prog(), {"bill": bill, "ext": ext, "connector": self.api})
+        today = datetime.date.today().strftime("%Y%m%d")
+        self.client.call("finance.import_statement", bank_account="CAIXA",
+                         content=self.ofx((today, str(amount), f"F3{SUFFIX}", f"PIX REC {ext} CLIENTE")))
+        r = self.client.call("finance.reconcile", bank_account="CAIXA")
+        self.assertGreaterEqual(r["settled"], 1)
+        self.assertEqual(self.scalar(f"SELECT status FROM finance.bill WHERE id = {bill}"), "settled")
+        line = self.scalar(f"SELECT id FROM finance.bank_statement_line WHERE dedup_key = 'id:F3{SUFFIX}'")
+        s, c, _ = http("POST", "/api/sql", {"sql": "SELECT sum(debit), sum(credit), count(*) FROM finance.journal_line l "
+                                                  "JOIN finance.journal_entry e ON e.id = l.entry_id "
+                                                  f"WHERE e.document = 'EXT-{line}'"}, self.token)
+        debit, credit, n = c["rows"][0]
+        self.assertEqual((Decimal(debit), Decimal(credit)), (amount, amount))
+        self.assertEqual(self.scalar(f"SELECT status FROM finance.charge WHERE external_id = '{ext}'"), "paid")
+
+    def charge_prog(self):
+        name = f"test.int_charge_{SUFFIX}"
+        if name not in CREATED_PROGRAMS:
+            self.save(name, "def main(bill, ext, connector):\n"
+                            "    amount = ana.sql_value('SELECT amount FROM finance.bill WHERE id = $1', bill)\n"
+                            "    return ana.sql_value(\"INSERT INTO finance.charge (bill_id, connector, method, status, external_id, "
+                            "amount, created_by) VALUES ($1, $2, 'pix', 'issued', $3, $4, 't') RETURNING id\", bill, connector, ext, amount)\n")
+        return name
+
+    def test_ca_017_03_equal_amounts_stay_for_manual_with_two_suggestions(self):
+        amount = Decimal(f"{700 + int(SUFFIX[-3:])}.43")
+        b1, b2 = self.bill(amount), self.bill(amount)
+        today = datetime.date.today().strftime("%Y%m%d")
+        self.client.call("finance.import_statement", bank_account="CAIXA",
+                         content=self.ofx((today, str(amount), f"F4{SUFFIX}", "DEPOSITO SEM IDENTIFICACAO")))
+        line = int(self.scalar(f"SELECT id FROM finance.bank_statement_line WHERE dedup_key = 'id:F4{SUFFIX}'"))
+        r = self.client.call("finance.reconcile", bank_account="CAIXA", tolerance_days=40)   # sales bills fall due in 30 days
+        self.assertEqual(self.scalar(f"SELECT status FROM finance.bank_statement_line WHERE id = {line}"), "open")
+        sug = {x["bill"] for x in r["suggestions"][str(line)]}
+        self.assertTrue({b1, b2} <= sug, sug)
+        # Manual: the user picks one; undo reverses and reopens it.
+        self.client.call("finance.match_statement_line", line=line, bills=[b1])
+        self.assertEqual(self.scalar(f"SELECT status FROM finance.bill WHERE id = {b1}"), "settled")
+        back = self.client.call("finance.unmatch_statement_line", line=line, reason="engano")
+        self.assertTrue(back["reversed"])
+        self.assertEqual(self.scalar(f"SELECT status FROM finance.bill WHERE id = {b1}"), "open")
+        self.assertEqual(self.scalar(f"SELECT count(*) FROM finance.journal_entry WHERE document = 'EXT-{line}-REV'"), 1)
+        with self.assertRaises(AnaRemoteError) as ctx:
+            self.client.call("finance.match_statement_line", line=line, bills=[b1, b2])     # 2× the line amount
+        self.assertEqual(ctx.exception.code, "DIFFERENCE")
+
+    def signed(self, body, ts=None, key=None, event=None):
+        import hashlib
+        import hmac as _hmac
+        ts = str(ts or int(time.time()))
+        raw = json.dumps(body).encode()
+        sig = _hmac.new((key or self.hmac_key).encode(), ts.encode() + b"." + raw, hashlib.sha256).hexdigest()
+        headers = {"X-Timestamp": ts, "X-Signature": "sha256=" + sig, "Content-Type": "application/json"}
+        if event:
+            headers["X-Event-Id"] = event
+        req = urllib.request.Request(URL + f"/hooks/{self.hooks}", data=raw, method="POST", headers=headers)
+        try:
+            with urllib.request.urlopen(req, timeout=30) as r:
+                return r.status, json.loads(r.read() or b"{}")
+        except urllib.error.HTTPError as e:
+            return e.code, json.loads(e.read() or b"{}")
+
+    def test_ca_017_04_webhook_signature_and_idempotency(self):
+        amount = Decimal(f"{500 + int(SUFFIX[-3:])}.29")
+        bill = self.bill(amount)
+        ext = f"GW{SUFFIX}HOOK"
+        self.run_ok(self.charge_prog(), {"bill": bill, "ext": ext, "connector": self.api})
+        event = {"id": f"evt-{SUFFIX}", "type": "charge.paid", "charge_id": ext, "amount": str(amount), "fee": "1.99"}
+        self.assertEqual(self.signed(event, key="wrong-key")[0], 401)
+        self.assertEqual(self.signed(event, ts=int(time.time()) - 3600)[0], 401)          # outside the replay window
+        s, c = self.signed(event)
+        self.assertEqual(s, 202, c)
+        self.wait(f"SELECT status FROM finance.bill WHERE id = {bill}", "settled")
+        s, c = self.signed(event)
+        self.assertEqual((s, c.get("duplicate")), (200, True))
+        s, c = self.signed({**event, "id": f"evt-{SUFFIX}-again"})                       # same payment, other event id
+        self.assertEqual(s, 202, c)
+        self.wait(f"SELECT status FROM integration.inbox WHERE connector = '{self.hooks}' AND event_id = 'evt-{SUFFIX}-again'",
+                  "done")
+        charge = self.scalar(f"SELECT id FROM finance.charge WHERE external_id = '{ext}'")
+        self.assertEqual(self.scalar(f"SELECT count(*) FROM finance.journal_entry WHERE document = 'CHG-{charge}'"), 1)
+        self.assertEqual(Decimal(self.scalar(f"SELECT fee FROM finance.charge WHERE id = {charge}")), Decimal("1.99"))
+
+    def test_ca_017_05_retries_dead_letter_and_reprocess(self):
+        name = f"test.int_send_{SUFFIX}"
+        self.save(name, "def main(connector):\n    return ana.send(connector, 'ping', {'n': 1})\n")
+        msg = self.run_ok(name, {"connector": self.api})
+        self.wait(f"SELECT status FROM integration.outbox WHERE id = {msg}", "dead", seconds=60)
+        self.assertEqual(self.scalar(f"SELECT attempts FROM integration.outbox WHERE id = {msg}"), 2)
+        self.assertIn("HTTP 404", self.scalar(f"SELECT last_error FROM integration.outbox WHERE id = {msg}"))
+        # The administrator fixes the connector and reprocesses.
+        self.connector(self.api, {"kind": "http_api", "base_url": "http://localhost:8080", "auth": "bearer",
+                                  "outbound_program": self.out_prog, "max_attempts": 2, "options": {"path": "/health"}})
+        s, c, _ = http("POST", f"/api/admin/integrations/outbox/{msg}/reprocess", {}, self.token)
+        self.assertEqual(s, 200, c)
+        self.wait(f"SELECT status FROM integration.outbox WHERE id = {msg}", "done")
+        # A message enqueued by a failing execution is never sent (same transaction).
+        bad = f"test.int_send_fail_{SUFFIX}"
+        self.save(bad, "def main(connector):\n    ana.send(connector, 'ghost', {'n': 2})\n    raise ana.Error('NOPE', 'x')\n")
+        before = self.count("integration.outbox", f"connector = '{self.api}' AND kind = 'ghost'")
+        self.run_program(bad, {"connector": self.api})
+        self.assertEqual(self.count("integration.outbox", f"connector = '{self.api}' AND kind = 'ghost'"), before)
+        s, stats, _ = http("GET", "/api/admin/integrations/stats", token=self.token)
+        mine = [x for x in stats if x["name"] == self.api][0]
+        self.assertGreaterEqual(mine["calls"], 3)
+
+    def test_ca_017_06_programs_cannot_read_secrets_nor_leave_the_allowed_hosts(self):
+        name = f"test.int_escape_{SUFFIX}"
+        self.save(name, "def main(connector):\n"
+                        "    out = {}\n"
+                        "    try:\n"
+                        "        ana.sql('SELECT ciphertext FROM integration.secret')\n"
+                        "        out['secret'] = 'read'\n"
+                        "    except ana.SqlError as e:\n"
+                        "        out['secret'] = e.sqlstate\n"
+                        "    for path in ('https://example.com/x', '//example.com/x', '/../x', 'http://localhost:8080/health'):\n"
+                        "        try:\n"
+                        "            ana.http(connector, 'GET', path)\n"
+                        "            out[path] = 'called'\n"
+                        "        except ana.Error as e:\n"
+                        "            out[path] = e.code\n"
+                        "    return out\n")
+        r = self.run_ok(name, {"connector": self.api})
+        self.assertEqual(r["secret"], "42501")
+        self.assertEqual({k: v for k, v in r.items() if k != "secret"},
+                         {"https://example.com/x": "HOST_NOT_ALLOWED", "//example.com/x": "HOST_NOT_ALLOWED",
+                          "/../x": "HOST_NOT_ALLOWED", "http://localhost:8080/health": "HOST_NOT_ALLOWED"})
+        s, c, _ = http("GET", "/api/admin/connectors", token=self.token)
+        self.assertNotIn("super-secret-token-value", json.dumps(c))
+        self.assertEqual([x["key"] for x in [k for k in c["connectors"] if k["name"] == self.api][0]["secrets"]], ["token"])
+        s, log, _ = http("GET", "/api/admin/audit/changes?action=connector.secret&limit=200", token=self.token)
+        mine = [x for x in log if x["target"] == f"{self.api}:token"]
+        self.assertTrue(mine)
+        self.assertNotIn("super-secret", json.dumps(log))                 # recorded without the value
+
+    def test_rf_017_08_charge_through_gateway_connector(self):
+        robot = f"rob{SUFFIX}gw"
+        CREATED_USERS.append(robot)
+        http("POST", "/api/admin/users", {"username": robot, "kind": "robot", "role": "user"}, self.token)
+        s, k, _ = http("POST", f"/api/admin/users/{robot}/keys", {"name": "gateway"}, self.token)
+        fake = f"test.fakegw_{SUFFIX}"
+        self.save(fake, "def main(**kw):\n    return {'id': 'FGW-' + ana.context.execution_id[:8], 'qr_code': '000201PIX'}\n")
+        gw = f"t{SUFFIX}_gw"
+        self.connector(gw, {"kind": "http_api", "base_url": "http://localhost:8080", "auth": "bearer",
+                            "outbound_program": "integration.generic_gateway_out",
+                            "options": {"charges_path": f"/api/programs/{fake}/run", "response_field": "result"}})
+        self.secret(gw, "token", k["key"])
+        bill = self.bill(Decimal("42.00"))
+        r = self.client.call("finance.create_charge", bill=bill, connector=gw, method="pix")
+        self.wait(f"SELECT status FROM finance.charge WHERE id = {r['charge']}", "issued")
+        self.assertTrue(self.scalar(f"SELECT external_id FROM finance.charge WHERE id = {r['charge']}").startswith("FGW-"))
+        with self.assertRaises(AnaRemoteError) as ctx:
+            self.client.call("finance.create_charge", bill=bill, connector=gw)
+        self.assertEqual(ctx.exception.code, "CHARGE_EXISTS")
+
+    def test_rnf_017_03_import_100k_lines_under_60s(self):
+        name = f"test.int_bulk_{SUFFIX}"
+        self.save(name, "import datetime, time\n"
+                        "def main(n, tag):\n"
+                        "    d = datetime.date.today().strftime('%Y%m%d')\n"
+                        "    trn = ''.join(f'<STMTTRN><DTPOSTED>{d}<TRNAMT>{(i % 900) + 1}.{i % 100:02d}<FITID>{tag}-{i}'\n"
+                        "                  f'<MEMO>lote {i}</STMTTRN>' for i in range(n))\n"
+                        "    t0 = time.monotonic()\n"
+                        "    r = ana.call('finance.import_statement', bank_account='CAIXA', content='<OFX>' + trn + '</OFX>')\n"
+                        "    return {'lines': r['lines'], 'seconds': time.monotonic() - t0}\n",
+                  limits={"timeout_ms": 180000, "sql_timeout_ms": 120000})
+        s, c, _ = self.run_program(name, {"n": 100000, "tag": f"B{SUFFIX}"})
+        self.assertEqual(s, 200, c)
+        self.assertEqual(c["result"]["lines"], 100000)
+        self.assertLess(c["result"]["seconds"], 60, c["result"])
+        # Leave the account clean for the other suites (these are test lines only).
+        purge = f"test.int_bulk_purge_{SUFFIX}"
+        self.save(purge, "def main(tag):\n    return ana.sql_exec(\"DELETE FROM finance.bank_statement_line "
+                         "WHERE dedup_key LIKE 'id:' || $1 || '-%'\", tag)\n")
+        self.run_program(purge, {"tag": f"B{SUFFIX}"})
+
+
 if __name__ == "__main__":
     unittest.main()

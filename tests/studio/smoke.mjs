@@ -200,9 +200,16 @@ for (const [section, marker] of [["groups", "Grupos de acesso"], ["limits", "Per
                                  ["settings", "ceiling_cpu_ms"], ["accounts", "service_revenue"], ["commands", "hello"],
                                  ["remote", "Sistemas remotos"], ["scheduler", "Feriados"], ["monitor", "Execuções ativas"], ["consumption", "CPU total"],
                                  ["retention", "Expurgos recentes"], ["health", "Mudanças de estado"], ["sqlperf", "Desempenho do SQL"],
-                                 ["advice", "Dicas de otimização"], ["updates", "Atualizações do produto"], ["audit", "Auditoria"]]) {
+                                 ["advice", "Dicas de otimização"], ["updates", "Atualizações do produto"], ["integrations", "Chamadas 24 h"], ["audit", "Auditoria"]]) {
   await go(w, `#/admin/${section}`);
   await until(() => text("#admin-main").includes(marker), section, jsErrors);
+  if (section === "integrations") {
+    [...d.querySelectorAll("#admin-main .sub-tabs button")].find((b) => b.textContent === "Conectores").click();
+    await until(() => text("#admin-main").includes("Segredos (só escrita)"), "connectors", jsErrors);
+    [...d.querySelectorAll("#admin-main .sub-tabs button")].find((b) => b.textContent === "Saída").click();
+    await until(() => text("#admin-main").includes("Último erro"), "outbox", jsErrors);
+    ok(true, "integrações: painel, conectores com segredos só de escrita e mensagens (spec 017)");
+  }
   if (section === "updates") {
     // Spec 028: an update row opens the side-by-side comparison (demo.hello is used by the integration suite).
     const view = [...d.querySelectorAll("#admin-main tbody button")][0];

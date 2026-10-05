@@ -44,7 +44,14 @@ categories() ->
      {incidents, <<"Incidentes encerrados"/utf8>>, retention_observability_days,
       "ana_system.incident", "opened_at", "closed_at IS NOT NULL"},
      {metrics, <<"Amostras de métricas"/utf8>>, retention_observability_days,
-      "ana_system.metric_sample", "at", "true"}].
+      "ana_system.metric_sample", "at", "true"},
+     %% Spec 017: only finished messages; pending and dead ones stay until decided.
+     {integration_calls, <<"Chamadas de integração"/utf8>>, retention_integration_days,
+      "integration.call_log", "at", "true"},
+     {integration_outbox, <<"Mensagens de saída entregues"/utf8>>, retention_integration_days,
+      "integration.outbox", "created_at", "status IN ('done', 'discarded')"},
+     {integration_inbox, <<"Mensagens de entrada processadas"/utf8>>, retention_integration_days,
+      "integration.inbox", "received_at", "status IN ('done', 'discarded')"}].
 
 %% Manual purge (RF-024-09): owned by the administrator who asked.
 -spec purge_now(map()) -> {ok, binary()} | {error, term()}.

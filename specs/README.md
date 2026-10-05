@@ -47,7 +47,7 @@ inglês, como no código (constituição, P2a).
 | 014 | [Produção e capacidade](014-production-planning/spec.md) | Estruturas, roteiros, necessidades, ordens, capacidade (bens e serviços) | especificada |
 | 015 | [Logística e campo](015-logistics-field-service/spec.md) | Transferências, expedição, devoluções, ordens de serviço, agenda, rotas | especificada |
 | 016 | [Repositório de arquivos](016-file-repository/spec.md) | Pastas, versões, permissões granulares, portal do cliente, links | especificada |
-| 017 | [Hub de integrações](017-integration-hub/spec.md) | Conectores, cofre, webhooks, extratos, conciliação, gateways | especificada |
+| 017 | [Hub de integrações](017-integration-hub/spec.md) | Conectores, cofre, webhooks, extratos, conciliação, gateways | implementada (faltam SFTP/pasta/e-mail, mTLS, CNAB e pacotes de modelos) |
 | 018 | [Agendamento](018-scheduler/spec.md) | Rotinas com cron/calendário, cluster, tentativas, dependências | implementada |
 | 019 | [Observabilidade](019-observability/spec.md) | Saúde, métricas, rastros, stack traces, perfilamento, dicas | implementada (faltam alertas configuráveis e OpenTelemetry) |
 | 020 | [Arquitetura da informação](020-information-architecture/spec.md) | Áreas por tarefa; fluxo coerente (próxima ação, fluxos guiados) | parcial |
