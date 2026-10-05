@@ -290,6 +290,8 @@ class TestChaos(unittest.TestCase):
 
     # ------------------------------------------------------------------ CA-019-01
     def test_g_database_down_opens_and_closes_an_incident(self):
+        s, h = http(NODE1, "GET", "/api/admin/observability/health", token=self.token)
+        seen = max([i["id"] for i in h["incidents"]] or [0]) if s == 200 else 0   # incidents of earlier runs
         compose("stop", "db")
         try:
             time.sleep(15)                      # > one health check interval (10 s)
@@ -297,12 +299,12 @@ class TestChaos(unittest.TestCase):
             compose("start", "db")
         wait_ready(NODE1)
         token = login(NODE1)
-        end, closed = time.time() + 60, []
-        while time.time() < end and not closed:
+        end, closed, states = time.time() + 60, [], {}
+        while time.time() < end and not (closed and states.get("database") == "green"):
             s, h = http(NODE1, "GET", "/api/admin/observability/health", token=token)
             if s == 200:
                 closed = [i for i in h["incidents"] if i["component"] == "database" and i["closed_at"]
-                          and i["seconds"] >= 5]
+                          and i["seconds"] >= 5 and i["id"] > seen]
                 states = {c["component"]: c["state"] for c in h["components"]}
             time.sleep(2)
         self.assertTrue(closed, "o banco fora deveria abrir um incidente e a volta, fechá-lo")
