@@ -19,6 +19,7 @@ def main(start=None, end=None, cost_center=None):
     today = datetime.date.today()
     start = start or today.replace(month=1, day=1)
     end = end or today
+    # ana:lint-ok unbounded_select — cost centers: small table, the whole hierarchy is needed for the roll-up
     centers = {r["code"]: r for r in ana.sql("SELECT code, name, parent_code, kind FROM finance.cost_center")}
     actual = ana.sql(
         "SELECT l.cost_center, a.nature, to_char(date_trunc('month', e.entry_date), 'YYYY-MM-01') AS month, "

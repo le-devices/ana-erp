@@ -28,6 +28,7 @@ def policy():
 
 
 def profile_costs():
+    # ana:lint-ok unbounded_select — one row per rate profile (aggregate over the people master)
     rows = ana.sql(
         "SELECT r.code, COALESCE(r.standard_cost, avg(e.hourly_cost) FILTER (WHERE e.active)) AS cost "
         "FROM projects.rate_profile r LEFT JOIN projects.employee e ON e.profile = r.code GROUP BY r.code")
@@ -69,7 +70,10 @@ def projection(p, adj=None, today=None):
     this_week = C.monday(today)
     employees = {r["id"]: r for r in ana.sql(
         "SELECT e.id, e.name, e.hourly_cost, COALESCE(pm.profile, e.profile) AS profile FROM projects.employee e "
-        "LEFT JOIN projects.project_member pm ON pm.employee_id = e.id AND pm.project_id = $1", p["id"])}
+        "LEFT JOIN projects.project_member pm ON pm.employee_id = e.id AND pm.project_id = $1 "
+        "WHERE pm.employee_id IS NOT NULL "
+        "   OR e.id IN (SELECT employee_id FROM projects.allocation WHERE project_id = $1 AND employee_id IS NOT NULL) "
+        "   OR e.id IN (SELECT employee_id FROM projects.time_entry WHERE project_id = $1)", p["id"])}
     allocs = ana.sql("SELECT task_id, week, employee_id, profile, hours FROM projects.allocation WHERE project_id = $1",
                      p["id"])
     by_task = {}
@@ -209,7 +213,8 @@ def projection(p, adj=None, today=None):
     expense_revenue = ZERO
     months = months_between(today if executing else project_start, max(planned_finish, today if executing else
                                                                        project_start))
-    for x in ana.sql("SELECT * FROM projects.planned_expense WHERE project_id = $1", p["id"]):
+    for x in ana.sql("SELECT id, project_id, description, kind, amount, monthly, expected_date, rebillable, markup_pct, "
+                     "created_by, created_at FROM projects.planned_expense WHERE project_id = $1", p["id"]):
         markup = (1 + x["markup_pct"] / HUNDRED) if x["rebillable"] else ZERO
         if x["monthly"]:
             for m in months:
@@ -283,8 +288,12 @@ FIELDS = ("hours_pct", "cost_pct", "rate_pct", "delay_weeks")
 
 def standard_scenarios(p):
     """Base, optimistic and pessimistic adjustments: project overrides, else company policy."""
-    pol = ana.sql_one("SELECT * FROM projects.policy WHERE id = 1")
-    own = {r["kind"]: r for r in ana.sql("SELECT * FROM projects.scenario WHERE project_id = $1 AND kind <> 'custom'",
+    pol = ana.sql_one("SELECT id, target_margin_pct, min_margin_pct, overhead_pct, optimistic_hours_pct, "
+                      "optimistic_cost_pct, optimistic_rate_pct, optimistic_delay_weeks, pessimistic_hours_pct, "
+                      "pessimistic_cost_pct, pessimistic_rate_pct, pessimistic_delay_weeks, updated_by, "
+                      "updated_at FROM projects.policy WHERE id = 1")
+    own = {r["kind"]: r for r in ana.sql("SELECT id, project_id, name, kind, rate_pct, hours_pct, cost_pct, delay_weeks, notes, created_by, "
+                                         "created_at FROM projects.scenario WHERE project_id = $1 AND kind <> 'custom'",
                                          p["id"])}
     out = [("base", "base", {f: 0 for f in FIELDS})]
     for kind in ("optimistic", "pessimistic"):
@@ -297,7 +306,8 @@ def standard_scenarios(p):
 def scenarios(p, extra=None):
     """[(key, label, adjustments, projection)] — always base, optimistic, pessimistic; then custom ones."""
     items = standard_scenarios(p)
-    for r in ana.sql("SELECT * FROM projects.scenario WHERE project_id = $1 AND kind = 'custom' ORDER BY name",
+    for r in ana.sql("SELECT id, project_id, name, kind, rate_pct, hours_pct, cost_pct, delay_weeks, notes, created_by, "
+                     "created_at FROM projects.scenario WHERE project_id = $1 AND kind = 'custom' ORDER BY name",
                      p["id"]):
         items.append((f"custom:{r['id']}", r["name"], {f: r[f] for f in FIELDS}))
     if extra:

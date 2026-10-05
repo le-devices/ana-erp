@@ -18,7 +18,9 @@ def require_admin():
 
 
 def project(code, lock=False):
-    p = ana.sql_one("SELECT * FROM projects.project WHERE code = $1" + (" FOR UPDATE" if lock else ""),
+    p = ana.sql_one("SELECT id, code, name, customer_id, manager, billing, status, start_date, due_date, budget_hours, "
+                    "budget_amount, service_tax_rate, service_tax_withheld, description, created_at, "
+                    "cost_center FROM projects.project WHERE code = $1" + (" FOR UPDATE" if lock else ""),
                     str(code).upper())
     if not p:
         raise ana.Error("PROJECT_NOT_FOUND", f"projeto {code} não encontrado")

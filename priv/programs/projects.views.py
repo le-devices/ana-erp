@@ -234,7 +234,8 @@ def gantt(p):
     base = C.latest_baseline(p["id"])
     bitems = {}
     if base:
-        bitems = {b["task_id"]: b for b in ana.sql("SELECT * FROM projects.baseline_item WHERE baseline_id = $1",
+        bitems = {b["task_id"]: b for b in ana.sql("SELECT baseline_id, task_id, code, name, kind, parent_code, planned_hours, planned_start, "
+                                                   "planned_finish, planned_value FROM projects.baseline_item WHERE baseline_id = $1",
                                                    base["id"])}
     items = []
     for t in ordered(tasks):
@@ -375,7 +376,9 @@ def activity_detail(p, code):
 
 
 def changes(p):
-    rows = ana.sql("SELECT * FROM projects.scope_change WHERE project_id = $1 ORDER BY number DESC", p["id"])
+    rows = ana.sql("SELECT id, project_id, number, title, description, requested_by, requested_at, est_hours, "
+                   "est_amount, est_days, status, internal_approved_by, internal_approved_at, "
+                   "customer_approver, customer_approved_at, rejection_reason, milestone_id, baseline_id FROM projects.scope_change WHERE project_id = $1 ORDER BY number DESC", p["id"])
     labels = {"requested": "pedida", "estimated": "estimada", "approved_internal": "aprovada internamente",
               "approved": "aprovada pelo cliente", "rejected": "recusada"}
     out = []
@@ -411,7 +414,8 @@ def changes(p):
 
 
 def risks(p):
-    rows = ana.sql("SELECT * FROM projects.risk WHERE project_id = $1 ORDER BY status = 'closed', "
+    rows = ana.sql("SELECT id, project_id, kind, title, probability, impact, owner, action_plan, due_date, status, "
+                   "client_visible, created_by, created_at FROM projects.risk WHERE project_id = $1 ORDER BY status = 'closed', "
                    "probability * impact DESC, id", p["id"])
     labels = {"open": "aberto", "mitigating": "em tratamento", "closed": "fechado"}
     out = [{"tipo": "risco" if r["kind"] == "risk" else "pendência", "título": r["title"],

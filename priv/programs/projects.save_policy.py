@@ -52,6 +52,7 @@ def main(profile_costs=None, **f):
                       "pessimistic_rate_pct, pessimistic_delay_weeks FROM projects.policy WHERE id = 1")
     if access.is_admin():
         ana.table([{"perfil": r["code"], "valor-hora": r["hourly_rate"], "custo padrão": r["standard_cost"] or "média das pessoas"}
+                   # ana:lint-ok unbounded_select — rate profiles: small configuration table
                    for r in ana.sql("SELECT code, hourly_rate, standard_cost FROM projects.rate_profile ORDER BY code")],
                   title="Perfis")
     ana.table([{"parâmetro": k, "valor": pol[k]} for k in FIELDS], title="Política de projeção")
