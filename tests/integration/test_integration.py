@@ -3749,5 +3749,188 @@ class TestTransports(Base):
         self.assertEqual((cols[("base.party", "name")], cols[("base.party", "email")]), ("company", "email"))
 
 
+# ---------------------------------------------------------------- spec 030
+class TestFlows(Base):
+    """Automated flows: automatic steps, manual stop, failure and reprocess, blocked customer, conditions."""
+
+    @classmethod
+    def setUpClass(cls):
+        super().setUpClass()
+        c = cls.client
+        cls.sfx = SUFFIX[-5:]
+        cls.item = f"F{cls.sfx}IT"
+        c.call("base.save_product", code=cls.item, description=f"Item esteira {SUFFIX}", price="10")
+        c.call("inventory.stock_in", product=cls.item, quantity=100, warehouse="CENTRAL")
+        cls.customer = c.call("base.save_party", name=f"Cliente Esteira {SUFFIX}", state="SP")["id"]
+        name = f"test.flowpolicy_{SUFFIX}"
+        CREATED_PROGRAMS.add(name)
+        s, r, _ = http("PUT", f"/api/programs/{name}", {"source":
+            "def main(carrier=None, restore=False):\n"
+            "    if restore:\n"
+            "        ana.sql_exec('UPDATE logistics.policy SET default_carrier = $1 WHERE id = 1', carrier)\n"
+            "        return carrier\n"
+            "    return ana.sql_value('SELECT default_carrier FROM logistics.policy WHERE id = 1')\n"}, cls.token)
+        assert s == 200, r
+        cls.policy = name
+        cls.old_carrier = http("POST", f"/api/programs/{name}/run", {"params": {}}, cls.token)[1]["result"]
+        cls.saved = {}
+        for code in ("sales", "purchase", "field", "production"):
+            cls.saved[code] = cls.call("flows.configure", flow=code)
+        carrier = c.call("logistics.save_carrier", name=f"Transportes Esteira {SUFFIX}", default=True)["id"]
+        cls.carrier = carrier
+
+    @classmethod
+    def call(cls, program, **params):
+        s, r, _ = http("POST", f"/api/programs/{program}/run", {"params": params}, cls.token)
+        assert s == 200 and "error" not in r, r
+        return r["result"]
+
+    @classmethod
+    def tearDownClass(cls):
+        for code, cfg in cls.saved.items():
+            cls.call("flows.configure", flow=code, action="activate" if cfg["active"] else "deactivate")
+            for st in cfg["steps"]:
+                if st["mode"] != "wait":
+                    cls.call("flows.configure", flow=code, action="mode", step=st["seq"], mode=st["mode"])
+                    cls.call("flows.configure", flow=code, action="clear_condition", step=st["seq"])
+                    for rule in st["condition"]:
+                        cls.call("flows.configure", flow=code, action="condition", step=st["seq"], **rule)
+        http("POST", f"/api/programs/{cls.policy}/run", {"params": {"carrier": cls.old_carrier, "restore": True}}, cls.token)
+
+    def ok(self, _program, **params):
+        s, c, _ = self.run_program(_program, params)
+        self.assertEqual(s, 200, c)
+        self.assertNotIn("error", c, c.get("error"))
+        return c["result"]
+
+    def configure(self, flow, modes, conditions=None):
+        self.ok("flows.configure", flow=flow, action="activate")
+        for seq, mode in modes.items():
+            self.ok("flows.configure", flow=flow, action="mode", step=seq, mode=mode)
+            self.ok("flows.configure", flow=flow, action="clear_condition", step=seq)
+        for seq, rule in (conditions or {}).items():
+            self.ok("flows.configure", flow=flow, action="condition", step=seq, **rule)
+
+    def steps(self, flow, key, until=None, timeout=60):
+        """Waits until `until(steps)` holds; steps = {code: (status, how, reason, error)}."""
+        end = time.time() + timeout
+        while True:
+            s, c, _ = http("POST", "/api/sql", {"sql":
+                "SELECT s.code, x.status, x.how, x.reason, x.error, i.status AS inst, i.id, x.seq FROM flow.instance i "
+                "JOIN flow.instance_step x ON x.instance_id = i.id JOIN flow.step s ON s.flow_code = i.flow_code AND s.seq = x.seq "
+                f"WHERE i.flow_code = '{flow}' AND i.doc_key = '{key}' ORDER BY x.seq"}, self.token)
+            self.assertEqual(s, 200, c)
+            st = {r[0]: {"status": r[1], "how": r[2], "reason": r[3], "error": r[4], "instance": r[5], "id": r[6], "seq": r[7]}
+                  for r in c["rows"]}
+            if until is None or (st and until(st)) or time.time() > end:
+                return st
+            time.sleep(0.5)
+
+    def order(self, customer=None, qty=2, **extra):
+        return self.ok("sales.create_order", customer=customer or self.customer, items=[{"product": self.item, "quantity": qty}], **extra)
+
+    def test_ca_030_01_sale_runs_by_itself(self):
+        self.configure("sales", {1: "auto", 2: "auto", 3: "auto"})
+        n = self.order()["number"]
+        st = self.steps("sales", n, lambda s: s["receipt"]["status"] == "waiting")
+        self.assertEqual([st[k]["status"] for k in ("ship", "invoice", "charge", "receipt")], ["done", "done", "done", "waiting"], st)
+        self.assertEqual((st["ship"]["how"], st["invoice"]["how"]), ("auto", "auto"))
+        self.assertEqual(self.scalar(f"SELECT status FROM sales.sales_order WHERE number = {n}"), "INVOICED")
+        self.assertGreater(int(self.scalar(f"SELECT count(*) FROM logistics.shipment s JOIN sales.sales_order o ON o.id = s.sales_order_id "
+                                           f"WHERE o.number = {n}")), 0)
+        self.assertGreater(int(self.scalar(f"SELECT count(*) FROM finance.bill WHERE document = 'ORD-{n}' OR document LIKE 'ORD-{n}/%'")), 0)
+        self.assertEqual(self.scalar(f"SELECT s.created_by FROM logistics.shipment s JOIN sales.sales_order o ON o.id = s.sales_order_id "
+                                     f"WHERE o.number = {n} LIMIT 1"), "system")                  # P14: the flow's robot
+
+    def test_ca_030_02_manual_step_waits_then_continues(self):
+        self.configure("sales", {1: "auto", 2: "manual", 3: "auto"})
+        n = self.order()["number"]
+        st = self.steps("sales", n, lambda s: s["invoice"]["status"] == "waiting")
+        self.assertEqual((st["ship"]["status"], st["invoice"]["status"], st["charge"]["status"]), ("done", "waiting", "pending"))
+        self.assertIn("manual", st["invoice"]["reason"])
+        self.ok("flows.act", instance=st["invoice"]["id"], seq=st["invoice"]["seq"], action="run")   # a person: run it now
+        st = self.steps("sales", n, lambda s: s["receipt"]["status"] == "waiting")
+        self.assertEqual((st["invoice"]["status"], st["invoice"]["how"], st["charge"]["status"]), ("done", "manual", "done"))
+
+    def test_rf_030_02_condition_for_automatic(self):
+        self.configure("sales", {1: "auto", 2: "auto", 3: "auto"}, {2: {"field": "total", "op": "<=", "value": "50"}})
+        small, big = self.order(qty=2)["number"], self.order(qty=20)["number"]       # R$ 20 and R$ 200
+        st = self.steps("sales", big, lambda s: s["invoice"]["status"] == "waiting")
+        self.assertIn("condição", st["invoice"]["reason"])
+        st = self.steps("sales", small, lambda s: s["invoice"]["status"] == "done")
+        self.assertEqual(st["invoice"]["how"], "auto")
+
+    def test_ca_030_03_failure_then_reprocess(self):
+        self.configure("sales", {1: "manual", 2: "auto", 3: "auto"})
+        item = f"F{self.sfx}SEM"
+        self.client.call("base.save_product", code=item, description=f"Sem estoque {SUFFIX}", price="5")
+        n = self.ok("sales.create_order", customer=self.customer, items=[{"product": item, "quantity": 3}])["number"]
+        st = self.steps("sales", n, lambda s: s["ship"]["status"] == "waiting")
+        self.ok("flows.act", instance=st["ship"]["id"], seq=st["ship"]["seq"], action="skip", reason="retirada no balcão")
+        st = self.steps("sales", n, lambda s: s["invoice"]["status"] == "failed")
+        self.assertEqual((st["invoice"]["error"]["code"], st["invoice"]["instance"]), ("INSUFFICIENT_STOCK", "failed"))
+        self.assertEqual((st["ship"]["status"], st["ship"]["how"]), ("skipped", "skipped"))
+        board = self.ok("flows.board", flow="sales", document=str(n))
+        self.assertEqual(board["failed"], 1)
+        self.ok("inventory.stock_in", product=item, quantity=10, warehouse="CENTRAL")       # the cause is fixed
+        self.ok("flows.act", instance=st["invoice"]["id"], seq=st["invoice"]["seq"], action="retry")
+        st = self.steps("sales", n, lambda s: s["receipt"]["status"] == "waiting")
+        self.assertEqual(st["invoice"]["status"], "done")
+
+    def test_ca_030_04_blocked_customer_stops_at_invoice(self):
+        self.configure("sales", {1: "auto", 2: "auto", 3: "auto"})
+        cust = self.client.call("base.save_party", name=f"Cliente Bloqueado Esteira {SUFFIX}", state="SP")["id"]
+        n = self.order(customer=cust)["number"]
+        self.ok("finance.credit_block", customer=cust, action="block", reason="cheque devolvido")
+        # Blocked between the order and the invoice (the engine may already be past the invoice: then nothing to check).
+        st = self.steps("sales", n, lambda s: s["invoice"]["status"] in ("failed", "done"))
+        if st["invoice"]["status"] == "failed":
+            self.assertEqual(st["invoice"]["error"]["code"], "CUSTOMER_BLOCKED")
+            self.assertIn("cheque devolvido", st["invoice"]["error"]["message"])
+            self.ok("finance.credit_block", customer=cust, action="unblock", reason="regularizado")
+            self.ok("flows.act", instance=st["invoice"]["id"], seq=st["invoice"]["seq"], action="retry")
+            st = self.steps("sales", n, lambda s: s["invoice"]["status"] == "done")
+            self.assertEqual(st["invoice"]["status"], "done")
+
+    def test_ca_030_04b_blocked_before_any_step(self):
+        # Deterministic variant: the ship step is manual, the customer is blocked, then the person ships.
+        self.configure("sales", {1: "manual", 2: "auto", 3: "auto"})
+        cust = self.client.call("base.save_party", name=f"Cliente Bloqueio Dois {SUFFIX}", state="SP")["id"]
+        n = self.order(customer=cust)["number"]
+        st = self.steps("sales", n, lambda s: s["ship"]["status"] == "waiting")
+        self.ok("finance.credit_block", customer=cust, action="block", reason="protesto")
+        self.ok("flows.act", instance=st["ship"]["id"], seq=st["ship"]["seq"], action="run")
+        st = self.steps("sales", n, lambda s: s["invoice"]["status"] == "failed")
+        self.assertEqual(st["invoice"]["error"]["code"], "CUSTOMER_BLOCKED")
+        self.assertEqual(st["invoice"]["instance"], "failed")
+
+    def test_rf_030_01_other_flows_start_with_their_document(self):
+        self.configure("field", {})
+        os_ = self.ok("field.open_order", customer=self.customer, description=f"Visita esteira {SUFFIX}")["number"]
+        st = self.steps("field", os_, lambda s: s["schedule"]["status"] == "waiting")
+        self.assertEqual(st["schedule"]["status"], "waiting")
+        self.configure("purchase", {})
+        req = self.ok("supply.request_purchase", product=self.item, quantity=1, reason=f"esteira {SUFFIX}")
+        number = req.get("number") or req.get("request")
+        st = self.steps("purchase", number, lambda s: s["approve"]["status"] in ("waiting", "done"))
+        self.assertIn(st["approve"]["status"], ("waiting", "done"))
+        self.ok("flows.configure", flow="field", action="deactivate")
+        os2 = self.ok("field.open_order", customer=self.customer, description=f"Fora da esteira {SUFFIX}")["number"]
+        time.sleep(1)
+        self.assertEqual(self.steps("field", os2), {})                          # switched off: nothing enters
+
+    def test_rf_030_05_include_open_and_screens(self):
+        self.ok("flows.configure", flow="production", action="deactivate")
+        r = self.ok("flows.configure", flow="sales")
+        self.assertEqual([s["code"] for s in r["steps"]], ["ship", "invoice", "charge", "receipt"])
+        s, c, _ = self.run_program("flows.configure", {"flow": "sales", "action": "mode", "step": 4, "mode": "auto"})
+        self.assertEqual(c["error"]["code"], "INVALID_OPERATION")                # a waiting step has no mode
+        u, t = new_user("user")
+        s, c, _ = self.run_program("flows.configure", {"flow": "sales"}, token=t)
+        self.assertIn(s, (403, 422))
+        b = self.ok("flows.board", flow="sales")
+        self.assertIn("open", b)
+
+
 if __name__ == "__main__":
     unittest.main()

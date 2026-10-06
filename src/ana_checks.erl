@@ -10,7 +10,7 @@
 -behaviour(gen_server).
 
 -export([start_link/0, run/2, summary/0, import_vulnerabilities/2, notices/1, mark_notice/1]).
--export([regression/3, demo/0]).
+-export([regression/3, demo/0, technical_codes/0]).
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2]).
 
 -define(TICK_MS, 5 * 60 * 1000).        % probes; robustness every 3rd tick
@@ -90,6 +90,10 @@ purge() ->
     _ = ana_db:exec("DELETE FROM ana_system.notice WHERE read AND created_at < now() - interval '90 days'", []),
     _ = catch ana_datacopy:purge(),        % spec 034: copy files live 48 h
     ok.
+
+%% Spec 030: technical failures are retried by the flows engine; business refusals are not.
+-spec technical_codes() -> [binary()].
+technical_codes() -> ?TECHNICAL.
 
 -spec demo() -> boolean().
 demo() -> ana_config:text("ANA_DEMO", "false") =:= "true".

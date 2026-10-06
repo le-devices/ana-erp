@@ -34,6 +34,7 @@ init([]) ->
         worker(ana_sql_stats, []),
         worker(ana_advisor, []),
         worker(ana_checks, []),
+        worker(ana_flows, []),
         worker(ana_health, []),
         worker(ana_integration, [])
     ],

@@ -354,6 +354,31 @@ ou comprar, prazo, lote, segurança, custo padrão).
   indicadores (`sla`): SLA cumprido, atrasadas, resposta, horas em campo,
   visitas e retornos.
 
+## Esteiras de processos (spec 030)
+
+Operação → Esteiras: cada documento segue sua esteira e a etapa seguinte
+acontece sozinha quando a anterior termina — ou espera uma pessoa, conforme
+a regra da empresa.
+
+- **Venda**: pedido → expedição (baixa e movimentação do estoque) →
+  faturamento (títulos por parcela) → cobrança (PIX/boleto/cartão pelo
+  gateway) → recebimento. **Compras**: solicitação → aprovação → ordem ao
+  fornecedor → recebimento → pagamento. **Campo**: chamado → agendamento →
+  execução e aceite → faturamento → cobrança → recebimento. **Produção**:
+  ordem → liberação → requisição dos componentes → fabricação →
+  encerramento.
+- Em `esteira_config` (administrador): ligar (nasce desligada), incluir os
+  documentos em aberto, escolher o robô que executa e, por etapa, automática
+  ou manual, com condições sobre o documento (ex.: faturar sozinho só até
+  R$ 5.000; condição não cumprida = espera uma pessoa).
+- O quadro (`esteiras`) mostra cada documento na sua etapa, por que espera,
+  falhas com o motivo (cliente bloqueado, falta de estoque…) e as ações:
+  fazer agora (abre a rotina com o documento preenchido), executar
+  automaticamente, reprocessar, pular com motivo. O que alguém fizer à mão,
+  fora da esteira, também a faz andar.
+- A esteira começa na mesma transação que cria o documento; o motor roda no
+  nó líder, com nova tentativa em falhas técnicas e retomada se um nó cair.
+
 ## Condições de pagamento e crédito (spec 031)
 
 - **Condições** (`condicao`): forma (PIX, boleto, cartão de crédito/débito,
@@ -554,9 +579,8 @@ correspondentes são só o valor inicial).
 
 ## Situação das specs
 
-Implementadas: 001–008, 011 (com usuários robô e dono obrigatório), 012, 018, 021, 019 (faltam alertas configuráveis e OpenTelemetry), 013, 014, 015, 016 (faltam S3 e antivírus), 017 (faltam SFTP/pasta/e-mail, mTLS, CNAB e pacotes de modelos), 022, 023, 024, 025, 026, 027, 028, 029, 031, 033 (falta base OSV por conector), 034 (faltam agendamentos e migrações no pacote, envio por conector); 020 parcial (falta próxima ação
+Implementadas: 001–008, 011 (com usuários robô e dono obrigatório), 012, 018, 021, 019 (faltam alertas configuráveis e OpenTelemetry), 013, 014, 015, 016 (faltam S3 e antivírus), 017 (faltam SFTP/pasta/e-mail, mTLS, CNAB e pacotes de modelos), 022, 023, 024, 025, 026, 027, 028, 029, 030, 031, 033 (falta base OSV por conector), 034 (faltam agendamentos e migrações no pacote, envio por conector); 020 parcial (falta próxima ação
 sugerida, fluxos guiados e auditoria de acessibilidade).
 Na fila (ordem em [scripts/pending-work.prompt.md](scripts/pending-work.prompt.md)):
-030 esteiras automáticas (venda →
-estoque → expedição → faturamento → cobrança); 032 distâncias por
+032 distâncias por
 coordenadas; 010 API pública; 009 licenciamento aguarda decisões.
