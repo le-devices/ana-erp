@@ -43,6 +43,9 @@ produto. Sem chamada obrigatória à internet (funciona em rede isolada).
 Pacote exportável (programas + migrações do cliente + parâmetros) para levar
 customizações de desenvolvimento/homologação para produção, com registro de
 quem importou o quê.
+**Implementado (out/2026)** na [spec 034](../034-dev-test-instance/spec.md):
+pacote assinado de programas, comandos e parâmetros (migrações de dados de
+negócio ficam para a T-034-07b).
 
 ## Outros itens a especificar
 - Perfis de acesso de negócio (além de admin/desenvolvedor/usuário):

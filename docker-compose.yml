@@ -17,6 +17,8 @@ x-ana-env: &ana-env
   ANA_ADMIN_PASSWORD: ${ANA_ADMIN_PASSWORD:-admin}
   ANA_HTTP_PORT: "8080"
   ANA_DEMO: ${ANA_DEMO:-true}
+  # Spec 034: production | test | development (this compose is the development environment).
+  ANA_INSTANCE: ${ANA_INSTANCE:-development}
   ANA_TIMEZONE: ${ANA_TIMEZONE:-America/Sao_Paulo}
   # Vault of connector secrets (spec 017): 32 bytes in base64, the same on every node.
   # The default is for development only; generate one with: openssl rand -base64 32

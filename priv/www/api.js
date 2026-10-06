@@ -23,6 +23,14 @@
     return q ? "?" + q : "";
   };
 
+  function saveBlob(blob, filename) {
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url; a.download = filename;
+    document.body.append(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 10000);
+  }
+
   const API = {
     onExpired: () => {},
     onPasswordRequired: () => {},
@@ -79,6 +87,15 @@
     version: (n, v) => API.request("GET", `/api/programs/${enc(n)}/versions/${v}`),
     restore: (n, v) => API.request("POST", `/api/programs/${enc(n)}/versions/${v}/restore`, {}),
     run: (n, body) => API.request("POST", `/api/programs/${enc(n)}/run`, body, { accept: [422] }),
+    /** Authenticated download saved as a file (spec 034: data copies). */
+    async download(path, filename) {
+      const headers = {};
+      if (token) headers["Authorization"] = "Bearer " + token;
+      const resp = await fetch(path, { headers, cache: "no-store", credentials: "omit" });
+      if (!resp.ok) throw new ApiError(resp.status, null);
+      saveBlob(await resp.blob(), filename);
+    },
+    saveBlob: (blob, filename) => saveBlob(blob, filename),
     /** Raw body (file upload): bytes go as they are, with the session token. */
     async raw(method, path, blob) {
       const headers = { "Accept": "application/json", "Content-Type": "application/octet-stream" };
@@ -192,6 +209,24 @@
       checksRun: (category) => API.request("POST", "/api/admin/checks/run", { category }),
       checksInventory: () => API.request("GET", "/api/admin/checks/inventory"),
       checksImport: (blob) => API.raw("POST", "/api/admin/checks/vulnerabilities", blob),
+      transports: () => API.request("GET", "/api/admin/transports"),
+      transport: (id) => API.request("GET", `/api/admin/transports/${id}`),
+      transportKey: () => API.request("GET", "/api/admin/transports/key"),
+      transportOrigins: () => API.request("GET", "/api/admin/transports/origins"),
+      saveOrigin: (name, public_key) => API.request("PUT", `/api/admin/transports/origins/${encodeURIComponent(name)}`, { public_key }),
+      deleteOrigin: (name) => API.request("DELETE", `/api/admin/transports/origins/${encodeURIComponent(name)}`),
+      exportTransport: (body) => API.request("POST", "/api/admin/transports/export", body),
+      receiveTransport: (blob) => API.raw("POST", "/api/admin/transports/receive", blob),
+      importTransport: (id, body) => API.request("POST", `/api/admin/transports/${id}/import`, body, { accept: [409] }),
+      revertTransport: (id) => API.request("POST", `/api/admin/transports/${id}/revert`, {}),
+      refuseTransport: (id, reason) => API.request("POST", `/api/admin/transports/${id}/refuse`, { reason }),
+      copies: () => API.request("GET", "/api/admin/datacopy"),
+      copyExport: () => API.request("POST", "/api/admin/datacopy/export", {}),
+      copyUpload: (blob) => API.raw("POST", "/api/admin/datacopy/upload", blob),
+      copyImport: (id, body) => API.request("POST", `/api/admin/datacopy/${id}/import`, body),
+      masking: () => API.request("GET", "/api/admin/datacopy/masking"),
+      saveMasking: (body) => API.request("PUT", "/api/admin/datacopy/masking", body),
+      instance: () => API.request("GET", "/api/admin/instance"),
       notices: (unread) => API.request("GET", "/api/admin/checks/notices" + query(unread ? { unread: 1 } : {})),
       noticeRead: (id) => API.request("POST", `/api/admin/checks/notices/${id}/read`, {}),
       connectors: () => API.request("GET", "/api/admin/connectors"),

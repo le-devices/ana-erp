@@ -397,6 +397,38 @@ no formato OSV: baixe em osv.dev os avisos de Hex, Debian e PyPI e envie em
 Verificações → Inventário (nada é consultado na internet sem o administrador
 pedir). Avisos retirados (`withdrawn`) removem o aviso anterior.
 
+## Desenvolvimento, testes e transporte para produção (spec 034)
+
+Cada instalação tem um papel: `ANA_INSTANCE=production` (padrão), `test` ou
+`development` (o `docker-compose.yml` deste repositório é `development`).
+Fora da produção uma faixa "DESENVOLVIMENTO"/"TESTES" aparece em todas as
+telas. Com o parâmetro `transport_required = 1`, a produção só aceita
+mudanças de programas por pacote.
+
+- **Transportes** (Administração → Sistema): na instância de desenvolvimento
+  monte o pacote (programas, comandos, parâmetros, o que muda, testes feitos)
+  e gere o arquivo assinado com a chave Ed25519 da instância (guardada no
+  cofre). Na produção, cadastre a origem (nome + chave pública), receba o
+  arquivo: assinatura, hashes e versão do produto são conferidos e a
+  verificação prévia mostra o que é novo, igual, atualização ou **conflito**
+  (programa alterado na produção depois da origem — só segue com aceite
+  explícito, com comparação lado a lado) e dependências ausentes. Importar
+  grava tudo numa transação, como versões novas, sem parar o sistema
+  (execuções em andamento terminam na versão em que começaram); desfazer
+  volta tudo ao estado anterior. Quatro olhos opcional
+  (`transport_four_eyes`).
+- **Cópia de dados para testes**: na produção, "Exportar dados mascarados"
+  gera um retrato consistente dos esquemas de negócio com nomes, e-mails,
+  telefones, documentos, endereços, coordenadas e observações **mascarados
+  na origem** (determinístico dentro da cópia: o mesmo cliente é o mesmo em
+  todas as tabelas), comprimido e cifrado; a chave aparece uma vez e o
+  arquivo fica 48 h. Na instância de testes, envie o arquivo, ensaie (carga
+  completa desfeita ao final) e importe: tudo numa transação, contagens e
+  totais conferidos; depois os conectores são desligados e as chamadas
+  externas bloqueadas (`outbound_blocked`). Tabelas do sistema, cofre,
+  integrações, arquivos e senhas nunca entram. A aba Máscaras mostra e ajusta
+  o catálogo por coluna.
+
 ## Repositório de arquivos e portal do cliente (spec 016)
 
 **Arquivos** guarda documentos de projetos, clientes e fornecedores em pastas
@@ -522,10 +554,9 @@ correspondentes são só o valor inicial).
 
 ## Situação das specs
 
-Implementadas: 001–008, 011 (com usuários robô e dono obrigatório), 012, 018, 021, 019 (faltam alertas configuráveis e OpenTelemetry), 013, 014, 015, 016 (faltam S3 e antivírus), 017 (faltam SFTP/pasta/e-mail, mTLS, CNAB e pacotes de modelos), 022, 023, 024, 025, 026, 027, 028, 029, 031, 033 (falta base OSV por conector); 020 parcial (falta próxima ação
+Implementadas: 001–008, 011 (com usuários robô e dono obrigatório), 012, 018, 021, 019 (faltam alertas configuráveis e OpenTelemetry), 013, 014, 015, 016 (faltam S3 e antivírus), 017 (faltam SFTP/pasta/e-mail, mTLS, CNAB e pacotes de modelos), 022, 023, 024, 025, 026, 027, 028, 029, 031, 033 (falta base OSV por conector), 034 (faltam agendamentos e migrações no pacote, envio por conector); 020 parcial (falta próxima ação
 sugerida, fluxos guiados e auditoria de acessibilidade).
 Na fila (ordem em [scripts/pending-work.prompt.md](scripts/pending-work.prompt.md)):
-034 ambiente de desenvolvimento e testes com transporte para
-produção e cópia mascarada de dados; 030 esteiras automáticas (venda →
+030 esteiras automáticas (venda →
 estoque → expedição → faturamento → cobrança); 032 distâncias por
 coordenadas; 010 API pública; 009 licenciamento aguarda decisões.

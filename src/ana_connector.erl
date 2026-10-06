@@ -29,7 +29,10 @@ lookup(Name) ->
 -spec http(binary(), binary(), binary(), map(), binary() | null) -> {ok, map()} | {error, map()}.
 http(Name, Method0, Path, Opts, ExecId) when is_binary(Name), is_binary(Method0), is_binary(Path), is_map(Opts) ->
     Method = string:uppercase(Method0),
-    case lookup(Name) of
+    %% Spec 034 (RF-034-07): a test instance with copied data calls nothing outside.
+    Blocked = ana_settings:get(outbound_blocked) =:= 1,
+    case Blocked orelse lookup(Name) of
+        true -> fail(<<"OUTBOUND_BLOCKED">>, <<"chamadas externas bloqueadas nesta instância (dados copiados da produção)"/utf8>>);
         {ok, #{<<"active">> := true, <<"kind">> := <<"http_api">>} = C} ->
             case {lists:member(Method, ?METHODS), target_url(C, Path, maps:get(<<"params">>, Opts, #{}))} of
                 {false, _} -> fail(<<"INVALID_METHOD">>, <<"método HTTP não permitido: "/utf8, Method/binary>>);

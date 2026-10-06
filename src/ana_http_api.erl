@@ -84,7 +84,8 @@ route(<<"GET">>, [<<"me">>], Req) ->
             {ok, #{<<"legal_name">> := N}} -> N;
             _ -> null
         end,
-        ana_http:json(200, (maps:without([trace, key_id], U))#{company => Company}, Req)
+        %% Spec 034: the screen marks development/test instances.
+        ana_http:json(200, (maps:without([trace, key_id], U))#{company => Company, instance => ana_instance:info()}, Req)
     end);
 route(<<"POST">>, [<<"me">>, <<"password">>], Req) ->
     ana_http:require_any(Req, fun(U) ->
@@ -144,7 +145,7 @@ route(<<"GET">>, [<<"programs">>, Name, <<"performance">>], Req) ->
 route(<<"GET">>, [<<"programs">>, Name], Req) ->
     ana_http:require(Req, ?DEV, fun(_) -> one_json(ana_program:get(Name), Req) end);
 route(<<"PUT">>, [<<"programs">>, Name], Req) ->
-    ana_http:require(Req, ?DEV, fun(U) ->
+    ana_http:require(Req, ?DEV, fun(U) -> transported(Req, fun() ->
         with_body(Req, fun(Fields, R) when is_map(Fields) ->
             case validate_program(Fields) of
                 ok -> save_reply(ana_program:save(Name, Fields, U), R);
@@ -152,12 +153,9 @@ route(<<"PUT">>, [<<"programs">>, Name], Req) ->
             end;
             (_, R) -> invalid(R)
         end)
-    end);
+    end) end);
 route(<<"DELETE">>, [<<"programs">>, Name], Req) ->
-    case ana_http:qs_int(<<"purge">>, Req, 0) of
-        1 -> ana_http:require(Req, ?ADMIN, fun(U) -> save_reply(ana_program:purge(Name, U), Req) end);
-        _ -> ana_http:require(Req, ?DEV, fun(U) -> save_reply(ana_program:deactivate(Name, U), Req) end)
-    end;
+    transported(Req, fun() -> delete_program(Name, Req) end);
 route(<<"GET">>, [<<"programs">>, Name, <<"limits">>], Req) ->
     ana_http:require(Req, ?DEV, fun(U) ->
         case ana_program:get(Name) of
@@ -172,9 +170,9 @@ route(<<"GET">>, [<<"programs">>, Name, <<"versions">>, V], Req) ->
         with_integer(V, Req, fun(N) -> one_json(ana_program:version(Name, N), Req) end)
     end);
 route(<<"POST">>, [<<"programs">>, Name, <<"versions">>, V, <<"restore">>], Req) ->
-    ana_http:require(Req, ?DEV, fun(U) ->
+    ana_http:require(Req, ?DEV, fun(U) -> transported(Req, fun() ->
         with_integer(V, Req, fun(N) -> save_reply(ana_program:restore(Name, N, U), Req) end)
-    end);
+    end) end);
 route(<<"POST">>, [<<"programs">>, Name, <<"run">>], Req) ->
     %% Spec 016: external portal accounts reach this route too; the execution only lets
     %% them run programs marked for the portal (ana_execution:load/2).
@@ -412,6 +410,21 @@ strip(R) -> R.
 strip_event(#{<<"error">> := E} = Ev) when is_map(E) ->
     Ev#{<<"error">> => maps:without([<<"frames">>, <<"locals">>, <<"trace">>], E)};
 strip_event(Ev) -> Ev.
+
+
+%% Spec 034 (RF-034-01): production with "transport_required" changes programs only by package.
+transported(Req, Fun) ->
+    case ana_instance:transport_required() of
+        true -> ana_http:reply_error(409, <<"TRANSPORT_REQUIRED">>,
+                                     <<"nesta produção programas só mudam por pacote de transporte (Administração → Transportes)"/utf8>>, Req);
+        false -> Fun()
+    end.
+
+delete_program(Name, Req) ->
+    case ana_http:qs_int(<<"purge">>, Req, 0) of
+        1 -> ana_http:require(Req, ?ADMIN, fun(U) -> save_reply(ana_program:purge(Name, U), Req) end);
+        _ -> ana_http:require(Req, ?DEV, fun(U) -> save_reply(ana_program:deactivate(Name, U), Req) end)
+    end.
 
 validate_program(F) ->
     Checks = [

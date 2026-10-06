@@ -6,7 +6,7 @@
 %% NOTIFY "ana_setting" (handled by ana_listener).
 -module(ana_settings).
 -compile({no_auto_import, [get/1]}).
--export([init_cache/0, load/0, get/1, list/0, set/3, on_notify/2, definitions/0]).
+-export([init_cache/0, load/0, get/1, list/0, set/3, on_notify/2, definitions/0, valid/2]).
 
 -define(TAB, ana_settings_cache).
 
@@ -118,7 +118,14 @@ definitions() ->
      {checks_key_max_days, integer, 30, 3650, "ANA_CHECKS_KEY_MAX_DAYS", 365,
       <<"Verificações: idade máxima de chave de API sem validade (dias)"/utf8>>},
      {checks_perf_factor_pct, integer, 110, 1000, "ANA_CHECKS_PERF_FACTOR_PCT", 200,
-      <<"Verificações: piora de desempenho a partir de (% da linha de base)"/utf8>>}].
+      <<"Verificações: piora de desempenho a partir de (% da linha de base)"/utf8>>},
+     %% Spec 034: development/test instance and transports.
+     {transport_required, integer, 0, 1, "ANA_TRANSPORT_REQUIRED", 0,
+      <<"Produção: programas só mudam por pacote de transporte (1 = sim)"/utf8>>},
+     {transport_four_eyes, integer, 0, 1, "ANA_TRANSPORT_FOUR_EYES", 0,
+      <<"Transporte: quem recebeu o pacote não pode importá-lo (1 = sim)"/utf8>>},
+     {outbound_blocked, integer, 0, 1, "ANA_OUTBOUND_BLOCKED", 0,
+      <<"Bloquear chamadas a sistemas externos (instância de testes com dados copiados)"/utf8>>}].
 
 init_cache() ->
     _ = ets:new(?TAB, [named_table, public, set, {read_concurrency, true}]),
@@ -179,6 +186,14 @@ set(KeyBin, Value, #{username := Who}) ->
                 {error, _} = E -> E
             end;
         error -> {error, unknown_setting}
+    end.
+
+%% Spec 034: a transported parameter must exist here and be inside its range.
+-spec valid(binary(), term()) -> boolean().
+valid(KeyBin, Value) ->
+    case find(KeyBin) of
+        {ok, {_, Type, Min, Max, _, _, _}} -> validate(Type, Min, Max, Value) =:= ok;
+        error -> false
     end.
 
 on_notify(_Channel, all) -> load();

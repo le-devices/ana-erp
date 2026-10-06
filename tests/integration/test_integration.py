@@ -5,6 +5,7 @@ created here is named `test.*` and purged at the end (RF-011-11).
 Run: ANA_URL=http://localhost:8080 python3 -m unittest discover -s tests/integration -v
 """
 
+import base64
 import concurrent.futures
 import datetime
 from decimal import Decimal
@@ -1963,7 +1964,12 @@ class TestObservability(Base):
                         "def light():\n    return 1\n\ndef main():\n    light()\n    return heavy()\n")
         s, c, _ = self.run_program(name, profile=True)
         self.assertEqual(s, 200, c)
-        s, x, _ = http("GET", f"/api/admin/audit/executions/{c['id']}", token=self.token)
+        # The trace is written after the result (never in its way): wait for it briefly.
+        for _ in range(50):
+            s, x, _ = http("GET", f"/api/admin/audit/executions/{c['id']}", token=self.token)
+            if x.get("trace"):
+                break
+            time.sleep(0.1)
         funcs = {f["function"]: f for f in x["trace"]["profile"]["functions"]}
         self.assertGreater(funcs["heavy"]["total_ms"], funcs["light"]["total_ms"] * 10)
         self.assertEqual(x["trace"]["reason"], "profile")
@@ -3529,6 +3535,8 @@ class TestPeriodicChecks(Base):
     @unittest.skipUnless(psql_available(), "psql no contêiner do banco")
     def test_ca_033_04_old_backup_is_a_finding(self):
         tag = f"teste-{SUFFIX}"
+        # Real backups recorded by scripts/backup.sh (chaos and HA suites) are set aside meanwhile.
+        psql("UPDATE ana_system.ops_event SET kind = 'backup_base_aside' WHERE kind = 'backup_base'")
         try:
             psql(f"INSERT INTO ana_system.ops_event (kind, ok, detail, at) VALUES ('backup_base', true, '{tag}', now() - interval '30 hours')")
             self.run_checks("robustness")
@@ -3543,6 +3551,7 @@ class TestPeriodicChecks(Base):
             self.assertEqual(len(self.find("base_backup", "failed", "open")), 1)
         finally:
             psql(f"DELETE FROM ana_system.ops_event WHERE detail = '{tag}'")
+            psql("UPDATE ana_system.ops_event SET kind = 'backup_base' WHERE kind = 'backup_base_aside'")
             self.run_checks("robustness")
 
     def test_rf_033_07_runs_are_internal_tasks_with_owner(self):
@@ -3555,6 +3564,189 @@ class TestPeriodicChecks(Base):
         u, t = new_user("user")
         s, _, _ = http("GET", "/api/admin/checks", token=t)
         self.assertEqual(s, 403)
+
+
+# ---------------------------------------------------------------- spec 034
+class TestTransports(Base):
+    """Signed packages between instances: preflight, conflicts, atomic import, undo; masked data copy."""
+
+    @classmethod
+    def setUpClass(cls):
+        super().setUpClass()
+        # The test instance plays origin and destination: it accepts its own key.
+        s, k, _ = http("GET", "/api/admin/transports/key", token=cls.token)
+        assert s == 200, k
+        cls.origin = k["name"]
+        s, c, _ = http("PUT", f"/api/admin/transports/origins/{cls.origin}", {"public_key": k["public_key"]}, cls.token)
+        assert s == 200, c
+
+    def source(self, name):
+        s, c, _ = http("GET", f"/api/programs/{name}", token=self.token)
+        self.assertEqual(s, 200, c)
+        return c
+
+    def export(self, title, programs=(), commands=(), settings=()):
+        s, c, _ = http("POST", "/api/admin/transports/export", {"title": title, "programs": list(programs), "commands": list(commands),
+                                                                "settings": list(settings), "tests": "suíte de integração"}, self.token)
+        self.assertEqual(s, 200, c)
+        return c["package"]
+
+    def receive(self, package):
+        return http("POST", "/api/admin/transports/receive", token=self.token, raw=json.dumps(package).encode())
+
+    def test_ca_034_01_to_04_package_lifecycle(self):
+        a, b, n = f"test.tr_a_{SUFFIX}", f"test.tr_b_{SUFFIX}", f"test.tr_new_{SUFFIX}"
+        src = lambda v, wait=0: f"import time\ndef main():\n    time.sleep({wait})\n    return {v!r}\n"
+        self.save(a, src("a1"))
+        self.save(b, src("b-old", 3))
+        # Development changes A; production still has A1 (simulated by going back to it).
+        self.save(a, src("a2"))
+        pkg = self.export("Primeiro pacote", [a, b])
+        self.save(a, src("a1"))
+        s, r, _ = self.receive(pkg)
+        self.assertEqual(s, 200, r)
+        st = {i["name"]: i["status"] for i in r["preflight"]["items"]}
+        self.assertEqual((st[a], st[b]), ("conflict", "unchanged"))          # CA-034-03: unknown base, changed here
+        s, again, _ = self.receive(pkg)
+        self.assertEqual(s, 400)                                             # the same package is not received twice
+        s, c, _ = http("POST", f"/api/admin/transports/{r['id']}/import", {}, self.token)
+        self.assertEqual((s, c["error"]["code"], c["error"]["conflicts"]), (409, "CONFLICTS", [a]))
+        s, c, _ = http("POST", f"/api/admin/transports/{r['id']}/import", {"accept_conflicts": [a]}, self.token)
+        self.assertEqual(s, 200, c)
+        self.assertEqual(self.run_program(a)[1]["result"], "a2")
+        self.assertTrue(self.source(a)["version"] >= 3)
+
+        # CA-034-01: second package with two programs while an execution of B is running.
+        self.save(a, src("a3"))
+        self.save(b, src("b-new"))
+        CREATED_PROGRAMS.add(n)
+        s, c, _ = http("PUT", f"/api/programs/{n}", {"source": src("novo")}, self.token)
+        self.assertEqual(s, 200, c)
+        pkg2 = self.export("Segundo pacote", [a, b, n])
+        self.save(a, src("a2"))                                              # production = base of the package
+        self.save(b, src("b-old", 3))
+        http("DELETE", f"/api/programs/{n}?purge=1", token=self.token)
+        s, r2, _ = self.receive(pkg2)
+        self.assertEqual(s, 200, r2)
+        st = {i["name"]: i["status"] for i in r2["preflight"]["items"]}
+        self.assertEqual((st[a], st[n]), ("update", "new"))
+        running = self.run_program(b, **{"async": True})[1]["id"]
+        time.sleep(0.8)
+        s, c, _ = http("POST", f"/api/admin/transports/{r2['id']}/import", {"accept_conflicts": [b]}, self.token)
+        self.assertEqual(s, 200, c)
+        self.assertEqual(c["imported"], 3)
+        end, _ = self.wait_event(running, {"end"})
+        self.assertEqual(end["result"], "b-old")                             # started before: finishes on the old version
+        self.assertEqual([self.run_program(x)[1]["result"] for x in (a, b, n)], ["a3", "b-new", "novo"])
+        self.assertIn("transporte #", self.source(a).get("comment", "") or json.dumps(http("GET", f"/api/programs/{a}/versions", token=self.token)[1]))
+
+        # CA-034-04: undo restores the previous versions; what did not exist is deactivated.
+        s, c, _ = http("POST", f"/api/admin/transports/{r2['id']}/revert", {}, self.token)
+        self.assertEqual(s, 200, c)
+        self.assertEqual([self.run_program(x)[1]["result"] for x in (a, b)], ["a2", "b-old"])
+        self.assertFalse(self.source(n)["active"])
+        s, c, _ = http("POST", f"/api/admin/transports/{r2['id']}/revert", {}, self.token)
+        self.assertEqual(s, 400)
+        s, lst, _ = http("GET", "/api/admin/transports", token=self.token)
+        self.assertEqual({t["id"]: t["status"] for t in lst}[r2["id"]], "reverted")
+
+    def test_ca_034_02_tampered_or_unknown_origin_refused(self):
+        a = f"test.tr_t_{SUFFIX}"
+        self.save(a, "def main():\n    return 1\n")
+        pkg = self.export("Pacote adulterado", [a])
+        manifest = json.loads(base64.b64decode(pkg["manifest_b64"]))
+        manifest["items"][0]["source"] = "def main():\n    return 'invasor'\n"
+        bad = dict(pkg, manifest_b64=base64.b64encode(json.dumps(manifest).encode()).decode())
+        s, c, _ = self.receive(bad)
+        self.assertEqual(s, 400)
+        self.assertIn("assinatura", c["error"]["message"])
+        s, c, _ = self.receive(dict(pkg, origin="origem-desconhecida"))
+        self.assertEqual(s, 400)
+        self.assertIn("origem", c["error"]["message"])
+        s, c, _ = self.receive({"format": "outro"})
+        self.assertEqual(s, 400)
+        self.assertEqual(self.run_program(a)[1]["result"], 1)              # nothing applied
+
+    def test_rf_034_05_four_eyes_and_refusal(self):
+        a = f"test.tr_f_{SUFFIX}"
+        self.save(a, "def main():\n    return 1\n")
+        pkg = self.export("Quatro olhos", [a], settings=["slow_sql_ms"])
+        self.save(a, "def main():\n    return 0\n")
+        s, r, _ = self.receive(pkg)
+        self.assertEqual(s, 200, r)
+        try:
+            self.assertEqual(http("PUT", "/api/admin/settings/transport_four_eyes", {"value": 1}, self.token)[0], 200)
+            s, c, _ = http("POST", f"/api/admin/transports/{r['id']}/import", {"accept_conflicts": [a]}, self.token)
+            self.assertEqual(s, 400)
+            self.assertIn("quatro olhos", c["error"]["message"])
+        finally:
+            http("PUT", "/api/admin/settings/transport_four_eyes", {"value": 0}, self.token)
+        s, c, _ = http("POST", f"/api/admin/transports/{r['id']}/refuse", {"reason": "falta revisão"}, self.token)
+        self.assertEqual(s, 200, c)
+        s, c, _ = http("POST", f"/api/admin/transports/{r['id']}/import", {"accept_conflicts": [a]}, self.token)
+        self.assertEqual(s, 400)
+        s, c, _ = http("GET", f"/api/admin/transports/{r['id']}", token=self.token)
+        self.assertEqual((c["status"], c["refused_reason"]), ("refused", "falta revisão"))
+        self.assertIn(a, c["current"])                                       # side-by-side comparison source
+
+    def test_ca_034_05_masked_copy_dry_run(self):
+        email, doc = f"segredo{SUFFIX}@empresa-real.com.br", f"12.345.{SUFFIX[-3:]}/0001-99"
+        name = f"Cliente Sigiloso {SUFFIX}"
+        p1 = self.client.call("base.save_party", name=name, email=email, tax_id=doc, state="SP")["id"]
+        p2 = self.client.call("base.save_party", name=f"Outra {SUFFIX}", email=email, state="SP")["id"]
+        s, e, _ = http("POST", "/api/admin/datacopy/export", {}, self.token)
+        self.assertEqual(s, 200, e)
+        done = self.wait_copy(e["id"])
+        self.assertEqual(done["status"], "ready", done)
+        req = urllib.request.Request(f"{URL}/api/admin/datacopy/{e['id']}/download", headers={"Authorization": "Bearer " + self.token})
+        data = urllib.request.urlopen(req, timeout=120).read()
+        self.assertTrue(data.startswith(b"ANADC1\n"))
+        self.assertNotIn(email.encode(), data)                               # encrypted, and masked at the origin
+        s, up, _ = http("POST", "/api/admin/datacopy/upload", token=self.token, raw=data)
+        self.assertEqual(s, 200, up)
+        s, c, _ = http("POST", f"/api/admin/datacopy/{up['id']}/import", {"key": base64.b64encode(b"x" * 32).decode(), "dry_run": True}, self.token)
+        self.assertEqual(s, 200, c)
+        self.assertEqual(self.wait_copy(up["id"])["status"], "failed")       # wrong key
+        s, c, _ = http("POST", f"/api/admin/datacopy/{up['id']}/import",
+                       {"key": e["key"], "dry_run": True, "probes": [name, email, doc], "inspect_parties": [p1, p2]}, self.token)
+        self.assertEqual(s, 200, c)
+        res = self.wait_copy(up["id"])
+        self.assertEqual(res["status"], "checked", res)
+        r = res["result"]
+        self.assertEqual((r["mismatches"], r["dry_run"]), ([], True))
+        self.assertEqual(r["probes_found"], {name: 0, email: 0, doc: 0})
+        m1, m2 = r["parties"]
+        self.assertEqual(m1["email"], m2["email"])                           # deterministic within the copy
+        self.assertTrue(m1["email"].endswith("@exemplo.test") and m1["name"].startswith("Empresa "))
+        self.assertRegex(m1["tax_id"], r"^\d{2}\.\d{3}\.\d{3}/\d{4}-\d{2}$")
+        self.assertEqual(self.scalar(f"SELECT name FROM base.party WHERE id = {p1}"), name)   # dry run rolled back
+
+    def wait_copy(self, id_):
+        end = time.time() + 180
+        while time.time() < end:
+            s, rows, _ = http("GET", "/api/admin/datacopy", token=self.token)
+            row = [x for x in rows if x["id"] == id_][0]
+            if row["status"] != "running":
+                return row
+            time.sleep(1)
+        self.fail("copy did not finish")
+
+    def test_ca_034_06_outbound_blocked(self):
+        name = f"test.outbound_{SUFFIX}"
+        self.save(name, "def main():\n    try:\n        ana.http('qualquer', 'GET', '/')\n    except ana.Error as e:\n        return e.code\n")
+        try:
+            self.assertEqual(http("PUT", "/api/admin/settings/outbound_blocked", {"value": 1}, self.token)[0], 200)
+            self.assertEqual(self.run_program(name)[1]["result"], "OUTBOUND_BLOCKED")
+        finally:
+            http("PUT", "/api/admin/settings/outbound_blocked", {"value": 0}, self.token)
+        self.assertNotEqual(self.run_program(name)[1]["result"], "OUTBOUND_BLOCKED")
+
+    def test_rf_034_01_instance_on_screen(self):
+        s, me, _ = http("GET", "/api/me", token=self.token)
+        self.assertEqual(me["instance"]["role"], "development")
+        s, c, _ = http("GET", "/api/admin/datacopy/masking", token=self.token)
+        cols = {(x["table"], x["column"]): x["kind"] for x in c["columns"]}
+        self.assertEqual((cols[("base.party", "name")], cols[("base.party", "email")]), ("company", "email"))
 
 
 if __name__ == "__main__":

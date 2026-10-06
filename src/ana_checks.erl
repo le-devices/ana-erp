@@ -88,6 +88,7 @@ internal(Category) -> catch run(Category, ana_task:system_user()).
 purge() ->
     _ = ana_db:exec("DELETE FROM ana_system.perf_sample WHERE at < now() - interval '30 days'", []),
     _ = ana_db:exec("DELETE FROM ana_system.notice WHERE read AND created_at < now() - interval '90 days'", []),
+    _ = catch ana_datacopy:purge(),        % spec 034: copy files live 48 h
     ok.
 
 -spec demo() -> boolean().

@@ -62,6 +62,7 @@ inglês, como no código (constituição, P2a).
 | 029 | [Linguagem visual "Linha ANA"](029-visual-language/spec.md) | Barra superior compacta, rotinas como páginas analíticas (indicadores, gráficos em cartões, tabelas em cartão), início em blocos, ícones próprios, claro/escuro | implementada |
 | 031 | [Condições de pagamento e crédito](031-payment-terms-credit/spec.md) | PIX, boleto, cartão, crédito direto e vários prazos; títulos por parcela; limite de crédito, bloqueio por inadimplência e liberação pontual; tela de venda com grade de itens e saldo por depósito | implementada |
 | 033 | [Verificações periódicas](033-periodic-checks/spec.md) | Segurança da configuração, componentes com vulnerabilidade conhecida (base OSV), integridade dos arquivos do produto, robustez (cópias, restauração, filas, erros) e desempenho (sondas com linha de base), pelo robô system, com avisos no sino | implementada (falta T-033-09b: base OSV e aviso por conector) |
+| 034 | [Instância de desenvolvimento e testes](034-dev-test-instance/spec.md) | Papel da instância na tela; pacote de transporte assinado (programas, comandos, parâmetros) com verificação prévia, importação atômica sem parada e desfazer; cópia de dados da produção mascarada na origem, cifrada, com ensaio e bloqueio de chamadas externas | implementada (faltam T-034-07b..09b) |
 
 ## Glossário
 
