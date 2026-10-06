@@ -189,6 +189,11 @@ ok(text("#ops-main .rows-foot").includes("1.499.998,50"), "total da grade com v�
 ok(d.querySelectorAll("#ops-main .rows-editor tbody tr").length === 2, "botão Adicionar item cria nova linha");
 ok(JSON.parse(d.querySelector("#ops-main input[type=hidden][name=items]").value)[0].price === "1.50", "linhas viajam como lista de itens, decimal sem vírgula");
 
+// Automated flows (spec 030): board with one column per step
+await go(w, "#/ops/flows/flows.board?flow=sales");
+await until(() => d.querySelectorAll("#ops-main .board-col").length === 4, "flow board", jsErrors);
+ok(text("#ops-main").includes("Faturamento") && text("#ops-main").includes("Recebimento"), "esteira de venda em quadro por etapa");
+
 // Date/time pickers beside date fields (no typing needed)
 await go(w, "#/ops/field/field.schedule?_form=1");
 await until(() => d.querySelector("#ops-main input[name=start]"), "datetime field", jsErrors);

@@ -51,7 +51,10 @@ categories() ->
      {integration_outbox, <<"Mensagens de saída entregues"/utf8>>, retention_integration_days,
       "integration.outbox", "created_at", "status IN ('done', 'discarded')"},
      {integration_inbox, <<"Mensagens de entrada processadas"/utf8>>, retention_integration_days,
-      "integration.inbox", "received_at", "status IN ('done', 'discarded')"}].
+      "integration.inbox", "received_at", "status IN ('done', 'discarded')"},
+     %% Spec 030: finished flow instances (their steps go with them); open ones stay.
+     {flows, <<"Esteiras concluídas ou canceladas"/utf8>>, retention_execution_days,
+      "flow.instance", "finished_at", "status IN ('done', 'cancelled')"}].
 
 %% Manual purge (RF-024-09): owned by the administrator who asked.
 -spec purge_now(map()) -> {ok, binary()} | {error, term()}.

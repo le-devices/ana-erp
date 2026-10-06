@@ -54,8 +54,11 @@ def main(order, lines=None, carrier=None, tracking=None, packages=1, weight_kg=N
     bad = [n for n, _ in wanted if n not in pending]
     if bad:
         raise ana.Error("LINE_NOT_FOUND", f"linhas sem mercadoria a expedir: {bad}")
+    if not carrier:
+        # Spec 030: the default carrier lets the flow ship on its own.
+        carrier = ana.sql_value("SELECT default_carrier FROM logistics.policy WHERE id = 1")
     if stage == "shipped" and not carrier:
-        raise ana.Error("INVALID_PARAMETER", "informe a transportadora para despachar")
+        raise ana.Error("INVALID_PARAMETER", "informe a transportadora para despachar (ou marque uma como padrão)")
     if freight_cost is None and carrier and weight_kg:
         freight_cost = ana.sql_value("SELECT min(price) FROM logistics.freight_rate WHERE carrier_id = $1 AND max_weight_kg >= $2 "
                                      "AND region IN ($3, '*')", carrier, weight_kg, o["state"] or "*")

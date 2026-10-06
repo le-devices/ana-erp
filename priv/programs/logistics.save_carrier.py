@@ -10,10 +10,11 @@ PARAMS = {
         "max_weight_kg": {"type": "decimal", "required": True, "label": "até (kg)"},
         "price": {"type": "decimal", "required": True, "label": "preço"}}},
     "active": {"type": "bool", "default": True, "label": "ativa"},
+    "default": {"type": "bool", "default": False, "label": "transportadora padrão (expedição sem escolha, esteira automática)"},
 }
 
 
-def main(name, tracking_url=None, rates=None, active=True):
+def main(name, tracking_url=None, rates=None, active=True, default=False):
     cid = ana.sql_value("INSERT INTO logistics.carrier (name, tracking_url, active) VALUES ($1, $2, $3) "
                         "ON CONFLICT (name) DO UPDATE SET tracking_url = EXCLUDED.tracking_url, active = EXCLUDED.active RETURNING id",
                         name.strip(), tracking_url, active)
@@ -21,4 +22,6 @@ def main(name, tracking_url=None, rates=None, active=True):
         ana.sql_exec("DELETE FROM logistics.freight_rate WHERE carrier_id = $1", cid)
         ana.sql_batch("INSERT INTO logistics.freight_rate (carrier_id, region, max_weight_kg, price) VALUES ($1, $2, $3, $4)",
                       [[cid, str(r.get("region") or "*").upper(), r["max_weight_kg"], r["price"]] for r in rates])
-    return {"id": cid}
+    if default:
+        ana.sql_exec("UPDATE logistics.policy SET default_carrier = $1 WHERE id = 1", cid)   # spec 030
+    return {"id": cid, "default": bool(default)}

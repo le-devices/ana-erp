@@ -10,7 +10,7 @@
     base: "Cadastros", inventory: "Estoque", sales: "Vendas", finance: "Financeiro",
     projects: "Projetos", analytics: "Analítico", supply: "Suprimentos", production: "Produção",
     logistics: "Logística", field: "Serviços em campo", demo: "Demonstração", files: "Arquivos",
-    integration: "Integrações",
+    integration: "Integrações", flows: "Esteiras",
   };
   const moduleOf = (name) => name.split(".")[0];
   const moduleLabel = (m) => MODULES[m] || m;
