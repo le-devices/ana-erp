@@ -12,7 +12,7 @@
     settings: "Parâmetros", accounts: "Contas padrão", commands: "Comandos", remote: "Sistemas remotos",
     scheduler: "Agendamento", monitor: "Monitor", consumption: "Consumo", audit: "Auditoria", retention: "Retenção",
     health: "Saúde", sqlperf: "Desempenho do SQL", advice: "Dicas de otimização", updates: "Atualizações do produto",
-    integrations: "Integrações", checks: "Verificações",
+    integrations: "Integrações", checks: "Verificações", transports: "Transportes", datacopy: "Cópia de dados para testes",
   };
   const state = { user: null, targets: new Map(), trail: [] };
 
@@ -84,6 +84,14 @@
     $("#notices-btn").hidden = isExternal();
     refreshNotices();
     refreshTitle(state.user.company);
+    // Spec 034 (RF-034-01): development and test instances are marked on every screen.
+    const inst = state.user.instance || {};
+    const band = $("#instance-band");
+    band.hidden = !inst.role || inst.role === "production";
+    band.textContent = { development: "DESENVOLVIMENTO", test: "TESTES" }[inst.role] || "";
+    band.className = "instance-band " + (inst.role || "");
+    band.title = inst.name ? `Instância ${inst.name} — não é a produção` : "";
+    document.body.dataset.instance = inst.role || "production";
     showScreen("#app-screen");
     if (!isExternal()) await buildTargets();
     route();

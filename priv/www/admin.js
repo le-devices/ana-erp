@@ -928,6 +928,244 @@
     render();
   }
 
+  // ------------------------------------------------------------------ transports (spec 034)
+  const T_STATUS = { exported: ["enviado", ""], received: ["recebido", "warn"], imported: ["importado", "ok"],
+                     refused: ["recusado", "off"], reverted: ["desfeito", "off"] };
+  const ITEM_STATUS = { new: ["novo", "ok"], unchanged: ["igual", ""], update: ["atualiza", "ok"], conflict: ["conflito", "off"] };
+
+  async function transports(tab = "list", detail = null) {
+    const tabs = el("div", { class: "sub-tabs" }, [["list", "Pacotes"], ["send", "Montar pacote"], ["receive", "Receber pacote"], ["keys", "Chave e origens"]]
+      .map(([k, l]) => el("button", { class: k === tab ? "active" : "", text: l, onclick: () => guard(() => transports(k)) })));
+    const head = header("Transportes", "Leve programas, comandos e parâmetros da instância de desenvolvimento e testes para a produção: " +
+      "pacote assinado, verificação prévia (conflitos e dependências), importação numa transação, sem parada, e desfazer com um clique.");
+    if (tab === "send") return transportSend(head, tabs);
+    if (tab === "receive") return transportReceive(head, tabs);
+    if (tab === "keys") return transportKeys(head, tabs);
+    if (detail) return transportDetail(head, tabs, detail);
+    const list = await API.admin.transports();
+    main().replaceChildren(...head, tabs, table([
+      { label: "Nº", value: (t) => String(t.id) },
+      { label: "Sentido", value: (t) => t.direction === "out" ? "enviado daqui" : `recebido de ${t.origin}` },
+      { label: "Título", value: (t) => t.title },
+      { label: "Itens", value: (t) => String(t.items), class: "num" },
+      { label: "Autor", value: (t) => t.author },
+      { label: "Situação", value: (t) => { const [l, c] = T_STATUS[t.status] || [t.status, ""]; return pill(l, c); } },
+      { label: "Quando", value: (t) => fmtDate(t.imported_at || t.received_at || t.created_at) },
+    ], list, { empty: "Nenhum pacote ainda.", onRow: (t) => guard(() => transports("list", t.id)) }));
+  }
+
+  async function transportDetail(head, tabs, id) {
+    const t = await API.admin.transport(id);
+    const pre = t.preflight || {};
+    const status = Object.fromEntries((pre.items || []).map((i) => [i.name, i.status]));
+    const accept = new Set();
+    const items = t.manifest.items;
+    const rows = items.map((i) => {
+      const st = status[i.name];
+      const [l, c] = ITEM_STATUS[st] || [st || "—", ""];
+      const box = st === "conflict" && t.status === "received"
+        ? el("input", { type: "checkbox", "aria-label": "Aceitar o conflito de " + i.name, onchange: (e) => e.target.checked ? accept.add(i.name) : accept.delete(i.name) }) : null;
+      return { i, l, c, box };
+    });
+    const diffs = el("div");
+    const actions = el("div", { class: "row-buttons" });
+    if (t.status === "received") {
+      actions.append(
+        el("button", { type: "button", text: "Importar", onclick: () => guard(async () => {
+          const r = await API.admin.importTransport(id, { accept_conflicts: [...accept] });
+          if (r && r.error) { toast(r.error.message + (r.error.conflicts ? ": " + r.error.conflicts.join(", ") : "") + (r.error.missing ? ": " + r.error.missing.join(", ") : ""), true); return; }
+          toast(`Pacote importado: ${r.imported} item(ns).`); transports("list", id);
+        }) }),
+        el("button", { type: "button", class: "quiet", text: "Recusar", onclick: () => guard(async () => {
+          const reason = window.prompt("Motivo da recusa:");
+          if (!reason) return;
+          await API.admin.refuseTransport(id, reason); toast("Pacote recusado."); transports("list", id);
+        }) }));
+    }
+    if (t.status === "imported") actions.append(el("button", { type: "button", class: "quiet", text: "Desfazer importação", onclick: () => guard(async () => {
+      if (!window.confirm("Voltar todos os itens deste pacote ao estado anterior?")) return;
+      const r = await API.admin.revertTransport(id); toast(`${r.reverted} item(ns) voltaram ao estado anterior.`); transports("list", id);
+    }) }));
+    main().replaceChildren(...head, tabs,
+      el("div", { class: "form-card" },
+        el("h3", { text: `#${t.id} — ${t.title}` }),
+        el("p", { class: "muted", text: `${t.direction === "out" ? "Enviado daqui" : "Recebido de " + t.origin} · autor ${t.author} · ` +
+          `versão ${t.manifest.product_version} · SHA-256 ${t.manifest_sha256.slice(0, 16)}…` }),
+        t.description ? el("p", { text: t.description }) : null,
+        t.manifest.tests ? el("p", { class: "muted", text: "Testes declarados: " + t.manifest.tests }) : null,
+        pre.missing && pre.missing.length ? el("p", { class: "warn-text", text: "Chama programas que não existem aqui: " + pre.missing.join(", ") }) : null,
+        t.refused_reason ? el("p", { class: "warn-text", text: `Recusado por ${t.refused_by}: ${t.refused_reason}` }) : null,
+        table([
+          { label: "Item", value: (r) => r.i.name },
+          { label: "Tipo", value: (r) => ({ program: "programa", command: "comando", setting: "parâmetro" })[r.i.kind] || r.i.kind },
+          { label: "Situação aqui", value: (r) => pill(r.l, r.c) },
+          { label: "Aceitar conflito", value: (r) => r.box || "" },
+          { label: "", value: (r) => r.i.kind === "program" ? el("button", { type: "button", class: "quiet small", text: "Comparar", onclick: () => {
+              const here = (t.current || {})[r.i.name];
+              diffs.replaceChildren(el("h4", { text: r.i.name }), here === undefined
+                ? el("p", { class: "muted", text: "Não existe nesta instância: a importação cria o programa." })
+                : diffView("Aqui (atual)", here, "No pacote", r.i.source));
+              diffs.scrollIntoView?.({ block: "nearest" });
+            } }) : "" },
+        ], rows),
+        actions),
+      diffs);
+  }
+
+  async function transportSend(head, tabs) {
+    const programs = await API.programs();
+    const filter = el("input", { type: "search", placeholder: "Filtrar programas…", "aria-label": "Filtrar programas" });
+    const chosen = new Set();
+    const listBox = el("div", { class: "pick-list" });
+    const draw = () => {
+      const q = filter.value.trim().toLowerCase();
+      listBox.replaceChildren(...programs.filter((p) => !q || p.name.toLowerCase().includes(q) || (p.description || "").toLowerCase().includes(q))
+        .slice(0, 300).map((p) => el("label", { class: "check" },
+          el("input", { type: "checkbox", checked: chosen.has(p.name), onchange: (e) => { e.target.checked ? chosen.add(p.name) : chosen.delete(p.name); count.textContent = `${chosen.size} escolhido(s)`; } }),
+          el("span", {}, el("code", { text: p.name }), " ", el("span", { class: "muted small", text: `v${p.version} · ${p.description || ""}` })))));
+    };
+    filter.addEventListener("input", draw);
+    const count = el("span", { class: "muted small", text: "0 escolhido(s)" });
+    const title = el("input", { type: "text", placeholder: "ex.: Ajuste no faturamento de serviços" });
+    const desc = el("textarea", { rows: 3 });
+    const tests = el("textarea", { rows: 2, placeholder: "ex.: suíte de integração verde; testado com a massa de 05/10" });
+    const commands = el("input", { type: "text", placeholder: "códigos separados por vírgula (opcional)" });
+    const settings = el("input", { type: "text", placeholder: "parâmetros separados por vírgula (opcional)" });
+    const split = (v) => v.split(",").map((x) => x.trim()).filter(Boolean);
+    main().replaceChildren(...head, tabs, el("div", { class: "form-card" },
+      field("Título do pacote", title), field("O que muda e por quê", desc), field("Testes feitos", tests),
+      el("h4", {}, "Programas ", count), filter, listBox,
+      field("Comandos", commands), field("Parâmetros", settings),
+      el("div", { class: "row-buttons" }, el("button", { type: "button", text: "Gerar pacote assinado", onclick: () => guard(async () => {
+        const r = await API.admin.exportTransport({ title: title.value, description: desc.value, tests: tests.value, programs: [...chosen],
+                                                    commands: split(commands.value), settings: split(settings.value) });
+        API.saveBlob(new Blob([JSON.stringify(r.package)], { type: "application/json" }), r.file_name);
+        toast(`Pacote #${r.id} gerado: leve o arquivo ${r.file_name} à produção (Transportes → Receber pacote).`);
+      }) }))));
+    draw();
+  }
+
+  function transportReceive(head, tabs) {
+    const file = el("input", { type: "file", accept: ".json,application/json", "aria-label": "Arquivo do pacote" });
+    main().replaceChildren(...head, tabs, el("div", { class: "form-card" },
+      el("p", { class: "muted", text: "O pacote só é aceito de uma origem cadastrada (Chave e origens), com assinatura e conteúdo conferidos. " +
+        "Nada é aplicado agora: você verá a verificação prévia e decide importar." }),
+      el("div", { class: "row-buttons" }, file, el("button", { type: "button", text: "Receber", onclick: () => guard(async () => {
+        if (!file.files[0]) { toast("Escolha o arquivo do pacote.", true); return; }
+        const r = await API.admin.receiveTransport(file.files[0]);
+        toast(r.preflight.ok ? "Pacote recebido: sem conflitos." : "Pacote recebido: veja os conflitos antes de importar.");
+        transports("list", r.id);
+      }) }))));
+  }
+
+  async function transportKeys(head, tabs) {
+    const [key, origins] = await Promise.all([API.admin.transportKey().catch((e) => ({ error: errorText(e) })), API.admin.transportOrigins()]);
+    const name = el("input", { type: "text", placeholder: "ex.: ana-development" });
+    const pub = el("input", { type: "text", placeholder: "chave pública (base64)" });
+    main().replaceChildren(...head, tabs,
+      el("div", { class: "form-card" },
+        el("h3", { text: "Esta instância" }),
+        key.error ? el("p", { class: "warn-text", text: key.error }) : el("div", {},
+          el("p", {}, "Nome: ", el("strong", { text: key.name }), ` · papel: ${key.role} · versão ${key.product_version}`),
+          el("p", {}, "Chave pública: ", el("code", { text: key.public_key })),
+          el("p", { class: "muted", text: `Impressão digital ${key.fingerprint}. Cadastre nome e chave pública como origem na instância que vai receber os pacotes.` }))),
+      el("div", { class: "form-card" },
+        el("h3", { text: "Origens aceitas aqui" }),
+        table([
+          { label: "Origem", value: (o) => o.name },
+          { label: "Impressão digital", value: (o) => el("code", { text: o.fingerprint }) },
+          { label: "Cadastrada por", value: (o) => `${o.created_by} em ${fmtDate(o.created_at)}` },
+          { label: "", value: (o) => el("button", { type: "button", class: "quiet small", text: "Remover", onclick: () => guard(async () => {
+              await API.admin.deleteOrigin(o.name); transports("keys"); }) }) },
+        ], origins, { empty: "Nenhuma origem: esta instância ainda não aceita pacotes." }),
+        el("div", { class: "row-buttons" }, name, pub, el("button", { type: "button", text: "Cadastrar origem", onclick: () => guard(async () => {
+          await API.admin.saveOrigin(name.value.trim(), pub.value.trim()); toast("Origem cadastrada."); transports("keys");
+        }) }))));
+  }
+
+  // ------------------------------------------------------------------ data copy (spec 034)
+  const COPY_STATUS = { running: ["em andamento", "warn"], ready: ["pronta para baixar", "ok"], uploaded: ["recebida", ""],
+                        imported: ["importada", "ok"], checked: ["ensaio ok", "ok"], failed: ["falhou", "off"], expired: ["expirada", ""] };
+  const MASK_KINDS = { keep: "manter", person: "nome de pessoa", company: "nome de empresa", email: "e-mail", phone: "telefone",
+                       document: "documento", address: "endereço", geo: "coordenada", text: "texto livre", null: "apagar" };
+
+  async function datacopy(tab = "copies") {
+    const tabs = el("div", { class: "sub-tabs" }, [["copies", "Cópias"], ["masking", "Máscaras"]]
+      .map(([k, l]) => el("button", { class: k === tab ? "active" : "", text: l, onclick: () => guard(() => datacopy(k)) })));
+    const inst = await API.admin.instance();
+    const head = header("Cópia de dados para testes", "Leva os dados reais da produção para a instância de testes como massa de testes: " +
+      "dados pessoais mascarados já na origem, arquivo cifrado, carga numa transação com contagens e totais conferidos. " +
+      "Depois da carga, a instância de testes não chama nenhum sistema externo.");
+    if (tab === "masking") return datacopyMasking(head, tabs);
+    const copies = await API.admin.copies();
+    const isProd = inst.role === "production";
+    const keyBox = el("div");
+    const exportCard = el("div", { class: "form-card" }, el("h3", { text: "Exportar daqui" }),
+      el("p", { class: "muted", text: "Gera o arquivo cifrado desta instância. A chave aparece uma única vez: guarde-a para importar no destino." }),
+      el("div", { class: "row-buttons" }, el("button", { type: "button", text: "Exportar dados mascarados", onclick: () => guard(async () => {
+        const r = await API.admin.copyExport();
+        keyBox.replaceChildren(el("div", { class: "secret-box" }, el("div", { text: `Cópia #${r.id} — chave (mostrada só agora):` }), el("strong", { text: r.key }),
+          el("div", { class: "muted", text: "Copie a chave; o arquivo fica disponível por 48 horas." })));
+        setTimeout(() => datacopy("copies").then(() => main().prepend(keyBox)), 2500);
+      }) })), keyBox);
+    const file = el("input", { type: "file", accept: ".anadc", "aria-label": "Arquivo da cópia" });
+    const importCard = isProd ? el("div", { class: "form-card" }, el("p", { class: "muted", text: "Esta instância é a produção: ela não recebe cópias." }))
+      : el("div", { class: "form-card" }, el("h3", { text: `Receber nesta instância (${inst.role === "test" ? "testes" : "desenvolvimento"})` }),
+          el("p", { class: "warn-text", text: "A importação substitui todos os dados de negócio desta instância." }),
+          el("div", { class: "row-buttons" }, file, el("button", { type: "button", text: "Enviar arquivo", onclick: () => guard(async () => {
+            if (!file.files[0]) { toast("Escolha o arquivo da cópia.", true); return; }
+            await API.admin.copyUpload(file.files[0]); toast("Arquivo recebido: informe a chave e importe."); datacopy("copies");
+          }) })));
+    main().replaceChildren(...head, tabs, el("div", { class: "card-pair" }, exportCard, importCard),
+      table([
+        { label: "Nº", value: (c) => String(c.id) },
+        { label: "Sentido", value: (c) => c.direction === "out" ? "exportada daqui" : "recebida" },
+        { label: "Situação", value: (c) => { const [l, k] = COPY_STATUS[c.status] || [c.status, ""]; return pill(l, k); } },
+        { label: "Tamanho", value: (c) => c.size_bytes ? `${(c.size_bytes / 1048576).toFixed(1)} MiB` : "—", class: "num" },
+        { label: "Resultado", value: (c) => c.error ? el("span", { class: "warn-text", text: c.error })
+            : c.result ? `${c.result.tables} tabela(s), ${c.result.rows} linha(s)` + (c.result.skipped ? `, ${c.result.skipped} omitida(s)` : "") : "" },
+        { label: "Quando", value: (c) => fmtDate(c.finished_at || c.created_at) },
+        { label: "", value: (c) => c.direction === "out" && c.status === "ready"
+            ? el("button", { type: "button", class: "small", text: "Baixar", onclick: () => guard(() => API.download(`/api/admin/datacopy/${c.id}/download`, `copia-${c.id}.anadc`)) })
+            : c.direction === "in" && ["uploaded", "checked", "failed"].includes(c.status) && !isProd ? copyImportButtons(c) : "" },
+      ], copies, { empty: "Nenhuma cópia." }));
+  }
+
+  function copyImportButtons(c) {
+    const run = (dry) => guard(async () => {
+      const key = window.prompt("Chave da cópia (mostrada na exportação):");
+      if (!key) return;
+      if (!dry && !window.confirm("Substituir todos os dados de negócio desta instância pela cópia?")) return;
+      await API.admin.copyImport(c.id, { key: key.trim(), dry_run: dry });
+      toast(dry ? "Ensaio iniciado: carga completa e desfeita ao final." : "Importação iniciada.");
+      setTimeout(() => datacopy("copies"), 1500);
+    });
+    return el("span", { class: "row-buttons" },
+      el("button", { type: "button", class: "quiet small", text: "Ensaiar", onclick: () => run(true) }),
+      el("button", { type: "button", class: "small", text: "Importar", onclick: () => run(false) }));
+  }
+
+  async function datacopyMasking(head, tabs) {
+    const m = await API.admin.masking();
+    main().replaceChildren(...head, tabs,
+      el("p", { class: "muted", text: "Colunas mascaradas na exportação (catálogo do produto e ajustes desta instalação). Tabelas do sistema, cofre, " +
+        "integrações, arquivos e senhas nunca entram na cópia." }),
+      table([
+        { label: "Tabela", value: (c) => c.table },
+        { label: "Coluna", value: (c) => c.column },
+        { label: "Máscara", value: (c) => {
+            const sel = el("select", { "aria-label": `Máscara de ${c.table}.${c.column}` },
+              el("option", { value: "catalog", text: "padrão do produto" }),
+              ...m.kinds.map((k) => el("option", { value: k, text: MASK_KINDS[k] || k })));
+            sel.value = c.rule ? c.kind : "catalog";
+            sel.addEventListener("change", () => guard(async () => {
+              await API.admin.saveMasking({ table: c.table, column: c.column, kind: sel.value }); toast("Máscara salva.");
+            }));
+            return el("span", {}, sel, c.rule ? "" : el("span", { class: "muted small", text: ` (${MASK_KINDS[c.kind] || c.kind})` }));
+          } },
+      ], m.columns, { empty: "Nenhuma coluna mascarada." }));
+  }
+
   // ------------------------------------------------------------------ integrations (spec 017)
   const MSG_STATUS = { pending: "pendente", processing: "processando", done: "entregue", dead: "esgotada", discarded: "descartada" };
   const SECRET_KEYS = { none: [], basic: ["username", "password"], bearer: ["token"], api_key: ["api_key"],
@@ -1201,7 +1439,7 @@
                        window.AnaScheduler.holidays(hol)]);
   }
 
-  const SECTIONS = { users, groups, settings, company, commands, remote, accounts, limits, consumption, scheduler, monitor, audit, retention, health, sqlperf, advice, updates, integrations, checks };
+  const SECTIONS = { users, groups, settings, company, commands, remote, accounts, limits, consumption, scheduler, monitor, audit, retention, health, sqlperf, advice, updates, integrations, checks, transports, datacopy };
 
   function show(section) {
     refreshUpdatesCount();

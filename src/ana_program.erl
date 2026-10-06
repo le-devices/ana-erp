@@ -8,7 +8,8 @@
 -export([refresh_params/0, init_cache/0, valid_name/1,
          list/1, get/1, save/3, deactivate/2, purge/2, versions/1, version/2, restore/3,
          for_execution/1, library_source/1,
-         commands/0, save_command/3, delete_command/1, on_notify/2]).
+         commands/0, save_command/3, delete_command/1, on_notify/2,
+         inspect_fields/1, write_in/5, invalidate/1]).
 
 -define(CACHE, ana_program_cache).
 -define(CHANNEL, "ana_program").
@@ -100,6 +101,18 @@ save(Name, Fields, #{username := Who}) ->
                 end,
             invalidate(Name),
             R
+    end.
+
+%% Spec 034: several programs in one transaction (transport import). Inspection (Python) runs
+%% before the transaction; the caller invalidates the caches after COMMIT.
+-spec inspect_fields(map()) -> map() | undefined.
+inspect_fields(Fields) ->
+    inspection(maps:get(<<"source">>, Fields, undefined), maps:get(<<"kind">>, Fields, undefined)).
+
+-spec write_in(epgsql:connection(), binary(), map(), map() | undefined, binary()) -> {ok, map()} | {error, term()}.
+write_in(C, Name, Fields, Insp, Who) ->
+    try write(C, Name, Fields, maps:get(<<"source">>, Fields, undefined), Insp, Who)
+    catch throw:{error, E} -> {error, E}
     end.
 
 write(C, Name, Fields, Source, Insp, Who) ->

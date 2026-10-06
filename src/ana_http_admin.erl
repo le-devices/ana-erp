@@ -249,6 +249,73 @@ route(<<"POST">>, [<<"checks">>, <<"vulnerabilities">>], U, Req) ->
         {too_large, Req2} -> ana_http:reply_error(413, <<"BODY_TOO_LARGE">>, <<"base acima de 20 MiB: envie por ecossistema"/utf8>>, Req2)
     end;
 
+%% --- Transports and data copies (spec 034) --------------------------------
+route(<<"GET">>, [<<"instance">>], _U, Req) ->
+    reply({ok, ana_instance:info()}, Req);
+route(<<"GET">>, [<<"transports">>], _U, Req) ->
+    reply(ana_transport:list(), Req);
+route(<<"GET">>, [<<"transports">>, <<"key">>], U, Req) ->
+    reply(ana_transport:public_key(U), Req);
+route(<<"GET">>, [<<"transports">>, <<"origins">>], _U, Req) ->
+    reply(ana_transport:origins(), Req);
+route(<<"PUT">>, [<<"transports">>, <<"origins">>, Name], U, Req) ->
+    with_body(Req, fun(B, R) -> reply(ana_transport:save_origin(Name, B, U), R) end);
+route(<<"DELETE">>, [<<"transports">>, <<"origins">>, Name], U, Req) ->
+    reply(ana_transport:delete_origin(Name, U), Req);
+route(<<"POST">>, [<<"transports">>, <<"export">>], U, Req) ->
+    with_body(Req, fun(B, R) -> reply(ana_transport:export(B, U), R) end);
+route(<<"POST">>, [<<"transports">>, <<"receive">>], U, Req) ->
+    case read_raw(Req, 20 * 1048576, <<>>) of
+        {ok, Body, Req2} -> reply(ana_transport:receive_package(Body, U), Req2);
+        {too_large, Req2} -> ana_http:reply_error(413, <<"BODY_TOO_LARGE">>, <<"pacote acima de 20 MiB: divida em partes"/utf8>>, Req2)
+    end;
+route(<<"GET">>, [<<"transports">>, Id], _U, Req) ->
+    with_int(Id, Req, fun(N) -> reply(ana_transport:get(N), Req) end);
+route(<<"POST">>, [<<"transports">>, Id, <<"import">>], U, Req) ->
+    with_int(Id, Req, fun(N) -> with_body(Req, fun(B, R) -> transport_reply(ana_transport:import(N, B, U), R) end) end);
+route(<<"POST">>, [<<"transports">>, Id, <<"revert">>], U, Req) ->
+    with_int(Id, Req, fun(N) -> transport_reply(ana_transport:revert(N, U), Req) end);
+route(<<"POST">>, [<<"transports">>, Id, <<"refuse">>], U, Req) ->
+    with_int(Id, Req, fun(N) -> with_body(Req, fun(B, R) -> reply(ana_transport:refuse(N, B, U), R) end) end);
+
+route(<<"GET">>, [<<"datacopy">>], _U, Req) ->
+    reply(ana_datacopy:list(), Req);
+route(<<"POST">>, [<<"datacopy">>, <<"export">>], U, Req) ->
+    reply(ana_datacopy:export(U), Req);
+route(<<"GET">>, [<<"datacopy">>, <<"masking">>], _U, Req) ->
+    reply(ana_datacopy:masking(), Req);
+route(<<"PUT">>, [<<"datacopy">>, <<"masking">>], U, Req) ->
+    with_body(Req, fun(B, R) -> reply(ana_datacopy:save_rule(B, U), R) end);
+route(<<"GET">>, [<<"datacopy">>, Id, <<"download">>], #{username := Who}, Req) ->
+    with_int(Id, Req, fun(N) ->
+        case ana_datacopy:file(N) of
+            {ok, Path} ->
+                ana_admin:log(Who, <<"datacopy.download">>, Id, null, null),
+                Size = filelib:file_size(Path),
+                cowboy_req:reply(200, #{<<"content-type">> => <<"application/octet-stream">>,
+                                        <<"content-disposition">> => <<"attachment; filename=\"copia-", Id/binary, ".anadc\"">>,
+                                        <<"cache-control">> => <<"no-store">>, <<"x-content-type-options">> => <<"nosniff">>},
+                                 {sendfile, 0, Size, Path}, Req);
+            E -> reply(E, Req)
+        end
+    end);
+route(<<"POST">>, [<<"datacopy">>, <<"upload">>], U, Req) ->
+    case ana_instance:role() of
+        <<"production">> ->
+            ana_http:reply_error(403, <<"INSTANCE_IS_PRODUCTION">>, <<"a produção não recebe cópias de dados"/utf8>>, Req);
+        _ ->
+            Path = ana_datacopy:upload_path(erlang:unique_integer([positive])),
+            ok = filelib:ensure_dir(Path),
+            {ok, F} = file:open(Path, [write, raw, binary]),
+            case receive_file(Req, F, 0, 8 * 1073741824) of
+                {ok, Size, Req2} -> ok = file:close(F), reply(ana_datacopy:uploaded(list_to_binary(Path), Size, U), Req2);
+                {too_large, Req2} -> _ = file:close(F), _ = file:delete(Path),
+                                     ana_http:reply_error(413, <<"BODY_TOO_LARGE">>, <<"cópia acima de 8 GiB"/utf8>>, Req2)
+            end
+    end;
+route(<<"POST">>, [<<"datacopy">>, Id, <<"import">>], U, Req) ->
+    with_int(Id, Req, fun(N) -> with_body(Req, fun(B, R) -> reply(ana_datacopy:import(N, B, U), R) end) end);
+
 %% --- Retention (spec 024, RF-024-08..10) ----------------------------------
 route(<<"GET">>, [<<"retention">>], _U, Req) ->
     reply(ana_retention:overview(), Req);
@@ -278,6 +345,22 @@ reply({error, last_admin}, Req) ->
         <<"não é possível remover ou rebaixar o último administrador ativo"/utf8>>, Req);
 reply({error, Msg}, Req) when is_binary(Msg) -> ana_http:reply_error(400, <<"INVALID">>, Msg, Req);
 reply({error, #{} = E}, Req) -> ana_http:json(400, #{error => E}, Req).
+
+with_int(Id, Req, Fun) ->
+    case catch binary_to_integer(Id) of
+        N when is_integer(N) -> Fun(N);
+        _ -> invalid(Req)
+    end.
+
+transport_reply({error, #{code := Code} = E}, Req) when is_binary(Code) -> ana_http:json(409, #{error => E}, Req);
+transport_reply(R, Req) -> reply(R, Req).
+
+receive_file(Req, F, Size, Max) ->
+    case cowboy_req:read_body(Req, #{length => 4 * 1048576, period => 60000}) of
+        {_, Data, Req2} when Size + byte_size(Data) > Max -> {too_large, Req2};
+        {ok, Data, Req2} -> ok = file:write(F, Data), {ok, Size + byte_size(Data), Req2};
+        {more, Data, Req2} -> ok = file:write(F, Data), receive_file(Req2, F, Size + byte_size(Data), Max)
+    end.
 
 read_raw(Req, Max, Acc) ->
     case cowboy_req:read_body(Req, #{length => 1048576, period => 30000}) of

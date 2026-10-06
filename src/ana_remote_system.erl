@@ -18,11 +18,12 @@ forget(Name) ->
 
 -spec call(binary(), binary(), map()) -> {ok, term()} | {error, map()}.
 call(System, Function, Params) when is_binary(System), is_binary(Function), is_map(Params) ->
-    case ana_db:one("SELECT name, url, username, password, timeout_ms FROM ana_system.remote_system "
+    case ana_settings:get(outbound_blocked) =:= 1 orelse ana_db:one("SELECT name, url, username, password, timeout_ms FROM ana_system.remote_system "
                     "WHERE name = $1 AND active", [System]) of
         %% RF-023-07: a failing remote system fails fast instead of tying up executions.
         {ok, #{} = S} -> ana_breaker:call({remote, System}, fun() -> call_system(S, Function, Params, 1) end,
                                           fun(#{<<"code">> := C}) -> C =:= <<"REMOTE_FAILED">>; (_) -> true end);
+        true -> failure(<<"chamadas externas bloqueadas nesta instância (dados copiados da produção)"/utf8>>);
         _ -> failure(<<"sistema remoto desconhecido ou inativo: ", System/binary>>)
     end;
 call(_, _, _) ->
