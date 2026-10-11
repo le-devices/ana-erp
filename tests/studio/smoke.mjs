@@ -197,6 +197,11 @@ ok(invoiceRow.getAttribute("tabindex") === "0", "linha da fatura alcançável pe
 invoiceRow.dispatchEvent(new w.KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
 await until(() => location_hash(w).includes("docs.view") && text("#ops-main").includes("Título a receber"), "bill opened", jsErrors);
 ok(text("#ops-main").includes("Vencimento"), "Enter na linha abre a fatura (CA-035-04)");
+const opened = { href: null, closed: false };
+w.open = () => ({ location: { set href(v) { opened.href = v; }, get href() { return opened.href; } }, close() { opened.closed = true; } });
+[...d.querySelectorAll("#ops-main button")].find((b) => b.textContent === "PDF da fatura").click();
+await until(() => opened.href || opened.closed, "pdf tab", jsErrors);
+ok(opened.href && !opened.closed, "PDF da fatura abre numa aba com o endereço assinado do arquivo");
 
 // Automated flows (spec 030): board with one column per step
 await go(w, "#/ops/flows/flows.board?flow=sales");

@@ -16,6 +16,17 @@
     }
   }
 
+  /** fetch that turns "Failed to fetch" (server restarting, network down) into a clear message. */
+  async function send(path, init) {
+    try {
+      return await fetch(path, init);
+    } catch (e) {
+      if (init && init.signal && init.signal.aborted) throw e;
+      throw new ApiError(0, { error: { code: "OFFLINE",
+        message: "sem conexão com o ERP (servidor reiniciando ou rede fora do ar); tente de novo em alguns segundos" } });
+    }
+  }
+
   const enc = encodeURIComponent;
   const query = (params) => {
     const q = Object.entries(params || {}).filter(([, v]) => v !== undefined && v !== null && v !== "")
@@ -40,7 +51,7 @@
       const headers = { "Accept": "application/json" };
       if (token) headers["Authorization"] = "Bearer " + token;
       if (body !== undefined) headers["Content-Type"] = "application/json";
-      const resp = await fetch(path, {
+      const resp = await send(path, {
         method, headers, signal: options.signal,
         body: body === undefined ? undefined : JSON.stringify(body),
         cache: "no-store", credentials: "omit",
@@ -91,7 +102,7 @@
     async download(path, filename) {
       const headers = {};
       if (token) headers["Authorization"] = "Bearer " + token;
-      const resp = await fetch(path, { headers, cache: "no-store", credentials: "omit" });
+      const resp = await send(path, { headers, cache: "no-store", credentials: "omit" });
       if (!resp.ok) throw new ApiError(resp.status, null);
       saveBlob(await resp.blob(), filename);
     },
@@ -100,7 +111,7 @@
     async raw(method, path, blob) {
       const headers = { "Accept": "application/json", "Content-Type": "application/octet-stream" };
       if (token) headers["Authorization"] = "Bearer " + token;
-      const resp = await fetch(path, { method, headers, body: blob, cache: "no-store", credentials: "omit" });
+      const resp = await send(path, { method, headers, body: blob, cache: "no-store", credentials: "omit" });
       const text = await resp.text();
       let data = null;
       try { data = text ? JSON.parse(text) : null; } catch (_) { data = { error: { message: text } }; }

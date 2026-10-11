@@ -4074,6 +4074,29 @@ class TestDocuments(Base):
             s, c, _ = self.run_program("docs.view", {"kind": kind, "key": str(key)}, token=t)
             self.assertEqual(c["error"]["code"], "DOCUMENT_NOT_FOUND", (kind, c))
 
+    def test_rf_035_03_invoice_pdf(self):
+        n, bills = self.invoiced_order(self.a)
+        r = self.run_ok("files.my_invoices", customer=self.a)
+        t = self.tables(r)["Faturas"]
+        self.assertTrue(all(any(x.get("download") for x in acts) for acts in t["row_actions"]))
+        pdf = self.run_ok("finance.bill_pdf", bill=bills[1])["result"]
+        self.assertEqual(pdf["name"], f"Fatura ORD-{n}.pdf")                      # one PDF for all installments
+        self.assertEqual(pdf["_download"], {"file": pdf["file"]})
+        s, d, _ = http("POST", f"/api/files/files/{pdf['file']}/download", {"inline": True}, self.token)
+        self.assertEqual(s, 200, d)
+        with urllib.request.urlopen(URL + d["url"] if d["url"].startswith("/") else d["url"], timeout=30) as resp:
+            self.assertTrue(resp.read().startswith(b"%PDF"))
+        username = f"dpx{SUFFIX}"
+        CREATED_USERS.append(username)
+        http("POST", "/api/admin/users", {"username": username, "role": "external", "party_id": self.a, "password": "Initial-pass-1"},
+             self.token)
+        tk = login(username, "Initial-pass-1")
+        http("POST", "/api/me/password", {"current": "Initial-pass-1", "new": "Changed-pass-1"}, tk)
+        self.assertEqual(self.run_ok("finance.bill_pdf", token=tk, bill=bills[0])["result"]["file"], pdf["file"])
+        _, bills_b = self.invoiced_order(self.b)
+        s, c, _ = self.run_program("finance.bill_pdf", {"bill": bills_b[0]}, token=tk)
+        self.assertEqual(c["error"]["code"], "BILL_NOT_FOUND")
+
     def test_rf_035_02_every_kind_opens(self):
         keys = {"purchase_request": "SELECT max(number) FROM supply.purchase_request",
                 "purchase_order": "SELECT max(number) FROM supply.purchase_order",

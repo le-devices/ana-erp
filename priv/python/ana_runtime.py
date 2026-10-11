@@ -541,7 +541,7 @@ def make_ana_module(channel, output, context):
         for a in items:
             if not isinstance(a, dict) or not a.get("label") or not a.get("program"):
                 raise ParamError("ação exige label e program")
-            out.append({k: a[k] for k in ("label", "program", "params", "ask", "open", "style", "confirm")
+            out.append({k: a[k] for k in ("label", "program", "params", "ask", "open", "style", "confirm", "download")
                         if k in a})
         return out
 

@@ -378,7 +378,9 @@ ordens de compra, ordens de produção, expedições, transferências — a linh
 clicável (ou Enter pelo teclado) e abre o documento (`doc`): cabeçalho,
 itens, valores, situação, histórico, documentos ligados (que também abrem) e
 o próximo passo. No portal, o cliente abre só os próprios pedidos, faturas e
-OS.
+OS. A fatura de pedido ou de OS tem PDF (itens, parcelas, vencimentos e dados
+de pagamento), gerado no faturamento e guardado na pasta "Faturas" do
+cliente — o título e Minhas faturas abrem o PDF numa aba.
 
 ## Distâncias (spec 032)
 

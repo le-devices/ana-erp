@@ -21,7 +21,9 @@ def main(customer=None):
     labels = {"open": "em aberto", "settled": "paga", "cancelled": "cancelada"}
     # Spec 035 (CA-035-01): each invoice opens with its installments, charges and origin.
     ana.table([{"documento": b["document"], "_open": doc_link("bill", b["id"]), "emissão": b["issue_date"], "vencimento": b["due_date"],
-                "valor": money(b["amount"]), "situação": labels.get(b["status"], b["status"])} for b in bills],
+                "valor": money(b["amount"]), "situação": labels.get(b["status"], b["status"]),
+                "_actions": [{"label": "PDF", "program": "finance.bill_pdf", "params": {"bill": b["id"]}, "download": True}]}
+               for b in bills],
               title="Faturas")
     try:
         folder = ana.files.folder(entity=("party", int(party)), subfolder="Faturas", create=False)

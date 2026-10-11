@@ -35,3 +35,7 @@ usuário precisa saber qual rotina abrir e digitar o número.
 - **CA-035-03** Conta do portal não abre documento de outro cliente (não
   encontrado).
 - **CA-035-04** A linha clicável funciona pelo teclado.
+- **RF-035-06** A fatura (pedido ou OS) tem PDF — itens, parcelas,
+  vencimentos e dados de pagamento —, gerado no faturamento e guardado na
+  pasta "Faturas" do cliente; o título e Minhas faturas abrem o PDF (o
+  portal só os da própria empresa).
