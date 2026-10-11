@@ -7,6 +7,7 @@ preferred one) and delivery warehouse; price and promised date come from the cat
 import datetime
 from decimal import Decimal, ROUND_HALF_UP
 from ana_lib.docs.common import link as doc_link
+from ana_lib.docs import pdfs
 
 PARAMS = {
     "requests": {"type": "list", "label": "solicitações (vazio = todas as aprovadas)"},
@@ -79,5 +80,9 @@ def main(requests=None, send=True, notes=None):
                               "confirm": f"Receber tudo o que está pendente na ordem {ids[k]['number']}?"}] if send else []}
                for k, t in zip(keys, totals)]
     ana.sql_exec("UPDATE supply.purchase_request SET status = 'ordered' WHERE id = ANY($1)", [r["id"] for r in reqs])
+    if send:
+        for c in created:
+            # ana:lint-ok sql_in_loop — one PDF per purchase order sent to its supplier
+            pdfs.publish_quietly("purchase_order", c["ordem"])
     ana.table(created, title="Ordens de compra geradas")
     return {"orders": [c["ordem"] for c in created], "requests": [r["number"] for r in reqs]}

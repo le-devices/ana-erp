@@ -125,6 +125,7 @@
       detail: (id) => API.request("GET", `/api/files/files/${id}`),
       update: (id, body) => API.request("PUT", `/api/files/files/${id}`, body),
       remove: (id) => API.request("DELETE", `/api/files/files/${id}`),
+      setExternal: (folder, external) => API.request("PUT", `/api/files/folders/${folder}/external`, { external }),
       download: (id, version, inline) => API.request("POST", `/api/files/files/${id}/download`, { version: version || null, inline: !!inline }),
       zip: (folder) => API.request("POST", `/api/files/folders/${folder}/zip`, {}),
       search: (q) => API.request("GET", "/api/files/search" + query(q)),

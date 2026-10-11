@@ -461,6 +461,8 @@ open_frame(P, RequestId, Savepoint, St = #st{stack = Stack}) ->
                     context => #{user => maps:get(username, St#st.user),
                                  role => maps:get(role, St#st.user),
                                  party => maps:get(party_id, St#st.user, null),
+                                 %% Spec 037: absolute addresses in download links sent to partners.
+                                 public_url => list_to_binary(ana_config:text("ANA_PUBLIC_URL", "")),
                                  execution_id => St#st.id,
                                  origin => St#st.origin,
                                  depth => length(Stack)},

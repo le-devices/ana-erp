@@ -353,6 +353,7 @@ class Context:
         self.user = d.get("user")
         self.role = d.get("role")
         self.party = d.get("party")          # external portal accounts (spec 016)
+        self.public_url = d.get("public_url") or ""   # e.g. https://erp.empresa.com.br (spec 037)
         self.execution_id = d.get("execution_id")
         self.program = d.get("program")
         self.version = d.get("version")
@@ -485,6 +486,24 @@ def make_ana_module(channel, output, context):
             return channel.request("files", {"action": "put", "name": str(name), "comment": comment,
                                              "data": base64.b64encode(raw).decode("ascii"),
                                              **self._where(folder, entity, subfolder)})
+
+        def publish(self, kind, party, name, data, comment=None):
+            """Spec 037: a document for a customer/supplier, in the partner's folder for that kind
+            (Pedidos, Faturas, Entregas, Atendimentos, Recibos, Extratos, Ordens de compra), which only
+            that partner's accounts reach. Internal kinds are refused (INTERNAL_DOCUMENT)."""
+            raw = data.encode("utf-8") if isinstance(data, str) else bytes(data)
+            return channel.request("files", {"action": "publish", "kind": str(kind), "party": int(party), "name": str(name),
+                                             "comment": comment, "data": base64.b64encode(raw).decode("ascii")})
+
+        def link(self, file, hours=72, max_downloads=None, password=None):
+            """Spec 037: download link without an account ({id, token, url}); only for files in
+            folders made for partners."""
+            body = {"action": "link", "file": int(file), "hours": int(hours)}
+            if max_downloads:
+                body["max_downloads"] = int(max_downloads)
+            if password:
+                body["password"] = str(password)
+            return channel.request("files", body)
 
         def get(self, file, version=None):
             """{name, mime, version, data: bytes}."""

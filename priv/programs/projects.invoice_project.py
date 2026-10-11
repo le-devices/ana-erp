@@ -137,8 +137,8 @@ def store_pdf(p, number, lines, total, tax, withheld, net, payment_days):
     venc = datetime.date.today() + datetime.timedelta(days=payment_days)
     doc.text(50, y - 70, f"Vencimento: {venc:%d/%m/%Y}", size=10)
     try:
-        r = ana.files.put(f"Fatura {number}.pdf", doc.build(), entity=("party", p["customer_id"]), subfolder="Faturas",
-                          comment=f"Fatura de serviços {number} — projeto {p['code']}")
+        r = ana.files.publish("bill", p["customer_id"], f"Fatura {number}.pdf", doc.build(),
+                              comment=f"Fatura de serviços {number} — projeto {p['code']}")
         return r["file"]
     except ana.Error as e:
         ana.log(f"fatura {number} sem PDF no repositório: {e.message}", "warning")

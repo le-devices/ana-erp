@@ -26,6 +26,7 @@ x-ana: &ana
     ANA_INSTANCE: ${ANA_INSTANCE:-production}
     ANA_INSTANCE_NAME: ${ANA_INSTANCE_NAME:-ana-production}
     ANA_TIMEZONE: ${ANA_TIMEZONE:-America/Sao_Paulo}
+    ANA_PUBLIC_URL: ${ANA_PUBLIC_URL:-}
     ANA_DRAIN_DELAY_MS: "4000"           # longer than the proxy's health detection
   read_only: true
   tmpfs:

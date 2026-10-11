@@ -54,7 +54,10 @@ ferramenta de operação (`ana-ctl`).
    ```bash
    sudo /opt/ana-erp/ana-ctl doctor
    ```
-6. **Configure**: Administração → Empresa (dados e coordenadas), Usuários,
+6. **Endereço público**: o instalador grava `ANA_PUBLIC_URL` (usado nos
+   links de download enviados a clientes); ajuste em `.env` se o acesso
+   externo usar outro nome e rode `ana-ctl up`.
+7. **Configure**: Administração → Empresa (dados e coordenadas), Usuários,
    Parâmetros; Administração → Verificações mostra o que ainda precisa de
    atenção.
 

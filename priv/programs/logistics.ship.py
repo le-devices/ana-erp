@@ -10,6 +10,7 @@ import datetime
 from decimal import Decimal
 
 from ana_lib.logistics import common
+from ana_lib.docs import pdfs
 
 PARAMS = {
     "order": {"type": "int", "required": True, "label": "pedido de venda", "order": 1,
@@ -87,5 +88,7 @@ def main(order, lines=None, carrier=None, tracking=None, packages=1, weight_kg=N
     state = ana.sql_value("SELECT state FROM logistics.order_shipping WHERE sales_order_id = $1", o["id"])
     labels = {"none": "nada expedido", "partial": "expedido em parte", "full": "totalmente expedido"}
     ana.log(f"expedição {s['number']} do pedido {o['number']}: {labels[state]}")
+    if stage == "shipped":
+        pdfs.publish_quietly("shipment", s["number"])  # spec 037: packing list for the customer
     return {"shipment": s["number"], "status": stage, "order_state": state, "freight_cost": freight_cost, "stock_moved": moved,
             "shipped_on": datetime.date.today() if stage == "shipped" else None}

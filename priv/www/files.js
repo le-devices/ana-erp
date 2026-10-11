@@ -42,7 +42,9 @@
     const list = el("div", { class: "files-list" },
       table([
         { label: "Nome", value: (r) => r.kind === "folder"
-            ? el("button", { class: "linkish icon-text", onclick: () => go(r.id) }, window.AnaUI.icon("folder", 16), el("span", { text: r.name }))
+            ? el("span", {}, el("button", { class: "linkish icon-text", onclick: () => go(r.id) }, window.AnaUI.icon("folder", 16),
+                                el("span", { text: r.name })),
+                 r.external ? el("span", { class: "pill ok external-pill", text: "para parceiros", title: "Clientes/fornecedores podem ter acesso" }) : null)
             : el("button", { class: "linkish icon-text", onclick: () => guard(() => fileDetail(r.id, detail)) }, window.AnaUI.icon("file", 16),
                  el("span", { text: r.name })) },
         { label: "Versão", value: (r) => r.version ? `v${r.version}` : "" },
@@ -62,7 +64,20 @@
       el("h2", { text: "Arquivos" }),
       el("p", { class: "lead", text: "Documentos de projetos, clientes e fornecedores, com versões e acesso controlado. Arraste arquivos para a lista para enviar." }),
       crumbs,
+      // Spec 037: what is inside a folder for partners can reach customers/suppliers; elsewhere never.
+      folder !== null && data.external ? el("p", { class: "notice-external", text:
+        "Pasta para clientes/fornecedores: o que estiver aqui pode ser compartilhado com eles. Documentos internos ficam fora." }) : null,
       el("div", { class: "row-buttons" },
+        folder !== null && document.body.classList.contains("is-admin")
+          ? el("button", { class: "quiet", text: data.external ? "Tornar pasta interna" : "Marcar como pasta para parceiros",
+                           onclick: () => guard(async () => {
+                             const msg = data.external
+                               ? "Tornar interna? Clientes e fornecedores perdem o acesso que tinham aqui."
+                               : "Marcar como pasta para clientes/fornecedores? Só ponha aqui o que eles podem ver.";
+                             if (!window.confirm(msg)) return;
+                             await API.files.setExternal(folder, !data.external);
+                             browse(folder);
+                           }) }) : null,
         data.level >= 3 ? el("button", { text: "Nova pasta", onclick: () => guard(async () => {
           const name = prompt("Nome da pasta");
           if (!name) return;
