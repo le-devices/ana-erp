@@ -9,7 +9,7 @@ concurrent invoicing never drives a balance negative. Services skip stock.
 
 import datetime
 
-from ana_lib.finance import terms
+from ana_lib.finance import invoice_pdf, terms
 from ana_lib.util import validation as v
 from ana_lib.util.format import money
 
@@ -102,5 +102,6 @@ def main(number, payment_days=30):
     ana.sql_exec("UPDATE sales.sales_order SET status = 'INVOICED', invoiced_at = now() WHERE id = $1",
                  order["id"])
     ana.log(f"pedido {number} faturado: {money(order['total'])}, vencimento {due}")
+    pdf = invoice_pdf.store(document)          # spec 035: the invoice PDF in the customer's folder (portal sees it)
     return {"number": number, "total": gross, "freight": freight, "bill": bill, "bills": [b["id"] for b in bills],
-            "installments": n, "entry": entry, "due_date": due, "charges": charges}
+            "installments": n, "entry": entry, "due_date": due, "charges": charges, "pdf": pdf}

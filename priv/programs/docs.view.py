@@ -138,8 +138,11 @@ def view_bill(key):
     if not ana.context.party and b["status"] == "open" and b["kind"] == "receivable" and not charges and gateway:
         acts.append({"label": "Emitir cobrança", "program": "finance.charge_document", "params": {"document": b["document"]},
                      "confirm": "Emitir a cobrança deste título pelo gateway da condição de pagamento?"})
+    if b["kind"] == "receivable":
+        acts.insert(0, {"label": "PDF da fatura", "program": "finance.bill_pdf", "params": {"bill": b["id"]}, "download": True,
+                        "style": "primary"})
     acts += entry_link(b["entry_id"])
-    acts.append({"label": "Faturas e PDFs do cliente", "program": "files.my_invoices", "params": {"customer": b["party_id"]}, "open": True})
+    acts.append({"label": "Todas as faturas do cliente", "program": "files.my_invoices", "params": {"customer": b["party_id"]}, "open": True})
     ana.actions(acts, title="Relacionados")
     return {"kind": "bill", "id": b["id"], "document": b["document"], "amount": b["amount"], "status": b["status"],
             "due_date": b["due_date"], "charges": len(charges), "origin": origin and {"kind": origin[0], "key": origin[1]}}

@@ -451,15 +451,26 @@
         return;
       }
       if (a.confirm && !window.confirm(a.confirm)) return;
-      await execute(a, a.params || {}, ctx);
+      // Spec 035: "download" actions return {_download: {file}}; the tab opens now (inside the click,
+      // so the browser allows it) and receives the file's signed address when it arrives.
+      const tab = a.download ? window.open("", "_blank") : null;
+      const res = await execute(a, a.params || {}, ctx, true);
+      const f = res && res.result && res.result._download;
+      if (tab) {
+        if (f && f.file) {
+          try { const r = await window.AnaApi.files.download(f.file, null, true); tab.location.href = r.url; }
+          catch (e) { tab.close(); window.AnaUI.toast(window.AnaUI.errorText(e), true); }
+        } else tab.close();
+      }
     });
     return b;
   }
 
-  async function execute(a, params, ctx) {
+  async function execute(a, params, ctx, wantResult) {
     try {
       const res = await ctx.run(a.program, params);
       if (res.error) { window.AnaUI.toast(`${res.error.code}: ${res.error.message || ""}`, true); return false; }
+      if (wantResult && a.download) return res;          // the file opens; the screen stays as it is
       window.AnaUI.toast(`${a.label}: feito.`);
       ctx.refresh();
       return true;
