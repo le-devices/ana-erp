@@ -3932,5 +3932,80 @@ class TestFlows(Base):
         self.assertIn("open", b)
 
 
+# ---------------------------------------------------------------- spec 032
+class TestGeo(Base):
+    """Coordinates, straight and road distances, travel time, scheduling, freight band, geocoding guard."""
+
+    SP = ("-23.5505", "-46.6333")
+    CAMPINAS = ("-22,9056", "-47,0608")          # typed with a decimal comma
+
+    @classmethod
+    def setUpClass(cls):
+        super().setUpClass()
+        cls.wh = f"G{SUFFIX[-6:]}"
+        cls.call("inventory.save_warehouse", code=cls.wh, description=f"Base São Paulo {SUFFIX}", latitude=cls.SP[0], longitude=cls.SP[1])
+        cls.customer = cls.call("base.save_party", name=f"Cliente Campinas {SUFFIX}", state="SP", city="Campinas",
+                                latitude=cls.CAMPINAS[0], longitude=cls.CAMPINAS[1])["id"]
+        cls.old = cls.call("base.geo_settings")
+        cls.call("base.geo_settings", road_factor="1.3", avg_speed_kmh="50")
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.call("base.geo_settings", road_factor=cls.old["road_factor"], avg_speed_kmh=cls.old["avg_speed_kmh"])
+
+    @classmethod
+    def call(cls, program, **params):
+        s, r, _ = http("POST", f"/api/programs/{program}/run", {"params": params}, cls.token)
+        assert s == 200 and "error" not in r, r
+        return r["result"]
+
+    def err(self, _program, **params):
+        s, c, _ = self.run_program(_program, params)
+        self.assertIn("error", c, c)
+        return c["error"]["code"]
+
+    def test_ca_032_01_sao_paulo_to_campinas(self):
+        km = Decimal(str(self.scalar("SELECT base.distance_km(-23.5505, -46.6333, -22.9056, -47.0608)")))
+        self.assertLess(abs(km - Decimal("84")), 1)
+        r = self.call("base.distance", customer=self.customer, origin=self.wh)
+        self.assertLess(abs(Decimal(str(r["straight_km"])) - Decimal("83.97")), Decimal("0.05"))
+        self.assertEqual(Decimal(str(r["road_km"])), Decimal("109.2"))                 # × 1,3
+        self.assertEqual(r["minutes"], 132)                                            # 109,2 km a 50 km/h
+        self.assertIsNone(self.scalar("SELECT base.distance_km(NULL, -46.6, -22.9, -47.0)"))
+
+    def test_ca_032_02_schedule_estimates_travel(self):
+        emp = self.client.call("projects.save_employee", name=f"Técnico Geo {SUFFIX}", profile="TEC", hourly_cost="60")["id"]
+        self.call("field.save_technician", employee=emp, warehouse=self.wh)
+        os_ = self.call("field.open_order", customer=self.customer, description=f"Calibração {SUFFIX}")["number"]
+        start = (datetime.datetime.now() + datetime.timedelta(days=40)).replace(hour=9, minute=0, second=0, microsecond=0)
+        r = self.call("field.schedule", order=os_, technician=emp, start=start.isoformat(timespec="minutes"))
+        self.assertEqual((Decimal(str(r["distance_km"])), r["travel_min"]), (Decimal("109.2"), 132))
+        self.assertEqual(Decimal(str(self.scalar(f"SELECT distance_km FROM field.assignment WHERE id = {r['assignment']}"))), Decimal("109.2"))
+
+    def test_rf_032_03_customers_by_distance_and_freight_band(self):
+        near = self.call("base.customers_by_distance", origin=self.wh, max_km="120")
+        far = self.call("base.customers_by_distance", origin=self.wh, max_km="50")
+        self.assertGreaterEqual(near["customers"], 1)
+        self.assertGreaterEqual(near["customers"], far["customers"])
+        item = f"G{SUFFIX[-6:]}I"
+        self.client.call("base.save_product", code=item, description=f"Item geo {SUFFIX}", price="10")
+        self.call("inventory.stock_in", product=item, quantity=5, warehouse=self.wh)
+        carrier = self.call("logistics.save_carrier", name=f"Transportes Geo {SUFFIX}",
+                            rates=[{"region": "*", "max_weight_kg": 10, "max_km": 50, "price": 10},
+                                   {"region": "*", "max_weight_kg": 10, "max_km": 200, "price": 30}])["id"]
+        o = self.call("sales.create_order", customer=self.customer, warehouse=self.wh, items=[{"product": item, "quantity": 1}])
+        sh = self.call("logistics.ship", order=o["number"], carrier=carrier, weight_kg=2)
+        self.assertEqual(Decimal(str(sh["freight_cost"])), Decimal(30))                 # 109 km: the 200 km band
+
+    def test_rf_032_01_validation_and_geocoder_guard(self):
+        self.assertEqual(self.err("base.save_party", name=f"Só latitude {SUFFIX}", latitude="-23.5"), "INVALID_COORDINATES")
+        self.assertEqual(self.err("inventory.save_warehouse", code="GEOX", description="x", latitude="-95", longitude="0"),
+                         "INVALID_COORDINATES")
+        if not self.old.get("geocoder_connector"):
+            self.assertEqual(self.err("base.geocode", party=self.customer), "GEOCODER_NOT_CONFIGURED")
+        s, c, _ = http("GET", "/api/admin/company", token=self.token)
+        self.assertIn("latitude", c)
+
+
 if __name__ == "__main__":
     unittest.main()

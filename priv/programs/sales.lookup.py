@@ -1,13 +1,13 @@
 # ana:description Opções para campos de vendas: clientes, itens com saldo por depósito, depósitos
 # ana:kind program
 # ana:menu no
-"""Lookup for forms: [{"value", "label", …}]. kind: customers | products | warehouses | orders | invoiced | order_lines. products brings price and stock (in the chosen
+"""Lookup for forms: [{"value", "label", …}]. kind: customers | products | warehouses | orders | invoiced | order_lines | origins. products brings price and stock (in the chosen
 warehouse and in the others) so the order screen shows availability while typing."""
 
 from ana_lib.util.format import compact, money
 
 PARAMS = {
-    "kind": {"type": "str", "required": True, "label": "tipo", "choices": ["customers", "products", "warehouses", "orders", "invoiced", "order_lines"]},
+    "kind": {"type": "str", "required": True, "label": "tipo", "choices": ["customers", "products", "warehouses", "orders", "invoiced", "order_lines", "origins"]},
     "warehouse": {"type": "str", "label": "depósito"},
     "from_wh": {"type": "str", "label": "depósito de origem (transferência)"},
     "customer": {"type": "int", "label": "cliente"},
@@ -31,6 +31,11 @@ def main(kind, warehouse=None, from_wh=None, customer=None, order=None):
         rows = ana.sql("SELECT o.number, p.name, o.total FROM sales.sales_order o JOIN base.party p ON p.id = o.customer_id "
                        "WHERE o.status = 'OPEN' ORDER BY o.number DESC LIMIT 500")
         return [{"value": r["number"], "label": f"{r['number']} — {r['name']} — {money(r['total'])}"} for r in rows]
+    if kind == "origins":
+        # Spec 032: where a distance starts — the company or a warehouse with coordinates.
+        rows = ana.sql("SELECT code, description FROM inventory.warehouse WHERE latitude IS NOT NULL ORDER BY code LIMIT 500")
+        return [{"value": "EMPRESA", "label": "Empresa"}] + [{"value": r["code"], "label": f"Depósito {r['code']} — {r['description']}"}
+                                                              for r in rows]
     if kind == "invoiced":
         if not customer:
             return []

@@ -8,6 +8,7 @@ PARAMS = {
     "rates": {"type": "list", "label": "tabela de frete", "add_label": "Adicionar faixa", "columns": {
         "region": {"type": "str", "default": "*", "label": "UF de destino (* = demais)"},
         "max_weight_kg": {"type": "decimal", "required": True, "label": "até (kg)"},
+        "max_km": {"type": "decimal", "label": "até (km; vazio = qualquer)"},
         "price": {"type": "decimal", "required": True, "label": "preço"}}},
     "active": {"type": "bool", "default": True, "label": "ativa"},
     "default": {"type": "bool", "default": False, "label": "transportadora padrão (expedição sem escolha, esteira automática)"},
@@ -20,8 +21,8 @@ def main(name, tracking_url=None, rates=None, active=True, default=False):
                         name.strip(), tracking_url, active)
     if rates is not None:
         ana.sql_exec("DELETE FROM logistics.freight_rate WHERE carrier_id = $1", cid)
-        ana.sql_batch("INSERT INTO logistics.freight_rate (carrier_id, region, max_weight_kg, price) VALUES ($1, $2, $3, $4)",
-                      [[cid, str(r.get("region") or "*").upper(), r["max_weight_kg"], r["price"]] for r in rates])
+        ana.sql_batch("INSERT INTO logistics.freight_rate (carrier_id, region, max_weight_kg, price, max_km) VALUES ($1, $2, $3, $4, $5)",
+                      [[cid, str(r.get("region") or "*").upper(), r["max_weight_kg"], r["price"], r.get("max_km") or None] for r in rates])
     if default:
         ana.sql_exec("UPDATE logistics.policy SET default_carrier = $1 WHERE id = 1", cid)   # spec 030
     return {"id": cid, "default": bool(default)}

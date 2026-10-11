@@ -60,8 +60,13 @@ def main(order, lines=None, carrier=None, tracking=None, packages=1, weight_kg=N
     if stage == "shipped" and not carrier:
         raise ana.Error("INVALID_PARAMETER", "informe a transportadora para despachar (ou marque uma como padrão)")
     if freight_cost is None and carrier and weight_kg:
+        # Spec 032: rates may also have a distance band (road km from the warehouse to the customer).
+        km = ana.sql_value("SELECT base.road_km(w.latitude, w.longitude, p.latitude, p.longitude) FROM sales.sales_order so "
+                           "JOIN inventory.warehouse w ON w.id = so.warehouse_id JOIN base.party p ON p.id = so.customer_id "
+                           "WHERE so.id = $1", o["id"])
         freight_cost = ana.sql_value("SELECT min(price) FROM logistics.freight_rate WHERE carrier_id = $1 AND max_weight_kg >= $2 "
-                                     "AND region IN ($3, '*')", carrier, weight_kg, o["state"] or "*")
+                                     "AND region IN ($3, '*') AND (max_km IS NULL OR max_km >= $4::numeric)",
+                                     carrier, weight_kg, o["state"] or "*", km)
     s = ana.sql_one("INSERT INTO logistics.shipment (sales_order_id, carrier_id, tracking, packages, weight_kg, freight_cost, "
                     "  freight_charged, expected_date, created_by) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) RETURNING id, number",
                     o["id"], carrier, tracking, packages, weight_kg, freight_cost, freight_charged, expected_date, ana.context.user)

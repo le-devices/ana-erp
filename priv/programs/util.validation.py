@@ -46,3 +46,15 @@ def email(value):
     require(re.fullmatch(r"[^@\s]+@[^@\s]+\.[^@\s]+", value) is not None,
             "INVALID_EMAIL", f"e-mail inválido: {value}")
     return value.lower()
+
+
+def coordinates(latitude, longitude):
+    """Spec 032: both or none, inside the globe; returns (lat, lon) as Decimal or (None, None)."""
+    if latitude in (None, "") and longitude in (None, ""):
+        return None, None
+    require(latitude not in (None, "") and longitude not in (None, ""), "INVALID_COORDINATES",
+            "informe latitude e longitude juntas")
+    lat, lon = decimal(latitude, "latitude"), decimal(longitude, "longitude")
+    require(-90 <= lat <= 90, "INVALID_COORDINATES", f"latitude fora de -90..90: {lat}")
+    require(-180 <= lon <= 180, "INVALID_COORDINATES", f"longitude fora de -180..180: {lon}")
+    return round(lat, 6), round(lon, 6)
