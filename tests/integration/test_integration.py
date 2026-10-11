@@ -2639,6 +2639,9 @@ class TestFileRepository(Base):
         cls.root = cls.folder(None, f"Repo {SUFFIX}")
         cls.fa = cls.folder(cls.root, "Projeto A")
         cls.fb = cls.folder(cls.root, "Projeto B")
+        # Spec 037: only folders made for partners reach external accounts; the administrator marks "Projeto A".
+        s, c, _ = http("PUT", f"/api/files/folders/{cls.fa}/external", {"external": True}, cls.token)
+        assert s == 200, c
 
     EXTERNALS = {}
 
@@ -2733,6 +2736,24 @@ class TestFileRepository(Base):
         s, c, _ = http("POST", f"/api/files/files/{fid}/download", {}, self.token)
         st, body, headers = self.fetch(c["url"], headers={"Range": "bytes=2-6"})
         self.assertEqual((st, body), (206, self.pdf("v2")[2:7]))
+
+    def test_ca_037_03_internal_folder_never_reaches_partners(self):
+        s, c, _ = self.upload(self.fb, "interno.pdf", self.pdf("interno"))
+        fid = c["file"]
+        s, c, _ = http("POST", "/api/files/grants", {"folder_id": self.fb, "subject_kind": "party", "subject": str(self.cust_a),
+                                                      "level": "download"}, self.token)
+        self.assertEqual(s, 400)
+        s, c, _ = http("POST", "/api/files/grants", {"file_id": fid, "subject_kind": "user", "subject": self.ext_a,
+                                                      "level": "view"}, self.token)
+        self.assertEqual(s, 400)
+        s, c, _ = http("POST", f"/api/files/files/{fid}/links", {"hours": 1}, self.token)
+        self.assertEqual((s, c["error"]["code"]), (400, "INTERNAL_DOCUMENT"))
+        u, t = new_user("developer")
+        s, c, _ = http("PUT", f"/api/files/folders/{self.fb}/external", {"external": True}, t)
+        self.assertIn(s, (403, 404))                                                        # only an administrator marks
+        s, c, _ = http("GET", f"/api/files/folders?parent={self.root}", token=self.token)
+        marks = {f["id"]: f["external"] for f in c["folders"]}
+        self.assertEqual((marks[self.fa], marks[self.fb]), (True, False))
 
     def test_ca_016_03_share_link_validity_and_limit(self):
         s, c, _ = self.upload(self.fa, "relatorio.pdf", self.pdf("link"))
@@ -4114,6 +4135,100 @@ class TestDocuments(Base):
         self.assertEqual(c["error"]["code"], "DOCUMENT_NOT_FOUND")
         wb = self.run_ok("logistics.shipping_workbench")
         self.assertTrue(any(t.get("row_open") for t in self.tables(wb).values()))
+
+
+# ---------------------------------------------------------------- spec 037
+class TestCustomerDocuments(Base):
+    """Documents for customers/suppliers in PDF, published only to folders made for partners."""
+
+    @classmethod
+    def setUpClass(cls):
+        super().setUpClass()
+        c = cls.client
+        cls.item = f"P{SUFFIX[-6:]}"
+        c.call("base.save_product", code=cls.item, description=f"Item PDF {SUFFIX}", price="12")
+        c.call("inventory.stock_in", product=cls.item, quantity=30, warehouse="CENTRAL")
+        cls.a = c.call("base.save_party", name=f"Cliente PDF A {SUFFIX}", state="SP")["id"]
+        cls.b = c.call("base.save_party", name=f"Cliente PDF B {SUFFIX}", state="SP")["id"]
+        cls.carrier = c.call("logistics.save_carrier", name=f"Transportes PDF {SUFFIX}")["id"]
+        username = f"pdx{SUFFIX}"
+        CREATED_USERS.append(username)
+        s, r, _ = http("POST", "/api/admin/users", {"username": username, "role": "external", "party_id": cls.a,
+                                                    "password": "Initial-pass-1"}, cls.token)
+        assert s == 200, r
+        t = login(username, "Initial-pass-1")
+        http("POST", "/api/me/password", {"current": "Initial-pass-1", "new": "Changed-pass-1"}, t)
+        cls.portal = t
+
+    def ok(self, _program, token=None, **params):
+        s, c, _ = self.run_program(_program, params, token=token)
+        self.assertEqual(s, 200, c)
+        self.assertNotIn("error", c, c.get("error"))
+        return c["result"]
+
+    def err(self, _program, token=None, **params):
+        s, c, _ = self.run_program(_program, params, token=token)
+        self.assertIn("error", c, c)
+        return c["error"]["code"]
+
+    def fetch_file(self, file, token):
+        s, d, _ = http("POST", f"/api/files/files/{file}/download", {"inline": True}, token)
+        self.assertEqual(s, 200, d)
+        with urllib.request.urlopen(URL + d["url"] if d["url"].startswith("/") else d["url"], timeout=30) as r:
+            return r.read()
+
+    def test_ca_037_01_events_publish_and_portal_downloads(self):
+        o = self.ok("sales.create_order", customer=self.a, items=[{"product": self.item, "quantity": 2}])
+        sh = self.ok("logistics.ship", order=o["number"], carrier=self.carrier, tracking=f"PDF{SUFFIX}")
+        names = {d["tipo"] + ":" + d["documento"] for d in self.documents(self.portal)}
+        self.assertIn(f"Pedido:Pedido {o['number']}.pdf", names)
+        self.assertIn(f"Entrega:Entrega {sh['shipment']}.pdf", names)
+        p = self.ok("docs.pdf", token=self.portal, kind="order", key=str(o["number"]))
+        self.assertTrue(self.fetch_file(p["file"], self.portal).startswith(b"%PDF"))
+        st = self.ok("docs.pdf", kind="statement", key=str(self.a))                         # on demand, by staff
+        self.assertTrue(st["name"].startswith("Extrato"))
+        self.assertTrue(self.fetch_file(st["file"], self.portal).startswith(b"%PDF"))       # published: the customer reaches it
+
+    def documents(self, token):
+        s, c, _ = self.run_program("files.my_documents", {}, token=token)
+        self.assertEqual(s, 200, c)
+        t = [e["data"] for e in c["events"] if e.get("type") == "output" and e.get("kind") == "table"][0]
+        return [dict(zip(t["columns"], r)) for r in t["rows"]]
+
+    def test_ca_037_02_internal_documents_refused(self):
+        name = f"test.publish_internal_{SUFFIX}"
+        self.save(name, "def main(kind, party):\n    return ana.files.publish(kind, party, 'x.pdf', b'%PDF-1.4')\n")
+        for kind in ("entry", "work_order", "transfer", "relatorio"):
+            s, c, _ = self.run_program(name, {"kind": kind, "party": self.a})
+            self.assertEqual(c["error"]["code"], "INTERNAL_DOCUMENT", (kind, c))
+        self.assertEqual(self.err("docs.pdf", kind="entry", key="1"), "INVALID_PARAMETER")    # not even offered
+
+    def test_ca_037_03_download_link_without_account(self):
+        o = self.ok("sales.create_order", customer=self.b, items=[{"product": self.item, "quantity": 1}])
+        r = self.ok("docs.share_link", kind="order", key=str(o["number"]), hours=1, max_downloads=1)
+        self.assertIn("/share/", r["url"])
+        path = r["url"][r["url"].index("/share/"):]
+        with urllib.request.urlopen(URL + path, timeout=30) as resp:
+            self.assertTrue(resp.read().startswith(b"%PDF"))
+        try:
+            urllib.request.urlopen(URL + path, timeout=30)
+            self.fail("segundo download deveria ser recusado")
+        except urllib.error.HTTPError as e:
+            self.assertEqual(e.code, 410)
+
+    def test_ca_037_04_portal_never_sees_internal_or_others(self):
+        ob = self.ok("sales.create_order", customer=self.b, items=[{"product": self.item, "quantity": 1}])
+        self.assertEqual(self.err("docs.pdf", token=self.portal, kind="order", key=str(ob["number"])), "DOCUMENT_NOT_FOUND")
+        # The customer's internal folder: staff put a file there; the portal account cannot reach it.
+        name = f"test.internal_file_{SUFFIX}"
+        self.save(name, "def main(party):\n"
+                        "    f = ana.files.folder(entity=('party', party), subfolder='Interno')\n"
+                        "    return ana.files.put('margens.pdf', b'%PDF-1.4 interno', folder=f)['file']\n")
+        fid = self.ok(name, party=self.a)
+        s, d, _ = http("POST", f"/api/files/files/{fid}/download", {}, self.portal)
+        self.assertIn(s, (403, 404))
+        s, roots, _ = http("GET", "/api/files/folders", token=self.portal)
+        self.assertTrue(roots["folders"] and all(f["external"] for f in roots["folders"]), roots["folders"])
 
 
 if __name__ == "__main__":

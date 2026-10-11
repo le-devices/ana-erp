@@ -2,7 +2,7 @@
 %% signed downloads, search, entity folders and audit. Every permission comes from
 %% files.level() (one rule, in the database); what a user may not see is 404.
 -module(ana_files).
--export([level/2, list/2, create_folder/4, detail/2, store/7, upload_single/6, upload_init/5, upload_chunk/4,
+-export([publishable/0, set_external/3, level/2, list/2, create_folder/4, detail/2, store/7, upload_single/6, upload_init/5, upload_chunk/4,
          upload_status/2, upload_complete/3, download_token/4, zip_token/2, check_token/1, version_for/2,
          grant/2, revoke/2, link_create/3, link_revoke/2, share_find/1, share_take/3, delete_file/2,
          update_file/3, search/2, entity_folder/2, resolve/3, put_binary/6, get_binary/3, event/7,
@@ -15,6 +15,9 @@
 -define(TOKEN_TTL, 300).
 -define(PROGRAM_MAX, 32 * 1024 * 1024).
 -define(ZIP_MAX, 100 * 1024 * 1024).
+-define(PUBLISHABLE, [{<<"order">>, <<"Pedidos">>}, {<<"bill">>, <<"Faturas">>}, {<<"shipment">>, <<"Entregas">>},
+                      {<<"service_order">>, <<"Atendimentos">>}, {<<"receipt">>, <<"Recibos">>},
+                      {<<"statement">>, <<"Extratos">>}, {<<"purchase_order">>, <<"Ordens de compra">>}]).
 -define(LEVELS, [{<<"view">>, ?VIEW}, {<<"download">>, ?DOWNLOAD}, {<<"upload">>, ?UPLOAD}, {<<"manage">>, ?MANAGE}]).
 
 %% ---------------------------------------------------------------- permissions
@@ -43,11 +46,11 @@ need(User, Res, Min) ->
 
 list(User = #{username := U}, null) ->
     Rows = case internal(User) of
-        true -> rows("SELECT id, name, inherit, entity_kind, files.level($1, id, NULL) AS level FROM files.folder "
-                     "WHERE parent_id IS NULL ORDER BY lower(name)", [U]);
+        true -> rows("SELECT id, name, inherit, entity_kind, files.is_external(id) AS external, files.level($1, id, NULL) AS level "
+                     "FROM files.folder WHERE parent_id IS NULL ORDER BY lower(name)", [U]);
         false ->
             %% External accounts start at what was shared with them (their party or themselves).
-            rows("SELECT DISTINCT f.id, f.name, f.inherit, f.entity_kind, files.level($1, f.id, NULL) AS level "
+            rows("SELECT DISTINCT f.id, f.name, f.inherit, f.entity_kind, files.is_external(f.id) AS external, files.level($1, f.id, NULL) AS level "
                  "FROM files.folder f JOIN files.\"grant\" g ON g.folder_id = f.id AND NOT g.deny "
                  "  AND ((g.subject_kind = 'party' AND g.subject = $2) OR (g.subject_kind = 'user' AND g.subject = $1)) "
                  "ORDER BY f.name", [U, to_text(maps:get(party_id, User, null))])
@@ -57,13 +60,13 @@ list(User = #{username := U}, null) ->
 list(User = #{username := U}, Id) ->
     case need(User, {folder, Id}, ?VIEW) of
         {ok, L} ->
-            Folders = rows("SELECT id, name, inherit, entity_kind, files.level($1, id, NULL) AS level FROM files.folder "
-                           "WHERE parent_id = $2 ORDER BY lower(name)", [U, Id]),
+            Folders = rows("SELECT id, name, inherit, entity_kind, files.is_external(id) AS external, files.level($1, id, NULL) AS level "
+                           "FROM files.folder WHERE parent_id = $2 ORDER BY lower(name)", [U, Id]),
             Files = rows("SELECT f.id, f.name, f.version, f.tags, f.status, f.updated_at, v.size, v.mime, v.created_by, "
                          "  files.level($1, NULL, f.id) AS level FROM files.file f "
                          "JOIN files.file_version v ON v.file_id = f.id AND v.version = f.version "
                          "WHERE f.folder_id = $2 AND f.status = 'active' ORDER BY lower(f.name)", [U, Id]),
-            {ok, #{folder => Id, level => L, path => path(User, Id),
+            {ok, #{folder => Id, level => L, path => path(User, Id), external => external_target({folder, Id}),
                    folders => [R || R = #{<<"level">> := X} <- Folders, X > 0],
                    files => [R || R = #{<<"level">> := X} <- Files, X > 0]}};
         E -> E
@@ -345,7 +348,10 @@ grant(User = #{username := U}, B) ->
     Deny = maps:get(<<"deny">>, B, false) =:= true,
     Checks = [{Res =/= undefined, <<"informe a pasta ou o arquivo"/utf8>>},
               {lists:keymember(Level, 1, ?LEVELS), <<"nível inválido"/utf8>>},
-              {subject_exists(Kind, Subject), <<"sujeito inexistente"/utf8>>}],
+              {subject_exists(Kind, Subject), <<"sujeito inexistente"/utf8>>},
+              %% Spec 037: an external account only reaches folders made for partners.
+              {Deny orelse Res =:= undefined orelse not external_subject(Kind, Subject) orelse external_target(Res),
+               <<"clientes e fornecedores só recebem acesso a pastas para parceiros (documentos internos nunca)"/utf8>>}],
     case [M || {false, M} <- Checks] of
         [M | _] -> {error, M};
         [] ->
@@ -392,8 +398,11 @@ revoke(User, Id) ->
 %% ---------------------------------------------------------------- share links (RF-016-05)
 
 link_create(User = #{username := U}, FileId, B) ->
-    case need(User, {file, FileId}, ?MANAGE) of
-        {ok, _} ->
+    case {need(User, {file, FileId}, ?MANAGE), external_target({file, FileId})} of
+        {{ok, _}, false} ->
+            {error, #{code => <<"INTERNAL_DOCUMENT">>,
+                      message => <<"link de download só para documentos de pastas para clientes/fornecedores"/utf8>>}};
+        {{ok, _}, true} ->
             Hours = max(1, min(720, maps:get(<<"hours">>, B, 24))),
             Max = case maps:get(<<"max_downloads">>, B, null) of N when is_integer(N), N > 0 -> N; _ -> null end,
             Pass = case maps:get(<<"password">>, B, null) of
@@ -409,7 +418,7 @@ link_create(User = #{username := U}, FileId, B) ->
             event(<<"link.create">>, null, FileId, Version, User, null,
                   #{link => Id, hours => Hours, max_downloads => Max, password => Pass =/= null}),
             {ok, #{id => Id, token => Token, url => <<"/share/", Token/binary>>}};
-        E -> E
+        {E, _} -> E
     end.
 
 link_revoke(User, Id) ->
@@ -515,8 +524,7 @@ entity_folder(party, Id) ->
                 {ok, #{<<"name">> := Name}} ->
                     Root = system_root(1, <<"Clientes">>),
                     F = ensure(Root, safe_name(<<Name/binary, " (", (int(Id))/binary, ")">>), <<"party">>, Id),
-                    Inv = ensure(F, <<"Faturas">>, null, null),
-                    ok = system_grant(<<"party">>, int(Id), Inv, <<"download">>),
+                    _ = external_folder(F, <<"Faturas">>, int(Id)),
                     {ok, F};
                 _ -> {error, not_found}
             end
@@ -530,8 +538,7 @@ entity_folder(project, Id) ->
                     Root = system_root(2, <<"Projetos">>),
                     F = ensure(Root, safe_name(<<Code/binary, " — "/utf8, Name/binary>>), <<"project">>, Id),
                     ok = system_grant(<<"user">>, Mgr, F, <<"manage">>),
-                    Del = ensure(F, <<"Entregáveis"/utf8>>, null, null),
-                    ok = system_grant(<<"party">>, int(Cust), Del, <<"download">>),
+                    _ = external_folder(F, <<"Entregáveis"/utf8>>, int(Cust)),
                     {ok, F};
                 _ -> {error, not_found}
             end
@@ -552,6 +559,48 @@ ensure(Parent, Name, Kind, EntityId) ->
     {ok, #{<<"id">> := F}} = ana_db:one("SELECT id FROM files.folder WHERE COALESCE(parent_id, 0) = COALESCE($1::bigint, 0) "
                                         "AND lower(name) = lower($2)", [Parent, Name]),
     F.
+
+%% Spec 037: a subfolder made for a partner — marked external, downloadable by that partner only.
+external_folder(Parent, Name, Party) ->
+    F = ensure(Parent, Name, null, null),
+    {ok, _} = ana_db:exec("UPDATE files.folder SET external = true WHERE id = $1 AND NOT external", [F]),
+    ok = system_grant(<<"party">>, Party, F, <<"download">>),
+    F.
+
+%% Spec 037: only an administrator turns a folder into one for partners (deliberate, audited).
+%% Turning it back to internal also removes what external accounts had there.
+set_external(User = #{username := Who}, Folder, External) ->
+    case ana_security:has_role(User, <<"admin">>) of
+        false -> {error, forbidden};
+        true ->
+            case ana_db:exec("UPDATE files.folder SET external = $2 WHERE id = $1", [Folder, External]) of
+                {ok, 1} ->
+                    _ = External orelse ana_db:exec(
+                        "DELETE FROM files.\"grant\" g WHERE g.folder_id = $1 AND NOT g.deny AND (g.subject_kind = 'party' "
+                        "OR (g.subject_kind = 'role' AND g.subject = 'external') OR (g.subject_kind = 'user' AND EXISTS "
+                        "(SELECT 1 FROM ana_system.app_user u WHERE u.username = g.subject AND u.role = 'external')))", [Folder]),
+                    event(<<"external">>, Folder, null, null, User, null, #{external => External}),
+                    ana_admin:log(Who, <<"files.folder.external">>, integer_to_binary(Folder), null, #{external => External}),
+                    {ok, #{folder => Folder, external => External}};
+                {ok, 0} -> {error, not_found};
+                E -> E
+            end
+    end.
+
+%% Is the folder (or the file's folder) made for partners? Only then external accounts and
+%% download links may reach it (spec 037: customers never reach internal documents).
+external_target({folder, F}) ->
+    case ana_db:one("SELECT files.is_external($1) AS e", [F]) of {ok, #{<<"e">> := true}} -> true; _ -> false end;
+external_target({file, F}) ->
+    case ana_db:one("SELECT files.is_external(folder_id) AS e FROM files.file WHERE id = $1", [F]) of
+        {ok, #{<<"e">> := true}} -> true;
+        _ -> false
+    end.
+
+external_subject(<<"party">>, _) -> true;
+external_subject(<<"role">>, <<"external">>) -> true;
+external_subject(<<"user">>, U) -> exists("SELECT 1 FROM ana_system.app_user WHERE username = $1 AND role = 'external'", U);
+external_subject(_, _) -> false.
 
 system_grant(Kind, Subject, Folder, Level) ->
     _ = ana_db:exec("INSERT INTO files.\"grant\" (subject_kind, subject, folder_id, level, granted_by) "
@@ -620,6 +669,28 @@ program(User, #{<<"action">> := <<"put">>} = A) ->
             end;
         E -> E
     end;
+%% Spec 037: documents for partners. The kind decides the subfolder (closed list); anything
+%% else is internal and refused.
+program(User, #{<<"action">> := <<"publish">>, <<"kind">> := K, <<"party">> := P} = A) when is_integer(P) ->
+    case lists:keyfind(K, 1, ?PUBLISHABLE) of
+        false ->
+            {error, #{<<"code">> => <<"INTERNAL_DOCUMENT">>,
+                      <<"message">> => <<"documento interno: não pode ser entregue a clientes ou fornecedores"/utf8>>}};
+        {_, Sub} ->
+            case entity_folder(party, P) of
+                {ok, F} ->
+                    Folder = external_folder(F, Sub, P),
+                    case catch base64:decode(maps:get(<<"data">>, A, <<>>)) of
+                        Data when is_binary(Data) ->
+                            put_binary(User, Folder, maps:get(<<"name">>, A, null), Data, maps:get(<<"comment">>, A, null),
+                                       <<"program">>);
+                        _ -> {error, <<"conteúdo inválido"/utf8>>}
+                    end;
+                E -> E
+            end
+    end;
+program(User, #{<<"action">> := <<"link">>, <<"file">> := F} = A) when is_integer(F) ->
+    link_create(User, F, maps:with([<<"hours">>, <<"max_downloads">>, <<"password">>], A));
 program(User, #{<<"action">> := <<"get">>, <<"file">> := F} = A) when is_integer(F) ->
     case get_binary(User, F, maps:get(<<"version">>, A, null)) of
         {ok, R = #{data := D}} -> {ok, R#{data := base64:encode(D)}};
@@ -702,3 +773,6 @@ rows(Sql, Params) ->
 to_text(null) -> null;
 to_text(I) when is_integer(I) -> integer_to_binary(I);
 to_text(B) -> B.
+
+-spec publishable() -> [{binary(), binary()}].
+publishable() -> ?PUBLISHABLE.

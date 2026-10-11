@@ -382,6 +382,23 @@ OS. A fatura de pedido ou de OS tem PDF (itens, parcelas, vencimentos e dados
 de pagamento), gerado no faturamento e guardado na pasta "Faturas" do
 cliente — o título e Minhas faturas abrem o PDF numa aba.
 
+## Documentos para clientes e fornecedores (spec 037)
+
+Pedido, fatura, comprovante de entrega, relatório de atendimento da OS,
+recibo, extrato e ordem de compra têm PDF, gerado nos eventos (pedido criado,
+expedição, aceite da OS, ordem enviada, pagamento) ou sob demanda, e
+**publicado** numa subpasta da pasta do parceiro feita para ele (Pedidos,
+Faturas, Entregas, Atendimentos, Recibos, Extratos, Ordens de compra). No
+portal, **Meus documentos** (`documentos`) lista e baixa esses PDFs; para
+quem não tem conta, **Link para o cliente** (`link_doc`) cria um endereço de
+download com validade, limite e senha (defina `ANA_PUBLIC_URL`).
+
+**Regra**: clientes e fornecedores nunca alcançam documento interno. O núcleo
+só publica tipos externos de uma lista fechada e recusa dar acesso a conta
+externa — ou criar link de download — fora das pastas para parceiros. Só um
+administrador marca outra pasta como "para parceiros" (Arquivos), e isso fica
+na auditoria.
+
 ## Distâncias (spec 032)
 
 Empresa (Administração → Empresa), depósitos (`inventory.save_warehouse`) e
@@ -619,7 +636,7 @@ correspondentes são só o valor inicial).
 
 ## Situação das specs
 
-Implementadas: 001–008, 011 (com usuários robô e dono obrigatório), 012, 018, 021, 019 (faltam alertas configuráveis e OpenTelemetry), 013, 014, 015, 016 (faltam S3 e antivírus), 017 (faltam SFTP/pasta/e-mail, mTLS, CNAB e pacotes de modelos), 022, 023, 024, 025, 026, 027, 028, 029, 030, 031, 032, 033, 035, 036 (falta base OSV por conector), 034 (faltam agendamentos e migrações no pacote, envio por conector); 020 parcial (falta próxima ação
+Implementadas: 001–008, 011 (com usuários robô e dono obrigatório), 012, 018, 021, 019 (faltam alertas configuráveis e OpenTelemetry), 013, 014, 015, 016 (faltam S3 e antivírus), 017 (faltam SFTP/pasta/e-mail, mTLS, CNAB e pacotes de modelos), 022, 023, 024, 025, 026, 027, 028, 029, 030, 031, 032, 033, 035, 036, 037 (falta base OSV por conector), 034 (faltam agendamentos e migrações no pacote, envio por conector); 020 parcial (falta próxima ação
 sugerida, fluxos guiados e auditoria de acessibilidade).
 Na fila (ordem em [scripts/pending-work.prompt.md](scripts/pending-work.prompt.md)):
 010 API pública; 009 licenciamento aguarda decisões.

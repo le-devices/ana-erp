@@ -5,6 +5,7 @@
 from decimal import Decimal
 
 from ana_lib.logistics import common
+from ana_lib.docs import pdfs
 
 PARAMS = {
     "shipment": {"type": "int", "required": True, "label": "expedição"},
@@ -32,4 +33,5 @@ def main(shipment, received_by=None, returned=False):
         raise ana.Error("INVALID_PARAMETER", "informe quem recebeu")
     ana.sql_exec("UPDATE logistics.shipment SET status = 'delivered', delivered_at = now(), received_by = $2 WHERE id = $1",
                  s["id"], received_by.strip())
+    pdfs.publish_quietly("shipment", s["number"])      # spec 037: delivery receipt
     return {"shipment": s["number"], "status": "delivered"}

@@ -16,6 +16,7 @@ from decimal import Decimal
 from ana_lib.finance import terms
 from ana_lib.util import validation as v
 from ana_lib.util.format import compact, money
+from ana_lib.docs import pdfs
 
 PARAMS = {
     "customer": {"type": "int", "required": True, "label": "cliente", "order": 1,
@@ -133,6 +134,7 @@ def main(customer, items, warehouse="CENTRAL", payment_term=None, fulfill="warn"
                   "style": "primary", "confirm": f"Faturar o pedido {order['number']}?"},
                  {"label": "Expedir", "program": "logistics.ship", "params": {"order": order["number"], "_form": "1"}, "open": True}],
                 title="Próximo passo")
+    pdfs.publish_quietly("order", order["number"])     # spec 037: confirmation for the customer
     return {"number": order["number"], "total": total, "items": len(lines), "payment_term": term and term["code"],
             "shortages": [{"product": by_code[s["product_id"]]["code"], "missing": s["missing"]} for s in short],
             "transfers": transfers}

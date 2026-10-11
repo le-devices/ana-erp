@@ -22,7 +22,7 @@ STATUS = {"OPEN": "em aberto", "INVOICED": "faturado", "CANCELLED": "cancelado",
           "rejected": "recusada", "ordered": "comprada", "sent": "enviada", "partial": "parcial", "closed": "encerrada",
           "planned": "planejada", "released": "liberada", "in_progress": "em andamento", "completed": "concluída",
           "scheduled": "agendada", "en_route": "a caminho", "done": "concluída", "invoiced": "faturada"}
-PORTAL_KINDS = ("order", "bill", "service_order")
+PORTAL_KINDS = ("order", "bill", "service_order", "shipment")
 
 
 def st(s):
@@ -64,6 +64,15 @@ def entry_link(entry_id):
         if entry_id and not ana.context.party else []
 
 
+def pdf_actions(kind, key):
+    """Spec 037: documents for partners have a PDF; staff can also send a download link."""
+    acts = [{"label": "PDF", "program": "docs.pdf", "params": {"kind": kind, "key": str(key)}, "download": True}]
+    if not ana.context.party:
+        acts.append({"label": "Link para o cliente" if kind != "purchase_order" else "Link para o fornecedor",
+                     "program": "docs.share_link", "params": {"kind": kind, "key": str(key), "_form": "1"}, "open": True})
+    return acts
+
+
 def flow_actions(flow, key):
     if ana.context.party or not ana.sql_value("SELECT count(*) FROM flow.instance WHERE flow_code = $1 AND doc_key = $2", flow, str(key)):
         return []
@@ -100,7 +109,7 @@ def view_order(key):
         acts += [{"label": "Faturar", "program": "sales.invoice_order", "params": {"number": o["number"]}, "style": "primary",
                   "confirm": f"Faturar o pedido {o['number']}?"},
                  {"label": "Expedir", "program": "logistics.ship", "params": {"order": o["number"], "_form": "1"}, "open": True}]
-    acts += flow_actions("sales", o["number"])
+    acts += flow_actions("sales", o["number"]) + pdf_actions("order", o["number"])
     if acts:
         ana.actions(acts, title="Próximo passo")
     return {"kind": "order", "number": o["number"], "status": o["status"], "total": o["total"], "shipments": len(ships), "bills": len(bills)}
@@ -141,6 +150,11 @@ def view_bill(key):
     if b["kind"] == "receivable":
         acts.insert(0, {"label": "PDF da fatura", "program": "finance.bill_pdf", "params": {"bill": b["id"]}, "download": True,
                         "style": "primary"})
+    if b["kind"] == "receivable" and not ana.context.party:
+        acts.append({"label": "Link para o cliente", "program": "docs.share_link",
+                     "params": {"kind": "bill", "key": str(b["id"]), "_form": "1"}, "open": True})
+    if b["kind"] == "receivable" and b["status"] == "settled":
+        acts.append({"label": "Recibo", "program": "docs.pdf", "params": {"kind": "receipt", "key": str(b["id"])}, "download": True})
     acts += entry_link(b["entry_id"])
     acts.append({"label": "Todas as faturas do cliente", "program": "files.my_invoices", "params": {"customer": b["party_id"]}, "open": True})
     ana.actions(acts, title="Relacionados")
@@ -170,7 +184,7 @@ def view_service_order(key):
         ana.table([{"linha": l["line"], "descrição": l["description"], "quantidade": compact(l["quantity"]),
                     "unitário": money(l["unit_price"]), "valor": money(l["amount"])} for l in lines], title="Faturado")
     bills_table(f"OS-{o['number']}", "Faturas")
-    acts = flow_actions("field", o["number"]) + entry_link(o["entry_id"])
+    acts = pdf_actions("service_order", o["number"]) + flow_actions("field", o["number"]) + entry_link(o["entry_id"])
     if acts:
         ana.actions(acts, title="Relacionados")
     return {"kind": "service_order", "number": o["number"], "status": o["status"]}
@@ -225,9 +239,10 @@ def view_purchase_order(key):
         ana.table([{"recebimento": r["id"], "nota": r["document"] or "—", "em": r["received_at"], "valor": money(r["total"]),
                     "título a pagar": st(r["status"]) if r["bill"] else "—",
                     "_open": common.link("bill", r["bill"]) if r["bill"] else None} for r in receipts], title="Recebimentos")
+    acts = pdf_actions("purchase_order", o["number"])
     if o["status"] not in ("received", "cancelled", "closed"):
-        ana.actions([{"label": "Receber", "program": "supply.receive", "params": {"order": o["number"], "_form": "1"}, "open": True}],
-                    title="Próximo passo")
+        acts.insert(0, {"label": "Receber", "program": "supply.receive", "params": {"order": o["number"], "_form": "1"}, "open": True})
+    ana.actions(acts, title="Próximo passo")
     return {"kind": "purchase_order", "number": o["number"], "status": o["status"]}
 
 
@@ -263,6 +278,7 @@ def view_shipment(key):
                     "LEFT JOIN logistics.carrier c ON c.id = s.carrier_id WHERE s.number = $1", number("shipment", key))
     if not s:
         not_found("shipment", key)
+    guard("shipment", key, s["customer_id"])
     ana.metrics([{"label": "Situação", "value": st(s["status"])}, {"label": "Transportadora", "value": s["carrier"] or "—"},
                  {"label": "Rastreio", "value": s["tracking"] or "—"},
                  {"label": "Frete", "value": money(s["freight_cost"]) if s["freight_cost"] is not None else "—"}],
@@ -272,7 +288,8 @@ def view_shipment(key):
     ana.table([{"linha do pedido": l["order_line"], "item": f"{l['code']} — {l['description']}", "quantidade": compact(l["quantity"])}
                for l in lines], title="Itens")
     ana.actions([{"label": f"Abrir pedido {s['order_number']}", "program": "docs.view",
-                  "params": {"kind": "order", "key": str(s["order_number"])}, "open": True}], title="Relacionados")
+                  "params": {"kind": "order", "key": str(s["order_number"])}, "open": True}] + pdf_actions("shipment", s["number"]),
+                title="Relacionados")
     return {"kind": "shipment", "number": s["number"], "status": s["status"], "order": s["order_number"]}
 
 

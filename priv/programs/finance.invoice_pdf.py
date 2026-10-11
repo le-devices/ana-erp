@@ -85,10 +85,11 @@ def build(document):
 def store(document):
     """File id of the stored PDF (new version when it exists), or None if the repository failed."""
     try:
-        party, data = build(document)
-        r = ana.files.put(file_name(document), data, entity=("party", int(party)), subfolder="Faturas",
-                          comment=f"Fatura {base(document)}")
-        return r["file"]
+        with ana.savepoint():           # a failure here rolls back only the PDF, never the invoice
+            party, data = build(document)
+            # Spec 037: published in the customer's folder for invoices (only that customer reaches it).
+            r = ana.files.publish("bill", party, file_name(document), data, comment=f"Fatura {base(document)}")
+            return r["file"]
     except ana.Error as e:
         ana.log(f"fatura {base(document)} sem PDF no repositório: {e.message}", "warning")
         return None

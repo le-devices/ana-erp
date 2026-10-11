@@ -8,6 +8,7 @@ import datetime
 from decimal import Decimal
 
 from ana_lib.finance import banking
+from ana_lib.docs import pdfs
 
 PARAMS = {
     "external_id": {"type": "str", "required": True, "label": "identificador no gateway"},
@@ -51,4 +52,6 @@ def main(external_id, amount=None, fee=0, bank_account="CAIXA", event_id=None, p
         ana.sql_exec("UPDATE finance.bill SET status = 'settled' WHERE id = $1", c["bill_id"])
     ana.sql_exec("UPDATE finance.charge SET status = 'paid', paid_amount = $2, fee = $3, paid_at = now(), event_id = $4, "
                  "entry_id = $5 WHERE id = $1", c["id"], paid, fee, event_id, entry)
+    if entry is not None:
+        pdfs.publish_quietly("receipt", c["bill_id"])   # spec 037: payment receipt
     return {"charge": c["id"], "settled": entry is not None, "entry": entry}
