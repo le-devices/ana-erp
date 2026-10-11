@@ -214,10 +214,11 @@
     const list = await API.portalPrograms();
     const out = el("div", { class: "output" });
     const runBox = el("div");
-    const open = (p) => {
-      const ctx = { run: (program, params) => API.run(program, { params }), open: (program) => openByName(program),
+    const open = (p, initial) => {
+      // Spec 035: a document row opens docs.view (or another portal routine) with its parameters.
+      const ctx = { run: (program, params) => API.run(program, { params }), open: (program, params) => openByName(program, params),
                     refresh: () => null, lookup: () => Promise.resolve([]) };
-      const form = window.AnaRunner.paramsForm(p.params, { submitLabel: "Consultar", onSubmit: () => guard(async () => {
+      const form = window.AnaRunner.paramsForm(p.params, { initial: initial || {}, submitLabel: "Consultar", onSubmit: () => guard(async () => {
         out.replaceChildren(el("p", { class: "muted", text: "Consultando…" }));
         const res = await API.run(p.name, { params: form.read() });
         out.replaceChildren();
@@ -227,9 +228,9 @@
       }) });
       runBox.replaceChildren(el("h3", { text: p.description || p.name }), form.node);
       out.replaceChildren();
-      if (!p.params || !Object.keys(p.params).length || Object.values(p.params).every((s) => !s.required)) form.node.requestSubmit();
+      if (initial || !p.params || !Object.keys(p.params).length || Object.values(p.params).every((s) => !s.required)) form.node.requestSubmit();
     };
-    const openByName = (name) => { const p = list.find((x) => x.name === name); if (p) open(p); };
+    const openByName = (name, params) => { const p = list.find((x) => x.name === name); if (p) open(p, params); };
     $("#portal-main").replaceChildren(
       el("h2", { text: "Portal" }),
       el("p", { class: "lead", text: "Consultas liberadas para você. Os documentos compartilhados ficam em Arquivos." }),

@@ -189,6 +189,15 @@ ok(text("#ops-main .rows-foot").includes("1.499.998,50"), "total da grade com v�
 ok(d.querySelectorAll("#ops-main .rows-editor tbody tr").length === 2, "botão Adicionar item cria nova linha");
 ok(JSON.parse(d.querySelector("#ops-main input[type=hidden][name=items]").value)[0].price === "1.50", "linhas viajam como lista de itens, decimal sem vírgula");
 
+// Documents open from their row (spec 035): keyboard (Enter) and mouse
+await go(w, "#/ops/files/files.my_invoices?customer=1");
+await until(() => d.querySelector("#ops-main tr.row-open"), "invoice rows", jsErrors);
+const invoiceRow = d.querySelector("#ops-main tr.row-open");
+ok(invoiceRow.getAttribute("tabindex") === "0", "linha da fatura alcançável pelo teclado");
+invoiceRow.dispatchEvent(new w.KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
+await until(() => location_hash(w).includes("docs.view") && text("#ops-main").includes("Título a receber"), "bill opened", jsErrors);
+ok(text("#ops-main").includes("Vencimento"), "Enter na linha abre a fatura (CA-035-04)");
+
 // Automated flows (spec 030): board with one column per step
 await go(w, "#/ops/flows/flows.board?flow=sales");
 await until(() => d.querySelectorAll("#ops-main .board-col").length === 4, "flow board", jsErrors);

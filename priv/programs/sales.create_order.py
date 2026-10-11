@@ -128,7 +128,8 @@ def main(customer, items, warehouse="CENTRAL", payment_term=None, fulfill="warn"
         sched = terms.schedule(terms.adjusted(total, term), term)
         ana.table([{"parcela": f"{n}/{len(sched)}", "vencimento (se faturado hoje)": d, "valor": val} for n, d, val in sched],
                   title=f"Parcelas — {term['name']}")
-    ana.actions([{"label": "Faturar agora", "program": "sales.invoice_order", "params": {"number": order["number"]},
+    ana.actions([{"label": "Abrir pedido", "program": "docs.view", "params": {"kind": "order", "key": str(order["number"])}, "open": True},
+                 {"label": "Faturar agora", "program": "sales.invoice_order", "params": {"number": order["number"]},
                   "style": "primary", "confirm": f"Faturar o pedido {order['number']}?"},
                  {"label": "Expedir", "program": "logistics.ship", "params": {"order": order["number"], "_form": "1"}, "open": True}],
                 title="Próximo passo")

@@ -354,6 +354,15 @@ ou comprar, prazo, lote, segurança, custo padrão).
   indicadores (`sla`): SLA cumprido, atrasadas, resposta, horas em campo,
   visitas e retornos.
 
+## Documentos navegáveis (spec 035)
+
+Onde uma lista mostra um documento — faturas, pedidos, OS, solicitações e
+ordens de compra, ordens de produção, expedições, transferências — a linha é
+clicável (ou Enter pelo teclado) e abre o documento (`doc`): cabeçalho,
+itens, valores, situação, histórico, documentos ligados (que também abrem) e
+o próximo passo. No portal, o cliente abre só os próprios pedidos, faturas e
+OS.
+
 ## Distâncias (spec 032)
 
 Empresa (Administração → Empresa), depósitos (`inventory.save_warehouse`) e
@@ -591,7 +600,7 @@ correspondentes são só o valor inicial).
 
 ## Situação das specs
 
-Implementadas: 001–008, 011 (com usuários robô e dono obrigatório), 012, 018, 021, 019 (faltam alertas configuráveis e OpenTelemetry), 013, 014, 015, 016 (faltam S3 e antivírus), 017 (faltam SFTP/pasta/e-mail, mTLS, CNAB e pacotes de modelos), 022, 023, 024, 025, 026, 027, 028, 029, 030, 031, 032, 033 (falta base OSV por conector), 034 (faltam agendamentos e migrações no pacote, envio por conector); 020 parcial (falta próxima ação
+Implementadas: 001–008, 011 (com usuários robô e dono obrigatório), 012, 018, 021, 019 (faltam alertas configuráveis e OpenTelemetry), 013, 014, 015, 016 (faltam S3 e antivírus), 017 (faltam SFTP/pasta/e-mail, mTLS, CNAB e pacotes de modelos), 022, 023, 024, 025, 026, 027, 028, 029, 030, 031, 032, 033, 035 (falta base OSV por conector), 034 (faltam agendamentos e migrações no pacote, envio por conector); 020 parcial (falta próxima ação
 sugerida, fluxos guiados e auditoria de acessibilidade).
 Na fila (ordem em [scripts/pending-work.prompt.md](scripts/pending-work.prompt.md)):
 010 API pública; 009 licenciamento aguarda decisões.

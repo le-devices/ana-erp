@@ -514,13 +514,14 @@ def make_ana_module(channel, output, context):
         output.emit("log", {"level": str(level), "message": str(message)})
 
     def table(rows, title=None):
-        """Rows are dicts; the optional key `_actions` holds per-row actions."""
+        """Rows are dicts; the optional key `_actions` holds per-row actions and `_open` the
+        document the row opens when clicked (spec 035: {"program", "params"})."""
         output.flush()
         rows = list(rows)
         columns = []
         for rec in rows:
             for k in rec.keys():
-                if k not in columns and k != "_actions":
+                if k not in columns and k not in ("_actions", "_open"):
                     columns.append(k)
         data = {
             "title": title,
@@ -529,6 +530,9 @@ def make_ana_module(channel, output, context):
         }
         if any(rec.get("_actions") for rec in rows):
             data["row_actions"] = [_actions(rec.get("_actions") or []) for rec in rows]
+        if any(rec.get("_open") for rec in rows):
+            data["row_open"] = [_actions([{"label": "Abrir", **rec["_open"], "open": True}])[0] if rec.get("_open") else None
+                                for rec in rows]
         output.emit("table", data)
 
     # Rich views (spec 021): rendered by the UI for any program.
