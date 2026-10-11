@@ -6,6 +6,7 @@ done after due_at. Response = first trip/work − opening. Return = another orde
 customer and equipment within 30 days."""
 
 import datetime
+from ana_lib.docs.common import link as doc_link
 
 PARAMS = {
     "start": {"type": "date", "label": "de (vazio = 30 dias)"},
@@ -44,7 +45,7 @@ def main(start=None, end=None):
                  {"label": "Retornos em 30 dias", "value": sum(1 for r in rows if r["returned"])}])
     labels = {"open": "aberta", "scheduled": "agendada", "en_route": "a caminho", "in_progress": "em atendimento", "done": "concluída",
               "invoiced": "faturada"}
-    ana.table([{"OS": r["number"], "cliente": r["name"], "prioridade": r["priority"], "situação": labels.get(r["status"], r["status"]),
+    ana.table([{"OS": r["number"], "_open": doc_link("service_order", r["number"]), "cliente": r["name"], "prioridade": r["priority"], "situação": labels.get(r["status"], r["status"]),
                 "aberta": f"{r['opened_at']:%d/%m %H:%M}", "prazo": f"{r['due_at']:%d/%m %H:%M}",
                 "resposta (h)": round(float(r["response_h"]), 1) if r["response_h"] is not None else None,
                 "atrasada": "sim" if r["late_open"] or r["late_done"] else ""} for r in rows], title="Ordens de serviço")

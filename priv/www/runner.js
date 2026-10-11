@@ -10,7 +10,7 @@
     base: "Cadastros", inventory: "Estoque", sales: "Vendas", finance: "Financeiro",
     projects: "Projetos", analytics: "Analítico", supply: "Suprimentos", production: "Produção",
     logistics: "Logística", field: "Serviços em campo", demo: "Demonstração", files: "Arquivos",
-    integration: "Integrações", flows: "Esteiras",
+    integration: "Integrações", flows: "Esteiras", docs: "Documentos",
   };
   const moduleOf = (name) => name.split(".")[0];
   const moduleLabel = (m) => MODULES[m] || m;
@@ -342,12 +342,18 @@
   const show = (v) => (v === null || v === undefined ? "" : typeof v === "object" ? JSON.stringify(v) : String(v));
 
   function drawTable(d, ctx) {
-    if (!d.row_actions) return dataTable(d.columns, d.rows, d.title);
+    // Spec 035: a row with "open" opens its document (click or Enter).
+    const onOpen = d.row_open ? (i, test) => {
+      const a = d.row_open[i];
+      if (test || !a) return !!a;
+      return ctx.open(a.program, a.params || {});
+    } : null;
+    if (!d.row_actions) return dataTable(d.columns, d.rows, d.title, null, onOpen);
     const box = dataTable(d.columns, d.rows, d.title, (i) => {
       const slot = el("div", { class: "action-form-row", hidden: true });
       const wrap = el("div", {}, (d.row_actions[i] || []).map((a) => actionButton(a, ctx, slot)), slot);
       return wrap;
-    });
+    }, onOpen);
     return box;
   }
 

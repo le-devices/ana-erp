@@ -26,11 +26,13 @@ Você trabalha no projeto ANA ERP em /home/andre/ana-erp: um ERP com núcleo Erl
 13. 034 — instância de desenvolvimento e testes: transporte seguro e sem parada para produção; cópia de dados reais de produção mascarados como massa de testes (`specs/034-dev-test-instance`) — implementada; T-034-07b, 08b e 09b ficam para o fim da fila
 14. 030 — esteiras automáticas: venda → baixa de estoque → movimentação → faturamento → cobrança, e outras, com opção de passos automáticos (`specs/030-automated-flows`) — implementada; T-030-06b fica para o fim da fila
 15. 032 — distância aproximada empresa ↔ cliente por coordenadas (`specs/032-distances`) — implementada; T-032-06b fica para o fim da fila
+15a. 035 — documentos navegáveis (`specs/035-document-navigation`) — implementada; T-035-05b fica para o fim da fila
+15b. 036 — instalação pelo cliente, local e nuvem, com passos definidos (`specs/036-installation`)
 16. 010 — API pública (`specs/010-public-api`)
 17. 009 — licenciamento (`specs/009-licensing`): é rascunho com decisões em aberto; NÃO implemente — liste as decisões necessárias no relatório e pare.
 18. 020 — tarefas restantes da arquitetura da informação: próxima ação sugerida, fluxos guiados, continuidade (T-020-09..11) e auditoria de acessibilidade (T-020-07). Itens de fluxo podem ser adiantados quando a spec em andamento precisar deles.
 
-Escolha o **primeiro item da lista cuja `tasks.md` ainda tenha tarefas `[ ]`** (exceções: a T-023-09 é o item 5; as T-019-08b, T-019-09b, T-017-02b, T-017-02c, T-017-05b, T-017-08b, T-016-02b, T-016-04b, T-033-09b, T-034-07b, T-034-08b, T-034-09b, T-030-06b e T-032-06b ficam para depois de todos os outros itens). Se tudo estiver `[x]`, apenas rode as suítes e relate.
+Escolha o **primeiro item da lista cuja `tasks.md` ainda tenha tarefas `[ ]`** (exceções: a T-023-09 é o item 5; as T-019-08b, T-019-09b, T-017-02b, T-017-02c, T-017-05b, T-017-08b, T-016-02b, T-016-04b, T-033-09b, T-034-07b, T-034-08b, T-034-09b, T-030-06b, T-032-06b e T-035-05b ficam para depois de todos os outros itens). Se tudo estiver `[x]`, apenas rode as suítes e relate.
 
 ## Passos
 1. `cd /home/andre/ana-erp && git status` — se houver alterações não commitadas que não são suas, não as descarte; trabalhe por cima e relate.

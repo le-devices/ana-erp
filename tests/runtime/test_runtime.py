@@ -128,6 +128,19 @@ class TestExecution(unittest.TestCase):
         self.assertFalse(end["ok"])
         self.assertEqual(end["error"]["code"], "INVALID_PARAMETER")
 
+    def test_rf_035_01_rows_that_open_a_document(self):
+        source = ("def main():\n"
+                  "    ana.table([{'doc': 'ORD-1', '_open': {'program': 'docs.view', 'params': {'kind': 'order', 'key': '1'}}},\n"
+                  "               {'doc': 'avulso'}])\n")
+        end, ev = run(source)
+        self.assertTrue(end["ok"], end)
+        t = [e["data"] for e in ev if e["type"] == "output" and e["kind"] == "table"][0]
+        self.assertEqual(t["columns"], ["doc"])                          # _open is not a column
+        self.assertEqual(t["row_open"][0], {"label": "Abrir", "program": "docs.view",
+                                            "params": {"kind": "order", "key": "1"}, "open": True})
+        self.assertIsNone(t["row_open"][1])
+        self.assertNotIn("row_actions", t)
+
     def test_ca_026_02_03_chart_validation_and_other(self):
         source = ("def main():\n"
                   "    x = ['a', 'b']\n"

@@ -10,6 +10,7 @@ import datetime
 from decimal import Decimal, ROUND_HALF_UP
 
 from ana_lib.logistics import common as lc
+from ana_lib.docs.common import link as doc_link
 
 PARAMS = {
     "orders": {"type": "list", "label": "OS (vazio = todas as concluídas)"},
@@ -97,6 +98,6 @@ def main(orders=None, payment_days=30):
     ana.sql_exec("UPDATE field.service_order o SET status = 'invoiced', invoiced_at = now(), entry_id = x.e, bill_id = x.b "
                  "FROM unnest($1::int[], $2::bigint[], $3::bigint[]) AS x(id, e, b) WHERE o.id = x.id",
                  ids, [o["entry"] for o in out], [o["bill"] for o in out])
-    ana.table([{"OS": o["order"], "destino": "projeto" if o["project"] else "fatura", "linhas": o["lines"], "total": o["total"]}
+    ana.table([{"OS": o["order"], "_open": doc_link("service_order", o["order"]), "destino": "projeto" if o["project"] else "fatura", "linhas": o["lines"], "total": o["total"]}
                for o in out], title="Ordens faturadas")
     return {"orders": out}

@@ -66,15 +66,27 @@
 
   /** Program output table: sortable columns, numbers to the right, CSV export,
    *  resizable box. `extra(i)` may return a node for an extra last cell. */
-  function dataTable(columns, rows, title, extra) {
+  /** onOpen(i) → true when row i opens a document (spec 035): the row is clickable and focusable. */
+  function dataTable(columns, rows, title, extra, onOpen) {
     const t = el("table", { class: "data-table" });
     const tb = el("tbody");
     let order = rows.map((_, i) => i);
     let sortCol = -1, asc = true;
     const draw = () => {
-      tb.replaceChildren(...order.map((i) => el("tr", {},
-        rows[i].map((v) => { const s = cellText(v); return el("td", { class: NUMERIC.test(s) ? "num" : "", text: v === null ? "—" : s }); }),
-        extra ? el("td", { class: "cell-actions" }, extra(i)) : null)));
+      tb.replaceChildren(...order.map((i) => {
+        const opens = onOpen && onOpen(i, true);
+        const tr = el("tr", opens ? { class: "row-open", tabindex: "0", title: "Abrir o documento (Enter)" } : {},
+          rows[i].map((v, ci) => {
+            const s = cellText(v);
+            return el("td", { class: (NUMERIC.test(s) ? "num" : "") + (opens && ci === 0 ? " doc-link" : ""), text: v === null ? "—" : s });
+          }),
+          extra ? el("td", { class: "cell-actions" }, extra(i)) : null);
+        if (opens) {
+          tr.addEventListener("click", (ev) => { if (!ev.target.closest("button,input,select,a,textarea,form")) onOpen(i); });
+          tr.addEventListener("keydown", (ev) => { if (ev.key === "Enter" && ev.target === tr) { ev.preventDefault(); onOpen(i); } });
+        }
+        return tr;
+      }));
       if (!rows.length) tb.append(el("tr", {}, el("td", { colspan: columns.length + (extra ? 1 : 0), class: "muted", text: "Nada para mostrar." })));
     };
     const key = (v) => { const s = cellText(v); const n = Number(s.replace(/\./g, "").replace(",", ".")); return NUMERIC.test(s) && !isNaN(n) ? n : s.toLowerCase(); };

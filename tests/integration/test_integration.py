@@ -4007,5 +4007,91 @@ class TestGeo(Base):
         self.assertIn("latitude", c)
 
 
+# ---------------------------------------------------------------- spec 035
+class TestDocuments(Base):
+    """Documents that open from where they appear; related documents; portal limits."""
+
+    @classmethod
+    def setUpClass(cls):
+        super().setUpClass()
+        cls.item = f"D{SUFFIX[-6:]}"
+        cls.client.call("base.save_product", code=cls.item, description=f"Item documento {SUFFIX}", price="30")
+        cls.client.call("inventory.stock_in", product=cls.item, quantity=20, warehouse="CENTRAL")
+        cls.a = cls.client.call("base.save_party", name=f"Cliente Doc A {SUFFIX}", state="SP")["id"]
+        cls.b = cls.client.call("base.save_party", name=f"Cliente Doc B {SUFFIX}", state="SP")["id"]
+
+    def run_ok(self, program, token=None, **params):
+        s, c, _ = self.run_program(program, params, token=token)
+        self.assertEqual(s, 200, c)
+        self.assertNotIn("error", c, c.get("error"))
+        return c
+
+    def tables(self, c):
+        return {e["data"]["title"]: e["data"] for e in c.get("events", []) if e.get("type") == "output" and e.get("kind") == "table"}
+
+    def invoiced_order(self, customer, term="BOLETO-3X"):
+        o = self.run_ok("sales.create_order", customer=customer, items=[{"product": self.item, "quantity": 2}], payment_term=term)["result"]
+        self.run_ok("logistics.ship", order=o["number"], stage="packed")
+        inv = self.run_ok("sales.invoice_order", number=o["number"])["result"]
+        return o["number"], inv["bills"]
+
+    def test_ca_035_01_invoice_list_opens_the_bill(self):
+        n, bills = self.invoiced_order(self.a)
+        c = self.run_ok("files.my_invoices", customer=self.a)
+        t = self.tables(c)["Faturas"]
+        opens = [o for o in t["row_open"] if o]
+        self.assertEqual(len(opens), len(t["rows"]))                               # every invoice is clickable
+        mine = [o for o in opens if int(o["params"]["key"]) in bills]
+        self.assertEqual(len(mine), 3)                                              # 3 installments
+        self.assertEqual((mine[0]["program"], mine[0]["params"]["kind"], mine[0]["open"]), ("docs.view", "bill", True))
+        r = self.run_ok("docs.view", kind="bill", key=mine[0]["params"]["key"])["result"]
+        self.assertEqual(r["origin"], {"kind": "order", "key": str(n)})
+        self.assertEqual(r["status"], "open")
+
+    def test_ca_035_02_order_opens_its_bills_and_shipments(self):
+        n, bills = self.invoiced_order(self.a)
+        c = self.run_ok("docs.view", kind="order", key=str(n))
+        t = self.tables(c)
+        self.assertEqual(sorted(int(o["params"]["key"]) for o in t["Faturas e parcelas"]["row_open"]), sorted(bills))
+        self.assertEqual([o["params"]["kind"] for o in t["Expedições"]["row_open"]], ["shipment"])
+        self.assertEqual(c["result"]["status"], "INVOICED")
+        ship = t["Expedições"]["row_open"][0]["params"]["key"]
+        self.assertEqual(self.run_ok("docs.view", kind="shipment", key=ship)["result"]["order"], n)
+
+    def test_ca_035_03_portal_sees_only_its_own(self):
+        n_a, bills_a = self.invoiced_order(self.a)
+        n_b, bills_b = self.invoiced_order(self.b)
+        username = f"dex{SUFFIX}"
+        CREATED_USERS.append(username)
+        s, c, _ = http("POST", "/api/admin/users", {"username": username, "role": "external", "party_id": self.a,
+                                                    "password": "Initial-pass-1"}, self.token)
+        self.assertEqual(s, 200, c)
+        t = login(username, "Initial-pass-1")
+        http("POST", "/api/me/password", {"current": "Initial-pass-1", "new": "Changed-pass-1"}, t)
+        self.assertEqual(self.run_ok("docs.view", token=t, kind="bill", key=str(bills_a[0]))["result"]["id"], bills_a[0])
+        self.assertEqual(self.run_ok("docs.view", token=t, kind="order", key=str(n_a))["result"]["number"], n_a)
+        for kind, key in (("bill", bills_b[0]), ("order", n_b), ("entry", 1), ("purchase_order", 1)):
+            s, c, _ = self.run_program("docs.view", {"kind": kind, "key": str(key)}, token=t)
+            self.assertEqual(c["error"]["code"], "DOCUMENT_NOT_FOUND", (kind, c))
+
+    def test_rf_035_02_every_kind_opens(self):
+        keys = {"purchase_request": "SELECT max(number) FROM supply.purchase_request",
+                "purchase_order": "SELECT max(number) FROM supply.purchase_order",
+                "work_order": "SELECT max(number) FROM production.work_order",
+                "transfer": "SELECT max(number) FROM logistics.transfer",
+                "service_order": "SELECT max(number) FROM field.service_order",
+                "entry": "SELECT max(id) FROM finance.journal_entry"}
+        for kind, sql in keys.items():
+            k = self.scalar(sql)
+            if k is None:
+                continue
+            c = self.run_ok("docs.view", kind=kind, key=str(k))
+            self.assertEqual(c["result"]["kind"], kind)
+        s, c, _ = self.run_program("docs.view", {"kind": "order", "key": "999999999"})
+        self.assertEqual(c["error"]["code"], "DOCUMENT_NOT_FOUND")
+        wb = self.run_ok("logistics.shipping_workbench")
+        self.assertTrue(any(t.get("row_open") for t in self.tables(wb).values()))
+
+
 if __name__ == "__main__":
     unittest.main()

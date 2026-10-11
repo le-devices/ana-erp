@@ -5,7 +5,10 @@ it is waiting (manual step, condition not met, outside event) or the failure, wi
 action: do it now (opens the step's routine with the document filled in), run automatically
 now, reprocess, or skip with a reason."""
 
+from ana_lib.docs.common import link as doc_link
 from ana_lib.flows import common
+
+DOC_KIND = {"sales": "order", "purchase": "purchase_request", "field": "service_order", "production": "work_order"}
 
 PARAMS = {
     "flow": {"type": "str", "required": True, "default": "sales", "label": "esteira", "order": 1,
@@ -44,7 +47,7 @@ def main(flow="sales", document=None):
             continue
         facts = r["facts"] or {"key": r["doc_key"]}
         who = facts.get("customer") or facts.get("product") or facts.get("requester") or ""
-        actions = []
+        actions = [{"label": "Abrir documento", **doc_link(DOC_KIND[flow], r["doc_key"]), "open": True}] if flow in DOC_KIND else []
         if r["step_status"] in ("waiting", "failed") and s["program"]:
             actions.append({"label": "Fazer agora", "program": s["program"], "open": True, "style": "primary",
                             "params": {**{k: v for k, v in common.render(s["params"], facts).items() if v is not None}, "_form": "1"}})
