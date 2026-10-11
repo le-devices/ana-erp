@@ -1,0 +1,12 @@
+# File repository (spec 016), shared by every core pod: needs ReadWriteMany
+# (NFS, EFS, Azure Files, Filestore…). Adjust storageClassName to your cluster.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: ana-files
+spec:
+  accessModes: ["ReadWriteMany"]
+  storageClassName: rwx
+  resources:
+    requests:
+      storage: 50Gi

@@ -1,0 +1,8 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: ana
+spec:
+  selector: {app: ana}
+  ports:
+    - {name: http, port: 80, targetPort: http}

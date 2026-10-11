@@ -66,6 +66,7 @@ inglês, como no código (constituição, P2a).
 | 033 | [Verificações periódicas](033-periodic-checks/spec.md) | Segurança da configuração, componentes com vulnerabilidade conhecida (base OSV), integridade dos arquivos do produto, robustez (cópias, restauração, filas, erros) e desempenho (sondas com linha de base), pelo robô system, com avisos no sino | implementada (falta T-033-09b: base OSV e aviso por conector) |
 | 034 | [Instância de desenvolvimento e testes](034-dev-test-instance/spec.md) | Papel da instância na tela; pacote de transporte assinado (programas, comandos, parâmetros) com verificação prévia, importação atômica sem parada e desfazer; cópia de dados da produção mascarada na origem, cifrada, com ensaio e bloqueio de chamadas externas | implementada (faltam T-034-07b..09b) |
 | 035 | [Documentos navegáveis](035-document-navigation/spec.md) | Clicar numa fatura, pedido, OS, ordem, expedição ou lançamento abre o documento com itens, valores, situação e documentos ligados; portal só vê os seus | implementada |
+| 036 | [Instalação local e na nuvem](036-installation/spec.md) | Instalador com segredos gerados e HTTPS, dois nós, cópias agendadas, `ana-ctl` (diagnóstico, atualização sem parada, volta atrás, desinstalação), Kubernetes e banco gerenciado, guia passo a passo | implementada |
 
 ## Glossário
 
