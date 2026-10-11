@@ -270,10 +270,11 @@
   async function company() {
     const c = await API.admin.company();
     const fields = [["legal_name", "Razão social"], ["tax_id", "CNPJ / documento"], ["address", "Endereço"],
-                    ["city", "Cidade"], ["state", "UF"], ["email", "E-mail"], ["phone", "Telefone"]];
+                    ["city", "Cidade"], ["state", "UF"], ["email", "E-mail"], ["phone", "Telefone"],
+                    ["latitude", "Latitude (ex.: -23,5505)"], ["longitude", "Longitude (ex.: -46,6333)"]];
     const inputs = Object.fromEntries(fields.map(([k]) => [k, el("input", { value: c[k] || "" })]));
     main().replaceChildren(
-      ...header("Empresa", "Dados da empresa usados em documentos e no título do Estúdio."),
+      ...header("Empresa", "Dados da empresa usados em documentos e no título do Estúdio. As coordenadas servem para distâncias até os clientes."),
       el("form", { class: "form-card", onsubmit: async (e) => {
         e.preventDefault();
         await guard(async () => {

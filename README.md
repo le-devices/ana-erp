@@ -354,6 +354,18 @@ ou comprar, prazo, lote, segurança, custo padrão).
   indicadores (`sla`): SLA cumprido, atrasadas, resposta, horas em campo,
   visitas e retornos.
 
+## Distâncias (spec 032)
+
+Empresa (Administração → Empresa), depósitos (`inventory.save_warehouse`) e
+clientes (`party`) têm latitude e longitude (vírgula ou ponto). `distancia`
+mostra a distância em linha reta (haversine, no banco), a rodoviária
+aproximada (reta × fator, padrão 1,3) e o tempo estimado (velocidade média,
+padrão 50 km/h) — sem serviço externo; `clientes_distancia` lista clientes
+por raio e quem ainda não tem coordenadas. Ao agendar uma OS sem informar
+distância, o ERP calcula a partir da base do técnico; a tabela de frete pode
+ter faixas de distância. Parâmetros e geocodificação opcional (por conector,
+spec 017) em `base.geo_settings`.
+
 ## Esteiras de processos (spec 030)
 
 Operação → Esteiras: cada documento segue sua esteira e a etapa seguinte
@@ -579,8 +591,7 @@ correspondentes são só o valor inicial).
 
 ## Situação das specs
 
-Implementadas: 001–008, 011 (com usuários robô e dono obrigatório), 012, 018, 021, 019 (faltam alertas configuráveis e OpenTelemetry), 013, 014, 015, 016 (faltam S3 e antivírus), 017 (faltam SFTP/pasta/e-mail, mTLS, CNAB e pacotes de modelos), 022, 023, 024, 025, 026, 027, 028, 029, 030, 031, 033 (falta base OSV por conector), 034 (faltam agendamentos e migrações no pacote, envio por conector); 020 parcial (falta próxima ação
+Implementadas: 001–008, 011 (com usuários robô e dono obrigatório), 012, 018, 021, 019 (faltam alertas configuráveis e OpenTelemetry), 013, 014, 015, 016 (faltam S3 e antivírus), 017 (faltam SFTP/pasta/e-mail, mTLS, CNAB e pacotes de modelos), 022, 023, 024, 025, 026, 027, 028, 029, 030, 031, 032, 033 (falta base OSV por conector), 034 (faltam agendamentos e migrações no pacote, envio por conector); 020 parcial (falta próxima ação
 sugerida, fluxos guiados e auditoria de acessibilidade).
 Na fila (ordem em [scripts/pending-work.prompt.md](scripts/pending-work.prompt.md)):
-032 distâncias por
-coordenadas; 010 API pública; 009 licenciamento aguarda decisões.
+010 API pública; 009 licenciamento aguarda decisões.

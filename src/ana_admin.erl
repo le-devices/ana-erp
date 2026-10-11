@@ -324,21 +324,32 @@ delete_group(Name, #{username := Who}) ->
 %% ==========================================================================
 
 get_company() ->
-    ana_db:one("SELECT id, legal_name, tax_id, address, city, state, email, phone "
+    ana_db:one("SELECT id, legal_name, tax_id, address, city, state, email, phone, latitude, longitude "
                "FROM base.company ORDER BY id LIMIT 1", []).
 
 save_company(Fields, #{username := Who}) ->
     Cols = [<<"legal_name">>, <<"tax_id">>, <<"address">>, <<"city">>, <<"state">>,
             <<"email">>, <<"phone">>],
-    Values = [maps:get(C, Fields, null) || C <- Cols],
+    %% Spec 032: coordinates typed with a decimal comma or point ("-23,5505").
+    Coord = fun(K) ->
+        case maps:get(K, Fields, null) of
+            N when is_number(N) -> N;
+            B when is_binary(B), B =/= <<>> -> binary:replace(string:trim(B), <<",">>, <<".">>);
+            _ -> null
+        end
+    end,
+    Values = [maps:get(C, Fields, null) || C <- Cols] ++ [Coord(<<"latitude">>), Coord(<<"longitude">>)],
     {ok, Before} = get_company(),
     R = case Before of
         undefined ->
-            ana_db:exec("INSERT INTO base.company (legal_name, tax_id, address, city, state, email, phone) "
-                        "VALUES ($1, $2, $3, $4, $5, $6, $7)", Values);
+            ana_db:exec("INSERT INTO base.company (legal_name, tax_id, address, city, state, email, phone, latitude, longitude) "
+                        "VALUES ($1, $2, $3, $4, $5, $6, $7, $8::text::numeric, $9::text::numeric)",
+                        [case V of N when is_number(N) -> list_to_binary(io_lib:format("~p", [N])); _ -> V end || V <- Values]);
         #{<<"id">> := Id} ->
             ana_db:exec("UPDATE base.company SET legal_name = $2, tax_id = $3, address = $4, city = $5, "
-                        "state = $6, email = $7, phone = $8 WHERE id = $1", [Id | Values])
+                        "state = $6, email = $7, phone = $8, latitude = $9::text::numeric, longitude = $10::text::numeric "
+                        "WHERE id = $1",
+                        [Id | [case V of N when is_number(N) -> list_to_binary(io_lib:format("~p", [N])); _ -> V end || V <- Values]])
     end,
     case R of
         {ok, _} ->
