@@ -1,0 +1,19 @@
+# ANA ERP on Kubernetes (spec 036). Guide: deploy/INSTALL.md, section "Kubernetes".
+#   1. edit secret.yaml (generate values: see the comments) and config.yaml
+#   2. kubectl apply -k deploy/k8s
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: ana-erp
+resources:
+  - namespace.yaml
+  - config.yaml
+  - secret.yaml
+  - files-pvc.yaml
+  - ana.yaml
+  - service.yaml
+  - pdb.yaml
+  - ingress.yaml
+images:
+  - name: ana-erp
+    newName: registry.empresa.com.br/ana-erp     # where your image was pushed (docker build + push)
+    newTag: "0.1.0"

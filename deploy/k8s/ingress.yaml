@@ -1,0 +1,22 @@
+# HTTPS with cert-manager (automatic certificate). Adjust the host and the ingress class.
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: ana
+  annotations:
+    cert-manager.io/cluster-issuer: letsencrypt
+    nginx.ingress.kubernetes.io/proxy-body-size: 64m
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "600"
+spec:
+  ingressClassName: nginx
+  tls:
+    - hosts: [erp.empresa.com.br]
+      secretName: ana-tls
+  rules:
+    - host: erp.empresa.com.br
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service: {name: ana, port: {name: http}}

@@ -354,6 +354,23 @@ ou comprar, prazo, lote, segurança, custo padrão).
   indicadores (`sla`): SLA cumprido, atrasadas, resposta, horas em campo,
   visitas e retornos.
 
+## Instalação em produção (spec 036)
+
+Guia completo: [deploy/INSTALL.md](deploy/INSTALL.md) — servidor próprio,
+VM em qualquer nuvem ou Kubernetes. Em resumo:
+
+```bash
+sudo ./deploy/install.sh --domain erp.empresa.com.br --email ti@empresa.com.br
+sudo /opt/ana-erp/ana-ctl doctor
+```
+
+O instalador confere os requisitos, gera todas as senhas e chaves, sobe banco
+(com arquivamento contínuo), dois nós e o proxy HTTPS, faz a primeira cópia e
+agenda as cópias; o admin troca a senha inicial no primeiro acesso.
+`ana-ctl upgrade --source <pacote novo>` atualiza nó a nó sem parar (e volta
+atrás se falhar). O `docker-compose.yml` da raiz é o ambiente de
+**desenvolvimento** (senhas de exemplo, dados de demonstração).
+
 ## Documentos navegáveis (spec 035)
 
 Onde uma lista mostra um documento — faturas, pedidos, OS, solicitações e
@@ -600,7 +617,7 @@ correspondentes são só o valor inicial).
 
 ## Situação das specs
 
-Implementadas: 001–008, 011 (com usuários robô e dono obrigatório), 012, 018, 021, 019 (faltam alertas configuráveis e OpenTelemetry), 013, 014, 015, 016 (faltam S3 e antivírus), 017 (faltam SFTP/pasta/e-mail, mTLS, CNAB e pacotes de modelos), 022, 023, 024, 025, 026, 027, 028, 029, 030, 031, 032, 033, 035 (falta base OSV por conector), 034 (faltam agendamentos e migrações no pacote, envio por conector); 020 parcial (falta próxima ação
+Implementadas: 001–008, 011 (com usuários robô e dono obrigatório), 012, 018, 021, 019 (faltam alertas configuráveis e OpenTelemetry), 013, 014, 015, 016 (faltam S3 e antivírus), 017 (faltam SFTP/pasta/e-mail, mTLS, CNAB e pacotes de modelos), 022, 023, 024, 025, 026, 027, 028, 029, 030, 031, 032, 033, 035, 036 (falta base OSV por conector), 034 (faltam agendamentos e migrações no pacote, envio por conector); 020 parcial (falta próxima ação
 sugerida, fluxos guiados e auditoria de acessibilidade).
 Na fila (ordem em [scripts/pending-work.prompt.md](scripts/pending-work.prompt.md)):
 010 API pública; 009 licenciamento aguarda decisões.

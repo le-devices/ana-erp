@@ -38,7 +38,14 @@ teste-caos:       ## dois nós + balanceador: falhas, queda de nó, rolling, ban
 teste-pg-ha:      ## PostgreSQL primário + réplica: troca real de primário
 	tests/pg_ha/run.sh
 
-testes: eunit teste-runtime teste-integracao teste-estudio teste-cluster teste-caos teste-pg-ha
+pacote:           ## pacote de instalação para o cliente (ana-erp-<versão>.tar.gz, do commit atual)
+	VSN=$$(sed -n 's/.*{vsn, *"\([^"]*\)".*/\1/p' src/ana.app.src | head -1); \
+	git archive --format=tar.gz --prefix=ana-erp-$$VSN/ -o ana-erp-$$VSN.tar.gz HEAD && echo ana-erp-$$VSN.tar.gz
+
+teste-instalacao: ## instala, atualiza e remove uma pilha de produção isolada (spec 036)
+	tests/install/run.sh
+
+testes: eunit teste-runtime teste-integracao teste-estudio teste-cluster teste-caos teste-pg-ha teste-instalacao
 
 limpar:           ## apaga containers E dados
 	docker compose down -v
