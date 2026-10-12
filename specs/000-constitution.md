@@ -128,3 +128,15 @@ anterior (expandir → migrar → contrair). Remover ou renomear algo só numa
 versão seguinte, quando nenhum nó antigo roda mais; a migração que quebra a
 versão anterior se declara com `-- ana:breaking`. Toda falha prevista tem
 teste de caos versionado.
+
+## P17. Tudo integrado, nada a conciliar à mão
+Todo processo construído no ERP nasce integrado aos demais subsistemas e
+automatiza o que for necessário. Um fato de negócio é registrado uma vez e
+gera, na mesma unidade de trabalho, tudo o que dele decorre: movimento de
+estoque com valor, título, lançamento contábil, custo do projeto, documento
+para o cliente. Nenhum subsistema guarda um saldo que precise ser
+conferido à mão com outro: cada razão auxiliar (clientes, fornecedores,
+estoque, bancos, em elaboração) tem conciliação automática contra a
+contabilidade, com divergência zero esperada e aviso quando não for. Toda
+spec declara o que gera automaticamente e qual conciliação a cobre;
+estorno é sempre por documento (nunca lançamento manual corrigindo outro).

@@ -46,17 +46,22 @@ def main(order, lines=None):
     if short:
         raise ana.Error("INSUFFICIENT_STOCK", "; ".join(sorted(set(short))))
     doc = f"OP-{o['number']}"
-    ana.sql_batch("INSERT INTO inventory.stock_movement (product_id, warehouse_id, quantity, kind, document, created_by) "
-                  "VALUES ($1, $2, $3, 'out', $4, $5)",
-                  [[comps[n]["product_id"], o["warehouse_id"], -q, doc, ana.context.user] for n, q in wanted])
+    # Spec 038: components leave at the stock's average cost; the database posts D work_in_process / C inventory.
+    moved = ana.sql("INSERT INTO inventory.stock_movement (product_id, warehouse_id, quantity, kind, document, created_by, reason) "
+                    "SELECT p, $2, -q::numeric, 'out', $3, $4, 'production_issue' FROM unnest($1::int[], $5::text[]) AS x(p, q) "
+                    "RETURNING id, product_id",
+                    [comps[n]["product_id"] for n, _ in wanted], o["warehouse_id"], doc, ana.context.user,
+                    [str(q) for _, q in wanted])
     ana.sql_exec("UPDATE production.order_component c SET issued_qty = c.issued_qty + x.q::numeric "
                  "FROM unnest($2::int[], $3::text[]) AS x(line, q) WHERE c.order_id = $1 AND c.line = x.line",
                  o["id"], [n for n, _ in wanted], [str(q) for _, q in wanted])
-    value = sum((q * comps[n]["unit_cost"] for n, q in wanted), Decimal(0))
-    common.post(f"Requisição de componentes da ordem {o['number']}", doc,
-                [("@work_in_process", value, 0, None), ("@inventory", 0, value, None)])
+    valued = {r["product_id"]: r for r in ana.sql(
+        "SELECT product_id, unit_cost, -sum(value) OVER (PARTITION BY product_id) AS v FROM inventory.stock_movement WHERE id = ANY($1)",
+        [r["id"] for r in moved])}
+    value = sum((r["v"] for r in valued.values()), Decimal(0))
     if o["status"] == "released":
         ana.sql_exec("UPDATE production.work_order SET status = 'in_progress' WHERE id = $1", o["id"])
-    ana.table([{"linha": n, "componente": comps[n]["code"], "quantidade": q, "valor": common.money(q * comps[n]["unit_cost"])}
+    ana.table([{"linha": n, "componente": comps[n]["code"], "quantidade": q,
+                "valor": common.money(q * valued[comps[n]["product_id"]]["unit_cost"])}
                for n, q in wanted], title=f"Requisição {doc}")
     return {"order": o["number"], "lines": len(wanted), "value": common.money(value)}

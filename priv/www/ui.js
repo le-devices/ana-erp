@@ -63,6 +63,14 @@
 
   const cellText = (v) => (v === null || v === undefined ? "" : typeof v === "object" ? JSON.stringify(v) : String(v));
   const NUMERIC = /^-?[\d.]+(,\d+)?$|^-?\d+(\.\d+)?$/;
+  // Decimals as programs return them ("2829426.98", "21.000"): shown in pt-BR ("2.829.426,98", "21").
+  // Money keeps its 2 places; quantities lose trailing zeros. Integers stay as they are (codes, years).
+  const DECIMAL = /^-?\d+\.\d{2,6}$/;
+  const brDecimal = (s) => {
+    const f = s.split(".")[1];
+    const places = f.length > 2 ? f.replace(/0+$/, "").length : f.length;
+    return Number(s).toLocaleString("pt-BR", { minimumFractionDigits: places, maximumFractionDigits: places });
+  };
 
   /** Program output table: sortable columns, numbers to the right, CSV export,
    *  resizable box. `extra(i)` may return a node for an extra last cell. */
@@ -78,7 +86,8 @@
         const tr = el("tr", opens ? { class: "row-open", tabindex: "0", title: "Abrir o documento (Enter)" } : {},
           rows[i].map((v, ci) => {
             const s = cellText(v);
-            return el("td", { class: (NUMERIC.test(s) ? "num" : "") + (opens && ci === 0 ? " doc-link" : ""), text: v === null ? "—" : s });
+            return el("td", { class: (NUMERIC.test(s) ? "num" : "") + (opens && ci === 0 ? " doc-link" : ""),
+                              text: v === null ? "—" : DECIMAL.test(s) ? brDecimal(s) : s });
           }),
           extra ? el("td", { class: "cell-actions" }, extra(i)) : null);
         if (opens) {
@@ -89,7 +98,12 @@
       }));
       if (!rows.length) tb.append(el("tr", {}, el("td", { colspan: columns.length + (extra ? 1 : 0), class: "muted", text: "Nada para mostrar." })));
     };
-    const key = (v) => { const s = cellText(v); const n = Number(s.replace(/\./g, "").replace(",", ".")); return NUMERIC.test(s) && !isNaN(n) ? n : s.toLowerCase(); };
+    const key = (v) => {
+      const s = cellText(v);
+      if (DECIMAL.test(s)) return Number(s);          // raw decimal: the dot is the decimal point
+      const n = Number(s.replace(/\./g, "").replace(",", "."));
+      return NUMERIC.test(s) && !isNaN(n) ? n : s.toLowerCase();
+    };
     const head = el("tr", {}, columns.map((c, ci) => el("th", { class: "sortable", text: c, title: "Ordenar", onclick: () => {
       asc = sortCol === ci ? !asc : true;
       sortCol = ci;

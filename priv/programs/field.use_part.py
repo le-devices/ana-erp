@@ -30,7 +30,16 @@ def main(order, product, quantity=1, technician=None, client_key=None):
     q = Decimal(str(quantity))
     if q <= 0:
         raise ana.Error("INVALID_VALUE", "quantidade deve ser positiva")
-    moves = stock.take_stock(t["warehouse_id"], {p["id"]: q}, f"OS-{o['number']}") if p["kind"] == "goods" else {}
+    moves = {}
+    if p["kind"] == "goods":
+        # Spec 038: the part's cost goes to the project (its cost center) when the order belongs to one,
+        # else to the cost of goods sold; the database values and posts the movement.
+        reason = "service_part"
+        if o["project_id"]:
+            reason = "project_material"
+            ana.sql("SELECT set_config('ana.cost_center', COALESCE((SELECT cost_center FROM projects.project WHERE id = $1), ''), true)",
+                    o["project_id"])
+        moves = stock.take_stock(t["warehouse_id"], {p["id"]: q}, f"OS-{o['number']}", reason)
     pid = ana.sql_value("INSERT INTO field.part_usage (order_id, product_id, quantity, unit_price, warehouse_id, stock_movement_id, "
                         "  client_key, created_by) VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING id",
                         o["id"], p["id"], q, p["price"], t["warehouse_id"], moves.get(p["id"]), client_key, ana.context.user)

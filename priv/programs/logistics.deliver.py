@@ -26,7 +26,7 @@ def main(shipment, received_by=None, returned=False):
             back = {}
             for l in ana.sql("SELECT product_id, quantity FROM logistics.shipment_line WHERE shipment_id = $1", s["id"]):
                 back[l["product_id"]] = back.get(l["product_id"], Decimal(0)) + l["quantity"]
-            common.put_stock(s["warehouse_id"], back, f"EXP-{s['number']}-VOLTA")
+            common.put_stock(s["warehouse_id"], back, f"EXP-{s['number']}-VOLTA", "customer_return")
         ana.sql_exec("UPDATE logistics.shipment SET status = 'returned' WHERE id = $1", s["id"])
         return {"shipment": s["number"], "status": "returned"}
     if not received_by or len(received_by.strip()) < 2:

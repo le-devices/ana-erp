@@ -24,9 +24,10 @@ def products(codes):
     return found
 
 
-def take_stock(warehouse_id, wanted, document):
+def take_stock(warehouse_id, wanted, document, reason):
     """wanted: {product_id: qty}. Locks the products in order, checks balances, writes the 'out'
-    movements in one batch and returns {product_id: movement_id}."""
+    movements in one batch and returns {product_id: movement_id}. The reason decides how the
+    database values and posts them (spec 038)."""
     pids = sorted(wanted)
     if not pids:
         return {}
@@ -38,19 +39,19 @@ def take_stock(warehouse_id, wanted, document):
     if short:
         codes = {r["id"]: r["code"] for r in ana.sql("SELECT id, code FROM base.product WHERE id = ANY($1)", [s[0] for s in short])}
         raise ana.Error("INSUFFICIENT_STOCK", "; ".join(f"{codes[p]}: saldo {b}, necessário {q}" for p, b, q in short))
-    rows = ana.sql("INSERT INTO inventory.stock_movement (product_id, warehouse_id, quantity, kind, document, created_by) "
-                   "SELECT p, $2, -q::numeric, 'out', $3, $4 FROM unnest($1::int[], $5::text[]) AS x(p, q) RETURNING id, product_id",
-                   pids, warehouse_id, document, ana.context.user, [str(wanted[p]) for p in pids])
+    rows = ana.sql("INSERT INTO inventory.stock_movement (product_id, warehouse_id, quantity, kind, document, created_by, reason) "
+                   "SELECT p, $2, -q::numeric, 'out', $3, $4, $6 FROM unnest($1::int[], $5::text[]) AS x(p, q) RETURNING id, product_id",
+                   pids, warehouse_id, document, ana.context.user, [str(wanted[p]) for p in pids], reason)
     return {r["product_id"]: r["id"] for r in rows}
 
 
-def put_stock(warehouse_id, given, document):
-    """given: {product_id: qty} → 'in' movements in one batch."""
+def put_stock(warehouse_id, given, document, reason):
+    """given: {product_id: qty} → 'in' movements in one batch (at the average cost, spec 038)."""
     pids = sorted(p for p, q in given.items() if q > 0)
     if pids:
-        ana.sql_exec("INSERT INTO inventory.stock_movement (product_id, warehouse_id, quantity, kind, document, created_by) "
-                     "SELECT p, $2, q::numeric, 'in', $3, $4 FROM unnest($1::int[], $5::text[]) AS x(p, q)",
-                     pids, warehouse_id, document, ana.context.user, [str(given[p]) for p in pids])
+        ana.sql_exec("INSERT INTO inventory.stock_movement (product_id, warehouse_id, quantity, kind, document, created_by, reason) "
+                     "SELECT p, $2, q::numeric, 'in', $3, $4, $6 FROM unnest($1::int[], $5::text[]) AS x(p, q)",
+                     pids, warehouse_id, document, ana.context.user, [str(given[p]) for p in pids], reason)
 
 
 def policy():

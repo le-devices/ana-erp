@@ -12,7 +12,7 @@ PARAMS = {
     "project": {"type": "str", "required": True, "label": "projeto", "lookup": {"program": "projects.lookup", "params": {"kind": "projects"}}},
     "kind": {"type": "str", "required": True, "label": "tipo", "choices": [["component", "Componente"], ["pcb", "Placa (PCB)"], ["supplies", "Insumos"], ["subcontract", "Serviço contratado"], ["travel", "Viagem"], ["other", "Outro"]]},
     "description": {"type": "str", "required": True, "label": "descrição"},
-    "unit_cost": {"type": "decimal", "required": True, "label": "custo unitário"},
+    "unit_cost": {"type": "decimal", "label": "custo unitário (item do estoque: vazio = custo do estoque)"},
     "quantity": {"type": "decimal", "default": 1, "label": "quantidade"},
     "rebillable": {"type": "bool", "default": False, "label": "refaturável ao cliente"},
     "markup_pct": {"type": "decimal", "default": 0, "label": "acréscimo na refatura (%)"},
@@ -25,7 +25,7 @@ PARAMS = {
 KINDS = ("component", "pcb", "supplies", "subcontract", "travel", "other")
 
 
-def main(project, kind, description, unit_cost, quantity=1, rebillable=False, markup_pct=0,
+def main(project, kind, description, unit_cost=None, quantity=1, rebillable=False, markup_pct=0,
          supplier=None, product=None, warehouse="LAB", expense_date=None):
     p = access.project(project)
     access.require_manager(p)
@@ -33,7 +33,7 @@ def main(project, kind, description, unit_cost, quantity=1, rebillable=False, ma
         raise ana.Error("PROJECT_INACTIVE", f"projeto {p['code']} está encerrado")
     if kind not in KINDS:
         raise ana.Error("INVALID_KIND", "tipo deve ser um de: " + ", ".join(KINDS))
-    if quantity <= 0 or unit_cost < 0 or markup_pct < 0:
+    if quantity <= 0 or (unit_cost is not None and unit_cost < 0) or markup_pct < 0:
         raise ana.Error("INVALID_VALUE", "quantidade, custo e acréscimo devem ser válidos")
 
     product_id = movement_id = None
@@ -53,10 +53,18 @@ def main(project, kind, description, unit_cost, quantity=1, rebillable=False, ma
             if balance < quantity:
                 raise ana.Error("INSUFFICIENT_STOCK", f"{product}: saldo {balance}, necessário {quantity}",
                                 {"product": product.upper(), "balance": balance, "required": quantity})
-            movement_id = ana.sql_value(
+            # Spec 038: material leaves at the stock's average cost, which is the expense's cost; the
+            # database posts D project_costs (project cost center) / C inventory.
+            ana.sql("SELECT set_config('ana.cost_center', COALESCE((SELECT cost_center FROM projects.project WHERE id = $1), ''), true)",
+                    p["id"])
+            moved = ana.sql_one(
                 "INSERT INTO inventory.stock_movement (product_id, warehouse_id, quantity, kind, document, "
-                "  created_by) VALUES ($1, $2, $3, 'out', $4, $5) RETURNING id",
+                "  created_by, reason) VALUES ($1, $2, $3, 'out', $4, $5, 'project_material') RETURNING id",
                 product_id, w["id"], -quantity, f"PRJ-{p['code']}", ana.context.user)
+            movement_id = moved["id"]
+            unit_cost = ana.sql_value("SELECT unit_cost FROM inventory.stock_movement WHERE id = $1", movement_id)
+    if unit_cost is None:
+        raise ana.Error("INVALID_VALUE", "informe o custo unitário")
 
     new_id = ana.sql_value(
         "INSERT INTO projects.expense (project_id, expense_date, kind, description, supplier_id, product_id, "

@@ -20,9 +20,12 @@ def main(order, good_qty, scrap_qty=0, complete=False):
     if good_qty < 0 or scrap_qty < 0 or not (good_qty or scrap_qty):
         raise ana.Error("INVALID_VALUE", "informe as quantidades")
     if good_qty and not o["project_id"]:
-        ana.sql_exec("INSERT INTO inventory.stock_movement (product_id, warehouse_id, quantity, kind, document, created_by) "
-                     "VALUES ($1, $2, $3, 'in', $4, $5)", o["product_id"], o["warehouse_id"], good_qty, f"OP-{o['number']}",
-                     ana.context.user)
+        # Spec 038: the finished good enters at the standard unit cost (D inventory / C work_in_process,
+        # posted by the database); closing the order posts the difference to the actual cost.
+        std_unit = (o["std_cost"] / o["quantity"]) if o["std_cost"] and o["quantity"] else None
+        ana.sql_exec("INSERT INTO inventory.stock_movement (product_id, warehouse_id, quantity, kind, document, created_by, "
+                     "  reason, unit_cost) VALUES ($1, $2, $3, 'in', $4, $5, 'production_receipt', $6)",
+                     o["product_id"], o["warehouse_id"], good_qty, f"OP-{o['number']}", ana.context.user, std_unit)
     good, scrap = o["good_qty"] + good_qty, o["scrap_qty"] + scrap_qty
     done = complete or good + scrap >= o["quantity"]
     ana.sql_exec("UPDATE production.work_order SET good_qty = $2, scrap_qty = $3, status = $4 WHERE id = $1",

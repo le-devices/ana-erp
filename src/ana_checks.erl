@@ -20,7 +20,7 @@
                        <<"pending_password_change">>, <<"stale_api_key">>, <<"open_share_links">>,
                        <<"connector_without_hosts">>, <<"short_audit_retention">>],
     <<"dependencies">> => [<<"vulnerable_component">>, <<"vulnerability_feed">>],
-    <<"integrity">> => [<<"shipped_files">>],
+    <<"integrity">> => [<<"shipped_files">>, <<"ledger_reconciliation">>],
     <<"robustness">> => [<<"wal_archiving">>, <<"base_backup">>, <<"restore_test">>, <<"dead_letters">>,
                          <<"open_breaker">>, <<"error_rate">>, <<"files_disk">>],
     <<"performance">> => [<<"probe_regression">>]}).
@@ -126,7 +126,7 @@ rules(<<"security">>) ->
      fun pending_password_change/0, fun stale_api_key/0, fun open_share_links/0, fun connector_without_hosts/0,
      fun short_audit_retention/0];
 rules(<<"dependencies">>) -> [fun inventory/0, fun ana_osv:findings/0, fun vulnerability_feed/0];
-rules(<<"integrity">>) -> [fun shipped_files/0];
+rules(<<"integrity">>) -> [fun shipped_files/0, fun ledger_reconciliation/0];
 rules(<<"robustness">>) ->
     [fun wal_archiving/0, fun base_backup/0, fun restore_test/0, fun dead_letters/0, fun open_breaker/0,
      fun error_rate/0, fun files_disk/0];
@@ -281,6 +281,20 @@ shipped_files() ->
               <<"Arquivos do produto só mudam com uma imagem nova. Investigue a alteração e reconstrua o nó a partir da imagem."/utf8>>,
               #{files => [#{file => F, change => W} || {F, W} <- Shown]}}]
     end.
+
+%% Spec 038 (RF-038-04): every subledger matches the ledger; a difference is critical (a notice
+%% reaches the administrator) and resolves itself when it is back to zero.
+ledger_reconciliation() ->
+    {ok, Rows} = ana_db:rows(
+        "SELECT key, label, difference::text AS difference, items FROM finance.reconciliation() "
+        "WHERE abs(COALESCE(difference, 0)) >= 0.01", []),
+    [{<<"ledger_reconciliation">>, K, <<"critical">>,
+      fmt("Conciliação divergente: ~ts (diferença R$ ~ts)", [L, D]),
+      fmt("~ts não bate com a contabilidade (~b item(ns) envolvidos).", [L, N]),
+      <<"Abra Conciliações (finance.reconciliations), detalhe a linha e corrija pelo documento de origem; "
+        "não corrija com lançamento manual."/utf8>>,
+      #{key => K, difference => D}}
+     || #{<<"key">> := K, <<"label">> := L, <<"difference">> := D, <<"items">> := N} <- Rows].
 
 what(changed) -> <<"alterado"/utf8>>;
 what(missing) -> <<"ausente"/utf8>>;

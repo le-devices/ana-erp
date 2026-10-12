@@ -57,15 +57,15 @@ def main(number, payment_days=30):
                                 f"{item['code']}: saldo {balance}, necessário {item['quantity']}",
                                 {"product": item["code"], "balance": balance, "required": item["quantity"]})
 
-    ana.sql_batch(
-        "INSERT INTO inventory.stock_movement (product_id, warehouse_id, quantity, kind, document, created_by) "
-        "VALUES ($1, $2, $3, 'out', $4, $5)",
-        [[i["product_id"], order["warehouse_id"], -i["quantity"], document, ana.context.user] for i in goods])
-
     # Spec 027: revenue goes to the order's cost center (or the warehouse's; the database falls back to the company's).
+    # Set before the stock leaves: the database posts the cost of goods sold to the same cost center (spec 038).
     cc = ana.sql_value("SELECT COALESCE(o.cost_center, w.cost_center) FROM sales.sales_order o "
                        "JOIN inventory.warehouse w ON w.id = o.warehouse_id WHERE o.id = $1", order["id"])
     ana.sql("SELECT set_config('ana.cost_center', $1, true)", cc or "")
+    ana.sql_batch(
+        "INSERT INTO inventory.stock_movement (product_id, warehouse_id, quantity, kind, document, created_by, reason) "
+        "VALUES ($1, $2, $3, 'out', $4, $5, 'sale')",
+        [[i["product_id"], order["warehouse_id"], -i["quantity"], document, ana.context.user] for i in goods])
     term0 = terms.term_for(order["customer_id"], order["payment_term"])
     gross = terms.adjusted(order["total"] + freight, term0) if term0 else order["total"] + freight
     entry = ana.sql_value(
@@ -74,7 +74,9 @@ def main(number, payment_days=30):
     ana.sql_batch(
         "INSERT INTO finance.journal_line (entry_id, account, debit, credit) "
         "VALUES ($1, finance.account_for($2), $3, $4)",
-        [[entry, "customers", gross, 0], [entry, "sales_revenue", 0, gross]])
+        # Spec 038: the freight charged to the customer has its own revenue account.
+        [l for l in [[entry, "customers", gross, 0], [entry, "sales_revenue", 0, gross - freight],
+                     [entry, "freight_revenue", 0, freight]] if l[2] or l[3]])
 
     # Spec 031: one bill per installment of the order's term (else the customer's / the policy's,
     # else a single bill due in payment_days); a gateway connector on the term issues the charges.

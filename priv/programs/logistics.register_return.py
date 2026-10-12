@@ -1,8 +1,9 @@
 # ana:description Devolução de cliente: entrada no estoque (ou quarentena) e crédito ao cliente
 # ana:exposed yes
 # ana:command devolucao
-"""RF-015-04. D sales_returns / C customer_credits and a payable bill to the customer (the credit);
-goods enter the chosen warehouse, or QUARENTENA to be inspected."""
+"""RF-015-04. D sales_returns / C customer_credits and a payable bill to the customer (the credit,
+control account customer_credits); goods enter the chosen warehouse, or QUARENTENA to be inspected,
+at the average cost (spec 038: the database posts D inventory / C cost of goods sold)."""
 
 import datetime
 from decimal import Decimal, ROUND_HALF_UP
@@ -47,7 +48,8 @@ def main(customer, items, reason, order=None, warehouse="CENTRAL", quarantine=Fa
                     ana.context.user)
     ana.sql_batch("INSERT INTO logistics.return_line (return_id, line, product_id, quantity, unit_price) VALUES ($1, $2, $3, $4, $5)",
                   [[r["id"], n, p["id"], q, pr] for n, p, q, pr in lines])
-    common.put_stock(wh["id"], {p["id"]: q for _, p, q, _ in lines if p["kind"] == "goods"}, f"DEV-{r['number']}")
+    ana.sql("SELECT set_config('ana.cost_center', $1, true)", (so and so["cost_center"]) or "")
+    common.put_stock(wh["id"], {p["id"]: q for _, p, q, _ in lines if p["kind"] == "goods"}, f"DEV-{r['number']}", "customer_return")
     entry = bill = None
     if total > 0:
         ana.sql("SELECT set_config('ana.cost_center', $1, true)", (so and so["cost_center"]) or "")
@@ -55,8 +57,9 @@ def main(customer, items, reason, order=None, warehouse="CENTRAL", quarantine=Fa
                               f"Devolução de {party['name']}: {reason}"[:200], f"DEV-{r['number']}", ana.context.user)
         ana.sql_batch("INSERT INTO finance.journal_line (entry_id, account, debit, credit) VALUES ($1, finance.account_for($2), $3, $4)",
                       [[entry, "sales_returns", total, 0], [entry, "customer_credits", 0, total]])
-        bill = ana.sql_value("INSERT INTO finance.bill (kind, party_id, document, due_date, amount, entry_id) "
-                             "VALUES ('payable', $1, $2, $3, $4, $5) RETURNING id", customer, f"DEV-{r['number']}",
+        bill = ana.sql_value("INSERT INTO finance.bill (kind, party_id, document, due_date, amount, entry_id, account) "
+                             "VALUES ('payable', $1, $2, $3, $4, $5, finance.account_for('customer_credits')) RETURNING id",
+                             customer, f"DEV-{r['number']}",
                              datetime.date.today() + datetime.timedelta(days=30), total, entry)
         ana.sql_exec("UPDATE logistics.customer_return SET entry_id = $2, bill_id = $3 WHERE id = $1", r["id"], entry, bill)
     return {"return": r["number"], "total": total, "warehouse": wh["code"], "credit_bill": bill}

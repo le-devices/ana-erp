@@ -75,4 +75,6 @@ kind_test_() ->
      ?_assertEqual(<<"document">>, K(<<"base.party">>, <<"tax_id">>, <<"text">>)),
      ?_assertEqual(<<"geo">>, K(<<"field.service_order">>, <<"latitude">>, <<"numeric">>)),
      ?_assertEqual(<<"keep">>, K(<<"sales.sales_order">>, <<"total">>, <<"numeric">>)),
+     ?_assertEqual(<<"keep">>, K(<<"inventory.stock_movement">>, <<"reason">>, <<"text">>)),      % spec 038: a code
+     ?_assertEqual(<<"text">>, K(<<"logistics.customer_return">>, <<"reason">>, <<"text">>)),     % a person's words
      ?_assertEqual(<<"keep">>, ana_mask:kind_for(<<"base.party">>, <<"email">>, <<"text">>, #{{<<"base.party">>, <<"email">>} => <<"keep">>}))].
