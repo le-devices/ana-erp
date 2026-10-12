@@ -5,4 +5,5 @@
 - [x] T-037-03 Geração automática nos eventos e sob demanda (RF-037-03, CA-037-01)
 - [x] T-037-04 Portal "Meus documentos", link de download sem conta, botões no documento (RF-037-04, RF-037-05)
 - [x] T-037-05 Tela de Arquivos: marcar pasta para parceiros (administrador)
+- [x] T-037-07 Endereço público editável pelo administrador (Empresa), com o do instalador como valor inicial
 - [ ] T-037-06b Envio do link por e-mail pelo conector (hoje: copiar e enviar)

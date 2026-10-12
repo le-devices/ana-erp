@@ -55,8 +55,9 @@ ferramenta de operação (`ana-ctl`).
    sudo /opt/ana-erp/ana-ctl doctor
    ```
 6. **Endereço público**: o instalador grava `ANA_PUBLIC_URL` (usado nos
-   links de download enviados a clientes); ajuste em `.env` se o acesso
-   externo usar outro nome e rode `ana-ctl up`.
+   links de download enviados a clientes) como valor inicial; depois, um
+   administrador muda em Administração → Empresa → "Endereço público do ERP",
+   sem reiniciar.
 7. **Configure**: Administração → Empresa (dados e coordenadas), Usuários,
    Parâmetros; Administração → Verificações mostra o que ainda precisa de
    atenção.

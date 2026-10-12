@@ -271,10 +271,11 @@
     const c = await API.admin.company();
     const fields = [["legal_name", "Razão social"], ["tax_id", "CNPJ / documento"], ["address", "Endereço"],
                     ["city", "Cidade"], ["state", "UF"], ["email", "E-mail"], ["phone", "Telefone"],
-                    ["latitude", "Latitude (ex.: -23,5505)"], ["longitude", "Longitude (ex.: -46,6333)"]];
+                    ["latitude", "Latitude (ex.: -23,5505)"], ["longitude", "Longitude (ex.: -46,6333)"],
+                    ["public_url", "Endereço público do ERP (ex.: https://erp.empresa.com.br) — usado nos links enviados a clientes"]];
     const inputs = Object.fromEntries(fields.map(([k]) => [k, el("input", { value: c[k] || "" })]));
     main().replaceChildren(
-      ...header("Empresa", "Dados da empresa usados em documentos e no título do Estúdio. As coordenadas servem para distâncias até os clientes."),
+      ...header("Empresa", "Dados da empresa usados em documentos e no título do Estúdio. As coordenadas servem para distâncias até os clientes; o endereço público aparece nos links de download enviados a clientes e fornecedores."),
       el("form", { class: "form-card", onsubmit: async (e) => {
         e.preventDefault();
         await guard(async () => {

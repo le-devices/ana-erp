@@ -2,7 +2,7 @@
 %% Shown on screen outside production; production can require transports for program changes.
 -module(ana_instance).
 
--export([role/0, name/0, product_version/0, info/0, transport_required/0]).
+-export([role/0, name/0, product_version/0, info/0, transport_required/0, public_url/0, forget_public_url/0]).
 
 -spec role() -> binary().
 role() ->
@@ -35,3 +35,26 @@ info() -> #{role => role(), name => name(), product_version => product_version()
 -spec transport_required() -> boolean().
 transport_required() ->
     role() =:= <<"production">> andalso ana_settings:get(transport_required) =:= 1.
+
+%% Spec 037: public address used in links sent to partners. The administrator's value
+%% (Administração → Empresa) wins over the installer's ANA_PUBLIC_URL; cached for 30 s per node
+%% (another node sees a change within that time).
+-spec public_url() -> binary().
+public_url() ->
+    Now = erlang:monotonic_time(millisecond),
+    %% Kept in the settings cache table (public ETS owned by the application).
+    case catch ets:lookup(ana_settings_cache, {?MODULE, public_url}) of
+        [{_, {Url, At}}] when Now - At < 30000 -> Url;
+        _ ->
+            Url = case catch ana_db:one("SELECT public_url FROM base.company WHERE public_url IS NOT NULL ORDER BY id LIMIT 1", []) of
+                {ok, #{<<"public_url">> := U}} when is_binary(U), U =/= <<>> -> U;
+                _ -> list_to_binary(string:trim(ana_config:text("ANA_PUBLIC_URL", ""), trailing, "/"))
+            end,
+            _ = catch ets:insert(ana_settings_cache, {{?MODULE, public_url}, {Url, Now}}),
+            Url
+    end.
+
+-spec forget_public_url() -> ok.
+forget_public_url() ->
+    _ = catch ets:delete(ana_settings_cache, {?MODULE, public_url}),
+    ok.
