@@ -2203,7 +2203,14 @@ class TestSupplyChain(Base):
         s, c, _ = http("POST", "/api/sql", {"sql": "SELECT account, debit, credit FROM finance.journal_line WHERE entry_id = "
                                                   f"{r['entry']} ORDER BY account"}, self.token)
         lines = {row[0]: (Decimal(row[1]), Decimal(row[2])) for row in c["rows"]}
-        self.assertEqual(lines, {"1.1.3": (Decimal("128.40"), 0), "2.1.1": (0, Decimal("128.40"))})
+        # Spec 038: the receipt clears "goods received" against the supplier; the database posted the stock
+        # (D inventory / C goods received) from the valued movement, at the price of the order.
+        self.assertEqual(lines, {"2.1.3": (Decimal("128.40"), 0), "2.1.1": (0, Decimal("128.40"))})
+        s, c, _ = http("POST", "/api/sql", {"sql": "SELECT l.account, sum(l.debit), sum(l.credit) FROM finance.journal_line l "
+                                                  "WHERE l.entry_id IN (SELECT entry_id FROM inventory.stock_movement WHERE document = "
+                                                  f"'{r['document']}') GROUP BY 1 ORDER BY 1"}, self.token)
+        lines = {row[0]: (Decimal(row[1]), Decimal(row[2])) for row in c["rows"]}
+        self.assertEqual(lines, {"1.1.3": (Decimal("128.40"), 0), "2.1.3": (0, Decimal("128.40"))})
         # CA-013-06: 6 + 5 > 10 (tolerance 0) → refused by the database, nothing changes.
         e = self.err("supply.receive", order=number, line=1, quantity=5)
         self.assertEqual(e.code, "OVER_RECEIPT")
@@ -3010,8 +3017,8 @@ class TestProduction(Base):
         self.ok("production.save_resource", code=f"R{self.sfx}", name="Bancada de montagem", cost_per_hour="60")
         self.ok("production.save_structure", product=x, lines=[{"component": c1, "quantity": 1}, {"component": c2, "quantity": 2}])
         self.ok("production.save_routing", product=x, operations=[{"resource": f"R{self.sfx}", "description": "montagem", "run_min": 6}])
-        self.ok("inventory.stock_in", product=c1, quantity=10)
-        self.ok("inventory.stock_in", product=c2, quantity=20)
+        self.ok("inventory.stock_in", product=c1, quantity=10, unit_cost="2.50")
+        self.ok("inventory.stock_in", product=c2, quantity=20, unit_cost="1.00")
         o = self.ok("production.create_order", product=x, quantity=10, due_date=self.monday(1).isoformat())
         self.assertEqual(Decimal(o["std_cost"]), Decimal("105.00"))                       # 25 + 20 + 1 h × 60
         n = o["order"]
@@ -3021,13 +3028,21 @@ class TestProduction(Base):
         c1_before, c2_before = bal(c1), bal(c2)
         self.ok("production.issue_components", order=n)
         self.assertEqual((c1_before - bal(c1), c2_before - bal(c2)), (10, 20))
+        self.ok("inventory.stock_in", product=c1, quantity=5, unit_cost="2.50")    # balance, so the refusal is the over-issue
         self.assertEqual(self.err("production.issue_components", order=n, lines=[{"line": 1, "quantity": 5}]), "OVER_ISSUE")
         self.ok("production.report_operation", order=n, seq=10, hours="1.5", good_qty=9, scrap_qty=1)
         self.ok("production.deliver", order=n, good_qty=9, scrap_qty=1)
         self.assertEqual(bal(x), 9)
+        # Spec 038: the finished goods entered at the standard cost (105 / 10 per unit).
+        self.assertEqual(Decimal(self.scalar(f"SELECT sum(value) FROM inventory.stock_movement WHERE document = 'OP-{n}' "
+                                             "AND reason = 'production_receipt'")), Decimal("94.50"))
         r = self.ok("production.close_order", order=n)
-        self.assertEqual((Decimal(r["actual_cost"]), Decimal(r["components"]), Decimal(r["hours_cost"]), Decimal(r["variance"])),
-                         (Decimal("135.00"), Decimal("45.00"), Decimal("90.00"), Decimal("30.00")))
+        # Components leave at the stock's average cost (what was really consumed).
+        issued = Decimal(self.scalar(f"SELECT -sum(value) FROM inventory.stock_movement WHERE document = 'OP-{n}' "
+                                     "AND reason = 'production_issue'"))
+        self.assertEqual((Decimal(r["components"]), Decimal(r["hours_cost"])), (issued, Decimal("90.00")))
+        self.assertEqual(Decimal(r["actual_cost"]), issued + 90)
+        self.assertEqual(Decimal(r["variance"]), issued + 90 - 105)
         wip = self.scalar("SELECT COALESCE(sum(l.debit - l.credit), 0) FROM finance.journal_line l JOIN finance.journal_entry e "
                           f"ON e.id = l.entry_id WHERE e.document LIKE 'OP-{n}%' AND l.account = '1.1.5'")
         self.assertEqual(Decimal(wip), 0)                                                  # WIP cleared at closing
@@ -3381,10 +3396,16 @@ class TestPaymentTermsCredit(Base):
     def overdue_bill(self, customer, days, amount=50):
         name = f"test.overdue_{SUFFIX}"
         if name not in CREATED_PROGRAMS:
+            # Spec 038: even test bills carry their entry, so the customers reconciliation stays at zero.
             self.save(name, "def main(customer, days, amount):\n"
-                            "    return ana.sql_value(\"INSERT INTO finance.bill (kind, party_id, document, issue_date, due_date, amount) \"\n"
-                            "        \"VALUES ('receivable', $1, 'TESTE-ATRASO', current_date - $2::int - 30, current_date - $2::int, $3::numeric) RETURNING id\",\n"
-                            "        customer, days, amount)\n")
+                            "    e = ana.sql_value(\"INSERT INTO finance.journal_entry (memo, document, created_by) \"\n"
+                            "        \"VALUES ('Teste de atraso', 'TESTE-ATRASO', $1) RETURNING id\", ana.context.user)\n"
+                            "    ana.sql_exec(\"INSERT INTO finance.journal_line (entry_id, account, debit, credit) VALUES \"\n"
+                            "        \"($1, finance.account_for('customers'), $2::numeric, 0), ($1, finance.account_for('sales_revenue'), 0, $2::numeric)\",\n"
+                            "        e, amount)\n"
+                            "    return ana.sql_value(\"INSERT INTO finance.bill (kind, party_id, document, issue_date, due_date, amount, entry_id) \"\n"
+                            "        \"VALUES ('receivable', $1, 'TESTE-ATRASO', current_date - $2::int - 30, current_date - $2::int, $3::numeric, $4) RETURNING id\",\n"
+                            "        customer, days, amount, e)\n")
         return self.ok(name, customer=customer, days=days, amount=amount)
 
     def order(self, customer, **extra):
@@ -3714,7 +3735,7 @@ class TestTransports(Base):
         self.assertIn(a, c["current"])                                       # side-by-side comparison source
 
     def test_ca_034_05_masked_copy_dry_run(self):
-        email, doc = f"segredo{SUFFIX}@empresa-real.com.br", f"12.345.{SUFFIX[-3:]}/0001-99"
+        email, doc = f"segredo{SUFFIX}@empresa-real.com.br", f"{SUFFIX[-8:-6]}.{SUFFIX[-6:-3]}.{SUFFIX[-3:]}/0001-99"
         name = f"Cliente Sigiloso {SUFFIX}"
         p1 = self.client.call("base.save_party", name=name, email=email, tax_id=doc, state="SP")["id"]
         p2 = self.client.call("base.save_party", name=f"Outra {SUFFIX}", email=email, state="SP")["id"]
@@ -4520,3 +4541,167 @@ class TestPublicApi(Base):
         name = self.program("semescopo", "def main():\n    return 1\n")
         c = self.new_client(scopes=[])
         self.assertEqual(self.rpc(self.token_for(c), name)[1]["error"]["code"], -32601)
+
+
+# ---------------------------------------------------------------- spec 038
+class TestIntegratedProcesses(Base):
+    """Valued stock with automatic accounting, counts, freight, reconciliations and period close."""
+
+    @classmethod
+    def setUpClass(cls):
+        super().setUpClass()
+        c = cls.client
+        cls.item = f"VAL{SUFFIX}"
+        c.call("base.save_product", code=cls.item, description=f"Item valorizado {SUFFIX}", price="50")
+        cls.supplier = c.call("base.save_party", kind="supplier", name=f"Fornecedor Valor {SUFFIX}")["id"]
+        cls.customer = c.call("base.save_party", kind="customer", name=f"Cliente Valor {SUFFIX}")["id"]
+        c.call("supply.save_supplier_item", product=cls.item, supplier=cls.supplier, price="10.00", preferred=True)
+        cls.requester, token = new_user("user")
+        cls.req_client = Ana(URL, token=token)
+
+    def ok(self, program, **params):
+        return self.client.call(program, **params)
+
+    def reconciliation(self):
+        return {k: Decimal(str(v)) for k, v in self.ok("finance.reconciliations")["items"].items()}
+
+    def item_cost(self):
+        s, c, _ = http("POST", "/api/sql", {"sql": "SELECT c.quantity, c.value, c.avg_cost FROM inventory.item_cost c JOIN base.product p "
+                                                  f"ON p.id = c.product_id WHERE p.code = '{self.item}'"}, self.token)
+        return tuple(Decimal(x) for x in c["rows"][0])
+
+    def entry_lines(self, where):
+        s, c, _ = http("POST", "/api/sql", {"sql": "SELECT l.account, sum(l.debit), sum(l.credit) FROM finance.journal_line l "
+                                                  f"WHERE l.entry_id IN (SELECT entry_id FROM inventory.stock_movement WHERE {where}) "
+                                                  "GROUP BY 1 ORDER BY 1"}, self.token)
+        self.assertEqual(s, 200, c)
+        return {r[0]: (Decimal(r[1]), Decimal(r[2])) for r in c["rows"]}
+
+    def test_ca_038_01_moving_average_and_cost_of_goods_sold(self):
+        before = self.reconciliation()
+        r = self.req_client.call("supply.request_purchase", reason="valorização", product=self.item, quantity=20)
+        self.ok("supply.approve_request", request=r["number"])
+        order = self.ok("supply.create_orders", requests=[r["number"]])["orders"][0]
+        self.ok("supply.receive", order=order, line=1, quantity=10, price="10")
+        self.ok("supply.receive", order=order, line=1, quantity=10, price="20")
+        q, value, avg = self.item_cost()
+        self.assertEqual((q, value, avg), (Decimal(20), Decimal("300.00"), Decimal("15.000000")))
+        o = self.ok("sales.create_order", customer=self.customer, items=[{"product": self.item, "quantity": 5}])
+        self.ok("sales.invoice_order", number=o["number"])
+        self.assertEqual(self.entry_lines(f"document = 'ORD-{o['number']}' AND reason = 'sale'"),
+                         {"1.1.3": (0, Decimal("75.00")), "5.1.1": (Decimal("75.00"), 0)})
+        self.assertEqual(self.item_cost()[:2], (Decimal(15), Decimal("225.00")))
+        # Every subledger moved together with the ledger: no difference appeared (CA-038-05).
+        self.assertEqual(self.reconciliation(), before)
+
+    def test_ca_038_02_movement_from_any_path_is_posted_and_immutable(self):
+        name = f"test.valor_sql_{SUFFIX}"
+        self.save(name, "def main(code):\n"
+                        "    return ana.sql_value(\"INSERT INTO inventory.stock_movement (product_id, warehouse_id, quantity, kind, \"\n"
+                        "        \"document, created_by) SELECT p.id, w.id, 2, 'in', 'SQL-DIRETO', 'teste' FROM base.product p, \"\n"
+                        "        \"inventory.warehouse w WHERE p.code = $1 AND w.code = 'CENTRAL' RETURNING id\", code)\n", exposed=True)
+        before = self.reconciliation()
+        mid = self.ok(name, code=self.item)
+        s, c, _ = http("POST", "/api/sql", {"sql": f"SELECT reason, entry_id IS NOT NULL, value FROM inventory.stock_movement WHERE id = {mid}"},
+                       self.token)
+        reason, posted, value = c["rows"][0]
+        self.assertEqual((reason, posted), ("adjustment_in", True))       # old/client program without reason: an adjustment
+        self.assertEqual(self.entry_lines(f"id = {mid}"), {"1.1.3": (Decimal(value), 0), "4.3.1": (0, Decimal(value))})
+        self.assertEqual(self.reconciliation(), before)
+        changer = f"test.valor_altera_{SUFFIX}"
+        self.save(changer, "def main(mid):\n    ana.sql_exec('UPDATE inventory.stock_movement SET quantity = 1 WHERE id = $1', mid)\n",
+                  exposed=True)
+        with self.assertRaises(AnaRemoteError) as ctx:
+            self.ok(changer, mid=mid)
+        self.assertIn("MOVEMENT_IMMUTABLE", str(ctx.exception))
+
+    def test_ca_038_03_count_adjusts_with_value_and_entry(self):
+        self.ok("inventory.stock_in", product=self.item, quantity=10, unit_cost="12")
+        before = self.reconciliation()
+        bal = Decimal(self.scalar(f"SELECT sum(m.quantity) FROM inventory.stock_movement m JOIN base.product p ON p.id = m.product_id "
+                                  f"JOIN inventory.warehouse w ON w.id = m.warehouse_id WHERE p.code = '{self.item}' AND w.code = 'CENTRAL'"))
+        lines = [{"product": self.item, "counted": str(bal - 2)}]
+        preview = self.ok("inventory.count", warehouse="CENTRAL", lines=lines)
+        self.assertEqual((preview["preview"], preview["differences"]), (True, 1))
+        self.assertEqual(Decimal(self.scalar(f"SELECT count(*) FROM inventory.stock_movement WHERE document LIKE 'INV-%' AND product_id = "
+                                             f"(SELECT id FROM base.product WHERE code = '{self.item}')")), 0)   # preview writes nothing
+        avg = self.item_cost()[2]
+        r = self.ok("inventory.count", warehouse="CENTRAL", lines=lines, confirm=True)
+        loss = (2 * avg).quantize(Decimal("0.01"))
+        self.assertEqual(self.entry_lines(f"document = '{r['document']}'"), {"1.1.3": (0, loss), "5.4.1": (loss, 0)})
+        self.assertEqual(self.reconciliation(), before)
+        # Loss and quarantine also go through the valued path.
+        w = self.ok("inventory.write_off", product=self.item, quantity=1, reason="embalagem avariada")
+        self.assertEqual(self.entry_lines(f"document = '{w['document']}'"), {"1.1.3": (0, Decimal(str(w["value"]))),
+                                                                              "5.4.1": (Decimal(str(w["value"])), 0)})
+        self.assertEqual(self.reconciliation(), before)
+        # A return waits in quarantine; releasing is a transfer (no entry), scrapping is a valued loss.
+        ret = self.ok("logistics.register_return", customer=self.customer, quarantine=True, reason="inspeção",
+                      items=[{"product": self.item, "quantity": 2, "price": "50"}])
+        self.assertEqual(self.entry_lines(f"document = 'DEV-{ret['return']}'"), {"1.1.3": (Decimal(str(2 * self.item_cost()[2])).quantize(Decimal("0.01")), 0),
+                                                                              "5.1.1": (0, Decimal(str(2 * self.item_cost()[2])).quantize(Decimal("0.01")))})
+        rel = self.ok("inventory.release_quarantine", product=self.item, quantity=1, decision="release", to_warehouse="CENTRAL")
+        self.assertEqual(self.entry_lines(f"document = '{rel['document']}'"), {})
+        scr = self.ok("inventory.release_quarantine", product=self.item, quantity=1, decision="scrap", note="sem conserto")
+        self.assertEqual(self.entry_lines(f"document = '{scr['document']}'")["5.4.1"][0], Decimal(str(scr["value"])))
+        after = self.reconciliation()
+        self.assertEqual((after["inventory"], after["customer_credits"]), (before["inventory"], before["customer_credits"]))
+
+    def test_ca_038_04_freight_becomes_carrier_bill_and_freight_revenue(self):
+        self.ok("inventory.stock_in", product=self.item, quantity=3, unit_cost="15")
+        carrier = self.ok("logistics.save_carrier", name=f"Transportes Valor {SUFFIX}")["id"]
+        o = self.ok("sales.create_order", customer=self.customer, items=[{"product": self.item, "quantity": 1}])
+        before = self.reconciliation()
+        s = self.ok("logistics.ship", order=o["number"], carrier=carrier, freight_cost="30", freight_charged="12")
+        s2, c, _ = http("POST", "/api/sql", {"sql": "SELECT b.kind, b.amount, b.account, b.party_id = cr.party_id FROM logistics.shipment sh "
+                                                   "JOIN finance.bill b ON b.id = sh.freight_bill_id JOIN logistics.carrier cr ON cr.id = sh.carrier_id "
+                                                   f"WHERE sh.number = {s['shipment']}"}, self.token)
+        kind, amount, account, same_party = c["rows"][0]
+        self.assertEqual((kind, Decimal(amount), account, same_party), ("payable", Decimal("30.00"), "2.1.1", True))
+        inv = self.ok("sales.invoice_order", number=o["number"])
+        s2, c, _ = http("POST", "/api/sql", {"sql": "SELECT l.account, l.credit FROM finance.journal_line l JOIN finance.journal_entry e "
+                                                   f"ON e.id = l.entry_id WHERE e.document = 'ORD-{o['number']}' AND l.account IN ('4.1.1', '4.1.3') "
+                                                   "AND l.credit > 0 ORDER BY 1"}, self.token)
+        self.assertEqual([(r[0], Decimal(r[1])) for r in c["rows"]], [("4.1.1", Decimal(inv["total"]) - 12), ("4.1.3", Decimal("12.00"))])
+        self.assertEqual(self.reconciliation(), before)
+
+    def test_ca_038_05_difference_is_shown_and_becomes_a_notice(self):
+        before = self.reconciliation()
+        self.ok("finance.post_entry", memo="ajuste errado de propósito (teste)", lines=[
+            {"account": "1.1.3", "debit": "1.00"}, {"account": "4.3.1", "credit": "1.00"}])
+        after = self.reconciliation()
+        self.assertEqual(after["inventory"], before["inventory"] - 1)
+        detail = self.ok("finance.reconciliations", key="inventory")
+        self.assertGreaterEqual(detail["manual_entries"], 1)                 # the manual entry is pointed out
+        s, c, _ = http("POST", "/api/admin/checks/run", {"category": "integrity"}, self.token)
+        self.assertEqual(s, 200, c)
+        s, c, _ = http("GET", "/api/admin/checks?category=integrity&status=open", token=self.token)
+        found = [f for f in c["findings"] if f["rule"] == "ledger_reconciliation" and f["target"] == "inventory"]
+        self.assertEqual(len(found), 1)
+        self.assertEqual(found[0]["severity"], "critical")
+        # Undo by a counter entry; the finding resolves itself at the next run when the difference is back.
+        self.ok("finance.post_entry", memo="estorno do ajuste de teste", lines=[
+            {"account": "4.3.1", "debit": "1.00"}, {"account": "1.1.3", "credit": "1.00"}])
+        self.assertEqual(self.reconciliation(), before)
+        if before["inventory"] == 0:
+            http("POST", "/api/admin/checks/run", {"category": "integrity"}, self.token)
+            s, c, _ = http("GET", "/api/admin/checks?category=integrity&status=open", token=self.token)
+            self.assertFalse([f for f in c["findings"] if f["rule"] == "ledger_reconciliation" and f["target"] == "inventory"])
+
+    def test_ca_038_11_closed_period_refuses_entries(self):
+        old = datetime.date.today() - datetime.timedelta(days=3650)
+        current = self.scalar("SELECT finance.closed_until()")
+        if current:
+            old = max(old, datetime.date.fromisoformat(str(current)[:10]) + datetime.timedelta(days=1))
+        self.ok("finance.close_period", action="close", until=old.isoformat())
+        try:
+            with self.assertRaises(AnaRemoteError) as ctx:
+                self.ok("finance.post_entry", memo="lançamento em período fechado", entry_date=old.isoformat(), lines=[
+                    {"account": "1.1.1", "debit": "1.00"}, {"account": "3.1.1", "credit": "1.00"}])
+            self.assertIn("PERIOD_CLOSED", str(ctx.exception))
+            with self.assertRaises(AnaRemoteError):
+                self.ok("finance.close_period", action="reopen", until=(old - datetime.timedelta(days=1)).isoformat())   # no reason
+        finally:
+            # Leave the base as it was: reopen to before any entry (history keeps both actions).
+            self.ok("finance.close_period", action="reopen", until=(old - datetime.timedelta(days=1)).isoformat(),
+                    reason="teste automatizado do fechamento")

@@ -37,8 +37,8 @@ def main(memo, lines, entry_date=None, document=None):
         raise ana.Error("UNBALANCED", f"débitos ({sum(x[1] for x in clean)}) diferentes dos créditos ({sum(x[2] for x in clean)})")
     if document and document.upper().startswith("RATEIO-"):
         raise ana.Error("INVALID_PARAMETER", "documentos RATEIO- são reservados ao rateio")
-    entry = ana.sql_value("INSERT INTO finance.journal_entry (entry_date, memo, document, created_by) "
-                          "VALUES (COALESCE($1, current_date), $2, $3, $4) RETURNING id",
+    entry = ana.sql_value("INSERT INTO finance.journal_entry (entry_date, memo, document, created_by, manual) "
+                          "VALUES (COALESCE($1, current_date), $2, $3, $4, true) RETURNING id",
                           entry_date, memo.strip(), document, ana.context.user)
     try:
         ana.sql_batch("INSERT INTO finance.journal_line (entry_id, account, debit, credit, cost_center) "

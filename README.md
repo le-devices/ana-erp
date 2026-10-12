@@ -382,6 +382,36 @@ OS. A fatura de pedido ou de OS tem PDF (itens, parcelas, vencimentos e dados
 de pagamento), gerado no faturamento e guardado na pasta "Faturas" do
 cliente — o título e Minhas faturas abrem o PDF numa aba.
 
+## Processos integrados e conciliações (spec 038)
+
+Princípio P17: um fato de negócio é registrado uma vez e gera, na mesma
+transação, tudo o que dele decorre. O estoque tem **valor** (custo médio
+ponderado móvel por item): cada movimentação informa só o motivo (compra,
+venda, peça de OS, material de projeto, devolução, ajuste, perda, descarte,
+produção, transferência) e o **banco** calcula o custo e faz o lançamento
+contábil, por documento — inclusive o custo das mercadorias vendidas. Nenhum
+caminho, nem SQL direto, cria movimentação sem lançamento; movimentação
+gravada não se altera nem se apaga.
+
+- **Inventário físico** (`contagem`): digite o contado, veja saldo,
+  diferença e valor, confirme — sobras e faltas são lançadas sozinhas.
+  `baixa_estoque` (perda/descarte) e `quarentena` (liberar ou descartar
+  devoluções em inspeção).
+- **Frete**: a transportadora é também fornecedor; o frete da expedição vira
+  título a pagar e despesa; o frete cobrado do cliente vai para a receita de
+  frete.
+- **Conciliações** (`conciliacoes`): clientes, fornecedores, créditos de
+  clientes, estoque, recebimentos a faturar, produtos em elaboração e
+  documentos sem lançamento, cada um contra a contabilidade — verde quando
+  bate; quando não, o detalhe mostra os documentos e os lançamentos manuais
+  que explicam a diferença. A verificação periódica de integridade avisa o
+  administrador na hora.
+- **Fechamento** (`fechamento`, administrador): lançamentos com data até o
+  mês fechado são recusados pelo banco; reabrir pede motivo e fica no
+  histórico.
+- Instalação existente: depois de atualizar, rode uma vez
+  `finance.inventory_opening_adjustment` (ajuste inicial do estoque).
+
 ## API pública (spec 010)
 
 Sites e sistemas de terceiros chamam programas **expostos** por `/rpc`
@@ -666,7 +696,7 @@ correspondentes são só o valor inicial).
 
 ## Situação das specs
 
-Implementadas: 001–008, 011 (com usuários robô e dono obrigatório), 012, 018, 021, 019 (faltam alertas configuráveis e OpenTelemetry), 013, 014, 015, 016 (faltam S3 e antivírus), 017 (faltam SFTP/pasta/e-mail, mTLS, CNAB e pacotes de modelos), 022, 023, 024, 025, 026, 027, 028, 029, 030, 031, 032, 033, 035, 036, 037 (falta base OSV por conector), 034 (faltam agendamentos e migrações no pacote, envio por conector), 010 (faltam PKCE com consentimento, TOTP, HTTP/2 e cache, disjuntor; vazão de 1.000 chamadas/s aguarda decisão); 020 parcial (falta próxima ação
+Implementadas: 001–008, 011 (com usuários robô e dono obrigatório), 012, 018, 021, 019 (faltam alertas configuráveis e OpenTelemetry), 013, 014, 015, 016 (faltam S3 e antivírus), 017 (faltam SFTP/pasta/e-mail, mTLS, CNAB e pacotes de modelos), 022, 023, 024, 025, 026, 027, 028, 029, 030, 031, 032, 033, 035, 036, 037 (falta base OSV por conector), 034 (faltam agendamentos e migrações no pacote, envio por conector), 038 fase 1 (processos integrados: estoque valorizado com lançamento automático, inventário, frete, conciliações, fechamento), 010 (faltam PKCE com consentimento, TOTP, HTTP/2 e cache, disjuntor; vazão de 1.000 chamadas/s aguarda decisão); 020 parcial (falta próxima ação
 sugerida, fluxos guiados e auditoria de acessibilidade).
 Na fila (ordem em [scripts/pending-work.prompt.md](scripts/pending-work.prompt.md)):
 009 licenciamento aguarda decisões; depois 020 (restante) e as tarefas adiadas.

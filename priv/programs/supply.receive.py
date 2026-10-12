@@ -69,7 +69,9 @@ def main(order, line=None, quantity=None, price=None, document=None, note=None, 
         unit = Decimal(str(item["price"])) if item.get("price") is not None else l["price"]
         amount = (qty * unit).quantize(CENT, rounding=ROUND_HALF_UP)
         dest = "project" if l["project_id"] else ("stock" if l["kind"] == "goods" else "service")
-        key = {"project": ("project_costs", l["cost_center"]), "stock": ("inventory", None),
+        # Spec 038: goods are valued and posted by the database (D inventory / C goods_received);
+        # here the receipt clears goods_received against the supplier.
+        key = {"project": ("project_costs", l["cost_center"]), "stock": ("goods_received", None),
                "service": ("purchased_services", l["cost_center"])}[dest]
         journal[key] = journal.get(key, Decimal(0)) + amount
         total += amount
@@ -87,7 +89,7 @@ def main(order, line=None, quantity=None, price=None, document=None, note=None, 
         movement = expense = None
         if dest == "stock":
             movement = next(moves)
-            move_rows.append([movement, l["product_id"], o["warehouse_id"], qty, doc, ana.context.user])
+            move_rows.append([movement, l["product_id"], o["warehouse_id"], qty, doc, ana.context.user, str(unit)])
         elif dest == "project":
             expense = next(expenses)
             exp_rows.append([expense, l["project_id"], KIND_OF_EXPENSE[l["kind"]], f"{l['description']} ({doc})",
@@ -96,8 +98,8 @@ def main(order, line=None, quantity=None, price=None, document=None, note=None, 
         rows.append({"linha": n, "item": l["code"], "quantidade": qty, "unitário": unit, "valor": amount,
                      "destino": {"project": "projeto", "stock": "estoque", "service": "aceite de serviço"}[dest]})
     if move_rows:
-        ana.sql_batch("INSERT INTO inventory.stock_movement (id, product_id, warehouse_id, quantity, kind, document, created_by) "
-                      "VALUES ($1, $2, $3, $4, 'in', $5, $6)", move_rows)
+        ana.sql_batch("INSERT INTO inventory.stock_movement (id, product_id, warehouse_id, quantity, kind, document, created_by, "
+                      "  reason, unit_cost) VALUES ($1, $2, $3, $4, 'in', $5, $6, 'purchase', $7::numeric)", move_rows)
     if exp_rows:
         ana.sql_batch("INSERT INTO projects.expense (id, project_id, kind, description, supplier_id, product_id, quantity, "
                       "  unit_cost, rebillable, created_by) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)", exp_rows)

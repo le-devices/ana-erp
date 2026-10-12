@@ -17,8 +17,9 @@ ON CONFLICT DO NOTHING;
 INSERT INTO inventory.warehouse (code, description) VALUES ('LAB', 'Almoxarifado do laboratório')
 ON CONFLICT DO NOTHING;
 
-INSERT INTO inventory.stock_movement (product_id, warehouse_id, quantity, kind, document, created_by)
-SELECT p.id, w.id, q.qty, 'in', 'OPENING-BALANCE', 'system'
+-- Spec 038: opening balance at an estimated cost (60 % of the price); the database posts it against opening balances.
+INSERT INTO inventory.stock_movement (product_id, warehouse_id, quantity, kind, document, created_by, reason, unit_cost)
+SELECT p.id, w.id, q.qty, 'in', 'OPENING-BALANCE', 'system', 'opening', round(p.price * 0.6, 2)
 FROM (VALUES ('MCU-ARM-M4', 50), ('SENSOR-IMU', 40), ('MOD-LORA', 20)) AS q(product, qty)
 JOIN base.product p ON p.code = q.product
 JOIN inventory.warehouse w ON w.code = 'LAB';

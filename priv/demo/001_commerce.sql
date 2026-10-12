@@ -24,8 +24,9 @@ INSERT INTO inventory.warehouse (code, description) VALUES
     ('LOJA', 'Depósito da loja')
 ON CONFLICT DO NOTHING;
 
-INSERT INTO inventory.stock_movement (product_id, warehouse_id, quantity, kind, document, created_by)
-SELECT p.id, w.id, q.qty, 'in', 'OPENING-BALANCE', 'system'
+-- Spec 038: opening balance at an estimated cost (60 % of the price); the database posts it against opening balances.
+INSERT INTO inventory.stock_movement (product_id, warehouse_id, quantity, kind, document, created_by, reason, unit_cost)
+SELECT p.id, w.id, q.qty, 'in', 'OPENING-BALANCE', 'system', 'opening', round(p.price * 0.6, 2)
 FROM (VALUES ('CAFE-500', 'CENTRAL', 200), ('ARROZ-5', 'CENTRAL', 150),
              ('FEIJAO-1', 'CENTRAL', 300), ('OLEO-900', 'CENTRAL', 120),
              ('ACUCAR-1', 'CENTRAL', 250), ('CAFE-500', 'LOJA', 30),

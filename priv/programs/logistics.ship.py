@@ -74,6 +74,9 @@ def main(order, lines=None, carrier=None, tracking=None, packages=1, weight_kg=N
     ana.sql_batch("INSERT INTO logistics.shipment_line (shipment_id, order_line, product_id, quantity) VALUES ($1, $2, $3, $4)",
                   [[s["id"], n, pending[n]["product_id"], q] for n, q in wanted])
     moved = False
+    # Spec 038: the cost of goods sold and the freight go to the order's cost center (or the warehouse's).
+    ana.sql("SELECT set_config('ana.cost_center', COALESCE((SELECT COALESCE(so.cost_center, w.cost_center) FROM sales.sales_order so "
+            "JOIN inventory.warehouse w ON w.id = so.warehouse_id WHERE so.id = $1), ''), true)", o["id"])
     if stage in ("packed", "shipped"):
         ana.sql_exec("UPDATE logistics.shipment SET status = 'packed' WHERE id = $1", s["id"])
     if stage == "shipped":
@@ -81,10 +84,11 @@ def main(order, lines=None, carrier=None, tracking=None, packages=1, weight_kg=N
             need = {}
             for n, q in wanted:
                 need[pending[n]["product_id"]] = need.get(pending[n]["product_id"], Decimal(0)) + q
-            common.take_stock(o["warehouse_id"], need, f"EXP-{s['number']}")
+            common.take_stock(o["warehouse_id"], need, f"EXP-{s['number']}", "sale")
             moved = True
         ana.sql_exec("UPDATE logistics.shipment SET status = 'shipped', shipped_at = now(), stock_moved = $2, "
                      "expected_date = COALESCE(expected_date, current_date + 3) WHERE id = $1", s["id"], moved)
+        freight_bill(s, carrier, freight_cost)
     state = ana.sql_value("SELECT state FROM logistics.order_shipping WHERE sales_order_id = $1", o["id"])
     labels = {"none": "nada expedido", "partial": "expedido em parte", "full": "totalmente expedido"}
     ana.log(f"expedição {s['number']} do pedido {o['number']}: {labels[state]}")
@@ -92,3 +96,24 @@ def main(order, lines=None, carrier=None, tracking=None, packages=1, weight_kg=N
         pdfs.publish_quietly("shipment", s["number"])  # spec 037: packing list for the customer
     return {"shipment": s["number"], "status": stage, "order_state": state, "freight_cost": freight_cost, "stock_moved": moved,
             "shipped_on": datetime.date.today() if stage == "shipped" else None}
+
+
+def freight_bill(s, carrier, cost):
+    """Spec 038 (RF-038-03): the carrier's freight is a payable bill and an expense, in the same unit of work."""
+    if not cost or cost <= 0 or not carrier:
+        return None
+    c = ana.sql_one("SELECT party_id, name FROM logistics.carrier WHERE id = $1", carrier)
+    if not c or not c["party_id"]:
+        raise ana.Error("CARRIER_WITHOUT_SUPPLIER", f"a transportadora {c and c['name']} não está ligada a um fornecedor; "
+                        "salve-a de novo em logistics.save_carrier")
+    doc = f"FRT-{s['number']}"
+    entry = ana.sql_value("INSERT INTO finance.journal_entry (memo, document, created_by) VALUES ($1, $2, $3) RETURNING id",
+                          f"Frete da expedição {s['number']} — {c['name']}"[:200], doc, ana.context.user)
+    ana.sql_batch("INSERT INTO finance.journal_line (entry_id, account, debit, credit) VALUES ($1, finance.account_for($2), $3, $4)",
+                  [[entry, "freight_expense", cost, 0], [entry, "suppliers", 0, cost]])
+    days = ana.sql_value("SELECT COALESCE(default_payment_days, 30) FROM supply.policy WHERE id = 1") or 30
+    bill = ana.sql_value("INSERT INTO finance.bill (kind, party_id, document, due_date, amount, entry_id, account) "
+                         "VALUES ('payable', $1, $2, current_date + $3::int, $4, $5, finance.account_for('suppliers')) RETURNING id",
+                         c["party_id"], doc, days, cost, entry)
+    ana.sql_exec("UPDATE logistics.shipment SET freight_bill_id = $2 WHERE id = $1", s["id"], bill)
+    return bill

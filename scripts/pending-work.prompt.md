@@ -30,6 +30,9 @@ Você trabalha no projeto ANA ERP em /home/andre/ana-erp: um ERP com núcleo Erl
 15b. 036 — instalação pelo cliente, local e nuvem, com passos definidos (`specs/036-installation`) — implementada; T-036-07b e 08b ficam para o fim da fila
 15c. 037 — documentos para clientes e fornecedores em PDF, download controlado (`specs/037-customer-documents`) — implementada; T-037-06b fica para o fim da fila
 16. 010 — API pública (`specs/010-public-api`) — implementada; T-010-06b, 10b, 11b, 12b e 14b ficam para o fim da fila
+16a. 038 — processos integrados e conciliação automática (`specs/038-integrated-processes`) — fase 1 implementada; fases 2–4 (T-038-08..15) são os próximos itens
+16b. 039 — BPM: modelagem, simulação e execução de processos (`specs/039-bpm`)
+16c. 040 — dados mestres padronizados (`specs/040-master-data`)
 17. 009 — licenciamento (`specs/009-licensing`): é rascunho com decisões em aberto; NÃO implemente — liste as decisões necessárias no relatório e pare.
 18. 020 — tarefas restantes da arquitetura da informação: próxima ação sugerida, fluxos guiados, continuidade (T-020-09..11) e auditoria de acessibilidade (T-020-07). Itens de fluxo podem ser adiantados quando a spec em andamento precisar deles.
 

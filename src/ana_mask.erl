@@ -19,6 +19,9 @@ kind_for(Table, Column, Type, Rules) when is_map(Rules) ->
     end;
 kind_for(Table, Column, Type, _) -> catalog(Table, Column, Type).
 
+%% Spec 038: coded columns named like free text (a reason code, not a person's words) are kept.
+catalog(Table, <<"reason">>, _) when Table =:= <<"inventory.stock_movement">>; Table =:= <<"inventory.posting_rule">> ->
+    <<"keep">>;
 catalog(Table, Column, Type) ->
     Text = lists:member(Type, [<<"text">>, <<"character varying">>, <<"character">>, <<"citext">>]),
     Num = lists:member(Type, [<<"numeric">>, <<"double precision">>, <<"real">>]),
