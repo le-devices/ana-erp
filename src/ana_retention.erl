@@ -54,7 +54,12 @@ categories() ->
       "integration.inbox", "received_at", "status IN ('done', 'discarded')"},
      %% Spec 030: finished flow instances (their steps go with them); open ones stay.
      {flows, <<"Esteiras concluídas ou canceladas"/utf8>>, retention_execution_days,
-      "flow.instance", "finished_at", "status IN ('done', 'cancelled')"}].
+      "flow.instance", "finished_at", "status IN ('done', 'cancelled')"},
+     %% Spec 010: public API calls and daily usage (same retention as the other accesses).
+     {api_calls, <<"Chamadas da API pública"/utf8>>, retention_access_days,
+      "ana_system.api_call_log", "at", "true"},
+     {api_usage, <<"Uso diário da API pública"/utf8>>, retention_access_days,
+      "ana_system.api_usage", "day", "true"}].
 
 %% Manual purge (RF-024-09): owned by the administrator who asked.
 -spec purge_now(map()) -> {ok, binary()} | {error, term()}.

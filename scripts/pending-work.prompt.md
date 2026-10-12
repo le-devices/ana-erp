@@ -29,11 +29,11 @@ Você trabalha no projeto ANA ERP em /home/andre/ana-erp: um ERP com núcleo Erl
 15a. 035 — documentos navegáveis (`specs/035-document-navigation`) — implementada; T-035-05b fica para o fim da fila
 15b. 036 — instalação pelo cliente, local e nuvem, com passos definidos (`specs/036-installation`) — implementada; T-036-07b e 08b ficam para o fim da fila
 15c. 037 — documentos para clientes e fornecedores em PDF, download controlado (`specs/037-customer-documents`) — implementada; T-037-06b fica para o fim da fila
-16. 010 — API pública (`specs/010-public-api`)
+16. 010 — API pública (`specs/010-public-api`) — implementada; T-010-06b, 10b, 11b, 12b e 14b ficam para o fim da fila
 17. 009 — licenciamento (`specs/009-licensing`): é rascunho com decisões em aberto; NÃO implemente — liste as decisões necessárias no relatório e pare.
 18. 020 — tarefas restantes da arquitetura da informação: próxima ação sugerida, fluxos guiados, continuidade (T-020-09..11) e auditoria de acessibilidade (T-020-07). Itens de fluxo podem ser adiantados quando a spec em andamento precisar deles.
 
-Escolha o **primeiro item da lista cuja `tasks.md` ainda tenha tarefas `[ ]`** (exceções: a T-023-09 é o item 5; as T-019-08b, T-019-09b, T-017-02b, T-017-02c, T-017-05b, T-017-08b, T-016-02b, T-016-04b, T-033-09b, T-034-07b, T-034-08b, T-034-09b, T-030-06b, T-032-06b, T-035-05b, T-036-07b, T-036-08b e T-037-06b ficam para depois de todos os outros itens). Se tudo estiver `[x]`, apenas rode as suítes e relate.
+Escolha o **primeiro item da lista cuja `tasks.md` ainda tenha tarefas `[ ]`** (exceções: a T-023-09 é o item 5; as T-019-08b, T-019-09b, T-017-02b, T-017-02c, T-017-05b, T-017-08b, T-016-02b, T-016-04b, T-033-09b, T-034-07b, T-034-08b, T-034-09b, T-030-06b, T-032-06b, T-035-05b, T-036-07b, T-036-08b, T-037-06b, T-010-06b, T-010-10b, T-010-11b, T-010-12b e T-010-14b ficam para depois de todos os outros itens). Se tudo estiver `[x]`, apenas rode as suítes e relate.
 
 ## Passos
 1. `cd /home/andre/ana-erp && git status` — se houver alterações não commitadas que não são suas, não as descarte; trabalhe por cima e relate.

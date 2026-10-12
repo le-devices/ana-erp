@@ -316,6 +316,25 @@ route(<<"POST">>, [<<"datacopy">>, <<"upload">>], U, Req) ->
 route(<<"POST">>, [<<"datacopy">>, Id, <<"import">>], U, Req) ->
     with_int(Id, Req, fun(N) -> with_body(Req, fun(B, R) -> reply(ana_datacopy:import(N, B, U), R) end) end);
 
+%% --- Public API (spec 010) -------------------------------------------------
+route(<<"GET">>, [<<"api-clients">>], _U, Req) ->
+    reply(ana_api:clients(), Req);
+route(<<"POST">>, [<<"api-clients">>], U, Req) ->
+    with_body(Req, fun(B, R) -> reply(ana_api:create_client(B, U), R) end);
+route(<<"PUT">>, [<<"api-clients">>, Id], U, Req) ->
+    with_body(Req, fun(B, R) -> reply(ana_api:update_client(Id, B, U), R) end);
+route(<<"POST">>, [<<"api-clients">>, Id, <<"rotate-secret">>], U, Req) ->
+    reply(ana_api:rotate_secret(Id, U), Req);
+route(<<"POST">>, [<<"api-clients">>, Id, <<"drop-old-secret">>], U, Req) ->
+    reply(ana_api:drop_secret(Id, true, U), Req);
+route(<<"POST">>, [<<"api-clients">>, Id, <<"signing-secret">>], U, Req) ->
+    reply(ana_api:new_signing_secret(Id, U), Req);
+route(<<"GET">>, [<<"api-calls">>], _U, Req) ->
+    Q = ana_http:qs_map(Req),
+    reply(ana_api:calls(#{client => case Q of #{<<"client">> := C} when C =/= <<>> -> C; _ -> null end}), Req);
+route(<<"POST">>, [<<"api-keys">>, <<"rotate">>], U, Req) ->
+    reply(ana_api:rotate_keys(U), Req);
+
 %% --- Retention (spec 024, RF-024-08..10) ----------------------------------
 route(<<"GET">>, [<<"retention">>], _U, Req) ->
     reply(ana_retention:overview(), Req);

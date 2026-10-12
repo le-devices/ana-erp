@@ -11,7 +11,8 @@
 -define(CHANNELS, [{<<"ana_program">>, ana_program},
                    {<<"ana_setting">>, ana_settings},
                    {<<"ana_access">>, ana_access},
-                   {<<"ana_flow">>, ana_flows}]).
+                   {<<"ana_flow">>, ana_flows},
+                   {<<"ana_api">>, ana_api}]).
 
 start_link() ->
     gen_server:start_link({local, ?MODULE}, ?MODULE, [], []).

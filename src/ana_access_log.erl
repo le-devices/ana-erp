@@ -137,6 +137,14 @@ write_batches(Entries) ->
     end,
     case catch ana_db:transaction(Insert) of
         {ok, _} -> write_batches(Rest);
+        {error, #{sqlstate := <<"2", C, _/binary>>} = E} when (C =:= $2 orelse C =:= $3), length(Batch) > 1 ->
+            %% Data error (class 22/23): one bad entry must not hold back the others forever.
+            logger:warning("access log batch refused, writing one by one: ~0p", [E]),
+            _ = [write_batches([One]) || One <- Batch],
+            write_batches(Rest);
+        {error, #{sqlstate := <<"2", C, _/binary>>} = E} when C =:= $2; C =:= $3 ->
+            logger:warning("access log entry dropped: ~0p", [E]),
+            write_batches(Rest);
         {error, E} ->
             logger:warning("access log write failed: ~0p", [E]),
             error

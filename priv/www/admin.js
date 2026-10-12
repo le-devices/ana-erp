@@ -1430,6 +1430,142 @@
 
   // ------------------------------------------------------------------ navigation
   // ------------------------------------------------------------------ scheduler (spec 018)
+  // ------------------------------------------------------------------ public API (spec 010)
+  const API_KINDS = { confidential: "servidor (segredo)", browser: "navegador com login", publishable: "chave publicável (site)" };
+  const lines = (v) => v.split(/[\n,]/).map((s) => s.trim()).filter(Boolean);
+
+  function shownOnce(title, value, usage) {
+    return el("div", { class: "secret-box" },
+      el("div", { text: `${title} (copie agora: não será exibido novamente)` }),
+      el("strong", { text: value }),
+      usage ? el("div", { class: "muted", text: usage }) : null);
+  }
+
+  async function publicapi(tab = "clients", detail = null) {
+    const tabs = el("div", { class: "sub-tabs" }, [["clients", "Clientes"], ["new", "Novo cliente"], ["calls", "Chamadas"]]
+      .map(([k, l]) => el("button", { class: k === tab ? "active" : "", text: l, onclick: () => guard(() => publicapi(k)) })));
+    const head = header("API pública", "Sistemas de terceiros, sites e aplicativos chamam programas expostos por /rpc. Cada cliente " +
+      "executa como um usuário robô (toda chamada tem dono), só alcança os programas do seu escopo e tem limite por minuto e cota diária.");
+    if (tab === "new") return apiClientNew(head, tabs);
+    if (tab === "calls") return apiCallsView(head, tabs, detail);
+    if (detail) return apiClientDetail(head, tabs, detail);
+    const list = await API.admin.apiClients();
+    main().replaceChildren(...head, tabs, table([
+      { label: "Nome", value: (c) => c.name },
+      { label: "Tipo", value: (c) => API_KINDS[c.kind] || c.kind },
+      { label: "Executa como", value: (c) => c.run_as },
+      { label: "Escopo", value: (c) => c.scopes.join(", ") || "—" },
+      { label: "Hoje", value: (c) => String(c.today), class: "num" },
+      { label: "Situação", value: (c) => c.active ? pill("ativo", "ok") : pill("desativado", "off") },
+    ], list, { empty: "Nenhum cliente: a API pública está fechada.", onRow: (c) => guard(() => publicapi("clients", c.client_id)) }),
+    el("div", { class: "form-card" },
+      el("h3", { text: "Chaves de assinatura dos tokens" }),
+      el("p", { class: "muted", text: "Os tokens de acesso duram 10 minutos. Trocar a chave não derruba quem já tem token: a anterior segue valendo até eles vencerem." }),
+      el("button", { type: "button", class: "quiet", text: "Trocar chave de assinatura", onclick: () => guard(async () => {
+        if (!confirm("Gerar nova chave de assinatura dos tokens?")) return;
+        await API.admin.rotateApiKeys(); toast("Nova chave de assinatura ativa.");
+      }) })));
+  }
+
+  async function robotUsers() {
+    return (await API.admin.users("")).filter((u) => u.kind === "robot" && u.active !== false);
+  }
+
+  async function apiClientNew(head, tabs) {
+    const robots = await robotUsers();
+    const name = el("input", { type: "text", placeholder: "ex.: Loja virtual" });
+    const kind = el("select", {}, ...Object.entries(API_KINDS).map(([k, l]) => el("option", { value: k, text: l })));
+    const runAs = el("select", {}, ...robots.map((u) => el("option", { value: u.username, text: u.username })));
+    const scopes = el("textarea", { rows: 3, placeholder: "um por linha: sales.* ou sales.create_order" });
+    const origins = el("textarea", { rows: 2, placeholder: "https://loja.exemplo.com.br (um por linha)" });
+    const ips = el("input", { type: "text", placeholder: "IPs/redes permitidos, separados por vírgula (vazio = qualquer)" });
+    const rate = el("input", { type: "number", min: 1, value: 600 });
+    const quota = el("input", { type: "number", min: 1, placeholder: "vazio = sem cota" });
+    const sign = el("input", { type: "checkbox" });
+    const out = el("div");
+    kind.addEventListener("change", () => { rate.value = kind.value === "publishable" ? 60 : 600; });
+    const form = el("form", { class: "form-card" },
+      robots.length ? null : el("p", { class: "warn-text", text: "Crie antes um usuário robô (Usuários → Novo, tipo robô) com o papel e os grupos que o cliente deve ter." }),
+      field("Nome", name), field("Tipo", kind), field("Executa como (robô)", runAs), field("Escopo", scopes),
+      field("Origens permitidas (sites)", origins), field("Endereços permitidos", ips),
+      field("Chamadas por minuto", rate), field("Cota diária", quota),
+      check("Exigir requisições assinadas (HMAC)", sign),
+      el("div", { class: "row-buttons" }, el("button", { type: "submit", text: "Criar cliente" })), out);
+    form.addEventListener("submit", (e) => { e.preventDefault(); guard(async () => {
+      const r = await API.admin.createApiClient({
+        name: name.value.trim(), kind: kind.value, run_as: runAs.value, scopes: lines(scopes.value), origins: lines(origins.value),
+        ip_allow: lines(ips.value), rate_per_minute: parseInt(rate.value, 10) || 600,
+        daily_quota: quota.value ? parseInt(quota.value, 10) : null, require_signature: sign.checked,
+      });
+      out.replaceChildren(el("p", {}, "Cliente criado: ", el("code", { text: r.client_id })),
+        r.client_secret ? shownOnce("Segredo do cliente", r.client_secret, "POST /oauth/token com grant_type=client_credentials (Basic client_id:segredo)") : null,
+        r.publishable_key ? shownOnce("Chave publicável", r.publishable_key, "Cabeçalho X-Api-Key; só programas marcados como públicos, só das origens cadastradas") : null);
+      form.querySelector("button[type=submit]").disabled = true;
+    }); });
+    main().replaceChildren(...head, tabs, form);
+  }
+
+  async function apiClientDetail(head, tabs, id) {
+    const c = (await API.admin.apiClients()).find((x) => x.client_id === id);
+    if (!c) return publicapi();
+    const out = el("div");
+    const scopes = el("textarea", { rows: 3 }); scopes.value = c.scopes.join("\n");
+    const origins = el("textarea", { rows: 2 }); origins.value = c.origins.join("\n");
+    const ips = el("input", { type: "text", value: c.ip_allow.join(", ") });
+    const rate = el("input", { type: "number", min: 1, value: c.rate_per_minute });
+    const quota = el("input", { type: "number", min: 1, value: c.daily_quota ?? "" });
+    const sign = el("input", { type: "checkbox" }); sign.checked = c.require_signature;
+    const save = el("button", { type: "button", text: "Salvar", onclick: () => guard(async () => {
+      await API.admin.updateApiClient(id, { scopes: lines(scopes.value), origins: lines(origins.value), ip_allow: lines(ips.value),
+        rate_per_minute: parseInt(rate.value, 10), daily_quota: quota.value ? parseInt(quota.value, 10) : null, require_signature: sign.checked });
+      toast("Cliente atualizado (vale em todos os nós em até 5 s).");
+    }) });
+    const toggle = el("button", { type: "button", class: c.active ? "danger" : "", text: c.active ? "Desativar" : "Reativar", onclick: () => guard(async () => {
+      if (c.active && !confirm(`Desativar "${c.name}"? As chamadas param em até 5 s, mesmo com token válido.`)) return;
+      await API.admin.updateApiClient(id, { active: !c.active }); publicapi("clients", id);
+    }) });
+    const secrets = c.kind === "confidential" ? el("div", { class: "row-buttons" },
+      el("button", { type: "button", class: "quiet", text: "Gerar novo segredo", onclick: () => guard(async () => {
+        const r = await API.admin.rotateApiSecret(id);
+        out.replaceChildren(shownOnce("Novo segredo", r.client_secret, "O anterior continua valendo até você removê-lo: troque no sistema cliente e depois remova."));
+      }) }),
+      c.secrets > 1 ? el("button", { type: "button", class: "quiet", text: "Remover segredo anterior", onclick: () => guard(async () => {
+        if (!confirm("Remover o segredo anterior? Quem ainda o usa deixa de obter tokens.")) return;
+        await API.admin.dropOldApiSecret(id); toast("Segredo anterior removido."); publicapi("clients", id);
+      }) }) : null) : null;
+    const signing = el("button", { type: "button", class: "quiet", text: c.signing ? "Trocar chave de assinatura HMAC" : "Gerar chave de assinatura HMAC",
+      onclick: () => guard(async () => {
+        const r = await API.admin.apiSigningSecret(id);
+        out.replaceChildren(shownOnce("Chave HMAC", r.signing_secret, "Cabeçalhos X-Ana-Timestamp, X-Ana-Nonce e X-Ana-Signature = HMAC-SHA256(método\\ncaminho\\ntimestamp\\nnonce\\nsha256(corpo))"));
+      }) });
+    main().replaceChildren(...head, tabs,
+      el("div", { class: "form-card" },
+        el("h3", { text: c.name }),
+        el("p", {}, el("code", { text: c.client_id }), ` · ${API_KINDS[c.kind] || c.kind} · executa como ${c.run_as} · criado por ${c.created_by} em ${fmtDate(c.created_at)}`),
+        el("p", {}, c.active ? pill("ativo", "ok") : pill("desativado", "off"), ` ${c.today} chamada(s) hoje`),
+        field("Escopo", scopes), field("Origens permitidas", origins), field("Endereços permitidos", ips),
+        field("Chamadas por minuto", rate), field("Cota diária", quota), check("Exigir requisições assinadas (HMAC)", sign),
+        el("div", { class: "row-buttons" }, save, toggle,
+          el("button", { type: "button", class: "quiet", text: "Ver chamadas", onclick: () => guard(() => publicapi("calls", id)) })),
+        secrets, el("div", { class: "row-buttons" }, signing), out));
+  }
+
+  async function apiCallsView(head, tabs, client) {
+    const rows = await API.admin.apiCalls(client || "");
+    main().replaceChildren(...head, tabs,
+      client ? el("p", {}, "Cliente ", el("code", { text: client }), " ",
+        el("button", { type: "button", class: "quiet small", text: "Todos", onclick: () => guard(() => publicapi("calls")) })) : null,
+      table([
+        { label: "Quando", value: (r) => fmtDate(r.at) },
+        { label: "Cliente", value: (r) => r.client_id || "—" },
+        { label: "Autenticação", value: (r) => r.auth },
+        { label: "Programa", value: (r) => r.program || "—" },
+        { label: "Situação", value: (r) => pill(String(r.status), r.status < 300 ? "ok" : r.status === 429 ? "warn" : "off") },
+        { label: "ms", value: (r) => r.duration_ms == null ? "" : String(r.duration_ms), class: "num" },
+        { label: "Origem", value: (r) => r.ip || "" },
+      ], rows, { empty: "Nenhuma chamada registrada." }));
+  }
+
   async function scheduler() {
     const jobs = el("div"), hol = el("div"), notes = el("div");
     main().replaceChildren(
@@ -1441,7 +1577,7 @@
                        window.AnaScheduler.holidays(hol)]);
   }
 
-  const SECTIONS = { users, groups, settings, company, commands, remote, accounts, limits, consumption, scheduler, monitor, audit, retention, health, sqlperf, advice, updates, integrations, checks, transports, datacopy };
+  const SECTIONS = { users, groups, settings, company, commands, remote, accounts, limits, consumption, scheduler, monitor, audit, retention, health, sqlperf, advice, updates, integrations, checks, transports, datacopy, publicapi };
 
   function show(section) {
     refreshUpdatesCount();
