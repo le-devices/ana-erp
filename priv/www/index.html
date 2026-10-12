@@ -193,6 +193,7 @@
           <label>Tipo <select id="p-kind"><option value="program">programa</option><option value="library">biblioteca</option></select></label>
           <label>Papel mínimo <select id="p-role"><option value="user">usuário</option><option value="developer">desenvolvedor</option><option value="admin">administrador</option></select></label>
           <label class="check"><input id="p-exposed" type="checkbox"> Exposto (chamada remota)</label>
+          <label class="check" title="Pode ser chamado do navegador de qualquer visitante com uma chave publicável (API pública)"><input id="p-public" type="checkbox"> Público (chave publicável)</label>
           <label class="check"><input id="p-menu" type="checkbox"> Aparece no menu de Operação</label>
           <label class="check" title="Só membros de grupos que cobrem este programa"><input id="p-restricted" type="checkbox"> Restrito a grupos</label>
           <label class="check"><input id="p-active" type="checkbox" checked> Ativo</label>
@@ -263,6 +264,7 @@
       <button class="nav-link" data-section="audit">Auditoria</button>
       <button class="nav-link" data-section="retention">Retenção</button>
       <button class="nav-link" data-section="integrations">Integrações</button>
+      <button class="nav-link" data-section="publicapi">API pública</button>
       <div class="nav-group">Observabilidade</div>
       <button class="nav-link" data-section="checks">Verificações <span class="nav-count" id="checks-count" hidden></span></button>
       <button class="nav-link" data-section="health">Saúde</button>

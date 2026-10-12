@@ -434,6 +434,7 @@ validate_program(F) ->
         {<<"exposed">>, fun is_boolean/1},
         {<<"in_menu">>, fun is_boolean/1},
         {<<"portal">>, fun is_boolean/1},
+        {<<"public">>, fun is_boolean/1},
         {<<"restricted">>, fun is_boolean/1},
         {<<"active">>, fun is_boolean/1},
         {<<"min_role">>, fun(V) -> lists:member(V, [?ADMIN, ?DEV, ?USER]) end},

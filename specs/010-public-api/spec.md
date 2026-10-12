@@ -149,3 +149,27 @@ Recomendação documentada: sempre que possível, **S1 com o backend do site
 ## Fora de escopo
 Provedor de identidade externo (entrar com contas de terceiros) e webhooks de
 saída — candidatos a specs futuras.
+
+## Situação (implementação, outubro/2026)
+Implementados os cenários **S1** (servidor → ANA, com segredo, token Ed25519 de
+10 min e assinatura HMAC opcional) e **S3** (chave publicável, só programas
+`public`, só das origens cadastradas). O **S2** (código + PKCE, consentimento,
+renovação) e o TOTP ficaram para a fase 2 (T-010-10b, T-010-11b).
+
+Decisões tomadas na implementação:
+- Um módulo `ana_api` (clientes, tokens, limites, idempotência, assinatura) e
+  `ana_http_oauth` (`/oauth/token`), em vez dos sete módulos do plano: a
+  validação inteira acontece em memória e em um só lugar.
+- Cliente de tipo `browser` existe no cadastro, mas só obtém token quando o
+  fluxo PKCE chegar; `client_credentials` é só para `confidential`.
+- Fora do escopo, a resposta é `-32601` (igual a programa inexistente), e
+  `/rpc/functions` lista só o que o cliente alcança (RNF-010-05).
+- Mesma `Idempotency-Key` com corpo diferente → 422; chamada igual ainda em
+  andamento → a segunda espera e devolve a mesma resposta.
+- A cota diária conta o dia em UTC; o log de chamadas e o uso diário seguem a
+  retenção de acessos (spec 024).
+- Medição local (8 núcleos, nó único, `tests/load/public_api_load.py`): a
+  camada pública soma ~0,4 ms por chamada (RNF-010-11 atendido), mas a vazão de
+  um programa trivial fica em ~60 chamadas/s com p95 ~550 ms, porque cada
+  execução abre um processo Python isolado (RNF-002-07). O alvo do RNF-010-14
+  depende de decisão do dono do produto (T-010-14b).

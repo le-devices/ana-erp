@@ -113,7 +113,7 @@ def main(name="mundo"):
             class: "node" + (state.current && state.current.name === p.name ? " active" : "") + (p.active ? "" : " inactive"),
             title: p.description || p.name, onclick: () => window.AnaStudio.go(`#/dev/program/${p.name}`),
           }, el("span", { text: (p.kind === "library" ? "◇ " : "▸ ") + key.slice(0, -1) }));
-          if (p.exposed) item.append(el("span", { class: "tag exposed", text: "exposto" }));
+          if (p.exposed) item.append(el("span", { class: "tag exposed", text: p.public ? "público" : "exposto" }));
           if (p.restricted) item.append(el("span", { class: "tag restricted", text: "restrito" }));
           if (p.warning) item.append(el("span", { class: "tag warn", text: "!", title: p.warning }));
           ul.append(el("li", {}, item));
@@ -159,6 +159,7 @@ def main(name="mundo"):
     $("#p-kind").value = p.kind || "program";
     $("#p-role").value = p.min_role || "user";
     $("#p-exposed").checked = !!p.exposed;
+    $("#p-public").checked = !!p.public;
     $("#p-menu").checked = p.in_menu !== false;
     $("#p-restricted").checked = !!p.restricted;
     $("#p-active").checked = p.active !== false;
@@ -237,6 +238,7 @@ def main(name="mundo"):
       kind: $("#p-kind").value,
       min_role: $("#p-role").value,
       exposed: $("#p-exposed").checked,
+      public: $("#p-exposed").checked && $("#p-public").checked,
       in_menu: $("#p-menu").checked,
       restricted: $("#p-restricted").checked,
       active: $("#p-active").checked,
@@ -583,7 +585,7 @@ def main(name="mundo"):
       json.hidden = !json.hidden;
       $("#params-form").hidden = !json.hidden;
     });
-    for (const id of ["#p-description", "#p-kind", "#p-role", "#p-exposed", "#p-menu", "#p-restricted", "#p-active"]) {
+    for (const id of ["#p-description", "#p-kind", "#p-role", "#p-exposed", "#p-public", "#p-menu", "#p-restricted", "#p-active"]) {
       $(id).addEventListener("change", () => markDirty(true));
     }
     $("#console-form").addEventListener("submit", async (e) => {

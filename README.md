@@ -382,6 +382,34 @@ OS. A fatura de pedido ou de OS tem PDF (itens, parcelas, vencimentos e dados
 de pagamento), gerado no faturamento e guardado na pasta "Faturas" do
 cliente — o título e Minhas faturas abrem o PDF numa aba.
 
+## API pública (spec 010)
+
+Sites e sistemas de terceiros chamam programas **expostos** por `/rpc`
+(JSON-RPC 2.0). O administrador cadastra o cliente em Administração → API
+pública, escolhendo o **usuário robô** em nome de quem ele roda (papel e
+grupos do robô valem) e o **escopo** (`vendas.criar_pedido` ou `vendas.*`;
+cliente sem escopo não alcança nada):
+
+- **Servidor (segredo)** — o segredo `ana_sk_…` aparece uma única vez;
+  `POST /oauth/token` (`grant_type=client_credentials`, Basic
+  `client_id:segredo`) devolve um token de 10 minutos para
+  `Authorization: Bearer`. Troca de segredo sem parada (o anterior vale até
+  ser removido). Opcional: exigir requisição assinada (`X-Ana-Timestamp`,
+  `X-Ana-Nonce`, `X-Ana-Signature` = HMAC-SHA256 de
+  `método\ncaminho\ntimestamp\nnonce\nsha256(corpo)`; janela de 5 min,
+  nonce não se repete).
+- **Chave publicável (site)** — `X-Api-Key: ana_pk_…` no navegador, só das
+  origens cadastradas (CORS) e só para programas marcados **Público** no
+  programa.
+
+Cada cliente tem limite por minuto (429 com `Retry-After`), cota diária,
+lista de IPs, e `Idempotency-Key` evita pedido em dobro em repetições. As
+chamadas públicas usam no máximo `ANA_PUBLIC_EXEC_SHARE` (50 %) da
+capacidade. Em produção, `ANA_PUBLIC_MODE=true` recusa credenciais públicas
+sem HTTPS (atrás de proxy, declare-o em `ANA_TRUSTED_PROXIES`) e liga HSTS.
+Toda chamada fica em Administração → API pública → Chamadas. Teste de carga:
+`python3 tests/load/public_api_load.py`.
+
 ## Documentos para clientes e fornecedores (spec 037)
 
 Pedido, fatura, comprovante de entrega, relatório de atendimento da OS,
@@ -638,7 +666,7 @@ correspondentes são só o valor inicial).
 
 ## Situação das specs
 
-Implementadas: 001–008, 011 (com usuários robô e dono obrigatório), 012, 018, 021, 019 (faltam alertas configuráveis e OpenTelemetry), 013, 014, 015, 016 (faltam S3 e antivírus), 017 (faltam SFTP/pasta/e-mail, mTLS, CNAB e pacotes de modelos), 022, 023, 024, 025, 026, 027, 028, 029, 030, 031, 032, 033, 035, 036, 037 (falta base OSV por conector), 034 (faltam agendamentos e migrações no pacote, envio por conector); 020 parcial (falta próxima ação
+Implementadas: 001–008, 011 (com usuários robô e dono obrigatório), 012, 018, 021, 019 (faltam alertas configuráveis e OpenTelemetry), 013, 014, 015, 016 (faltam S3 e antivírus), 017 (faltam SFTP/pasta/e-mail, mTLS, CNAB e pacotes de modelos), 022, 023, 024, 025, 026, 027, 028, 029, 030, 031, 032, 033, 035, 036, 037 (falta base OSV por conector), 034 (faltam agendamentos e migrações no pacote, envio por conector), 010 (faltam PKCE com consentimento, TOTP, HTTP/2 e cache, disjuntor; vazão de 1.000 chamadas/s aguarda decisão); 020 parcial (falta próxima ação
 sugerida, fluxos guiados e auditoria de acessibilidade).
 Na fila (ordem em [scripts/pending-work.prompt.md](scripts/pending-work.prompt.md)):
-010 API pública; 009 licenciamento aguarda decisões.
+009 licenciamento aguarda decisões; depois 020 (restante) e as tarefas adiadas.

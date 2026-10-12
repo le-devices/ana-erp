@@ -490,6 +490,9 @@ class TestStudio(Base):
 # ---------------------------------------------------------------- spec 006
 class TestBusiness(Base):
     def test_ca_006_01_full_invoicing(self):
+        # Demo stock is consumed by every run: top it up so the suite can repeat.
+        self.client.call("inventory.stock_in", product="ACUCAR-1", quantity=3, document=f"TEST-{SUFFIX}")
+        self.client.call("inventory.stock_in", product="CAFE-500", quantity=1, document=f"TEST-{SUFFIX}")
         o = self.client.call("sales.create_order", customer=2,
                              items=[{"product": "ACUCAR-1", "quantity": 3}, {"product": "CAFE-500", "quantity": 1}])
         inv = self.client.call("sales.invoice_order", number=o["number"])
@@ -4248,3 +4251,272 @@ class TestCustomerDocuments(Base):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+# ---------------------------------------------------------------- spec 010
+class TestPublicApi(Base):
+    ORIGIN = "https://loja.exemplo.com.br"
+
+    @classmethod
+    def setUpClass(cls):
+        super().setUpClass()
+        cls.robot = f"api{SUFFIX}"
+        CREATED_USERS.append(cls.robot)
+        s, c, _ = http("POST", "/api/admin/users", {"username": cls.robot, "kind": "robot", "role": "user"}, cls.token)
+        assert s == 200, c
+        cls.ns = f"test.api{SUFFIX}"
+
+    @classmethod
+    def tearDownClass(cls):
+        # Clients can only be deactivated through the API (their calls stay audited); test ones go away.
+        if psql_available():
+            psql("DELETE FROM ana_system.api_usage WHERE client_id IN (SELECT client_id FROM ana_system.api_client "
+                 f"WHERE run_as = '{cls.robot}'); DELETE FROM ana_system.api_client WHERE run_as = '{cls.robot}'")
+
+    def program(self, short, source, **extra):
+        name = f"{self.ns}.{short}"
+        self.save(name, source, exposed=True, **extra)
+        return name
+
+    def new_client(self, **body):
+        s, c, _ = http("POST", "/api/admin/api-clients",
+                       {"name": "Cliente de teste", "run_as": self.robot, "scopes": [f"{self.ns}.*"], **body}, self.token)
+        self.assertEqual(s, 200, c)
+        return c
+
+    def request(self, method, path, body=None, headers=None, raw=None):
+        data = raw if raw is not None else (json.dumps(body).encode() if body is not None else None)
+        req = urllib.request.Request(URL + path, data=data, method=method)
+        if data is not None:
+            req.add_header("Content-Type", "application/json")
+        for k, v in (headers or {}).items():
+            req.add_header(k, v)
+        try:
+            with urllib.request.urlopen(req, timeout=60) as r:
+                text = r.read().decode()
+                return r.status, (json.loads(text) if text else None), dict(r.headers)
+        except urllib.error.HTTPError as e:
+            text = e.read().decode()
+            try:
+                return e.code, (json.loads(text) if text else None), dict(e.headers)
+            except ValueError:
+                return e.code, text, dict(e.headers)
+
+    def token_for(self, c, scope=None):
+        form = {"grant_type": "client_credentials"}
+        if scope:
+            form["scope"] = scope
+        basic = base64.b64encode(f"{c['client_id']}:{c['client_secret']}".encode()).decode()
+        s, r, h = self.request("POST", "/oauth/token", raw=urllib.parse.urlencode(form).encode(),
+                               headers={"Content-Type": "application/x-www-form-urlencoded", "Authorization": "Basic " + basic})
+        self.assertEqual(s, 200, r)
+        self.assertEqual(r["token_type"], "Bearer")
+        self.assertIn("no-store", h.get("cache-control", ""))
+        return r["access_token"]
+
+    def rpc(self, token, method, params=None, headers=None, raw=None):
+        return self.request("POST", "/rpc", {"jsonrpc": "2.0", "method": method, "params": params or {}, "id": 1},
+                            headers={"Authorization": "Bearer " + token, **(headers or {})}, raw=raw)
+
+    def test_ca_010_01_token_calls_in_scope_and_hides_the_rest(self):
+        name = self.program("eco", "def main(x):\n    return {'x': x, 'who': ana.context.user}\n")
+        outside = f"test.fora{SUFFIX}"
+        self.save(outside, "def main():\n    return 1\n", exposed=True)
+        c = self.new_client()
+        self.assertTrue(c["client_secret"].startswith("ana_sk_"))
+        t = self.token_for(c)
+        s, r, _ = self.rpc(t, name, {"x": 3})
+        self.assertEqual(s, 200, r)
+        self.assertEqual(r["result"], {"x": 3, "who": self.robot})        # P14: runs as the client's robot
+        s, r, _ = self.rpc(t, outside)
+        self.assertEqual(r["error"]["code"], -32601)                      # same as a program that does not exist
+        s, r, _ = self.request("GET", "/rpc/functions", headers={"Authorization": "Bearer " + t})
+        self.assertEqual(s, 200, r)
+        names = json.dumps(r)
+        self.assertIn(name, names)
+        self.assertNotIn(outside, names)
+        # The secret is never listed again; a wrong secret is refused the same way as an unknown client.
+        s, listed, _ = http("GET", "/api/admin/api-clients", token=self.token)
+        self.assertNotIn(c["client_secret"], json.dumps(listed))
+        for cid, sec in ((c["client_id"], "ana_sk_errado"), ("ana_ci_naoexiste0000000000", "x")):
+            s, r, _ = self.request("POST", "/oauth/token", {"grant_type": "client_credentials", "client_id": cid,
+                                                            "client_secret": sec})
+            self.assertEqual((s, r["error"]), (401, "invalid_client"))
+        # The call is in the API log (RF-010-11).
+        end = time.time() + 10
+        while time.time() < end:
+            s, calls, _ = http("GET", f"/api/admin/api-calls?client={c['client_id']}", token=self.token)
+            if any(x["program"] == name and x["status"] == 200 for x in calls):
+                break
+            time.sleep(0.5)
+        else:
+            self.fail(calls)
+        # ... and in the access trail with the credential type (spec 024).
+        end = time.time() + 10
+        while time.time() < end:
+            s, rows, _ = http("GET", "/api/admin/audit/access?" + urllib.parse.urlencode({"username": self.robot}), token=self.token)
+            if any(r["auth"] == "api_token" and r["path"] == "/rpc" for r in rows):
+                break
+            time.sleep(0.5)
+        else:
+            self.fail(rows[:3])
+
+    def test_ca_010_02_tampered_or_unknown_key_token_is_401(self):
+        name = self.program("eco2", "def main():\n    return 1\n")
+        t = self.token_for(self.new_client())
+        h, p, sig = t.split(".")
+        claims = json.loads(base64.urlsafe_b64decode(p + "=" * (-len(p) % 4)))
+        self.assertEqual((claims["aud"], claims["exp"] - claims["iat"]), ("ana-api", 600))
+        claims["scp"] = ["*"]
+        forged = base64.urlsafe_b64encode(json.dumps(claims).encode()).decode().rstrip("=")
+        hdr = json.loads(base64.urlsafe_b64decode(h + "=" * (-len(h) % 4)))
+        none_alg = base64.urlsafe_b64encode(json.dumps({**hdr, "alg": "none"}).encode()).decode().rstrip("=")
+        unknown_kid = base64.urlsafe_b64encode(json.dumps({**hdr, "kid": "desconhecida0"}).encode()).decode().rstrip("=")
+        claims["exp"] = int(time.time()) - 120
+        for bad in (f"{h}.{forged}.{sig}", f"{none_alg}.{p}.", f"{unknown_kid}.{p}.{sig}", f"{h}.{p}.{sig[:-4]}AAAA"):
+            s, r, _ = self.rpc(bad, name)
+            self.assertEqual(s, 401, (bad, r))
+            self.assertEqual(r["error"]["code"], "NOT_AUTHENTICATED")
+
+    def test_ca_010_03_deactivated_client_stops_within_5s(self):
+        name = self.program("eco3", "def main():\n    return 1\n")
+        c = self.new_client()
+        t = self.token_for(c)
+        self.assertEqual(self.rpc(t, name)[0], 200)
+        s, r, _ = http("PUT", f"/api/admin/api-clients/{c['client_id']}", {"active": False}, self.token)
+        self.assertEqual(s, 200, r)
+        end = time.time() + 5
+        while time.time() < end and self.rpc(t, name)[0] == 200:
+            time.sleep(0.2)
+        self.assertEqual(self.rpc(t, name)[0], 401)
+        s, r, _ = self.request("POST", "/oauth/token", {"grant_type": "client_credentials", "client_id": c["client_id"],
+                                                        "client_secret": c["client_secret"]})
+        self.assertEqual(s, 401)
+
+    def test_rf_010_02_secret_rotation_keeps_old_until_dropped(self):
+        c = self.new_client()
+        s, r, _ = http("POST", f"/api/admin/api-clients/{c['client_id']}/rotate-secret", {}, self.token)
+        self.assertEqual(s, 200, r)
+        new = {**c, "client_secret": r["client_secret"]}
+        self.token_for(c)
+        self.token_for(new)
+        s, r, _ = http("POST", f"/api/admin/api-clients/{c['client_id']}/drop-old-secret", {}, self.token)
+        self.assertEqual(s, 200, r)
+        self.token_for(new)
+        s, _, _ = self.request("POST", "/oauth/token", {"grant_type": "client_credentials", "client_id": c["client_id"],
+                                                        "client_secret": c["client_secret"]})
+        self.assertEqual(s, 401)
+
+    def test_ca_010_04_cors_only_for_registered_origins(self):
+        c = self.new_client(kind="publishable", origins=[self.ORIGIN])
+        time.sleep(0.5)
+        pre = {"Origin": self.ORIGIN, "Access-Control-Request-Method": "POST",
+               "Access-Control-Request-Headers": "content-type,x-api-key"}
+        s, _, h = self.request("OPTIONS", "/rpc", headers=pre)
+        self.assertEqual(s, 204)
+        self.assertEqual(h.get("access-control-allow-origin"), self.ORIGIN)
+        self.assertIn("x-api-key", h.get("access-control-allow-headers", "").lower())
+        s, _, h = self.request("OPTIONS", "/rpc", headers={**pre, "Origin": "https://intruso.example"})
+        self.assertNotIn("access-control-allow-origin", {k.lower() for k in h})
+        # An unregistered origin gets no CORS headers on the call itself either.
+        s, r, h = self.request("POST", "/rpc", {"jsonrpc": "2.0", "method": "x", "id": 1},
+                               headers={"Origin": "https://intruso.example", "X-Api-Key": c["publishable_key"]})
+        self.assertNotIn("access-control-allow-origin", {k.lower() for k in h})
+
+    def test_ca_010_05_idempotency_key_runs_once(self):
+        name = self.program("pedido", "import time\n\ndef main(item):\n    time.sleep(0.5)\n"
+                                      "    return {'item': item, 'execucao': ana.context.execution_id}\n")
+        t = self.token_for(self.new_client())
+        key = "idem-" + uuid.uuid4().hex
+        body = json.dumps({"jsonrpc": "2.0", "method": name, "params": {"item": "A"}, "id": 7}).encode()
+        with concurrent.futures.ThreadPoolExecutor(5) as ex:
+            res = list(ex.map(lambda _: self.rpc(t, name, raw=body, headers={"Idempotency-Key": key}), range(5)))
+        self.assertTrue(all(s == 200 for s, _, _ in res), res)
+        self.assertEqual(len({json.dumps(r, sort_keys=True) for _, r, _ in res}), 1, res)
+        self.assertEqual(res[0][1]["result"]["item"], "A")
+        if psql_available():
+            self.assertEqual(psql(f"SELECT count(*) FROM ana_system.execution WHERE program = '{name}'"), "1")
+        # Same key, different body → refused (never a silent replay of something else).
+        other = json.dumps({"jsonrpc": "2.0", "method": name, "params": {"item": "B"}, "id": 7}).encode()
+        s, r, _ = self.rpc(t, name, raw=other, headers={"Idempotency-Key": key})
+        self.assertEqual(s, 422, r)
+
+    def test_ca_010_06_signed_requests(self):
+        import hashlib
+        import hmac
+        name = self.program("assinado", "def main():\n    return 'ok'\n")
+        c = self.new_client(require_signature=True)
+        s, r, _ = http("POST", f"/api/admin/api-clients/{c['client_id']}/signing-secret", {}, self.token)
+        self.assertEqual(s, 200, r)
+        key = bytes.fromhex(r["signing_secret"])
+        t = self.token_for(c)
+        body = json.dumps({"jsonrpc": "2.0", "method": name, "params": {}, "id": 1}).encode()
+
+        def signed(ts, nonce, payload=body):
+            msg = "\n".join(["POST", "/rpc", str(ts), nonce, hashlib.sha256(payload).hexdigest()]).encode()
+            return {"X-Ana-Timestamp": str(ts), "X-Ana-Nonce": nonce,
+                    "X-Ana-Signature": hmac.new(key, msg, hashlib.sha256).hexdigest()}
+
+        self.assertEqual(self.rpc(t, name, raw=body)[0], 401)                    # signature required
+        nonce = uuid.uuid4().hex
+        s, r, _ = self.rpc(t, name, raw=body, headers=signed(int(time.time()), nonce))
+        self.assertEqual((s, r.get("result")), (200, "ok"))
+        self.assertEqual(self.rpc(t, name, raw=body, headers=signed(int(time.time()), nonce))[0], 401)   # replay
+        old = signed(int(time.time()) - 360, uuid.uuid4().hex)
+        self.assertEqual(self.rpc(t, name, raw=body, headers=old)[0], 401)                               # 6 min old
+        h = signed(int(time.time()), uuid.uuid4().hex)
+        self.assertEqual(self.rpc(t, name, raw=body + b" ", headers=h)[0], 401)                          # body changed
+
+    def test_ca_010_07_rate_limit_429_while_internal_use_continues(self):
+        name = self.program("rapido", "def main():\n    return 1\n")
+        t = self.token_for(self.new_client(rate_per_minute=5))
+        statuses, after = [], None
+        for _ in range(12):
+            s, _, h = self.rpc(t, name)
+            statuses.append(s)
+            if s == 429:
+                after = h.get("retry-after")
+        self.assertEqual(statuses[:5], [200] * 5, statuses)
+        self.assertIn(429, statuses)
+        self.assertTrue(after and int(after) >= 1, after)
+        s, _, _ = http("GET", "/api/programs", token=self.token)                  # the ERP itself keeps answering
+        self.assertEqual(s, 200)
+
+    def test_ca_010_09_publishable_key_public_programs_and_origin(self):
+        pub = self.program("catalogo", "def main():\n    return ['A', 'B']\n", public=True)
+        private = self.program("interno", "def main():\n    return 'segredo'\n")
+        c = self.new_client(kind="publishable", origins=[self.ORIGIN])
+        k = c["publishable_key"]
+        self.assertTrue(k.startswith("ana_pk_"))
+        self.assertIsNone(c.get("client_secret"))
+        time.sleep(0.5)
+
+        def call(method, origin=self.ORIGIN):
+            hdr = {"X-Api-Key": k}
+            if origin:
+                hdr["Origin"] = origin
+            return self.request("POST", "/rpc", {"jsonrpc": "2.0", "method": method, "params": {}, "id": 1}, headers=hdr)
+
+        s, r, h = call(pub)
+        self.assertEqual((s, r.get("result")), (200, ["A", "B"]), r)
+        self.assertEqual(h.get("access-control-allow-origin"), self.ORIGIN)
+        self.assertEqual(call(private)[1]["error"]["code"], -32601)
+        self.assertEqual(call(pub, "https://intruso.example")[0], 401)
+        self.assertEqual(call(pub, None)[0], 401)
+        # A publishable key never gets a token.
+        s, r, _ = self.request("POST", "/oauth/token", {"grant_type": "client_credentials", "client_id": c["client_id"],
+                                                        "client_secret": k})
+        self.assertEqual(s, 401)
+        # public requires exposed.
+        s, r, _ = http("PUT", f"/api/programs/{pub}", {"public": True, "exposed": False}, self.token)
+        s, r, _ = http("GET", f"/api/programs/{pub}", token=self.token)
+        self.assertFalse(r.get("public") and not r.get("exposed"))
+
+    def test_rnf_010_07_client_without_scope_or_with_human_run_as_is_refused(self):
+        s, r, _ = http("POST", "/api/admin/api-clients", {"name": "Xis", "run_as": "admin"}, self.token)
+        self.assertEqual(s, 400, r)
+        s, r, _ = http("POST", "/api/admin/api-clients", {"name": "Xis", "run_as": self.robot, "scopes": ["*"]}, self.token)
+        self.assertEqual(s, 400, r)
+        name = self.program("semescopo", "def main():\n    return 1\n")
+        c = self.new_client(scopes=[])
+        self.assertEqual(self.rpc(self.token_for(c), name)[1]["error"]["code"], -32601)

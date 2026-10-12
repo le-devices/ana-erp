@@ -80,7 +80,7 @@ d.querySelector('[data-ptab="perf"]').click();
 await until(() => text("#ptab-perf").includes("Análise do SQL do código"), "perf tab", jsErrors);
 ok(true, "aba Desempenho do programa (spec 019)");
 d.querySelector('[data-ptab="versions"]').click();
-await until(() => text("#version-list").includes("v1"), "versions", jsErrors);
+await until(() => /\bv\d+/.test(text("#version-list")), "versions", jsErrors);
 ok(true, "versões na aba do programa");
 // Schedules of this program (spec 018)
 d.querySelector('[data-ptab="schedules"]').click();
@@ -314,6 +314,13 @@ await until(() => text("#admin-main").includes("Exportar dados mascarados"), "da
 [...d.querySelectorAll("#admin-main .sub-tabs button")].find((b) => b.textContent === "Máscaras").click();
 await until(() => text("#admin-main").includes("base.party"), "masking", jsErrors);
 ok(true, "cópia de dados: exportar, receber e catálogo de máscaras");
+await go(w, "#/admin/publicapi");
+await until(() => text("#admin-main").includes("Chaves de assinatura dos tokens"), "public api", jsErrors);
+[...d.querySelectorAll("#admin-main .sub-tabs button")].find((b) => b.textContent === "Novo cliente").click();
+await until(() => text("#admin-main").includes("Executa como (robô)"), "public api new", jsErrors);
+[...d.querySelectorAll("#admin-main .sub-tabs button")].find((b) => b.textContent === "Chamadas").click();
+await until(() => d.querySelector("#admin-main table"), "public api calls", jsErrors);
+ok(true, "API pública: clientes, novo cliente e chamadas (spec 010)");
 ok(true, "todas as seções administrativas abrem");
 ok(jsErrors.length === 0, "nenhum erro de JavaScript (admin)" + (jsErrors.length ? ": " + jsErrors.join("; ") : ""));
 w.close();

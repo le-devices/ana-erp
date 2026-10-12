@@ -30,13 +30,13 @@ valid_name(_) -> false.
 
 list(IncludeInactive) ->
     ana_db:rows(
-        "SELECT name, description, kind, exposed, restricted, min_role, active, version, warning, "
+        "SELECT name, description, kind, exposed, public, restricted, min_role, active, version, warning, "
         "       updated_at, updated_by "
         "FROM ana_system.program WHERE active OR $1 ORDER BY name", [IncludeInactive]).
 
 get(Name) ->
     ana_db:one(
-        "SELECT name, description, kind, exposed, restricted, min_role, active, in_menu, version, source, "
+        "SELECT name, description, kind, exposed, public, restricted, min_role, active, in_menu, version, source, "
         "       params, docs, warning, limits, lint, updated_at, updated_by "
         "FROM ana_system.program WHERE name = $1", [Name]).
 
@@ -58,7 +58,7 @@ for_execution(Name) ->
         [] ->
             case ana_db:one(
                    "SELECT name, version, source, kind, exposed, restricted, min_role, active, params, "
-                   "       description, docs, limits, portal "
+                   "       description, docs, limits, portal, public "
                    "FROM ana_system.program WHERE name = $1", [Name]) of
                 {ok, #{} = P} ->
                     ets:insert(?CACHE, {Name, P}),
@@ -125,8 +125,8 @@ write(C, Name, Fields, Source, Insp, Who) ->
         undefined ->
             ok = exec(C,
                 "INSERT INTO ana_system.program (name, description, kind, exposed, restricted, min_role, "
-                "  active, version, source, params, docs, warning, updated_by, limits, in_menu, lint, portal) "
-                "VALUES ($1, $2, $3, $4, $5, $6, $7, 1, $8, $9, $10, $11, $12, $13, $14, $15, $16)",
+                "  active, version, source, params, docs, warning, updated_by, limits, in_menu, lint, portal, public) "
+                "VALUES ($1, $2, $3, $4, $5, $6, $7, 1, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)",
                 [Name, maps:get(<<"description">>, Fields, <<>>),
                  maps:get(<<"kind">>, Fields, <<"program">>),
                  maps:get(<<"exposed">>, Fields, false),
@@ -135,7 +135,8 @@ write(C, Name, Fields, Source, Insp, Who) ->
                  maps:get(<<"active">>, Fields, true),
                  Source, field(params, Insp), field(docs, Insp), field(warning, Insp), Who,
                  maps:get(<<"limits">>, Fields, #{}), maps:get(<<"in_menu">>, Fields, true), field(lint, Insp),
-                 maps:get(<<"portal">>, Fields, false) =:= true]),
+                 maps:get(<<"portal">>, Fields, false) =:= true,
+                 maps:get(<<"public">>, Fields, false) =:= true andalso maps:get(<<"exposed">>, Fields, false) =:= true]),
             ok = new_version(C, Name, 1, Source, Comment, Who),
             notify(C, Name),
             {ok, #{version => 1, created => true, warning => field(warning, Insp)}};
@@ -156,7 +157,8 @@ write(C, Name, Fields, Source, Insp, Who) ->
                         "  updated_at = now(), updated_by = $13, limits = COALESCE($14, limits), "
                         "  in_menu = COALESCE($15, in_menu), "
                         "  lint = CASE WHEN $9 IS NULL THEN lint ELSE $16 END, "
-                        "  portal = COALESCE($17, portal) "
+                        "  portal = COALESCE($17, portal), "
+                        "  public = CASE WHEN COALESCE($4, exposed) THEN COALESCE($18, public) ELSE false END "
                         "WHERE name = $1",
                         [Name, maps:get(<<"description">>, Fields, null),
                          maps:get(<<"kind">>, Fields, null),
@@ -167,7 +169,7 @@ write(C, Name, Fields, Source, Insp, Who) ->
                          null_if_undefined(Source), field(params, Insp), field(docs, Insp),
                          field(warning, Insp), Who, maps:get(<<"limits">>, Fields, null),
                          maps:get(<<"in_menu">>, Fields, null), field(lint, Insp),
-                         maps:get(<<"portal">>, Fields, null)]),
+                         maps:get(<<"portal">>, Fields, null), maps:get(<<"public">>, Fields, null)]),
                     _ = Changed andalso (ok =:= new_version(C, Name, NV, Source, Comment, Who)),
                     notify(C, Name),
                     {ok, #{version => NV, created => false, warning => field(warning, Insp)}};

@@ -1,6 +1,6 @@
 %% HTTP server and shared helpers (spec 001: RF-001-05..07, RNF-001-03..05).
 -module(ana_http).
--export([start/0, json/3, reply_error/4, read_json/1, authenticate/1, require/3, require_any/2,
+-export([start/0, json/3, reply_error/4, read_json/1, read_raw/2, authenticate/1, require/3, require_any/2,
          ip/1, qs_int/3, qs_map/1]).
 
 start() ->
@@ -20,7 +20,8 @@ start() ->
         {"/api/[...]", ana_http_api, api},
         {"/rpc", ana_http_rpc, rpc},
         {"/hooks/:connector", ana_http_hooks, hooks},
-        {"/rpc/functions", ana_http_rpc, functions}
+        {"/rpc/functions", ana_http_rpc, functions},
+        {"/oauth/token", ana_http_oauth, token}
     ]}]),
     Port = ana_config:integer("ANA_HTTP_PORT", 8080),
     {ok, _} = cowboy:start_clear(ana_http,
@@ -63,8 +64,20 @@ read_json(Req) ->
             end
     end.
 
+%% Raw body up to Max bytes (spec 010: signatures cover the exact bytes).
+-spec read_raw(cowboy_req:req(), pos_integer()) -> {ok, binary(), cowboy_req:req()} | {too_large, cowboy_req:req()}.
+read_raw(Req, Max) ->
+    case cowboy_req:body_length(Req) of
+        N when is_integer(N), N > Max -> {too_large, Req};
+        _ ->
+            case cowboy_req:read_body(Req, #{length => Max, period => 15000}) of
+                {ok, Body, Req2} -> {ok, Body, Req2};
+                {more, _, Req2} -> {too_large, Req2}
+            end
+    end.
+
 %% RF-001-06
--spec authenticate(cowboy_req:req()) -> {ok, map()} | {error, invalid}.
+-spec authenticate(cowboy_req:req()) -> {ok, map()} | {error, invalid | tls}.
 %% The authenticated user carries `trace` (ip, auth, key_id) so executions
 %% record where they came from (RF-024-04); the request is tagged for the
 %% access log (RF-024-01).
@@ -74,8 +87,17 @@ authenticate(Req) ->
         <<"Bearer ana_rk_", _/binary>> = H ->
             <<"Bearer ", Key/binary>> = H,
             traced(ana_security:validate_key(string:trim(Key), Ip), <<"api_key">>, Ip);
-        <<"Bearer ", Token/binary>> ->
-            traced(ana_security:validate(string:trim(Token)), <<"session">>, Ip);
+        <<"Bearer ", Token0/binary>> ->
+            Token = string:trim(Token0),
+            case binary:matches(Token, <<".">>) of
+                [_, _] -> api_token(Token, Req, Ip);                       % spec 010: signed access token
+                _ -> traced(ana_security:validate(Token), <<"session">>, Ip)
+            end;
+        undefined ->
+            case cowboy_req:header(<<"x-api-key">>, Req) of
+                <<"ana_pk_", _/binary>> = K -> publishable(K, Req, Ip);   % spec 010: anonymous browser
+                _ -> {error, invalid}
+            end;
         _ -> {error, invalid}
     end,
     ok = case Result of
@@ -83,6 +105,44 @@ authenticate(Req) ->
         _ -> ok
     end,
     Result.
+
+%% Spec 010 (RF-010-05): public credentials only reach /rpc, from allowed addresses, over HTTPS
+%% when ANA_PUBLIC_MODE=true; the scopes are the token's ∩ the client's current ones.
+api_token(Token, Req, Ip) ->
+    case ana_api:validate(Token) of
+        {ok, #{<<"sub">> := Id, <<"scp">> := Scp}} ->
+            case ana_api:client(Id) of
+                {ok, #{<<"usable">> := true, <<"kind">> := Kind, <<"scopes">> := Now} = C} when Kind =/= <<"publishable">> ->
+                    api_gate(C#{<<"scopes">> => [S || S <- Now, lists:member(S, Scp)]}, <<"api_token">>, Req, Ip);
+                _ -> {error, invalid}
+            end;
+        _ -> {error, invalid}
+    end.
+
+publishable(Key, Req, Ip) ->
+    case ana_api:by_publishable(Key) of
+        {ok, #{<<"usable">> := true, <<"origins">> := Origins} = C} ->
+            case lists:member(cowboy_req:header(<<"origin">>, Req), Origins) of
+                true -> api_gate(C, <<"publishable">>, Req, Ip);
+                false -> {error, invalid}
+            end;
+        _ -> {error, invalid}
+    end.
+
+api_gate(C, Auth, Req, Ip) ->
+    Rpc = case cowboy_req:path(Req) of <<"/rpc", _/binary>> -> true; _ -> false end,
+    if
+        not Rpc -> {error, invalid};
+        true ->
+            case ana_api:ip_allowed(C, Ip) of
+                false -> {error, invalid};
+                true ->
+                    case ana_api:public_mode() andalso not ana_api:secure(Req) of
+                        true -> {error, tls};
+                        false -> {ok, (ana_api:user_for(C, Auth, Ip))#{api_client => C}}
+                    end
+            end
+    end.
 
 traced({ok, U}, Auth, Ip) ->
     {ok, U#{trace => #{ip => Ip, auth => Auth, key_id => maps:get(key_id, U, null)}}};
@@ -105,6 +165,7 @@ require(Req, Role, Fun) ->
 require_any(Req, Fun) ->
     case authenticate(Req) of
         {ok, U} -> Fun(U);
+        {error, tls} -> reply_error(403, <<"HTTPS_REQUIRED">>, <<"chamadas públicas só por HTTPS"/utf8>>, Req);
         {error, _} -> reply_error(401, <<"NOT_AUTHENTICATED">>, <<"credencial ausente ou inválida"/utf8>>, Req)
     end.
 
