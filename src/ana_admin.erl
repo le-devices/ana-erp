@@ -324,7 +324,7 @@ delete_group(Name, #{username := Who}) ->
 %% ==========================================================================
 
 get_company() ->
-    ana_db:one("SELECT id, legal_name, tax_id, address, city, state, email, phone, latitude, longitude "
+    ana_db:one("SELECT id, legal_name, tax_id, address, city, state, email, phone, latitude, longitude, public_url "
                "FROM base.company ORDER BY id LIMIT 1", []).
 
 save_company(Fields, #{username := Who}) ->
@@ -338,24 +338,32 @@ save_company(Fields, #{username := Who}) ->
             _ -> null
         end
     end,
-    Values = [maps:get(C, Fields, null) || C <- Cols] ++ [Coord(<<"latitude">>), Coord(<<"longitude">>)],
+    %% Spec 037: public address for links sent to customers ("https://erp.empresa.com.br").
+    Url = case maps:get(<<"public_url">>, Fields, null) of
+        U0 when is_binary(U0) -> case string:trim(U0) of <<>> -> null; T -> string:trim(T, trailing, "/") end;
+        _ -> null
+    end,
+    Values = [maps:get(C, Fields, null) || C <- Cols] ++ [Coord(<<"latitude">>), Coord(<<"longitude">>), Url],
     {ok, Before} = get_company(),
     R = case Before of
         undefined ->
-            ana_db:exec("INSERT INTO base.company (legal_name, tax_id, address, city, state, email, phone, latitude, longitude) "
-                        "VALUES ($1, $2, $3, $4, $5, $6, $7, $8::text::numeric, $9::text::numeric)",
+            ana_db:exec("INSERT INTO base.company (legal_name, tax_id, address, city, state, email, phone, latitude, longitude, public_url) "
+                        "VALUES ($1, $2, $3, $4, $5, $6, $7, $8::text::numeric, $9::text::numeric, $10)",
                         [case V of N when is_number(N) -> list_to_binary(io_lib:format("~p", [N])); _ -> V end || V <- Values]);
         #{<<"id">> := Id} ->
             ana_db:exec("UPDATE base.company SET legal_name = $2, tax_id = $3, address = $4, city = $5, "
-                        "state = $6, email = $7, phone = $8, latitude = $9::text::numeric, longitude = $10::text::numeric "
-                        "WHERE id = $1",
+                        "state = $6, email = $7, phone = $8, latitude = $9::text::numeric, longitude = $10::text::numeric, "
+                        "public_url = $11 WHERE id = $1",
                         [Id | [case V of N when is_number(N) -> list_to_binary(io_lib:format("~p", [N])); _ -> V end || V <- Values]])
     end,
     case R of
         {ok, _} ->
             {ok, After} = get_company(),
+            ana_instance:forget_public_url(),
             log(Who, <<"company.save">>, <<"company">>, Before, After),
             {ok, After};
+        {error, #{sqlstate := <<"23514">>}} ->
+            {error, <<"endereço público inválido: use https://nome[:porta], sem caminho"/utf8>>};
         {error, E} -> {error, E}
     end.
 

@@ -4216,6 +4216,21 @@ class TestCustomerDocuments(Base):
         except urllib.error.HTTPError as e:
             self.assertEqual(e.code, 410)
 
+    def test_rf_037_05_public_address_set_by_admin(self):
+        s, company, _ = http("GET", "/api/admin/company", token=self.token)
+        self.assertEqual(s, 200, company)
+        body = {k: company.get(k) for k in ("legal_name", "tax_id", "address", "city", "state", "email", "phone", "latitude", "longitude")}
+        try:
+            s, c, _ = http("PUT", "/api/admin/company", {**body, "public_url": "ftp://erp.teste"}, self.token)
+            self.assertEqual(s, 400)
+            s, c, _ = http("PUT", "/api/admin/company", {**body, "public_url": "https://erp.teste.com.br:8443/"}, self.token)
+            self.assertEqual((s, c.get("public_url")), (200, "https://erp.teste.com.br:8443"))
+            o = self.ok("sales.create_order", customer=self.b, items=[{"product": self.item, "quantity": 1}])
+            r = self.ok("docs.share_link", kind="order", key=str(o["number"]))
+            self.assertTrue(r["url"].startswith("https://erp.teste.com.br:8443/share/"), r["url"])
+        finally:
+            http("PUT", "/api/admin/company", {**body, "public_url": company.get("public_url")}, self.token)
+
     def test_ca_037_04_portal_never_sees_internal_or_others(self):
         ob = self.ok("sales.create_order", customer=self.b, items=[{"product": self.item, "quantity": 1}])
         self.assertEqual(self.err("docs.pdf", token=self.portal, kind="order", key=str(ob["number"])), "DOCUMENT_NOT_FOUND")

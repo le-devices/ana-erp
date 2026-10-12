@@ -391,7 +391,9 @@ expedição, aceite da OS, ordem enviada, pagamento) ou sob demanda, e
 Faturas, Entregas, Atendimentos, Recibos, Extratos, Ordens de compra). No
 portal, **Meus documentos** (`documentos`) lista e baixa esses PDFs; para
 quem não tem conta, **Link para o cliente** (`link_doc`) cria um endereço de
-download com validade, limite e senha (defina `ANA_PUBLIC_URL`).
+download com validade, limite e senha; o endereço usado nos links é o
+"Endereço público do ERP" (Administração → Empresa; valor inicial do
+instalador, `ANA_PUBLIC_URL`).
 
 **Regra**: clientes e fornecedores nunca alcançam documento interno. O núcleo
 só publica tipos externos de uma lista fechada e recusa dar acesso a conta
