@@ -3,6 +3,8 @@
 # ana:menu no
 """Lookup for forms: [{"value", "label"}]. kind: warehouses | carriers | orders | technicians | service_orders | services | transfers."""
 
+from ana_lib.master import core  # spec 040: the single lookup of master records
+
 PARAMS = {
     "kind": {"type": "str", "required": True, "label": "tipo", "choices": ["warehouses", "carriers", "orders", "technicians", "service_orders", "services", "transfers"]},
 }
@@ -10,11 +12,9 @@ PARAMS = {
 
 def main(kind):
     if kind == "warehouses":
-        rows = ana.sql("SELECT code, description FROM inventory.warehouse ORDER BY code LIMIT 500")
-        return [{"value": r["code"], "label": f"{r['code']} — {r['description']}"} for r in rows]
+        return core.options("warehouse")
     if kind == "carriers":
-        rows = ana.sql("SELECT id, name FROM logistics.carrier WHERE active ORDER BY name LIMIT 500")
-        return [{"value": r["id"], "label": r["name"]} for r in rows]
+        return core.options("carrier")
     if kind == "orders":
         rows = ana.sql("SELECT o.number, p.name, s.state FROM sales.sales_order o JOIN base.party p ON p.id = o.customer_id "
                        "JOIN logistics.order_shipping s ON s.sales_order_id = o.id WHERE o.status <> 'CANCELLED' AND s.state <> 'full' "

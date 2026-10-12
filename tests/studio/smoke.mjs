@@ -47,7 +47,7 @@ const { w, d, jsErrors } = await open("admin", PASSWORD);
 const text = (s) => (d.querySelector(s) || {}).textContent || "";
 await until(() => text("#area-home").includes("Favoritas"), "home");
 ok(!d.querySelector("#area-home").hidden, "Início é a área inicial");
-ok([...d.querySelectorAll(".area:not([hidden])")].map((b) => b.dataset.area).join(",") === "home,ops,files,dev,admin", "admin vê as cinco áreas (Portal é só para contas externas)");
+ok([...d.querySelectorAll(".area:not([hidden])")].map((b) => b.dataset.area).join(",") === "home,ops,master,files,dev,admin", "admin vê as seis áreas (Portal é só para contas externas)");
 
 // Operation: routine with form, result and history together (RF-020-03)
 await go(w, "#/ops/demo/demo.hello");
@@ -314,6 +314,24 @@ await until(() => text("#admin-main").includes("Exportar dados mascarados"), "da
 [...d.querySelectorAll("#admin-main .sub-tabs button")].find((b) => b.textContent === "Máscaras").click();
 await until(() => text("#admin-main").includes("base.party"), "masking", jsErrors);
 ok(true, "cópia de dados: exportar, receber e catálogo de máscaras");
+// Master data (spec 040): the same list and sheet for every entity.
+await go(w, "#/master/party");
+await until(() => d.querySelectorAll("#master-main .md-list tbody tr").length > 0, "master list", jsErrors);
+ok(text("#master-nav").includes("Clientes e fornecedores") && text("#master-nav").includes("Qualidade dos cadastros"), "Cadastros: menu por grupos (spec 040)");
+d.querySelector("#master-main .md-list tbody tr").click();
+await until(() => d.querySelector("#master-main .sub-tabs") && text("#master-main").includes("Histórico"), "master sheet", jsErrors);
+ok(d.querySelector("#master-main .md-actions button.primary").disabled, "ficha abre com Salvar desabilitado até alterar algo");
+[...d.querySelectorAll("#master-main .sub-tabs button")].find((b) => b.textContent === "Histórico").click();
+await until(() => text("#master-main").includes("Sem alterações registradas") || text("#master-main").includes("Antes"), "master history", jsErrors);
+ok(true, "ficha com abas e histórico");
+await go(w, "#/master/product/novo");
+await until(() => text("#master-main").includes("Novo: item"), "master new", jsErrors);
+d.querySelector("#master-main .md-actions button.primary").click();
+await until(() => text("#master-main").includes("Corrija os campos destacados"), "master validation", jsErrors);
+ok(d.querySelectorAll("#master-main .md-field.invalid").length >= 2, "campos obrigatórios destacados antes de enviar");
+await go(w, "#/master/_quality");
+await until(() => text("#master-main").includes("pendência") || text("#master-main").includes("Nenhuma pendência"), "master quality", jsErrors);
+ok(true, "painel de qualidade dos cadastros");
 await go(w, "#/admin/publicapi");
 await until(() => text("#admin-main").includes("Chaves de assinatura dos tokens"), "public api", jsErrors);
 [...d.querySelectorAll("#admin-main .sub-tabs button")].find((b) => b.textContent === "Novo cliente").click();
@@ -334,7 +352,7 @@ await fetch(ANA_URL + "/api/admin/users", { method: "POST", headers: { "Content-
 const u = await open(uname, "Operator-pass-1");
 const utext = (s) => (u.d.querySelector(s) || {}).textContent || "";
 await until(() => utext("#area-home").includes("Favoritas"), "user home", u.jsErrors);
-ok([...u.d.querySelectorAll(".area")].filter((b) => !b.hidden).map((b) => b.dataset.area).join(",") === "home,ops,files", "usuário vê Início, Operação e Arquivos");
+ok([...u.d.querySelectorAll(".area")].filter((b) => !b.hidden).map((b) => b.dataset.area).join(",") === "home,ops,master,files", "usuário vê Início, Operação, Cadastros e Arquivos");
 u.w.location.hash = "#/dev";
 await sleep(300);
 ok(!u.d.querySelector("#area-home").hidden, "acesso direto a #/dev volta ao Início");

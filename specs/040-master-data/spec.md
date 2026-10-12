@@ -71,8 +71,8 @@ próprias.
   que corrige.
 
 ## Requisitos funcionais
-- **RF-040-01** Registro de entidades mestres (`master.entity`). Cada
-  entidade declara:
+- **RF-040-01** Registro de entidades mestres (biblioteca do produto
+  `master.entities`, atualizável pela spec 028). Cada entidade declara:
   - nome e rótulo;
   - tabela principal e tabelas filhas, como abas (ex.: item →
     `production.item_plan`, `supply.supplier_item`,
@@ -193,3 +193,34 @@ próprias.
 2. **Duplicados e mesclagem, importação e exportação** (RF-07, RF-09).
 3. **Aprovação de campos sensíveis e painel de qualidade** (RF-08, RF-10).
 4. **Migração** de todos os cadastros atuais e das buscas (RF-11).
+
+## Situação (implementação, outubro/2026)
+Implementada, com duas pendências (T-040-10b e T-040-11b).
+
+Onze entidades do produto estão registradas: clientes e fornecedores, itens,
+depósitos, centros de custo, contas bancárias, condições de pagamento,
+transportadoras, colaboradores, perfis profissionais, técnicos de campo e
+recursos de produção.
+
+Decisões tomadas:
+- **Registro na biblioteca.** As definições ficam na biblioteca do produto
+  `master.entities`, e não numa tabela. Melhorias chegam pela atualização do
+  produto (spec 028); campos próprios do cliente ficam em
+  `master.custom_field`.
+- **Escritores reaproveitados.** A gravação passa pelos programas `save_*`
+  existentes, que já têm as regras de negócio testadas, com a mesma resposta
+  de antes. O serviço padrão acrescenta validação, duplicados, versão,
+  aprovação e histórico.
+- **Documento no banco.** CPF/CNPJ é conferido (dígito verificador) e
+  formatado pelo banco quando muda, por qualquer caminho. Registros antigos
+  inválidos continuam editáveis enquanto o documento não mudar.
+- **Histórico por gatilho genérico.** Uma linha por alteração, com os campos
+  mudados no formato antes → depois, quem, origem e execução. Custo por hora
+  do colaborador aparece mascarado no histórico.
+- **Mesclagem no serviço,** com a autorização do contexto. Uma referência que
+  não pode mudar (por exemplo, a conta de portal do parceiro) bloqueia a
+  mesclagem dizendo onde; a contagem usa `master.reference_count`.
+- **Depósito inativo é recusado em documentos novos:** pedido, compra,
+  produção, entrada de estoque e despesa de projeto.
+- **Importação:** prévia em cerca de 0,1 s por mil linhas; gravação em cerca
+  de 18 ms por linha (T-040-10b).

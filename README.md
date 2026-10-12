@@ -382,6 +382,32 @@ OS. A fatura de pedido ou de OS tem PDF (itens, parcelas, vencimentos e dados
 de pagamento), gerado no faturamento e guardado na pasta "Faturas" do
 cliente — o título e Minhas faturas abrem o PDF numa aba.
 
+## Cadastros (spec 040)
+
+A área **Cadastros** reúne os dados mestres — clientes e fornecedores, itens,
+depósitos, centros de custo, contas bancárias, condições de pagamento,
+transportadoras, colaboradores, perfis, técnicos e recursos de produção —
+todos com a **mesma lista** (busca enquanto digita, ativos/inativos,
+exportar, desativar em lote) e a **mesma ficha** (abas, validação no campo,
+Salvar só quando algo mudou, histórico campo a campo e onde o cadastro é
+usado). Atalhos iguais em todos: `/` busca, `N` novo, `Ctrl+S` salva, `Esc`
+volta.
+
+- CPF/CNPJ conferido pelo dígito verificador e formatado — na tela, na API,
+  na importação e pelo banco.
+- Possível duplicado avisado antes de criar; o administrador **mescla**
+  duplicados (move pedidos, títulos e demais referências).
+- Desativar em vez de apagar; apagar só o que nunca foi usado.
+- Campos sensíveis (preço, custo, limite de crédito, dados bancários) podem
+  exigir **aprovação de outra pessoa** (Cadastros → Configuração).
+- **Importar planilha** (CSV): prévia linha a linha, gravação só das linhas
+  válidas; reimportar não duplica. Exportar gera o mesmo formato.
+- **Qualidade dos cadastros**: incompletos, sem custo, sem fornecedor… com a
+  lista para corrigir; a verificação periódica avisa.
+- **Campos próprios** da empresa em clientes e itens, sem mudar o banco.
+- API: `master.describe`, `master.search`, `master.get`, `master.save`,
+  `master.lookup` e demais `master.*` (mesmas regras da tela).
+
 ## Processos integrados e conciliações (spec 038)
 
 Princípio P17: um fato de negócio é registrado uma vez e gera, na mesma
@@ -696,7 +722,7 @@ correspondentes são só o valor inicial).
 
 ## Situação das specs
 
-Implementadas: 001–008, 011 (com usuários robô e dono obrigatório), 012, 018, 021, 019 (faltam alertas configuráveis e OpenTelemetry), 013, 014, 015, 016 (faltam S3 e antivírus), 017 (faltam SFTP/pasta/e-mail, mTLS, CNAB e pacotes de modelos), 022, 023, 024, 025, 026, 027, 028, 029, 030, 031, 032, 033, 035, 036, 037 (falta base OSV por conector), 034 (faltam agendamentos e migrações no pacote, envio por conector), 038 fase 1 (processos integrados: estoque valorizado com lançamento automático, inventário, frete, conciliações, fechamento), 010 (faltam PKCE com consentimento, TOTP, HTTP/2 e cache, disjuntor; vazão de 1.000 chamadas/s aguarda decisão); 020 parcial (falta próxima ação
+Implementadas: 001–008, 011 (com usuários robô e dono obrigatório), 012, 018, 021, 019 (faltam alertas configuráveis e OpenTelemetry), 013, 014, 015, 016 (faltam S3 e antivírus), 017 (faltam SFTP/pasta/e-mail, mTLS, CNAB e pacotes de modelos), 022, 023, 024, 025, 026, 027, 028, 029, 030, 031, 032, 033, 035, 036, 037 (falta base OSV por conector), 034 (faltam agendamentos e migrações no pacote, envio por conector), 040 (cadastros padronizados; falta importação em lote rápida), 038 fase 1 (processos integrados: estoque valorizado com lançamento automático, inventário, frete, conciliações, fechamento), 010 (faltam PKCE com consentimento, TOTP, HTTP/2 e cache, disjuntor; vazão de 1.000 chamadas/s aguarda decisão); 020 parcial (falta próxima ação
 sugerida, fluxos guiados e auditoria de acessibilidade).
 Na fila (ordem em [scripts/pending-work.prompt.md](scripts/pending-work.prompt.md)):
 009 licenciamento aguarda decisões; depois 020 (restante) e as tarefas adiadas.

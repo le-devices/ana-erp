@@ -43,8 +43,8 @@ def main(customer, items, warehouse="CENTRAL", payment_term=None, fulfill="warn"
     v.require(0 < len(items) <= 500, "INVALID_ITEMS", "o pedido deve ter de 1 a 500 itens")
     c = ana.sql_one("SELECT id, name FROM base.party WHERE id = $1 AND active AND kind IN ('customer', 'both')", customer)
     v.require(c, "CUSTOMER_NOT_FOUND", f"cliente {customer} não encontrado")
-    w = ana.sql_one("SELECT id, code, cost_center FROM inventory.warehouse WHERE code = $1", warehouse.upper())
-    v.require(w and w["code"] not in NON_SALEABLE, "WAREHOUSE_NOT_FOUND", f"depósito {warehouse} não encontrado ou não vende")
+    w = ana.sql_one("SELECT id, code, cost_center FROM inventory.warehouse WHERE code = $1 AND active", warehouse.upper())
+    v.require(w and w["code"] not in NON_SALEABLE, "WAREHOUSE_NOT_FOUND", f"depósito {warehouse} não encontrado, inativo ou não vende")
 
     codes = sorted({str(i.get("product", "")).strip().upper() for i in items})
     products = {p["code"]: p for p in ana.sql(
