@@ -3735,7 +3735,7 @@ class TestTransports(Base):
         self.assertIn(a, c["current"])                                       # side-by-side comparison source
 
     def test_ca_034_05_masked_copy_dry_run(self):
-        email, doc = f"segredo{SUFFIX}@empresa-real.com.br", f"{SUFFIX[-8:-6]}.{SUFFIX[-6:-3]}.{SUFFIX[-3:]}/0001-99"
+        email, doc = f"segredo{SUFFIX}@empresa-real.com.br", cnpj(f"{SUFFIX}0002")
         name = f"Cliente Sigiloso {SUFFIX}"
         p1 = self.client.call("base.save_party", name=name, email=email, tax_id=doc, state="SP")["id"]
         p2 = self.client.call("base.save_party", name=f"Outra {SUFFIX}", email=email, state="SP")["id"]
@@ -4705,3 +4705,177 @@ class TestIntegratedProcesses(Base):
             # Leave the base as it was: reopen to before any entry (history keeps both actions).
             self.ok("finance.close_period", action="reopen", until=(old - datetime.timedelta(days=1)).isoformat(),
                     reason="teste automatizado do fechamento")
+
+
+# ---------------------------------------------------------------- spec 040
+def cnpj(base12):
+    """A valid CNPJ for 12 digits (test data must pass the check digits, as real data does)."""
+    d = [int(c) for c in base12]
+    w = [6, 5, 4, 3, 2, 9, 8, 7, 6, 5, 4, 3, 2]
+    for n in (12, 13):
+        r = sum(d[i] * w[i + 13 - n] for i in range(n)) % 11
+        d.append(0 if r < 2 else 11 - r)
+    s = "".join(map(str, d))
+    return f"{s[:2]}.{s[2:5]}.{s[5:8]}/{s[8:12]}-{s[12:]}"
+
+
+class TestMasterData(Base):
+    """One list, one sheet, one search; validation, duplicates, history, approval, import (spec 040)."""
+
+    def ok(self, program, client=None, **params):
+        return (client or self.client).call(program, **params)
+
+    def err(self, program, client=None, **params):
+        with self.assertRaises(AnaRemoteError) as ctx:
+            (client or self.client).call(program, **params)
+        e = ctx.exception
+        e.info = (e.data or {}).get("data") or e.data or {}
+        return e
+
+    def party(self, name, **values):
+        return self.ok("master.save", entity="party", values={"name": name, "kind": "customer", **values},
+                       confirm_duplicate=True, reason="teste automatizado")
+
+    def test_ca_040_01_same_list_and_sheet_for_every_entity(self):
+        d = self.ok("master.describe")
+        names = {e["name"] for e in d["entities"]}
+        self.assertTrue({"party", "product", "warehouse", "cost_center"} <= names)
+        for e in ("party", "product", "warehouse", "cost_center"):
+            s = self.ok("master.search", entity=e, limit=3)
+            self.assertTrue(s["total"] >= 1 and s["rows"] and s["columns"], e)
+            rec = self.ok("master.get", entity=e, key=str(s["rows"][0]["key"]))
+            self.assertEqual(set(rec), {"entity", "id", "key", "title", "active", "version", "values", "titles", "tabs", "pending"})
+        code = f"MD{SUFFIX}"
+        sup = self.party(f"Fornecedor MD {SUFFIX}", kind="supplier")
+        self.ok("master.save", entity="product", values={"code": code, "description": f"Item mestre {SUFFIX}", "price": "12,50"},
+                tabs={"Produção e custo": {"make_or_buy": "buy", "standard_cost": "7,25", "lead_time_days": "5"},
+                      "Fornecimento": [{"supplier_id": sup["id"], "price": "6,90", "preferred": True}]},
+                confirm_duplicate=True, reason="teste")
+        rec = self.ok("master.get", entity="product", key=code)
+        self.assertEqual((rec["values"]["price"], rec["tabs"]["Produção e custo"]["standard_cost"]), ("12.50", "7.2500"))
+        self.assertEqual([(r["supplier_id"], r["preferred"]) for r in rec["tabs"]["Fornecimento"]], [(sup["id"], True)])
+        # Removing the supplier row on the sheet removes it (and only it).
+        self.ok("master.save", entity="product", key=code, version=rec["version"], tabs={"Fornecimento": []})
+        self.assertEqual(self.ok("master.get", entity="product", key=code)["tabs"]["Fornecimento"], [])
+
+    def test_ca_040_02_tax_id_checked_everywhere_with_the_same_words(self):
+        bad = "11.222.333/0001-82"
+        e = self.err("master.save", entity="party", values={"name": f"Doc errado {SUFFIX}", "tax_id": bad})
+        self.assertEqual(e.code, "INVALID_FIELDS")
+        self.assertIn("confira os números", e.info["fields"]["tax_id"])
+        e = self.err("base.save_party", name=f"Doc errado API {SUFFIX}", tax_id=bad)     # old path: the database refuses
+        self.assertEqual(e.code, "INVALID_TAX_ID")
+        self.assertIn("confira os números", e.message)
+        r = self.ok("master.import", entity="party", content=f"Nome;CNPJ/CPF\nDoc errado CSV {SUFFIX};{bad}\n")
+        self.assertEqual(r["error"], 1)
+        self.assertIn("confira os números", r["errors"][0]["detalhe"])
+        good = cnpj(f"{SUFFIX}0001")
+        p = self.ok("base.save_party", name=f"Doc certo {SUFFIX}", tax_id=good.replace(".", "").replace("/", "").replace("-", ""))
+        self.assertEqual(self.ok("master.get", entity="party", key=str(p["id"]))["values"]["tax_id"], good)   # formatted
+
+    def test_ca_040_03_duplicate_warning_and_merge(self):
+        base = self.party(f"Comercial Andrômeda {SUFFIX}")
+        e = self.err("master.save", entity="party", values={"name": f"Comercial Andromeda {SUFFIX}", "kind": "customer"})
+        self.assertEqual(e.code, "POSSIBLE_DUPLICATE")
+        self.assertIn(base["id"], [c["id"] for c in e.info["candidates"]])
+        dup = self.party(f"Comercial Andromeda {SUFFIX}")
+        o = self.ok("sales.create_order", customer=dup["id"], items=[{"product": "CAFE-500", "quantity": 1}])
+        r = self.ok("master.merge", entity="party", keep=str(base["id"]), drop=str(dup["id"]), reason="mesmo cliente")
+        self.assertGreaterEqual(r["moved"].get("sales.sales_order", 0), 1)
+        self.assertEqual(self.scalar(f"SELECT customer_id FROM sales.sales_order WHERE number = {o['number']}"), base["id"])
+        self.assertFalse(self.ok("master.get", entity="party", key=str(dup["id"]))["active"])
+        hist = self.ok("master.history", entity="party", key=str(base["id"]))["changes"]
+        self.assertTrue(any(h["op"] == "merge" for h in hist))
+
+    def test_ca_040_04_deactivate_and_delete_only_unused(self):
+        code = f"MX{SUFFIX}"
+        self.ok("base.save_product", code=code, description=f"Item a desativar {SUFFIX}", price="3")
+        self.ok("inventory.stock_in", product=code, quantity=2, unit_cost="1")
+        o = self.ok("sales.create_order", customer=1, items=[{"product": code, "quantity": 1}])
+        self.ok("master.set_active", entity="product", keys=[code], active=False)
+        self.assertNotIn(code, [x["value"] for x in self.ok("master.lookup", entity="product", q=code)])
+        s, c, _ = self.run_program("supply.lookup", {"kind": "products"})
+        self.assertNotIn(code, [x["value"] for x in c["result"]])
+        s, c, _ = self.run_program("docs.view", {"kind": "order", "key": str(o["number"])})            # the old order opens
+        self.assertEqual((s, c["result"]["number"]), (200, o["number"]))
+        e = self.err("master.delete", entity="product", key=code)
+        self.assertEqual(e.code, "IN_USE")
+        self.assertTrue(any(u["table"] == "sales.sales_order_item" for u in e.info["used"]))
+        fresh = f"MY{SUFFIX}"
+        self.ok("base.save_product", code=fresh, description=f"Item nunca usado {SUFFIX}", price="3")
+        self.assertTrue(self.ok("master.delete", entity="product", key=fresh)["deleted"])
+        self.ok("master.set_active", entity="product", keys=[code], active=True)
+
+    def test_ca_040_05_history_and_approval_of_sensitive_fields(self):
+        code = f"MP{SUFFIX}"
+        self.ok("base.save_product", code=code, description=f"Item preço {SUFFIX}", price="10")
+        rec = self.ok("master.get", entity="product", key=code)
+        rec = self.ok("master.save", entity="product", key=code, version=rec["version"], values={"price": "11,00"})
+        h = [c for c in self.ok("master.history", entity="product", key=code)["changes"] if c["field"] == "Preço de venda"]
+        self.assertEqual((Decimal(str(h[0]["before"])), Decimal(str(h[0]["after"])), h[0]["by"]), (10, 11, "admin"))
+        self.ok("master.settings", entity="product", approval=True)
+        try:
+            r = self.ok("master.save", entity="product", key=code, version=rec["version"], values={"price": "15"})
+            self.assertTrue(r["pending"])
+            self.assertEqual(self.ok("master.get", entity="product", key=code)["values"]["price"], "11.00")   # not yet
+            self.assertEqual(self.err("master.requests", id=r["pending"], decision="approve").code, "SELF_APPROVAL")
+            _, t2 = new_user("admin")
+            self.ok("master.requests", client=Ana(URL, token=t2), id=r["pending"], decision="approve")
+            self.assertEqual(self.ok("master.get", entity="product", key=code)["values"]["price"], "15.00")
+            # Non-sensitive fields are not held.
+            rec = self.ok("master.get", entity="product", key=code)
+            r = self.ok("master.save", entity="product", key=code, version=rec["version"],
+                        values={"description": f"Item preço novo {SUFFIX}"})
+            self.assertEqual(r["values"]["description"], f"Item preço novo {SUFFIX}")
+        finally:
+            self.ok("master.settings", entity="product", approval=False)
+
+    def test_ca_040_06_import_preview_confirm_and_reimport_without_duplicates(self):
+        lines = ["Nome;Tipo;CNPJ/CPF;E-mail;UF"]
+        for i in range(1000):
+            lines.append(f"Importado {SUFFIX} {i:04d};customer;{cnpj(f'{SUFFIX[-4:]}{i:04d}0001')};imp{i}.{SUFFIX}@exemplo.com.br;SP")
+        lines[10] = f"Importado {SUFFIX} ruim 1;customer;11.222.333/0001-82;x@y.com;SP"
+        lines[20] = f"Importado {SUFFIX} ruim 2;cliente-vip;;x@y.com;SP"
+        lines[30] = f"Importado {SUFFIX} ruim 3;customer;;nao-e-email;SP"
+        content = "\n".join(lines) + "\n"
+        preview = self.ok("master.import", entity="party", content=content)
+        self.assertEqual((preview["new"], preview["error"], preview["confirmed"]), (997, 3, False))
+        self.assertEqual(self.count("base.party", f"name LIKE 'Importado {SUFFIX} %'"), 0)       # preview writes nothing
+        done = self.ok("master.import", entity="party", content=content, confirm=True)
+        self.assertEqual((done["new"], done["error"]), (997, 3))
+        self.assertEqual(self.count("base.party", f"name LIKE 'Importado {SUFFIX} %'"), 997)
+        again = self.ok("master.import", entity="party", content=content)
+        self.assertEqual((again["new"], again["same"]), (0, 997))
+        exported = self.ok("master.export", entity="party", q=f"Importado {SUFFIX}")
+        self.assertEqual(exported["rows"], 997)
+        self.assertTrue(exported["content"].lstrip("﻿").startswith("Identificador;Tipo;Nome"))
+
+    def test_ca_040_07_concurrent_edit_does_not_overwrite(self):
+        p = self.party(f"Concorrência {SUFFIX}")
+        a = self.ok("master.get", entity="party", key=str(p["id"]))
+        b = self.ok("master.get", entity="party", key=str(p["id"]))
+        self.ok("master.save", entity="party", key=str(p["id"]), version=a["version"], values={"city": "Campinas"})
+        e = self.err("master.save", entity="party", key=str(p["id"]), version=b["version"], values={"city": "Santos"})
+        self.assertEqual(e.code, "CONFLICT")
+        self.assertEqual(self.ok("master.get", entity="party", key=str(p["id"]))["values"]["city"], "Campinas")
+
+    def test_ca_040_08_old_writers_keep_their_answers(self):
+        r = self.ok("base.save_party", name=f"Compat {SUFFIX}", state="SP")
+        self.assertEqual(set(r), {"id", "created"})
+        r = self.ok("base.save_product", code=f"MC{SUFFIX}", description="compat", price="1")
+        self.assertEqual(set(r), {"id", "code", "created"})
+
+    def test_rf_040_01_custom_field_and_quality(self):
+        name = f"seg{SUFFIX[-6:]}"
+        self.ok("master.settings", entity="party", field={"name": name, "label": "Segmento", "type": "choice",
+                                                           "choices": ["Varejo", "Indústria"]})
+        try:
+            p = self.party(f"Campo próprio {SUFFIX}", **{name: "Indústria"})
+            self.assertEqual(self.ok("master.get", entity="party", key=str(p["id"]))["values"][name], "Indústria")
+            e = self.err("master.save", entity="party", key=str(p["id"]), values={name: "Outro"})
+            self.assertEqual(e.info["fields"][name], "escolha uma das opções")
+        finally:
+            self.ok("master.settings", entity="party", field={"name": name, "label": "Segmento", "type": "choice",
+                                                               "choices": ["Varejo", "Indústria"], "active": False})
+        q = self.ok("master.quality")
+        self.assertTrue(any(i["label"] == "Sem CNPJ/CPF" for e in q["entities"] for i in e["items"]))

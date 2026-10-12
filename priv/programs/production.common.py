@@ -30,9 +30,9 @@ def product(code):
 
 
 def warehouse(code):
-    w = ana.sql_one("SELECT id, code, cost_center FROM inventory.warehouse WHERE code = $1", str(code).upper())
+    w = ana.sql_one("SELECT id, code, cost_center FROM inventory.warehouse WHERE code = $1 AND active", str(code).upper())
     if not w:
-        raise ana.Error("WAREHOUSE_NOT_FOUND", f"depósito {code} não encontrado")
+        raise ana.Error("WAREHOUSE_NOT_FOUND", f"depósito {code} não encontrado ou inativo")
     return w
 
 

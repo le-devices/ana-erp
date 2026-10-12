@@ -25,8 +25,8 @@ def main(product, quantity, warehouse="CENTRAL", unit_cost=None, reason="adjustm
     p = ana.sql_one("SELECT id, kind FROM base.product WHERE code = $1 AND active", product.upper())
     v.require(p, "PRODUCT_NOT_FOUND", f"item {product} não encontrado")
     v.require(p["kind"] == "goods", "NOT_STOCKABLE", f"{product} é serviço e não tem estoque")
-    w = ana.sql_one("SELECT id FROM inventory.warehouse WHERE code = $1", warehouse.upper())
-    v.require(w, "WAREHOUSE_NOT_FOUND", f"depósito {warehouse} não encontrado")
+    w = ana.sql_one("SELECT id FROM inventory.warehouse WHERE code = $1 AND active", warehouse.upper())
+    v.require(w, "WAREHOUSE_NOT_FOUND", f"depósito {warehouse} não encontrado ou inativo")
     m = ana.sql_one(
         "INSERT INTO inventory.stock_movement (product_id, warehouse_id, quantity, kind, document, created_by, reason, unit_cost) "
         "VALUES ($1, $2, $3, 'in', $4, $5, $6, $7) RETURNING id", p["id"], w["id"], qty, document, ana.context.user, reason, unit_cost)

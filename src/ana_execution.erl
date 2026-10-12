@@ -409,11 +409,14 @@ prepare_run(P, L, St) ->
                 undefined -> "BEGIN; ";
                 S -> ["BEGIN ISOLATION LEVEL REPEATABLE READ; SET TRANSACTION SNAPSHOT '", S, "'; "]
             end,
-            %% ana.username: informational (outbox created_by, spec 017); never used for authorization.
+            %% ana.username / ana.origin / ana.execution_id: informational (outbox created_by, spec 017;
+            %% master data history, spec 040); never used for authorization.
+            Q = fun(V) -> binary:replace(iolist_to_binary(V), <<"'">>, <<"''">>, [global]) end,
             Begin = io_lib:format(
-                "~sSET LOCAL statement_timeout = ~b; SET LOCAL lock_timeout = ~b; SET LOCAL ana.username = '~ts'",
+                "~sSET LOCAL statement_timeout = ~b; SET LOCAL lock_timeout = ~b; SET LOCAL ana.username = '~ts'; "
+                "SET LOCAL ana.origin = '~ts'; SET LOCAL ana.execution_id = '~ts'",
                 [Snap, maps:get(<<"sql_timeout_ms">>, L), maps:get(<<"lock_timeout_ms">>, L),
-                 binary:replace(maps:get(username, St1#st.user), <<"'">>, <<"''">>, [global])]),
+                 Q(maps:get(username, St1#st.user)), Q(St1#st.origin), Q(St1#st.id)]),
             case lists:flatten([epgsql:squery(C, Begin)]) of
                 [{ok, [], []} | _] = Rs ->
                     case [E || {error, E} <- Rs] of

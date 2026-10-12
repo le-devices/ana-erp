@@ -20,7 +20,7 @@
                        <<"pending_password_change">>, <<"stale_api_key">>, <<"open_share_links">>,
                        <<"connector_without_hosts">>, <<"short_audit_retention">>],
     <<"dependencies">> => [<<"vulnerable_component">>, <<"vulnerability_feed">>],
-    <<"integrity">> => [<<"shipped_files">>, <<"ledger_reconciliation">>],
+    <<"integrity">> => [<<"shipped_files">>, <<"ledger_reconciliation">>, <<"master_quality">>],
     <<"robustness">> => [<<"wal_archiving">>, <<"base_backup">>, <<"restore_test">>, <<"dead_letters">>,
                          <<"open_breaker">>, <<"error_rate">>, <<"files_disk">>],
     <<"performance">> => [<<"probe_regression">>]}).
@@ -126,7 +126,7 @@ rules(<<"security">>) ->
      fun pending_password_change/0, fun stale_api_key/0, fun open_share_links/0, fun connector_without_hosts/0,
      fun short_audit_retention/0];
 rules(<<"dependencies">>) -> [fun inventory/0, fun ana_osv:findings/0, fun vulnerability_feed/0];
-rules(<<"integrity">>) -> [fun shipped_files/0, fun ledger_reconciliation/0];
+rules(<<"integrity">>) -> [fun shipped_files/0, fun ledger_reconciliation/0, fun master_quality/0];
 rules(<<"robustness">>) ->
     [fun wal_archiving/0, fun base_backup/0, fun restore_test/0, fun dead_letters/0, fun open_breaker/0,
      fun error_rate/0, fun files_disk/0];
@@ -295,6 +295,20 @@ ledger_reconciliation() ->
         "não corrija com lançamento manual."/utf8>>,
       #{key => K, difference => D}}
      || #{<<"key">> := K, <<"label">> := L, <<"difference">> := D, <<"items">> := N} <- Rows].
+
+%% Spec 040 (RF-040-10): the quality indicators declared for each master entity (master.entities),
+%% computed by the product program as the robot "system"; one finding per indicator with records.
+master_quality() ->
+    case ana_execution:run(<<"master.quality">>, #{}, ana_task:system_user(), #{origin => <<"internal">>}) of
+        {ok, #{result := #{<<"entities">> := Es}}} ->
+            [{<<"master_quality">>, <<E/binary, ":", L/binary>>, <<"warning">>,
+              fmt("Cadastros: ~ts — ~ts (~b)", [P, L, N]), H,
+              <<"Abra Cadastros → Qualidade dos cadastros e corrija os registros listados."/utf8>>,
+              #{entity => E, indicator => L, count => N}}
+             || #{<<"entity">> := E, <<"plural">> := P, <<"items">> := Items} <- Es,
+                #{<<"label">> := L, <<"count">> := N, <<"hint">> := H} <- Items, is_integer(N), N > 0];
+        _ -> []
+    end.
 
 what(changed) -> <<"alterado"/utf8>>;
 what(missing) -> <<"ausente"/utf8>>;

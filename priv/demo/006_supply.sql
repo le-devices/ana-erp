@@ -1,6 +1,6 @@
 -- Demo: purchasing for the R&D case (spec 013). Applied only with ANA_DEMO=true.
 INSERT INTO base.party (kind, name, tax_id, email, city, state) VALUES
-    ('supplier', 'Laboratório de Ensaios Delta', '88.888.888/0001-88', 'ensaios@delta.example', 'Campinas', 'SP')
+    ('supplier', 'Laboratório de Ensaios Delta', '88.888.888/0001-91', 'ensaios@delta.example', 'Campinas', 'SP')
 ON CONFLICT DO NOTHING;
 INSERT INTO base.product (code, description, unit, price, kind) VALUES
     ('PCB-PROTO', 'Placa de circuito impresso (protótipo, lote de 5)', 'LT', 0, 'goods'),

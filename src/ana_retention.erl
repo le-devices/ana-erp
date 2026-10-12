@@ -59,7 +59,10 @@ categories() ->
      {api_calls, <<"Chamadas da API pública"/utf8>>, retention_access_days,
       "ana_system.api_call_log", "at", "true"},
      {api_usage, <<"Uso diário da API pública"/utf8>>, retention_access_days,
-      "ana_system.api_usage", "day", "true"}].
+      "ana_system.api_usage", "day", "true"},
+     %% Spec 040: field-level history of master data (with the administrative changes).
+     {master_history, <<"Histórico dos cadastros"/utf8>>, retention_admin_log_days,
+      "master.change_log", "at", "true"}].
 
 %% Manual purge (RF-024-09): owned by the administrator who asked.
 -spec purge_now(map()) -> {ok, binary()} | {error, term()}.

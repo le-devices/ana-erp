@@ -43,9 +43,9 @@ def main(project, kind, description, unit_cost=None, quantity=1, rebillable=Fals
             raise ana.Error("PRODUCT_NOT_FOUND", f"item {product} não encontrado")
         product_id = prod["id"]
         if prod["kind"] == "goods":
-            w = ana.sql_one("SELECT id FROM inventory.warehouse WHERE code = $1", warehouse.upper())
+            w = ana.sql_one("SELECT id FROM inventory.warehouse WHERE code = $1 AND active", warehouse.upper())
             if not w:
-                raise ana.Error("WAREHOUSE_NOT_FOUND", f"depósito {warehouse} não encontrado")
+                raise ana.Error("WAREHOUSE_NOT_FOUND", f"depósito {warehouse} não encontrado ou inativo")
             ana.sql("SELECT id FROM base.product WHERE id = $1 FOR UPDATE", product_id)
             balance = ana.sql_value(
                 "SELECT COALESCE(sum(quantity), 0) FROM inventory.stock_movement "

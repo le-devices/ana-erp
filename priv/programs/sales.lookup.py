@@ -6,6 +6,8 @@ warehouse and in the others) so the order screen shows availability while typing
 
 from ana_lib.util.format import compact, money
 
+from ana_lib.master import core  # spec 040: the single lookup of master records
+
 PARAMS = {
     "kind": {"type": "str", "required": True, "label": "tipo", "choices": ["customers", "products", "warehouses", "orders", "invoiced", "order_lines", "origins"]},
     "warehouse": {"type": "str", "label": "depósito"},
@@ -24,9 +26,7 @@ def main(kind, warehouse=None, from_wh=None, customer=None, order=None):
         return [{"value": r["id"], "label": r["name"] + (f" — {r['city']}/{r['state']}" if r["city"] else "")
                  + (" (bloqueado)" if r["blocked"] else "")} for r in rows]
     if kind == "warehouses":
-        rows = ana.sql("SELECT code, description FROM inventory.warehouse WHERE code NOT IN ('TRANSITO', 'QUARENTENA') "
-                       "ORDER BY code LIMIT 500")
-        return [{"value": r["code"], "label": f"{r['code']} — {r['description']}"} for r in rows]
+        return core.options("warehouse", filter_sql="t.code NOT IN ('TRANSITO', 'QUARENTENA')")
     if kind == "orders":
         rows = ana.sql("SELECT o.number, p.name, o.total FROM sales.sales_order o JOIN base.party p ON p.id = o.customer_id "
                        "WHERE o.status = 'OPEN' ORDER BY o.number DESC LIMIT 500")
