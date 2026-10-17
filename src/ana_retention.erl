@@ -62,7 +62,14 @@ categories() ->
       "ana_system.api_usage", "day", "true"},
      %% Spec 040: field-level history of master data (with the administrative changes).
      {master_history, <<"Histórico dos cadastros"/utf8>>, retention_admin_log_days,
-      "master.change_log", "at", "true"}].
+      "master.change_log", "at", "true"},
+     %% Spec 039: finished cases (their tokens and tasks go with them), their trail and old notices.
+     {bpm_cases, <<"Casos de processos concluídos ou cancelados"/utf8>>, retention_execution_days,
+      "bpm.case", "finished_at", "status IN ('done', 'cancelled')"},
+     {bpm_events, <<"Trilha dos casos de processos"/utf8>>, retention_execution_days,
+      "bpm.event", "at", "true"},
+     {bpm_notices, <<"Avisos de tarefas lidos"/utf8>>, retention_scheduler_days,
+      "bpm.notification", "created_at", "read"}].
 
 %% Manual purge (RF-024-09): owned by the administrator who asked.
 -spec purge_now(map()) -> {ok, binary()} | {error, term()}.

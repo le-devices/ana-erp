@@ -4879,3 +4879,257 @@ class TestMasterData(Base):
                                                                "choices": ["Varejo", "Indústria"], "active": False})
         q = self.ok("master.quality")
         self.assertTrue(any(i["label"] == "Sem CNPJ/CPF" for e in q["entities"] for i in e["items"]))
+
+
+# ---------------------------------------------------------------- spec 039
+def bpm_node(i, t, name, lane="l1", **props):
+    return {"id": i, "type": t, "name": name, "x": 0, "y": 0, "lane": lane, "props": props}
+
+
+def bpm_edge(a, b, **extra):
+    return {"id": f"{a}-{b}-{extra.get('on', '')}", "from": a, "to": b, **extra}
+
+
+class TestBpm(Base):
+    """Model, simulate, execute and monitor processes (spec 039)."""
+    created = []
+
+    @classmethod
+    def tearDownClass(cls):
+        for code in cls.created:
+            http("POST", "/api/programs/bpm.save_process/run", {"params": {"code": code, "name": "desligado (teste)", "active": False}},
+                 cls.token)
+        if psql_available() and cls.created:
+            codes = ", ".join(f"'{c}'" for c in cls.created)
+            psql(f"DELETE FROM bpm.event WHERE case_id IN (SELECT id FROM bpm.case WHERE process_code IN ({codes})); "
+                 f"DELETE FROM bpm.notification WHERE case_id IN (SELECT id FROM bpm.case WHERE process_code IN ({codes})); "
+                 f"DELETE FROM bpm.case WHERE process_code IN ({codes}); DELETE FROM bpm.process WHERE code IN ({codes})")
+
+    def ok(self, program, client=None, **params):
+        return (client or self.client).call(program, **params)
+
+    def process(self, name, model=None, template=None, publish=True):
+        code = f"tbpm{SUFFIX}{len(self.created)}"
+        self.created.append(code)
+        self.ok("bpm.save_process", code=code, name=name, template=template)
+        if model is not None:
+            r = self.ok("bpm.save_model", process=code, model=model)
+            self.assertFalse([i for i in r["issues"] if i["level"] == "error"], r["issues"])
+        if publish:
+            self.ok("bpm.publish", process=code, comment="teste")
+        return code
+
+    def model(self, nodes, edges, lanes=None, document="none"):
+        return {"document": document, "run_as": "system", "variables": [], "nodes": nodes, "edges": edges,
+                "lanes": lanes or [{"id": "l1", "name": "Equipe", "role": "admin"}]}
+
+    def wait_case(self, case, cond, timeout=40):
+        end = time.time() + timeout
+        while True:
+            c = self.ok("bpm.case", case=case)
+            if cond(c) or time.time() > end:
+                return c
+            time.sleep(0.5)
+
+    def task_of(self, case, name, client=None, scope="mine", timeout=30):
+        end = time.time() + timeout
+        while time.time() < end:
+            for t in self.ok("bpm.tasks", client=client, scope=scope)["tasks"]:
+                if t["case_id"] == case and t["name"] == name:
+                    return t
+            time.sleep(0.5)
+        return None
+
+    def test_ca_039_03_gateways_follow_conditions_and_joins_wait(self):
+        nodes = [bpm_node("s", "start", "Início", trigger="manual"), bpm_node("x", "gw_xor", "Valor?"),
+                 bpm_node("alto", "task_rule", "Valor alto", assign=[{"var": "faixa", "value": "alta"}]),
+                 bpm_node("p", "gw_and", "Em paralelo"), bpm_node("a", "task_rule", "Ramo A", assign=[{"var": "a", "value": 1}]),
+                 bpm_node("b", "timer", "Ramo B", hours=0.0005), bpm_node("j", "gw_and", "Ambos"),
+                 bpm_node("o", "gw_or", "Inclusivo"), bpm_node("o1", "task_rule", "Opção 1", assign=[{"var": "o1", "value": True}]),
+                 bpm_node("o2", "task_rule", "Opção 2", assign=[{"var": "o2", "value": True}]), bpm_node("oj", "gw_or", "Junta"),
+                 bpm_node("e", "end", "Fim")]
+        edges = [bpm_edge("s", "x"), bpm_edge("x", "alto", condition=[{"field": "valor", "op": ">", "value": 1000}]),
+                 bpm_edge("x", "p", default=True), bpm_edge("alto", "e"), bpm_edge("p", "a"), bpm_edge("p", "b"),
+                 bpm_edge("a", "j"), bpm_edge("b", "j"), bpm_edge("j", "o"),
+                 bpm_edge("o", "o1", condition=[{"field": "valor", "op": ">=", "value": 10}]),
+                 bpm_edge("o", "o2", condition=[{"field": "pix", "op": "=", "value": True}]), bpm_edge("o", "oj", default=True),
+                 bpm_edge("o1", "oj"), bpm_edge("o2", "oj"), bpm_edge("oj", "e")]
+        code = self.process("Caminhos", self.model(nodes, edges))
+        high = self.ok("bpm.start", process=code, data={"valor": 5000})["case"]
+        low = self.ok("bpm.start", process=code, data={"valor": 50})["case"]
+        none = self.ok("bpm.start", process=code, data={"valor": 1})["case"]
+        c = self.wait_case(high, lambda c: c["case"]["status"] == "done")
+        self.assertEqual((c["case"]["status"], c["case"]["data"].get("faixa")), ("done", "alta"))
+        self.assertNotIn("a", c["done"])                                         # exclusive: only one path
+        c = self.wait_case(low, lambda c: c["case"]["status"] == "done")
+        self.assertEqual(c["case"]["status"], "done")
+        self.assertTrue({"a", "b", "o1"} <= set(c["done"]) and "o2" not in c["done"])  # parallel waited for both; inclusive took o1
+        self.assertTrue(any(e["kind"] == "wait" and e["node"] == "j" for e in c["events"]))
+        c = self.wait_case(none, lambda c: c["case"]["status"] == "done")
+        self.assertFalse({"o1", "o2"} & set(c["done"]))                          # inclusive default
+
+    def test_ca_039_02_task_for_the_right_role_and_escalation(self):
+        dev, dev_token = new_user("developer")
+        usr, usr_token = new_user("user")
+        nodes = [bpm_node("s", "start", "Início", trigger="manual"),
+                 bpm_node("t", "task_human", "Revisar contrato", lane="l1", sla_hours=1, escalate={"to": "admin", "mode": "reassign"}),
+                 bpm_node("t2", "task_human", "Arquivar", lane="l1"), bpm_node("e", "end", "Fim")]
+        code = self.process("Revisão", self.model(nodes, [bpm_edge("s", "t"), bpm_edge("t", "t2"), bpm_edge("t2", "e")],
+                                                    lanes=[{"id": "l1", "name": "Engenharia", "role": "developer"}]))
+        case = self.ok("bpm.start", process=code)["case"]
+        dc, uc = Ana(URL, token=dev_token), Ana(URL, token=usr_token)
+        t = self.task_of(case, "Revisar contrato", client=dc)
+        self.assertIsNotNone(t)
+        self.assertIsNone(self.task_of(case, "Revisar contrato", client=uc, timeout=1))       # not the user's role
+        with self.assertRaises(AnaRemoteError):
+            self.ok("bpm.task_action", client=uc, task=t["id"], action="complete")
+        self.ok("bpm.task_action", client=dc, task=t["id"], action="complete", vars={"parecer": "ok"})
+        t2 = self.task_of(case, "Arquivar", client=dc)
+        self.assertIsNotNone(t2)
+        self.assertEqual(self.ok("bpm.case", case=case)["case"]["data"].get("parecer"), "ok")
+        # The deadline passes (simulated): the task is reassigned to the escalation target and they are told.
+        if psql_available():
+            psql(f"UPDATE bpm.task SET due_at = now() - interval '1 minute', escalate = '{{\"to\": \"admin\", \"mode\": \"reassign\"}}' "
+                 f"WHERE id = {t2['id']}")
+            end = time.time() + 30
+            while time.time() < end:
+                row = self.ok("bpm.case", case=case)["tasks"]
+                if [x for x in row if x["id"] == t2["id"] and x["assignee"] == "admin" and x["escalated"]]:
+                    break
+                time.sleep(0.5)
+            else:
+                self.fail("não escalou")
+            n = self.ok("bpm.notifications")["notifications"]
+            self.assertTrue(any(x["task_id"] == t2["id"] and x["kind"] == "escalated" for x in n))
+
+    def test_ca_039_04_simulation_compares_staffing_and_repeats_with_the_seed(self):
+        code = self.process("Atendimento (simulação)", template="atendimento_campo", publish=False)
+        base = {"days": 40, "arrivals_per_day": 20, "hours_per_day": 8, "runs": 3, "seed": 7,
+                "durations": {"agendar": {"dist": "triangular", "min": 0.6, "mode": 0.9, "max": 1.2}},
+                "resources": {"l1": {"count": 2, "cost_hour": 50}}}
+        two = self.ok("bpm.simulate", process=code, params=base, name="2 pessoas", save=True)["result"]
+        three = self.ok("bpm.simulate", process=code, params={**base, "resources": {"l1": {"count": 3, "cost_hour": 50}}},
+                        name="3 pessoas", save=True)["result"]
+        self.assertLess(three["cycle_h"]["p90"], two["cycle_h"]["p90"])
+        self.assertEqual(two["bottleneck"]["kind"], "lane")
+        again = self.ok("bpm.simulate", process=code, params=base)["result"]
+        self.assertEqual((again["cycle_h"], again["cost_per_case"]), (two["cycle_h"], two["cost_per_case"]))
+        self.assertEqual(len(self.ok("bpm.scenarios", process=code)["scenarios"]), 2)
+
+    def test_ca_039_05_calibration_reproduces_the_real_mean(self):
+        nodes = [bpm_node("s", "start", "Início", trigger="manual"), bpm_node("a", "task_human", "Analisar"),
+                 bpm_node("b", "task_human", "Responder"), bpm_node("e", "end", "Fim")]
+        code = self.process("Calibração", self.model(nodes, [bpm_edge("s", "a"), bpm_edge("a", "b"), bpm_edge("b", "e")]))
+        cases = []
+        for _ in range(6):
+            cid = self.ok("bpm.start", process=code)["case"]
+            cases.append(cid)
+            for name in ("Analisar", "Responder"):
+                t = self.task_of(cid, name, scope="all")
+                self.ok("bpm.task_action", task=t["id"], action="complete")
+        for cid in cases:
+            self.wait_case(cid, lambda c: c["case"]["status"] == "done")
+        if not psql_available():
+            self.skipTest("sem acesso ao banco para fixar os tempos")
+        # Real lead times (simulated history): Analisar 2–4 h, Responder 1–3 h.
+        for i, cid in enumerate(cases):
+            a, b = 2 + (i % 3), 1 + (i % 3)
+            psql(f"UPDATE bpm.task SET created_at = now() - interval '{a + b} hours', finished_at = now() - interval '{b} hours' "
+                 f"WHERE case_id = {cid} AND node = 'a'; "
+                 f"UPDATE bpm.task SET created_at = now() - interval '{b} hours', finished_at = now() WHERE case_id = {cid} AND node = 'b'; "
+                 f"UPDATE bpm.case SET started_at = now() - interval '{a + b} hours', finished_at = now() WHERE id = {cid}")
+        cal = self.ok("bpm.calibrate", process=code, days=2)
+        real = cal["real_cycle_h"]
+        sim = self.ok("bpm.simulate", process=code, params={**cal["params"], "runs": 10})["result"]
+        self.assertAlmostEqual(sim["cycle_h"]["avg"], real, delta=0.15 * real)
+
+    def test_ca_039_06_bpmn_round_trip_and_unsupported_warning(self):
+        code = self.process("Exportação", template="projeto_pd", publish=False)
+        x = self.ok("bpm.bpmn", action="export", process=code)["xml"]
+        self.assertIn("bpmn:parallelGateway", x)
+        self.assertIn("bpmndi:BPMNShape", x)
+        other = f"tbpm{SUFFIX}imp"
+        self.created.append(other)
+        self.ok("bpm.save_process", code=other, name="Importado")
+        r = self.ok("bpm.bpmn", action="import", process=other, xml=x)
+        src = self.ok("bpm.model", process=code)["model"]
+        got = self.ok("bpm.model", process=other)["model"]
+        self.assertEqual(sorted((n["id"], n["type"]) for n in got["nodes"]), sorted((n["id"], n["type"]) for n in src["nodes"]))
+        self.assertEqual(len(got["edges"]), len(src["edges"]))
+        self.assertFalse([i for i in r["issues"] if i["level"] == "error"], r["issues"])
+        weird = x.replace("</bpmn:process>", '<bpmn:complexGateway id="cg" name="Complexo"/></bpmn:process>')
+        r = self.ok("bpm.bpmn", action="import", xml=weird)
+        self.assertTrue(any("complexGateway" in w for w in r["warnings"]))
+        with self.assertRaises(AnaRemoteError):
+            self.ok("bpm.bpmn", action="import", xml='<!DOCTYPE x [<!ENTITY a "b">]><x/>')
+
+    def test_ca_039_07_esteiras_are_processes_of_the_same_engine(self):
+        cat = {p["code"]: p for p in self.ok("bpm.catalog")["processes"]}
+        for f in ("sales", "purchase", "field", "production"):
+            self.assertEqual(cat[f"esteira.{f}"]["flow_code"], f)
+        m = self.ok("bpm.model", process="esteira.sales")
+        self.assertFalse(m["editable"])
+        self.assertTrue(any(n["id"] == "invoice" for n in m["model"]["nodes"]))
+        self.assertIn("heat", self.ok("bpm.dashboard", process="esteira.sales"))
+        with self.assertRaises(AnaRemoteError):
+            self.ok("bpm.save_model", process="esteira.sales", model=m["model"])
+
+    def test_ca_039_08_discovery_flags_a_skipped_step(self):
+        nodes = [bpm_node("s", "start", "Início", trigger="manual"), bpm_node("a", "task_human", "Receber"),
+                 bpm_node("b", "task_human", "Conferir"), bpm_node("c", "task_human", "Guardar"), bpm_node("e", "end", "Fim")]
+        code = self.process("Descoberta", self.model(nodes, [bpm_edge("s", "a"), bpm_edge("a", "b"), bpm_edge("b", "c"), bpm_edge("c", "e")]))
+        normal = self.ok("bpm.start", process=code)["case"]
+        skipped = self.ok("bpm.start", process=code)["case"]
+        for cid in (normal, skipped):
+            t = self.task_of(cid, "Receber", scope="all")
+            self.ok("bpm.task_action", task=t["id"], action="complete")
+        t = self.task_of(normal, "Conferir", scope="all")
+        self.ok("bpm.task_action", task=t["id"], action="complete")
+        t = self.task_of(skipped, "Conferir", scope="all")
+        self.ok("bpm.case_action", case=skipped, action="skip", task=t["id"], reason="conferido na portaria")
+        for cid in (normal, skipped):
+            t = self.task_of(cid, "Guardar", scope="all")
+            self.ok("bpm.task_action", task=t["id"], action="complete")
+            self.wait_case(cid, lambda c: c["case"]["status"] == "done")
+        d = self.ok("bpm.discover", process=code)
+        self.assertEqual(d["cases"], 2)
+        flagged = {x["case"]: [i["kind"] for i in x["issues"]] for x in d["deviations"]}
+        self.assertEqual(flagged.get(skipped), ["skipped"])
+        self.assertNotIn(normal, flagged)
+        self.assertEqual(d["variants"][0]["labels"], ["Receber", "Conferir", "Guardar"])
+
+    def test_ca_039_01_purchase_with_approval_runs_end_to_end(self):
+        prod, sup = f"BPM{SUFFIX}", self.ok("base.save_party", kind="supplier", name=f"Fornecedor BPM {SUFFIX}")["id"]
+        self.ok("base.save_product", code=prod, description=f"Item BPM {SUFFIX}", price="10")
+        self.ok("supply.save_supplier_item", product=prod, supplier=sup, price="5", preferred=True)
+        code = self.process("Compra com alçada", template="compra_pagamento", publish=False)
+        m = self.ok("bpm.model", process=code)
+        self.assertFalse([i for i in m["issues"] if i["level"] == "error"], m["issues"])
+        self.ok("bpm.publish", process=code, comment="alçada R$ 5.000")
+        _, rt = new_user("user")
+        try:
+            r = Ana(URL, token=rt).call("supply.request_purchase", reason="processo", product=prod, quantity=4)
+            case = None
+            end = time.time() + 20
+            while time.time() < end and not case:
+                rows = self.ok("bpm.cases", process=code)["cases"]
+                case = next((c["id"] for c in rows if c["title"].endswith(str(r["number"]))), None)
+                time.sleep(0.5)
+            self.assertIsNotNone(case, "o pedido de compra não iniciou o caso")
+            self.assertIsNotNone(self.task_of(case, "Aprovar solicitação", scope="all"))    # within the limit: normal approval
+            self.ok("supply.approve_request", request=r["number"])                          # done in the ERP, not in the task
+            c = self.wait_case(case, lambda c: "Mercadoria recebida" in [t["name"] for t in c["tasks"] if t["status"] == "waiting"])
+            self.assertTrue(any(t["name"] == "Emitir ordem de compra" and t["status"] == "done" for t in c["tasks"]), c["tasks"])
+            order = self.scalar(f"SELECT o.number FROM supply.purchase_order o JOIN supply.purchase_order_line l ON l.order_id = o.id "
+                                f"JOIN supply.purchase_request q ON q.id = l.request_id WHERE q.number = {r['number']} LIMIT 1")
+            self.ok("supply.receive", order=order)
+            c = self.wait_case(case, lambda c: "Fornecedor pago" in [t["name"] for t in c["tasks"] if t["status"] == "waiting"])
+            if psql_available():
+                psql(f"UPDATE finance.bill SET status = 'settled' WHERE id IN (SELECT rc.bill_id FROM supply.receipt rc "
+                     f"JOIN supply.purchase_order o ON o.id = rc.order_id WHERE o.number = {order})")
+                c = self.wait_case(case, lambda c: c["case"]["status"] == "done")
+                self.assertEqual(c["case"]["status"], "done")
+            panel = self.ok("bpm.dashboard", process=code)
+            self.assertGreaterEqual(panel["cases"]["started"], 1)
+        finally:
+            self.ok("bpm.save_process", code=code, name="Compra com alçada", active=False)

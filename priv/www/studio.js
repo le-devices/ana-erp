@@ -31,11 +31,14 @@
     if (!window.AnaScheduler || isExternal()) return;
     try {
       const n = await window.AnaScheduler.notifications(document.createElement("div"), true);
+      // Spec 039: notices of the processes (new task, near the deadline, escalated).
+      const tasks = window.AnaBpm ? await window.AnaBpm.unread() : 0;
       // Spec 033: administrators also see the system's notices (new critical findings of the checks).
       const sys = canSee("admin") ? (await API.admin.notices(true).catch(() => [])).length : 0;
       state.systemNotices = sys;
-      $("#notices-dot").hidden = !(n || sys);
-      const parts = [n ? `${n} aviso(s) das rotinas agendadas` : "", sys ? `${sys} aviso(s) das verificações do sistema` : ""].filter(Boolean);
+      $("#notices-dot").hidden = !(n || sys || tasks);
+      const parts = [n ? `${n} aviso(s) das rotinas agendadas` : "", sys ? `${sys} aviso(s) das verificações do sistema` : "",
+                     tasks ? `${tasks} aviso(s) de tarefas dos processos` : ""].filter(Boolean);
       $("#notices-btn").title = parts.length ? parts.join(" · ") : "Nenhum aviso";
       const badge = $("#checks-count");
       if (badge) { badge.hidden = !sys; badge.textContent = String(sys); }
@@ -129,6 +132,7 @@
     if (parts[0] === "dev") return parts.length > 1 ? "#/dev" : "#/home";
     if (parts[0] === "files") return parts.length > 1 ? "#/files" : isExternal() ? null : "#/home";
     if (parts[0] === "master") return parts.length > 2 ? `#/master/${parts[1]}` : "#/home";
+    if (parts[0] === "bpm") return parts.length > 1 ? "#/bpm" : "#/home";
     if (parts[0] === "portal") return null;
     return "#/home";
   }
@@ -150,7 +154,7 @@
     const query = Object.fromEntries(new URLSearchParams(search || ""));
     const parts = path.split("/").filter(Boolean).map(decodeURIComponent);
     let [area, ...rest] = parts;
-    const allowed = { home: "user", ops: "user", master: "user", files: "user", dev: "developer", admin: "admin" };
+    const allowed = { home: "user", ops: "user", bpm: "user", master: "user", files: "user", dev: "developer", admin: "admin" };
     const ok = isExternal() ? ["files", "portal"].includes(area) : (allowed[area] && canSee(allowed[area]));
     if (!ok) {
       area = isExternal() ? "portal" : "home";
@@ -159,13 +163,14 @@
     }
     for (const b of $$(".area")) b.classList.toggle("active", b.dataset.area === area);
     closeMenus();
-    for (const a of ["home", "ops", "master", "files", "portal", "dev", "admin"]) $("#area-" + a).hidden = a !== area;
+    for (const a of ["home", "ops", "bpm", "master", "files", "portal", "dev", "admin"]) $("#area-" + a).hidden = a !== area;
     try {
       if (area === "files") await window.AnaFiles.show(rest);
       else if (area === "portal") await window.AnaFiles.portal(rest);
       else if (area === "home") await window.AnaOps.home();
       else if (area === "ops") await window.AnaOps.ops(rest[0], rest[1], query);
       else if (area === "master") await window.AnaMaster.show(rest, query);
+      else if (area === "bpm") await window.AnaBpm.show(rest, query);
       else if (area === "dev") await window.AnaDev.show(rest);
       else if (area === "admin") window.AnaAdmin.show(rest[0] || "users");
     } catch (e) { toast(window.AnaUI.errorText(e), true); }

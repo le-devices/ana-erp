@@ -35,7 +35,7 @@ init([]) ->
         worker(ana_sql_stats, []),
         worker(ana_advisor, []),
         worker(ana_checks, []),
-        worker(ana_flows, []),
+        worker(ana_bpm, []),          % single process engine: BPM cases and esteiras (specs 030, 039)
         worker(ana_health, []),
         worker(ana_integration, [])
     ],

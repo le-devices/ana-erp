@@ -1,69 +1,22 @@
-%% Automated flows engine (spec 030, RF-030-02..05).
+%% Automated flows (spec 030, RF-030-02..05), executed by the single process engine (ana_bpm, spec
+%% 039): the engine's loop claims ready steps (claim/1), runs them (step/1) and sweeps waiting ones
+%% (sweep/0), sharing capacity, leader and execution policy with the BPM cases.
 %%
-%% A flow instance follows one document through its steps (flow schema, migration 031). Only
-%% the scheduler leader runs steps (once per cluster). A ready step is claimed with a lease
-%% (FOR UPDATE SKIP LOCKED: a crashed node's step is taken again after the lease); before
-%% running anything the engine reads the document's facts and asks the product SQL whether the
-%% document was cancelled or the step is already done (someone did it outside the flow). An
-%% automatic step whose condition holds runs its program as the flow's robot (P14) — or as
-%% the person who asked to run it now; a manual step, a false condition or a "wait" step
-%% waits. Technical failures are retried with backoff; business refusals (customer blocked,
-%% no stock…) stop the instance with the reason until someone acts. Waiting and failed steps
-%% are swept every 30 s, so work done by hand moves the flow on.
+%% A flow instance follows one document through its steps (flow schema, migration 031). A ready step
+%% is claimed with a lease (FOR UPDATE SKIP LOCKED: a crashed node's step is taken again after the
+%% lease); before running anything the engine reads the document's facts and asks the product SQL
+%% whether the document was cancelled or the step is already done (someone did it outside the flow).
+%% An automatic step whose condition holds runs its program as the flow's robot (P14) — or as the
+%% person who asked to run it now; a manual step, a false condition or a "wait" step waits.
+%% Technical failures are retried with backoff; business refusals (customer blocked, no stock…) stop
+%% the instance with the reason until someone acts. Waiting and failed steps are swept, so work done
+%% by hand moves the flow on.
 -module(ana_flows).
--behaviour(gen_server).
 
--export([start_link/0, on_notify/2]).
+-export([claim/1, step/1, sweep/0, user/1, check/2, code/1, small/1]).
 -export([render/2, condition/2]).
--export([init/1, handle_call/3, handle_cast/2, handle_info/2]).
 
--define(TICK_MS, 5000).
--define(SWEEP_MS, 30000).
--define(MAX_RUNNING, 8).
 -define(LEASE, "interval '15 minutes'").
-
-start_link() ->
-    gen_server:start_link({local, ?MODULE}, ?MODULE, [], []).
-
-%% ana_listener: a flow started or moved (channel ana_flow) — work now instead of at the tick.
-on_notify(_Channel, _Payload) ->
-    gen_server:cast(?MODULE, wake).
-
-init([]) ->
-    erlang:send_after(?TICK_MS, self(), tick),
-    {ok, #{running => 0, last_sweep => 0, sweep => undefined}}.
-
-handle_call(_, _From, S) -> {reply, {error, unknown}, S}.
-
-handle_cast(wake, S) -> {noreply, work(S)};
-handle_cast(_, S) -> {noreply, S}.
-
-handle_info(tick, S) ->
-    erlang:send_after(?TICK_MS, self(), tick),
-    {noreply, work(S)};
-handle_info({'DOWN', Ref, process, _, _}, S = #{sweep := Ref}) -> {noreply, S#{sweep := undefined}};
-handle_info({'DOWN', _, process, _, _}, S = #{running := N}) -> {noreply, work(S#{running := max(0, N - 1)})};
-handle_info(_, S) -> {noreply, S}.
-
-work(S = #{running := N, last_sweep := Last, sweep := Sweep}) ->
-    case leader() of
-        false -> S;
-        true ->
-            Claimed = case ?MAX_RUNNING - N of Free when Free > 0 -> claim(Free); _ -> [] end,
-            _ = [spawn_monitor(fun() -> step(R) end) || R <- Claimed],
-            Now = erlang:monotonic_time(millisecond),
-            S2 = S#{running := N + length(Claimed)},
-            case Sweep =:= undefined andalso Now - Last >= ?SWEEP_MS of
-                true -> {_, Ref} = spawn_monitor(fun sweep/0), S2#{last_sweep := Now, sweep := Ref};
-                false -> S2
-            end
-    end.
-
-leader() ->
-    case catch ana_scheduler:status() of
-        #{leader := true} -> true;
-        _ -> false
-    end.
 
 claim(N) ->
     case ana_db:rows(
@@ -183,6 +136,18 @@ done(I, Seq, How, By, Exec, Res) ->
     end),
     ok.
 
+%% From the sweep: only a step still waiting (or failed) is closed as done outside — never one that
+%% the engine is running at this very moment (its own result wins).
+done_waiting(I, Seq) ->
+    {ok, _} = ana_db:transaction(fun(C) ->
+        case ana_db:query(C, "UPDATE flow.instance_step SET status = 'done', how = 'outside', error = NULL, lease_until = NULL, "
+                             "  finished_at = now() WHERE instance_id = $1 AND seq = $2 AND status IN ('waiting', 'failed')", [I, Seq]) of
+            {ok, #{affected := 1}} -> {ok, _} = ana_db:query(C, "SELECT flow.advance($1, $2)", [I, Seq]), {ok, done};
+            {ok, _} -> {ok, skipped}
+        end
+    end),
+    ok.
+
 %% Step and instance change together (nobody sees one without the other).
 both(Sql1, P1, Sql2, P2) ->
     {ok, _} = ana_db:transaction(fun(C) ->
@@ -233,7 +198,7 @@ sweep() ->
                 true -> cancel(I, <<"documento cancelado"/utf8>>);
                 false ->
                     case check(Done, Key) of
-                        true -> done(I, Seq, <<"outside">>, null, null, null);
+                        true -> done_waiting(I, Seq);
                         false -> ok
                     end
             end

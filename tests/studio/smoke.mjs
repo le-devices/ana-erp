@@ -47,7 +47,7 @@ const { w, d, jsErrors } = await open("admin", PASSWORD);
 const text = (s) => (d.querySelector(s) || {}).textContent || "";
 await until(() => text("#area-home").includes("Favoritas"), "home");
 ok(!d.querySelector("#area-home").hidden, "Início é a área inicial");
-ok([...d.querySelectorAll(".area:not([hidden])")].map((b) => b.dataset.area).join(",") === "home,ops,master,files,dev,admin", "admin vê as seis áreas (Portal é só para contas externas)");
+ok([...d.querySelectorAll(".area:not([hidden])")].map((b) => b.dataset.area).join(",") === "home,ops,bpm,master,files,dev,admin", "admin vê as sete áreas (Portal é só para contas externas)");
 
 // Operation: routine with form, result and history together (RF-020-03)
 await go(w, "#/ops/demo/demo.hello");
@@ -285,7 +285,9 @@ await until(() => text("#admin-main").includes("Comandos SQL"), "execution detai
 ok(text("#admin-main").includes("CPU") && text("#admin-main").includes("Nó"), "detalhe da execução com consumo e origem (RF-024-07)");
 await go(w, "#/admin/users");
 await until(() => d.querySelectorAll("#admin-main tbody tr").length > 0, "users again", jsErrors);
-d.querySelector("#admin-main tbody tr").click();
+// The admin's own trail (it surely has accesses); test users created by other suites may have none.
+([...d.querySelectorAll("#admin-main tbody tr")].find((tr) => tr.cells[0] && tr.cells[0].textContent.trim() === "admin")
+  || d.querySelector("#admin-main tbody tr")).click();
 await until(() => [...d.querySelectorAll("#admin-main button")].some((b) => b.textContent === "Ver trilha"), "trail button", jsErrors);
 [...d.querySelectorAll("#admin-main button")].find((b) => b.textContent === "Ver trilha").click();
 await until(() => text("#admin-main tbody").includes("requisição"), "trail", jsErrors);
@@ -314,6 +316,22 @@ await until(() => text("#admin-main").includes("Exportar dados mascarados"), "da
 [...d.querySelectorAll("#admin-main .sub-tabs button")].find((b) => b.textContent === "Máscaras").click();
 await until(() => text("#admin-main").includes("base.party"), "masking", jsErrors);
 ok(true, "cópia de dados: exportar, receber e catálogo de máscaras");
+// Processes (spec 039): the map, a process diagram (SVG, no library), tasks and simulation.
+await go(w, "#/bpm");
+await until(() => text("#bpm-main").includes("Mapa de processos") && d.querySelectorAll("#bpm-main .bpm-card").length >= 4, "bpm map", jsErrors);
+ok(text("#bpm-main").includes("Venda"), "Processos: mapa com as esteiras como processos (spec 039)");
+await go(w, "#/bpm/p/esteira.sales");
+await until(() => d.querySelectorAll("#bpm-main svg [data-node]").length >= 5, "bpm diagram", jsErrors);
+ok(d.querySelector("#bpm-main [data-node=invoice]") && d.querySelector("#bpm-main .bpm-panel"), "diagrama desenhado em SVG com painel de propriedades");
+d.querySelector("#bpm-main [data-node=invoice]").dispatchEvent(new w.Event("pointerdown", { bubbles: true }));
+await until(() => text("#bpm-main .bpm-panel").includes("Faturamento"), "bpm select", jsErrors);
+ok(true, "selecionar um elemento mostra as propriedades");
+[...d.querySelectorAll("#bpm-main .sub-tabs button")].find((b) => b.textContent === "Simulação").click();
+await until(() => text("#bpm-main").includes("Calibrar pela realidade"), "bpm simulation", jsErrors);
+ok(true, "aba de simulação com parâmetros e calibração");
+await go(w, "#/bpm/tasks");
+await until(() => text("#bpm-main").includes("Minhas tarefas"), "bpm tasks", jsErrors);
+ok(true, "Minhas tarefas abre");
 // Master data (spec 040): the same list and sheet for every entity.
 await go(w, "#/master/party");
 await until(() => d.querySelectorAll("#master-main .md-list tbody tr").length > 0, "master list", jsErrors);
@@ -352,7 +370,7 @@ await fetch(ANA_URL + "/api/admin/users", { method: "POST", headers: { "Content-
 const u = await open(uname, "Operator-pass-1");
 const utext = (s) => (u.d.querySelector(s) || {}).textContent || "";
 await until(() => utext("#area-home").includes("Favoritas"), "user home", u.jsErrors);
-ok([...u.d.querySelectorAll(".area")].filter((b) => !b.hidden).map((b) => b.dataset.area).join(",") === "home,ops,master,files", "usuário vê Início, Operação, Cadastros e Arquivos");
+ok([...u.d.querySelectorAll(".area")].filter((b) => !b.hidden).map((b) => b.dataset.area).join(",") === "home,ops,bpm,master,files", "usuário vê Início, Operação, Processos, Cadastros e Arquivos");
 u.w.location.hash = "#/dev";
 await sleep(300);
 ok(!u.d.querySelector("#area-home").hidden, "acesso direto a #/dev volta ao Início");
