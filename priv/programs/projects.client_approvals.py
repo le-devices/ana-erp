@@ -50,7 +50,12 @@ def main(action="list", project=None, activity=None, number=None, comment=None, 
             raise ana.Error("INVALID_PARAMETER", "diga o motivo da recusa")
         ana.sql_exec("INSERT INTO projects.deliverable_acceptance (task_id, decision, comment, decided_by) "
                      "VALUES ($1, $2, $3, $4)", t["id"], decision, (comment or "").strip(), ana.context.user)
-        return {"project": p["code"], "activity": t["code"], "decision": decision}
+        completed = 0
+        if decision == "accepted":
+            # Spec 038 (RF-038-12, CA-038-13): the milestone tied to this deliverable is ready to invoice.
+            completed = ana.sql_exec("UPDATE projects.milestone SET status = 'completed', completed_on = current_date "
+                                     "WHERE task_id = $1 AND status = 'planned'", t["id"])
+        return {"project": p["code"], "activity": t["code"], "decision": decision, "milestones_completed": completed}
     if action in ("approve_change", "reject_change"):
         c = ana.sql_one("SELECT id, project_id, number, title, est_hours, est_amount, est_days, status "
                         "FROM projects.scope_change WHERE project_id = $1 AND number = $2 FOR UPDATE", p["id"], number)

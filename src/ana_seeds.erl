@@ -27,7 +27,52 @@ apply() ->
     %% Spec 028: newer product versions of installed programs are offered, never applied.
     _ = ana_task:run(<<"programs.product_updates">>, ana_task:system_user(), <<"internal">>,
                      fun() -> ana_product_updates:check() end),
+    _ = ana_task:run(<<"seed.routines">>, ana_task:system_user(), <<"internal">>, fun ensure_routines/0),
     ok.
+
+%% Spec 038 (phase 4): the routines that keep the subsystems reconciled without typing. Created once,
+%% inactive (the company turns each one on in Agendamento), never recreated after being deleted or renamed.
+%% They run as an administrator because they post and invoice.
+routines() ->
+    [{<<"conciliacao.bancaria">>, <<"finance.reconcile_all">>, #{}, <<"0 6 * * *">>,
+      <<"Conciliação bancária diária: concilia todas as contas pelos extratos importados e compensa créditos."/utf8>>},
+     {<<"compensacao.creditos">>, <<"finance.offset_credits">>, #{}, <<"30 6 * * *">>,
+      <<"Compensação de créditos: créditos de clientes e com fornecedores abatem os títulos em aberto do mesmo parceiro."/utf8>>},
+     {<<"projetos.mao_de_obra">>, <<"projects.appropriate_labor">>,
+      #{<<"month">> => <<"{{last_month_start}}">>, <<"execute">> => true}, <<"0 2 1 * *">>,
+      <<"Apropriação de mão de obra: custo das horas aprovadas do mês anterior lançado nos projetos."/utf8>>},
+     {<<"rateio.mensal">>, <<"finance.allocate_costs">>,
+      #{<<"month">> => <<"{{last_month_start}}">>, <<"execute">> => true}, <<"0 3 1 * *">>,
+      <<"Rateio de custos: centros de custo do mês anterior, depois da apropriação de mão de obra."/utf8>>},
+     {<<"projetos.faturamento">>, <<"projects.invoice_all">>,
+      #{<<"through">> => <<"{{last_month_end}}">>}, <<"0 5 1 * *">>,
+      <<"Faturamento mensal de projetos: horas, despesas refaturáveis e marcos concluídos até o fim do mês anterior."/utf8>>},
+     {<<"estoque.reposicao">>, <<"supply.suggest_replenishment">>,
+      #{<<"create">> => true}, <<"30 5 * * 1-5">>,
+      <<"Reposição de estoque: abaixo do ponto de pedido vira solicitação de compra (segue a alçada de aprovação)."/utf8>>}].
+
+ensure_routines() ->
+    case ana_db:one("SELECT username FROM ana_system.app_user WHERE role = 'admin' AND active AND kind <> 'robot' "
+                    "ORDER BY username = 'admin' DESC, username LIMIT 1", []) of
+        {ok, #{<<"username">> := Admin}} ->
+            %% A name that ever existed (still there, renamed or deleted by the company) is never created again.
+            {ok, Rows} = ana_db:rows("SELECT name FROM scheduler.job UNION SELECT after->>'name' FROM ana_system.admin_log "
+                                     "WHERE action = 'scheduler.job.save' AND after ? 'name'", []),
+            Have = [N || #{<<"name">> := N} <- Rows],
+            %% The built-in robot creates them; an administrator is the one they run as.
+            Creator = (ana_task:system_user())#{role => <<"admin">>},
+            Results = [{Name, ana_schedule:save_job(new, #{<<"name">> => Name, <<"description">> => Desc,
+                                                           <<"program">> => Program, <<"params">> => Params,
+                                                           <<"run_as">> => Admin, <<"active">> => false,
+                                                           <<"triggers">> => [#{<<"kind">> => <<"cron">>, <<"cron">> => Cron}]},
+                                                    Creator)}
+                       || {Name, Program, Params, Cron, Desc} <- routines(), not lists:member(Name, Have)],
+            Failed = [{Name, E} || {Name, {error, E}} <- Results],
+            _ = Failed =/= [] andalso ok =:= logger:warning("seed routines not created: ~p", [Failed]),
+            {ok, unicode:characters_to_binary(io_lib:format("~b rotina(s) criada(s), ~b com erro",
+                                                            [length(Results) - length(Failed), length(Failed)]))};
+        _ -> {ok, <<"sem administrador ainda: rotinas ficam para a próxima partida"/utf8>>}
+    end.
 
 %% Seed files: [{Name, Source}].
 -spec files() -> [{binary(), binary()}].

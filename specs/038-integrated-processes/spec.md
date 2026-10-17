@@ -269,3 +269,18 @@ Evidência no banco de demonstração:
 - A política de nota do fornecedor continua **pelo recebimento** por padrão;
   o confronto é opção do cliente.
 - A compensação automática de créditos vem **ligada**.
+
+## Situação
+Implementada (fases 1 a 4). Notas da implementação das fases 2–4:
+- Duas contas bancárias na mesma conta contábil não entram na conciliação
+  "banco × extrato" (o saldo de um extrato só se compara com uma conta
+  contábil própria).
+- Repasse do gateway que casa com cobranças de dois gateways diferentes
+  fica para a bancada (ambíguo).
+- As rotinas do produto (conciliação diária, compensação, apropriação de
+  mão de obra, rateio, faturamento de projetos, reposição) nascem
+  **desligadas** em Agendamento, rodando como administrador; uma rotina
+  apagada ou renomeada não é recriada.
+- O modelo de processo "Faturamento do projeto" roda as tarefas
+  automáticas como `admin` (faturar exige gestor ou administrador); a
+  validação do BPM recusa publicar com usuário de execução inexistente.

@@ -187,7 +187,8 @@ error_text(_) -> <<"erro">>.
 
 stop(C, Id, Node, Msg) ->
     event(C, Id, Node, <<"error">>, null, #{<<"message">> => Msg}),
-    {ok, _} = ana_db:query(C, "UPDATE bpm.case SET reason = $2 WHERE id = $1", [Id, Msg]).
+    {ok, _} = ana_db:query(C, "UPDATE bpm.case SET reason = $2 WHERE id = $1", [Id, Msg]),
+    ok.
 
 %% A token arrives at a node.
 enter(C, #{<<"id">> := Id} = Case, Model, Facts, Vars, Failed, NodeId) ->
@@ -536,7 +537,7 @@ deadlines() ->
         {ok, _} = ana_db:transaction(fun(C) ->
             event(C, Case, Node, <<"escalate">>, null, Esc),
             To = case Esc of #{<<"to">> := U} when is_binary(U), U =/= <<>> -> U; _ -> null end,
-            case Esc of
+            _ = case Esc of
                 #{<<"mode">> := <<"path">>} ->
                     {ok, _} = ana_db:query(C, "UPDATE bpm.task SET status = 'done', outcome = 'timeout', how = 'timeout', "
                                               "finished_at = now() WHERE id = $1", [T]);
