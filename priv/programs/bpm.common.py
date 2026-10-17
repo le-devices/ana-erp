@@ -200,6 +200,9 @@ def validate(model, process_code=None):
                 v = (n.get("props") or {}).get(f)
                 if v and v not in known:
                     add("error", f"fato do ERP desconhecido: {v}", k)
+    run_as = model.get("run_as") or "system"
+    if run_as != "system" and not ana.sql_value("SELECT bpm.user_exists($1)", run_as):      # system: the built-in robot
+        add("error", f"usuário de execução das tarefas automáticas não existe ou está inativo: {run_as}")
     doc = model.get("document") or "none"
     if not ana.sql_value("SELECT count(*) FROM bpm.document WHERE entity = $1", doc):
         add("error", f"documento desconhecido: {doc}")

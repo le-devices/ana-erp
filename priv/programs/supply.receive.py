@@ -112,7 +112,20 @@ def main(order, line=None, quantity=None, price=None, document=None, note=None, 
                   "  project_expense_id) VALUES ($1, $2, $3, $4, $5, $6, $7)", receipt_rows)
 
     entry = bill = None
-    if total > 0:
+    # Spec 038 (RF-038-10): with matching, the receipt only credits "goods received"; the supplier's bill is born
+    # from its invoice (supply.register_invoice), compared with what was received.
+    matching = ana.sql_value("SELECT supplier_invoice = 'match' FROM supply.policy WHERE id = 1")
+    if total > 0 and matching:
+        ana.sql("SELECT set_config('ana.cost_center', '', true)")
+        others = {k: v for k, v in journal.items() if k[0] != "goods_received"}
+        if others:
+            entry = ana.sql_value("INSERT INTO finance.journal_entry (memo, document, created_by) VALUES ($1, $2, $3) RETURNING id",
+                                  f"Recebimento da ordem de compra {o['number']} — {o['supplier']} (a faturar)", doc, ana.context.user)
+            ana.sql_batch("INSERT INTO finance.journal_line (entry_id, account, debit, credit, cost_center) "
+                          "VALUES ($1, finance.account_for($2), $3, $4, $5)",
+                          [[entry, k, v, 0, cc] for (k, cc), v in sorted(others.items(), key=lambda kv: (kv[0][0], kv[0][1] or ""))]
+                          + [[entry, "goods_received", 0, sum(others.values()), None]])
+    elif total > 0:
         ana.sql("SELECT set_config('ana.cost_center', '', true)")
         entry = ana.sql_value("INSERT INTO finance.journal_entry (memo, document, created_by) VALUES ($1, $2, $3) RETURNING id",
                               f"Recebimento da ordem de compra {o['number']} — {o['supplier']}", doc, ana.context.user)

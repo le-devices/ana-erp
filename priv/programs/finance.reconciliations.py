@@ -12,7 +12,7 @@ PARAMS = {
     "key": {"type": "str", "label": "conciliação (vazio = todas)"},
 }
 ME = "finance.reconciliations"
-CONTROL = ("customers", "suppliers", "customer_credits")
+CONTROL = ("customers", "suppliers", "customer_credits", "supplier_credits", "supplier_advances")
 CENT = Decimal("0.01")
 
 
@@ -38,6 +38,10 @@ def main(key=None):
     if not opening_done() and any(r["key"] in ("inventory", "work_in_process") and abs(r["difference"]) >= CENT for r in rows):
         ana.actions([{"label": "Ajuste inicial de estoque", "program": "finance.inventory_opening_adjustment", "open": True}],
                     title="Estoque ainda sem ajuste inicial")
+    ana.actions([{"label": "Regras do extrato (tarifas, IOF, rendimentos)", "program": "finance.statement_rules", "open": True},
+                 {"label": "Tolerância e compensação automática", "program": "finance.settlement_policy", "open": True},
+                 {"label": "Compensar créditos agora", "program": "finance.offset_credits"}],
+                title="O que concilia sozinho")
     return {"total": len(rows), "differences": len(bad), "items": {r["key"]: r["difference"] for r in rows}}
 
 
@@ -100,13 +104,38 @@ def detail(r):
         return {"key": k, "items": len(rows), "manual_entries": n}
     if k == "goods_received":
         rows = ana.sql(
-            "SELECT r.document, o.number, p.name, r.received_at, sum(m.value) AS value FROM supply.receipt r "
+            "SELECT o.number, p.name, r.received_at, r.total AS value, r.invoice_id FROM supply.receipt r "
             "JOIN supply.purchase_order o ON o.id = r.order_id JOIN base.party p ON p.id = o.supplier_id "
-            "JOIN supply.receipt_line rl ON rl.receipt_id = r.id JOIN inventory.stock_movement m ON m.id = rl.stock_movement_id "
-            "WHERE r.bill_id IS NULL GROUP BY r.id, o.number, p.name ORDER BY r.received_at LIMIT 300")
-        ana.table([{"ordem": x["number"], "fornecedor": x["name"], "recebido em": x["received_at"], "valor": x["value"]} for x in rows],
+            "WHERE r.bill_id IS NULL AND r.total > 0 ORDER BY r.received_at LIMIT 300")
+        ana.table([{"ordem": x["number"], "fornecedor": x["name"], "recebido em": x["received_at"], "valor": x["value"],
+                    "nota": "pendente de decisão" if x["invoice_id"] else "não chegou"} for x in rows],
                   title="Recebimentos ainda sem título do fornecedor")
-        return {"key": k, "receipts": len(rows), "manual_entries": manual_entries(r["account"])}
+        pending = ana.sql(
+            "SELECT i.id, i.number AS document, p.name, i.amount, i.reason FROM supply.supplier_invoice i JOIN base.party p ON p.id = i.supplier_id "
+            "WHERE i.status = 'pending' ORDER BY i.id LIMIT 300")
+        if pending:
+            ana.table([{"nota": x["document"], "fornecedor": x["name"], "valor": x["amount"], "motivo": x["reason"],
+                        "_actions": [{"label": "Decidir", "program": "supply.invoices", "open": True}]} for x in pending],
+                      title="Notas de fornecedor aguardando decisão (fora da tolerância)")
+        return {"key": k, "receipts": len(rows), "pending_invoices": len(pending), "manual_entries": manual_entries(r["account"])}
+    if k == "gateway_receivable":
+        rows = ana.sql("SELECT c.id, c.connector, c.external_id, c.amount, c.net, c.paid_at FROM finance.charge c "
+                       "WHERE c.status = 'paid' AND c.payout_line_id IS NULL AND c.net IS NOT NULL ORDER BY c.paid_at LIMIT 300")
+        ana.table([{"cobrança": x["id"], "gateway": x["connector"], "identificador": x["external_id"], "valor": x["amount"],
+                    "líquido": x["net"], "paga em": x["paid_at"]} for x in rows],
+                  title="Cobranças pagas aguardando o repasse do gateway no extrato")
+        return {"key": k, "charges": len(rows), "manual_entries": manual_entries(r["account"])}
+    if k.startswith("bank:"):
+        code = k[5:]
+        rows = ana.sql("SELECT l.id, l.posted_on, l.description, l.document, l.amount FROM finance.bank_statement_line l "
+                       "WHERE l.bank_account = $1 AND l.status = 'open' ORDER BY l.posted_on, l.id LIMIT 300", code)
+        ana.table([{"data": x["posted_on"], "histórico": x["description"], "documento": x["document"], "valor": x["amount"]} for x in rows],
+                  title="Linhas do extrato ainda sem lançamento")
+        ana.actions([{"label": "Conciliar agora", "program": "finance.reconcile", "params": {"bank_account": code}},
+                     {"label": "Bancada de conciliação", "program": "finance.reconciliation", "params": {"bank_account": code}, "open": True},
+                     {"label": "Criar regra para tarifas e rendimentos", "program": "finance.statement_rules", "open": True}],
+                    title="Como zerar")
+        return {"key": k, "open_lines": len(rows), "manual_entries": manual_entries(r["account"])}
     if k == "work_in_process":
         rows = ana.sql(
             "SELECT o.number, o.status, "

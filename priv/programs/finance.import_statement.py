@@ -18,6 +18,9 @@ PARAMS = {
                "choices": [["ofx", "OFX"], ["csv", "CSV (planilha)"]]},
     "content": {"type": "str", "required": True, "label": "conteúdo do arquivo", "order": 3},
     "file_name": {"type": "str", "label": "nome do arquivo", "order": 4},
+    "closing_balance": {"type": "decimal", "label": "saldo final do extrato (CSV; no OFX vem no arquivo)", "order": 6},
+    "closing_date": {"type": "date", "label": "data do saldo final", "order": 7},
+    "reconcile": {"type": "bool", "default": True, "label": "conciliar automaticamente ao importar", "order": 8},
     "csv_layout": {"type": "dict", "label": "layout do CSV", "order": 5,
                    "help": "colunas (a partir de 0): date, amount, description, document, id; delimiter; date_format; "
                            "decimal (',' ou '.'); skip (linhas de cabeçalho)"},
@@ -27,7 +30,8 @@ DEFAULT_LAYOUT = {"date": 0, "description": 1, "amount": 2, "document": None, "i
                   "delimiter": ";", "date_format": "%d/%m/%Y", "decimal": ",", "skip": 1}
 
 
-def main(bank_account, content, format="ofx", file_name=None, csv_layout=None):
+def main(bank_account, content, format="ofx", file_name=None, csv_layout=None, closing_balance=None, closing_date=None,
+         reconcile=True):
     acc = ana.sql_one("SELECT code FROM finance.bank_account WHERE code = $1 AND active", bank_account.strip().upper())
     if not acc:
         raise ana.Error("BANK_ACCOUNT_NOT_FOUND", f"conta bancária {bank_account} não encontrada")
@@ -54,14 +58,40 @@ def main(bank_account, content, format="ofx", file_name=None, csv_layout=None):
             statement, acc["code"], [r["date"] for r in part], [str(r["amount"]) for r in part],
             [r["description"] for r in part], [r["document"] for r in part], [r["key"] for r in part]))
     duplicates = len(keyed) - inserted
-    ana.sql_exec("UPDATE finance.bank_statement SET lines = $2, duplicates = $3 WHERE id = $1", statement, inserted, duplicates)
+    if format == "ofx" and closing_balance is None:
+        closing_balance, closing_date = ofx_balance(content)
+    if closing_balance is not None:
+        closing_date = closing_date or max(r["date"] for r in rows)
+    ana.sql_exec("UPDATE finance.bank_statement SET lines = $2, duplicates = $3, closing_balance = $4, closing_date = $5 WHERE id = $1",
+                 statement, inserted, duplicates, closing_balance, closing_date)
     ana.metrics([{"label": "Linhas novas", "value": inserted}, {"label": "Já importadas", "value": duplicates},
                  {"label": "Entradas", "value": f"R$ {sum(r['amount'] for r in rows if r['amount'] > 0):.2f}"},
                  {"label": "Saídas", "value": f"R$ {-sum(r['amount'] for r in rows if r['amount'] < 0):.2f}"}])
+    result = None
+    if inserted and reconcile:
+        # Spec 038 (RF-038-06): what is certain is reconciled at once; the rest waits in the workbench.
+        result = ana.call("finance.reconcile", bank_account=acc["code"])
     if inserted:
-        ana.actions([{"label": "Conciliar agora", "program": "finance.reconcile",
-                      "params": {"bank_account": acc["code"]}, "style": "primary"}], title="Próximo passo")
-    return {"statement": statement, "lines": inserted, "duplicates": duplicates}
+        ana.actions([{"label": "Abrir a conciliação", "program": "finance.reconciliation",
+                      "params": {"bank_account": acc["code"]}, "style": "primary", "open": True}], title="Próximo passo")
+    return {"statement": statement, "lines": inserted, "duplicates": duplicates, "closing_balance": closing_balance,
+            "reconciled": result and {k: result[k] for k in ("settled", "linked", "payouts", "rules", "transfers") if k in result}}
+
+
+def ofx_balance(content):
+    """<LEDGERBAL><BALAMT>…<DTASOF>… of the OFX: (balance, date) or (None, None)."""
+    block = re.search(r"<LEDGERBAL>(.*?)(?:</LEDGERBAL>|<AVAILBAL>|</STMTRS>|$)", content, re.S | re.I)
+    if not block:
+        return None, None
+    amt = re.search(r"<BALAMT>\s*([-0-9.,]+)", block.group(1), re.I)
+    day = re.search(r"<DTASOF>\s*(\d{8})", block.group(1), re.I)
+    if not amt:
+        return None, None
+    try:
+        bal = Decimal(amt.group(1).replace(",", "."))
+    except InvalidOperation:
+        return None, None
+    return bal, (datetime.datetime.strptime(day.group(1), "%Y%m%d").date() if day else None)
 
 
 def with_keys(rows):

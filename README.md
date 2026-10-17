@@ -467,6 +467,35 @@ gravada não se altera nem se apaga.
 - **Fechamento** (`fechamento`, administrador): lançamentos com data até o
   mês fechado são recusados pelo banco; reabrir pede motivo e fica no
   histórico.
+- **Baixas exatas**: o que entra no extrato ou no gateway baixa o título
+  mais antigo primeiro; diferença dentro da tolerância (padrão R$ 1) vai para
+  juros ou tarifa; pagar menos deixa um **título residual** (`/R`); pagar a
+  mais vira **crédito** do cliente (ou adiantamento ao fornecedor). Créditos
+  de devolução e de pagamento a mais **compensam sozinhos** os títulos em
+  aberto do mesmo parceiro (`compensar`; política em
+  `finance.settlement_policy`).
+- **Extrato**: importar já concilia o que é certo; o saldo final (OFX ou
+  informado) é conferido com a conta contábil; **regras do extrato**
+  (`finance.statement_rules`) lançam tarifas, IOF e rendimentos; a
+  transferência entre contas próprias é casada sozinha.
+- **Gateway**: a cobrança paga fica em "valores a receber do gateway" (líquido
+  da tarifa) até o **repasse** aparecer no extrato, que é casado sozinho.
+- **Cancelar fatura** (`cancelar_fatura` para pedido; `field.cancel_invoice`
+  para OS avulsa): estorno do lançamento, títulos e cobranças cancelados,
+  estoque de volta pelo mesmo custo.
+- **Nota do fornecedor por confronto** (opção em Suprimentos → política):
+  o recebimento só credita "recebimentos a faturar"; a nota (`nota_fornecedor`)
+  dentro da tolerância vira título; acima, fica pendente para outra pessoa
+  decidir (`supply.invoices`). **Devolução ao fornecedor**
+  (`supply.return_to_supplier`) sai pelo preço da compra e vira crédito
+  compensado nos títulos. Despesa de projeto com fornecedor gera o título.
+- **Projetos**: `projects.appropriate_labor` lança o custo das horas aprovadas
+  do mês; o marco ligado a um entregável fica pronto para faturar quando o
+  cliente aceita, e o modelo de processo "Faturamento do projeto" fatura
+  sozinho.
+- **Rotinas prontas** (Agendamento, nascem desligadas): conciliação bancária
+  diária, compensação de créditos, apropriação de mão de obra, rateio,
+  faturamento mensal de projetos e sugestão de reposição.
 - Instalação existente: depois de atualizar, rode uma vez
   `finance.inventory_opening_adjustment` (ajuste inicial do estoque).
 
@@ -754,7 +783,7 @@ correspondentes são só o valor inicial).
 
 ## Situação das specs
 
-Implementadas: 001–008, 011 (com usuários robô e dono obrigatório), 012, 018, 021, 019 (faltam alertas configuráveis e OpenTelemetry), 013, 014, 015, 016 (faltam S3 e antivírus), 017 (faltam SFTP/pasta/e-mail, mTLS, CNAB e pacotes de modelos), 022, 023, 024, 025, 026, 027, 028, 029, 030, 031, 032, 033, 035, 036, 037 (falta base OSV por conector), 034 (faltam agendamentos e migrações no pacote, envio por conector), 039 (BPM: modelar, simular, executar e acompanhar processos), 040 (cadastros padronizados; falta importação em lote rápida), 038 fase 1 (processos integrados: estoque valorizado com lançamento automático, inventário, frete, conciliações, fechamento), 010 (faltam PKCE com consentimento, TOTP, HTTP/2 e cache, disjuntor; vazão de 1.000 chamadas/s aguarda decisão); 020 parcial (falta próxima ação
+Implementadas: 001–008, 011 (com usuários robô e dono obrigatório), 012, 018, 021, 019 (faltam alertas configuráveis e OpenTelemetry), 013, 014, 015, 016 (faltam S3 e antivírus), 017 (faltam SFTP/pasta/e-mail, mTLS, CNAB e pacotes de modelos), 022, 023, 024, 025, 026, 027, 028, 029, 030, 031, 032, 033, 035, 036, 037 (falta base OSV por conector), 034 (faltam agendamentos e migrações no pacote, envio por conector), 039 (BPM: modelar, simular, executar e acompanhar processos), 040 (cadastros padronizados; falta importação em lote rápida), 038 (processos integrados: estoque valorizado com lançamento automático, inventário, frete, conciliações, fechamento, baixas exatas e compensação, extrato completo, gateway, cancelamento de faturas, nota do fornecedor por confronto, custo das horas, rotinas prontas), 010 (faltam PKCE com consentimento, TOTP, HTTP/2 e cache, disjuntor; vazão de 1.000 chamadas/s aguarda decisão); 020 parcial (falta próxima ação
 sugerida, fluxos guiados e auditoria de acessibilidade).
 Na fila (ordem em [scripts/pending-work.prompt.md](scripts/pending-work.prompt.md)):
 009 licenciamento aguarda decisões; depois 020 (restante) e as tarefas adiadas.

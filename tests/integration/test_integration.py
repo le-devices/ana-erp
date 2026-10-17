@@ -2460,10 +2460,10 @@ class TestIntegrationHub(Base):
         ext = f"PIX{SUFFIX}AUTO"
         self.run_ok(self.charge_prog(), {"bill": bill, "ext": ext, "connector": self.api})
         today = datetime.date.today().strftime("%Y%m%d")
-        self.client.call("finance.import_statement", bank_account="CAIXA",
-                         content=self.ofx((today, str(amount), f"F3{SUFFIX}", f"PIX REC {ext} CLIENTE")))
-        r = self.client.call("finance.reconcile", bank_account="CAIXA")
-        self.assertGreaterEqual(r["settled"], 1)
+        # Spec 038 (RF-038-06): importing already reconciles what is certain — no second step.
+        r = self.client.call("finance.import_statement", bank_account="CAIXA",
+                             content=self.ofx((today, str(amount), f"F3{SUFFIX}", f"PIX REC {ext} CLIENTE")))
+        self.assertGreaterEqual(r["reconciled"]["settled"], 1)
         self.assertEqual(self.scalar(f"SELECT status FROM finance.bill WHERE id = {bill}"), "settled")
         line = self.scalar(f"SELECT id FROM finance.bank_statement_line WHERE dedup_key = 'id:F3{SUFFIX}'")
         s, c, _ = http("POST", "/api/sql", {"sql": "SELECT sum(debit), sum(credit), count(*) FROM finance.journal_line l "
@@ -4707,6 +4707,330 @@ class TestIntegratedProcesses(Base):
                     reason="teste automatizado do fechamento")
 
 
+class TestIntegratedFinance(Base):
+    """Spec 038 phases 2–4: exact settlement, offsets, statement rules, transfers, gateway payouts, invoice
+    cancellation, supplier invoice matching, deliverable → milestone → invoice. Nothing typed twice."""
+    banks = []
+
+    @classmethod
+    def setUpClass(cls):
+        super().setUpClass()
+        c = cls.client
+        cls.service = f"SVF{SUFFIX}"
+        c.call("base.save_product", code=cls.service, description=f"Serviço financeiro {SUFFIX}", price="1", kind="service")
+        cls.item = f"FIN{SUFFIX}"
+        c.call("base.save_product", code=cls.item, description=f"Item financeiro {SUFFIX}", price="50")
+        cls.gl = f"test.fin_gl_{SUFFIX}"
+        CREATED_PROGRAMS.add(cls.gl)
+        s, r, _ = http("PUT", f"/api/programs/{cls.gl}", {"exposed": True, "source":
+            "def main(code, description):\n"
+            "    ana.sql_exec(\"INSERT INTO finance.account (code, description, nature) VALUES ($1, $2, 'asset') \"\n"
+            "                 \"ON CONFLICT (code) DO NOTHING\", code, description)\n"
+            "    return code\n"}, cls.token)
+        assert s == 200, r
+
+    @classmethod
+    def tearDownClass(cls):
+        for code, account in cls.banks:
+            http("POST", "/api/programs/finance.save_bank_account/run",
+                 {"params": {"code": code, "name": "banco de teste (desligado)", "account": account, "active": False}}, cls.token)
+        http("PUT", f"/api/admin/connectors/t{SUFFIX}_pay", {"kind": "webhook_in", "active": False}, cls.token)
+
+    def ok(self, program, **params):
+        """Runs any program (exposed or not, e.g. portal and admin screens) as the administrator."""
+        s, c, _ = self.run_program(program, params)
+        if "error" in c:
+            raise AnaRemoteError(c["error"].get("code"), c["error"].get("message"), c["error"].get("data"))
+        self.assertEqual(s, 200, c)
+        return c["result"]
+
+    def customer(self, tag):
+        return self.ok("base.save_party", kind="customer", name=f"Cliente {tag} {SUFFIX}")["id"]
+
+    def bank(self, n):
+        """A bank account with a ledger account of its own: its statement balance can be compared with the ledger."""
+        code, account = f"B{n}{SUFFIX}", f"1.1.9{n}.{SUFFIX}"
+        self.ok(self.gl, code=account, description=f"Banco de teste {n} {SUFFIX}")
+        s, c, _ = self.run_program("finance.save_bank_account", {"code": code, "name": f"Banco teste {n}", "account": account})
+        self.assertEqual(s, 200, c)
+        self.banks.append((code, account))
+        return code
+
+    def bill(self, customer, amount):
+        o = self.ok("sales.create_order", customer=customer, items=[{"product": self.service, "quantity": 1, "price": str(amount)}])
+        self.ok("sales.invoice_order", number=o["number"])
+        return int(self.scalar(f"SELECT id FROM finance.bill WHERE document = 'ORD-{o['number']}' AND kind = 'receivable'"))
+
+    def ofx(self, *trns):
+        body = "".join(f"<STMTTRN><TRNTYPE>{'CREDIT' if Decimal(a) > 0 else 'DEBIT'}<DTPOSTED>{d}120000<TRNAMT>{a}<FITID>{f}<MEMO>{m}</STMTTRN>\n"
+                       for d, a, f, m in trns)
+        return f"OFXHEADER:100\nDATA:OFXSGML\n<OFX><BANKMSGSRSV1><STMTTRNRS><STMTRS><BANKTRANLIST>\n{body}</BANKTRANLIST></STMTRS></STMTTRNRS></BANKMSGSRSV1></OFX>"
+
+    def line(self, bank, fitid):
+        return int(self.scalar(f"SELECT id FROM finance.bank_statement_line WHERE bank_account = '{bank}' AND dedup_key = 'id:{fitid}'"))
+
+    def reconciliation(self):
+        return {k: Decimal(str(v)) for k, v in self.ok("finance.reconciliations")["items"].items()}
+
+    def open_bills(self, customer, key="customers"):
+        s, c, _ = http("POST", "/api/sql", {"sql": "SELECT b.document, b.amount FROM finance.bill b WHERE b.status = 'open' "
+                                                  f"AND b.party_id = {customer} AND b.account = finance.account_for('{key}') ORDER BY b.id"},
+                       self.token)
+        self.assertEqual(s, 200, c)
+        return [(r[0], Decimal(r[1])) for r in c["rows"]]
+
+    def test_ca_038_06_partial_payment_leaves_residual_and_tolerance_goes_to_fees(self):
+        cust = self.customer("Residual")
+        before = self.reconciliation()
+        b1, b2, b3 = self.bill(cust, "100.00"), self.bill(cust, "200.00"), self.bill(cust, "300.00")
+        doc1 = self.scalar(f"SELECT document FROM finance.bill WHERE id = {b1}")
+        bank = self.bank(1)
+        today = datetime.date.today().strftime("%Y%m%d")
+        self.ok("finance.import_statement", bank_account=bank, reconcile=False, content=self.ofx(
+            (today, "90.00", f"R1{SUFFIX}", "PIX PARCIAL"), (today, "199.50", f"R2{SUFFIX}", "PIX QUASE"),
+            (today, "320.00", f"R3{SUFFIX}", "PIX A MAIS")))
+        with self.assertRaises(AnaRemoteError) as ctx:                   # the person sees what will happen before confirming
+            self.ok("finance.match_statement_line", line=self.line(bank, f"R1{SUFFIX}"), bills=[b1])
+        self.assertIn("residual", str(ctx.exception))
+        r = self.ok("finance.match_statement_line", line=self.line(bank, f"R1{SUFFIX}"), bills=[b1], accept_difference=True)
+        self.assertEqual(Decimal(str(r["details"][0]["open"])), Decimal("10.00"))
+        self.assertEqual(self.scalar(f"SELECT status FROM finance.bill WHERE id = {b1}"), "settled")
+        # Within the tolerance (R$ 1): settled, the 0.50 goes to bank fees; no residual.
+        self.ok("finance.match_statement_line", line=self.line(bank, f"R2{SUFFIX}"), bills=[b2], accept_difference=True)
+        fee = self.scalar(f"SELECT sum(l.debit) FROM finance.journal_line l JOIN finance.journal_entry e ON e.id = l.entry_id "
+                          f"WHERE e.document = 'EXT-{self.line(bank, f'R2{SUFFIX}')}' AND l.account = finance.account_for('bank_fees')")
+        self.assertEqual(Decimal(fee), Decimal("0.50"))
+        # Paying 20 more: a customer credit, offset at once against the customer's open residual of 10.
+        self.ok("finance.match_statement_line", line=self.line(bank, f"R3{SUFFIX}"), bills=[b3], accept_difference=True)
+        self.assertEqual(self.open_bills(cust), [])                                  # the residual was paid by the credit
+        self.assertEqual(self.open_bills(cust, "customer_credits"), [(f"CRED-EXT-{self.line(bank, f'R3{SUFFIX}')}/R", Decimal("10.00"))])
+        self.assertEqual(self.scalar(f"SELECT count(*) FROM finance.offset WHERE party_id = {cust}"), 1)
+        self.assertTrue(self.scalar(f"SELECT bool_and(document LIKE '{doc1}%') FROM finance.bill WHERE parent_bill_id = {b1}"))
+        after = self.reconciliation()
+        for k in ("customers", "customer_credits", "bills_without_entry"):
+            self.assertEqual(after[k], before[k], k)
+
+    def test_ca_038_07_return_credit_offsets_the_open_bill(self):
+        cust = self.customer("Devolução")
+        self.ok("inventory.stock_in", product=self.item, quantity=5, unit_cost="20")
+        o = self.ok("sales.create_order", customer=cust, items=[{"product": self.item, "quantity": 2, "price": "50"}])
+        self.ok("sales.invoice_order", number=o["number"])
+        before = self.reconciliation()
+        r = self.ok("logistics.register_return", customer=cust, items=[{"product": self.item, "quantity": 1, "price": "50"}],
+                    reason="cliente devolveu uma unidade", quarantine=True)
+        self.assertEqual(self.scalar(f"SELECT status FROM finance.bill WHERE id = {r['credit_bill']}"), "settled")
+        self.assertEqual(self.open_bills(cust), [(f"ORD-{o['number']}/R", Decimal("50.00"))])
+        after = self.reconciliation()
+        self.assertEqual((after["customers"], after["customer_credits"]), (before["customers"], before["customer_credits"]))
+
+    def test_ca_038_08_statement_rule_own_transfer_and_closing_balance(self):
+        a, b = self.bank(2), self.bank(3)
+        self.ok("finance.statement_rules", pattern="TARIFA PACOTE", account=self.scalar("SELECT finance.account_for('bank_fees')"),
+                bank_account=a, memo="Tarifa do pacote de serviços")
+        today = datetime.date.today()
+        d = today.strftime("%Y%m%d")
+        amount = Decimal(f"5{SUFFIX[-3:]}.37")
+        r = self.ok("finance.import_statement", bank_account=a, closing_balance=str(-amount - Decimal("35.90")), closing_date=today.isoformat(),
+                    content=self.ofx((d, "-35.90", f"T1{SUFFIX}", "TARIFA PACOTE SERVICOS"), (d, str(-amount), f"T2{SUFFIX}", "TED MESMA TITULARIDADE")))
+        self.assertEqual(r["reconciled"]["rules"], 1)
+        self.assertEqual(self.scalar(f"SELECT rule FROM finance.bank_statement_line WHERE id = {self.line(a, f'T1{SUFFIX}')}")[:5], "rule:")
+        r = self.ok("finance.import_statement", bank_account=b, closing_balance=str(amount), closing_date=today.isoformat(),
+                    content=self.ofx((d, str(amount), f"T3{SUFFIX}", "TED RECEBIDA")))
+        self.assertEqual(r["reconciled"]["transfers"], 1)
+        self.assertEqual(self.scalar(f"SELECT count(*) FROM finance.bank_statement_line WHERE bank_account IN ('{a}', '{b}') AND status = 'open'"), 0)
+        rec = self.reconciliation()
+        self.assertEqual((rec[f"bank:{a}"], rec[f"bank:{b}"]), (0, 0))
+
+    def test_ca_038_09_gateway_payout_clears_the_gateway_receivable(self):
+        gw = f"t{SUFFIX}_pay"
+        s, c, _ = http("PUT", f"/api/admin/connectors/{gw}", {"kind": "webhook_in", "inbound_program": "integration.generic_gateway_in"},
+                       self.token)
+        self.assertEqual(s, 200, c)
+        maker = f"test.fin_charge_{SUFFIX}"
+        self.save(maker, "def main(bill, ext, connector):\n"
+                         "    amount = ana.sql_value('SELECT amount FROM finance.bill WHERE id = $1', bill)\n"
+                         "    return ana.sql_value(\"INSERT INTO finance.charge (bill_id, connector, method, status, external_id, "
+                         "amount, created_by) VALUES ($1, $2, 'pix', 'issued', $3, $4, 't') RETURNING id\", bill, connector, ext, amount)\n",
+                  exposed=True)
+        cust = self.customer("Gateway")
+        before = self.reconciliation()
+        net, k = Decimal(0), Decimal(SUFFIX[-4:]) / 100                 # amounts of this run only
+        for n, amount in enumerate((str(Decimal("101.00") + k), str(Decimal("202.00") + k), str(Decimal("303.00") + k))):
+            bill = self.bill(cust, amount)
+            self.ok(maker, bill=bill, ext=f"GW{SUFFIX}{n}", connector=gw)
+            self.ok("finance.settle_charge", external_id=f"GW{SUFFIX}{n}", amount=amount, fee="1.99")
+            net += Decimal(amount) - Decimal("1.99")
+        self.assertEqual(self.reconciliation()["gateway_receivable"], before["gateway_receivable"])   # the subledger moved with it
+        bank = self.bank(4)
+        today = datetime.date.today()
+        r = self.ok("finance.import_statement", bank_account=bank, closing_balance=str(net), closing_date=today.isoformat(),
+                    content=self.ofx((today.strftime("%Y%m%d"), str(net), f"P1{SUFFIX}", "REPASSE GATEWAY")))
+        self.assertEqual(r["reconciled"]["payouts"], 1)
+        self.assertEqual(self.scalar(f"SELECT count(*) FROM finance.charge WHERE connector = '{gw}' AND payout_line_id = "
+                                     f"{self.line(bank, f'P1{SUFFIX}')}"), 3)
+        after = self.reconciliation()
+        self.assertEqual((after["gateway_receivable"], after[f"bank:{bank}"]), (before["gateway_receivable"], 0))
+        self.assertEqual(self.open_bills(cust), [])
+
+    def test_ca_038_10_cancel_order_invoice_restores_everything(self):
+        cust = self.customer("Cancelamento")
+        self.ok("inventory.stock_in", product=self.item, quantity=4, unit_cost="30")
+        cost = lambda: self.scalar(f"SELECT quantity || '/' || value FROM inventory.item_cost c JOIN base.product p ON p.id = c.product_id "
+                                   f"WHERE p.code = '{self.item}'")
+        o = self.ok("sales.create_order", customer=cust, items=[{"product": self.item, "quantity": 3, "price": "50"}])
+        stock, before = cost(), self.reconciliation()
+        self.ok("sales.invoice_order", number=o["number"])
+        self.assertNotEqual(cost(), stock)
+        with self.assertRaises(AnaRemoteError):
+            self.ok("sales.cancel_invoice", number=o["number"], reason="")                    # the reason stays in the history
+        r = self.ok("sales.cancel_invoice", number=o["number"], reason="pedido faturado com o cliente errado")
+        self.assertEqual(r["bills_cancelled"], 1)
+        self.assertEqual(cost(), stock)                                                       # back at the cost it left
+        self.assertEqual(self.scalar(f"SELECT status FROM sales.sales_order WHERE number = {o['number']}"), "OPEN")
+        self.assertEqual(self.open_bills(cust), [])
+        self.assertEqual(self.reconciliation(), before)
+        self.ok("sales.invoice_order", number=o["number"])                                    # invoiced again, correctly
+        self.assertEqual(len(self.open_bills(cust)), 1)
+
+    def test_ca_038_10b_cancel_service_order_invoice(self):
+        cust = self.customer("OS")
+        tech = self.ok("projects.save_employee", name=f"Técnico Cancela {SUFFIX}", profile="TEC", hourly_cost="60")["id"]
+        self.ok("field.save_technician", employee=tech, warehouse="LAB")
+        o = self.ok("field.open_order", customer=cust, description="Reparo com fatura cancelada", priority="normal")
+        n = o["number"]
+        self.ok("field.log_work", order=n, kind="work", hours=2, technician=tech, client_key=f"cx-{SUFFIX}")
+        self.ok("field.sign_off", order=n, signed_by="Cliente Teste")
+        before = self.reconciliation()
+        self.ok("field.invoice_orders", orders=[n])
+        r = self.ok("field.cancel_invoice", order=n, reason="valor da hora errado na fatura")
+        self.assertEqual(r["bills_cancelled"], 1)
+        self.assertEqual(self.open_bills(cust), [])
+        self.assertNotEqual(self.scalar(f"SELECT status FROM field.service_order WHERE number = {n}"), "invoiced")
+        self.assertEqual(self.reconciliation(), before)
+        self.ok("field.invoice_orders", orders=[n])                                     # invoiced again
+        self.assertEqual(len(self.open_bills(cust)), 1)
+
+    def test_ca_038_12_supplier_invoice_matching(self):
+        sup = self.ok("base.save_party", kind="supplier", name=f"Fornecedor Nota {SUFFIX}")["id"]
+        prod = f"NF{SUFFIX}"
+        self.ok("base.save_product", code=prod, description=f"Item com nota {SUFFIX}", price="30")
+        self.ok("supply.save_supplier_item", product=prod, supplier=sup, price="10.00", preferred=True)
+        _, rt = new_user("user")
+        self.ok("supply.settings", supplier_invoice="match")
+        try:
+            before = self.reconciliation()
+            q = Ana(URL, token=rt).call("supply.request_purchase", reason="confronto de nota", product=prod, quantity=15)
+            self.ok("supply.approve_request", request=q["number"])
+            order = self.ok("supply.create_orders", requests=[q["number"]])["orders"][0]
+            self.ok("supply.receive", order=order, line=1, quantity=10, price="10")
+            self.assertEqual(self.scalar(f"SELECT count(*) FROM finance.bill WHERE party_id = {sup}"), 0)   # no bill before the invoice
+            self.assertEqual(self.reconciliation()["goods_received"], before["goods_received"])
+            r = self.ok("supply.register_invoice", order=order, number=f"NF-{SUFFIX}-1", amount="100.00")
+            self.assertEqual(r["status"], "accepted")
+            self.assertEqual(self.scalar(f"SELECT amount FROM finance.bill WHERE id = {r['bill']}"), "100.00")
+            self.ok("supply.receive", order=order, line=1, quantity=5, price="10")
+            r = self.ok("supply.register_invoice", order=order, number=f"NF-{SUFFIX}-2", amount="80.00")
+            self.assertEqual(r["status"], "pending")
+            self.assertIn("tolerância", r["reason"])
+            self.assertEqual(self.reconciliation()["goods_received"], before["goods_received"])
+            a = self.ok("supply.invoices", id=r["invoice"], decision="accept")
+            variance = self.scalar(f"SELECT sum(l.debit - l.credit) FROM finance.journal_line l JOIN supply.supplier_invoice i "
+                                   f"ON i.entry_id = l.entry_id WHERE i.id = {r['invoice']} AND l.account = finance.account_for('purchase_price_variance')")
+            self.assertEqual((Decimal(variance), self.scalar(f"SELECT amount FROM finance.bill WHERE id = {a['bill']}")), (Decimal("30.00"), "80.00"))
+            after = self.reconciliation()
+            for k in ("goods_received", "suppliers", "inventory"):
+                self.assertEqual(after[k], before[k], k)
+        finally:
+            self.ok("supply.settings", supplier_invoice="receipt")
+
+    def test_rf_038_10_return_to_supplier_and_project_expense_with_supplier(self):
+        sup = self.ok("base.save_party", kind="supplier", name=f"Fornecedor Devolução {SUFFIX}")["id"]
+        prod = f"DF{SUFFIX}"
+        self.ok("base.save_product", code=prod, description=f"Item devolvido {SUFFIX}", price="30")
+        self.ok("supply.save_supplier_item", product=prod, supplier=sup, price="12.00", preferred=True)
+        _, rt = new_user("user")
+        q = Ana(URL, token=rt).call("supply.request_purchase", reason="devolução ao fornecedor", product=prod, quantity=10)
+        self.ok("supply.approve_request", request=q["number"])
+        order = self.ok("supply.create_orders", requests=[q["number"]])["orders"][0]
+        self.ok("supply.receive", order=order, line=1, quantity=10, price="12")
+        before = self.reconciliation()
+        r = self.ok("supply.return_to_supplier", order=order, line=1, quantity=3, reason="lote com defeito")
+        self.assertEqual(r["offsets"], 1)                                          # the credit paid part of the open bill
+        self.assertEqual(sum(a for _, a in self.open_bills(sup, "suppliers")), Decimal("84.00"))
+        with self.assertRaises(AnaRemoteError):
+            self.ok("supply.return_to_supplier", order=order, line=1, quantity=8, reason="mais do que recebeu")
+        after = self.reconciliation()
+        for k in ("suppliers", "supplier_credits", "inventory"):
+            self.assertEqual(after[k], before[k], k)
+        # Bought for a project outside purchases: a payable bill in the same transaction (no second typing).
+        employee = self.ok("projects.save_employee", name=f"Eng Despesa {SUFFIX}", profile="HW", hourly_cost="80")["id"]
+        project = f"PD{SUFFIX}"
+        self.ok("projects.save_project", code=project, name="Projeto com despesa", customer=self.customer("Despesa"), manager="admin",
+                status="active", billing="hourly", tasks=[{"code": "1", "name": "Trabalho"}],
+                team=[{"employee": employee, "profile": "HW"}], rates={"HW": "200"})
+        e = self.ok("projects.post_expense", project=project, kind="pcb", description="placas do protótipo", unit_cost="45.50",
+                    quantity=2, supplier=sup)
+        self.assertEqual(self.scalar(f"SELECT amount FROM finance.bill WHERE id = {e['bill']}"), "91.00")
+        self.assertEqual(self.reconciliation()["suppliers"], before["suppliers"])
+
+    def test_ca_038_13_accepted_deliverable_completes_the_milestone_and_the_process_invoices_it(self):
+        cust = self.customer("Projeto")
+        employee = self.ok("projects.save_employee", name=f"Eng Marco {SUFFIX}", profile="HW", hourly_cost="80")["id"]
+        code = f"tfat{SUFFIX}"
+        self.ok("bpm.save_process", code=code, name="Faturamento do projeto (teste)", template="faturamento_projeto")
+        self.ok("bpm.publish", process=code, comment="teste")
+        project = f"PM{SUFFIX}"
+        try:
+            self.ok("projects.save_project", code=project, name="Projeto com marco", customer=cust, manager="admin", status="active",
+                    billing="fixed", tasks=[{"code": "1", "name": "Trabalho"}], team=[{"employee": employee, "profile": "HW"}],
+                    rates={"HW": "200"})
+            self.ok("projects.save_activity", project=project, code="E1", name="Protótipo funcional", deliverable="Protótipo",
+                    acceptance_criteria="liga e comunica", planned_hours=8)
+            m = self.ok("projects.save_milestone", project=project, description="Entrega do protótipo", amount="5000", activity="E1")["id"]
+            with self.assertRaises(AnaRemoteError):
+                self.ok("projects.save_milestone", project=project, description="X", amount="1", activity="NAOEXISTE")
+            self.ok("projects.update_progress", project=project, activity="E1", percent=100)
+            r = self.ok("projects.client_approvals", action="accept_deliverable", project=project, activity="E1", customer=cust)
+            self.assertEqual(r["milestones_completed"], 1)
+            end = time.time() + 40
+            while time.time() < end and self.scalar(f"SELECT status FROM projects.milestone WHERE id = {m}") != "invoiced":
+                time.sleep(0.5)
+            self.assertEqual(self.scalar(f"SELECT status FROM projects.milestone WHERE id = {m}"), "invoiced")
+            self.assertEqual(self.scalar(f"SELECT count(*) FROM bpm.case WHERE process_code = '{code}' AND doc_key = '{project}'"), 1)
+        finally:
+            self.ok("bpm.save_process", code=code, name="Faturamento do projeto (teste)", active=False)
+            if psql_available():
+                psql(f"DELETE FROM bpm.event WHERE case_id IN (SELECT id FROM bpm.case WHERE process_code = '{code}'); "
+                     f"DELETE FROM bpm.notification WHERE case_id IN (SELECT id FROM bpm.case WHERE process_code = '{code}'); "
+                     f"DELETE FROM bpm.case WHERE process_code = '{code}'; DELETE FROM bpm.process WHERE code = '{code}'")
+
+    def test_phase_4_routines_and_labor_appropriation(self):
+        s, rows, _ = http("GET", "/api/scheduler/jobs", token=self.token)
+        jobs = {j["name"] for j in rows if j.get("owner") == "system"}
+        self.assertTrue({"conciliacao.bancaria", "compensacao.creditos", "projetos.mao_de_obra", "rateio.mensal",
+                         "projetos.faturamento", "estoque.reposicao"} <= jobs, jobs)
+        employee = self.ok("projects.save_employee", name=f"Eng Horas {SUFFIX}", profile="HW", hourly_cost="80")["id"]
+        project = f"PH{SUFFIX}"
+        cust = self.customer("Horas")
+        self.ok("projects.save_project", code=project, name="Projeto com horas", customer=cust, manager="admin", status="active",
+                billing="hourly", tasks=[{"code": "1", "name": "Trabalho"}], team=[{"employee": employee, "profile": "HW"}],
+                rates={"HW": "200"})
+        today = datetime.date.today()
+        t = self.ok("projects.log_time", project=project, task="1", hours=3, description="bancada", employee=employee,
+                    entry_date=today.isoformat())
+        self.ok("projects.approve_time", project=project, ids=[t["id"]])
+        preview = self.ok("projects.appropriate_labor", month=today.isoformat())
+        mine = [p for p in preview["projects"] if p["project"] == project]
+        self.assertEqual(Decimal(str(mine[0]["cost"])), Decimal("240.00"))
+        self.ok("projects.appropriate_labor", month=today.isoformat(), execute=True)
+        again = self.ok("projects.appropriate_labor", month=today.isoformat())
+        self.assertFalse([p for p in again["projects"] if p["project"] == project])     # never twice
+        r = self.ok("projects.invoice_all", through=today.isoformat())
+        self.assertNotIn(project, [f["projeto"] for f in r["failed"]])
+        self.assertGreaterEqual(r["invoiced"], 1)
+        self.assertEqual(self.scalar(f"SELECT count(*) FROM finance.bill b JOIN base.party p ON p.id = b.party_id WHERE p.id = {cust}"), 1)
+
+
 # ---------------------------------------------------------------- spec 040
 def cnpj(base12):
     """A valid CNPJ for 12 digits (test data must pass the check digits, as real data does)."""
@@ -5124,11 +5448,15 @@ class TestBpm(Base):
                                 f"JOIN supply.purchase_request q ON q.id = l.request_id WHERE q.number = {r['number']} LIMIT 1")
             self.ok("supply.receive", order=order)
             c = self.wait_case(case, lambda c: "Fornecedor pago" in [t["name"] for t in c["tasks"] if t["status"] == "waiting"])
-            if psql_available():
-                psql(f"UPDATE finance.bill SET status = 'settled' WHERE id IN (SELECT rc.bill_id FROM supply.receipt rc "
-                     f"JOIN supply.purchase_order o ON o.id = rc.order_id WHERE o.number = {order})")
-                c = self.wait_case(case, lambda c: c["case"]["status"] == "done")
-                self.assertEqual(c["case"]["status"], "done")
+            # The payment arrives in the bank statement (P17: never by editing the bill): imported, it settles by itself.
+            s, q, _ = http("POST", "/api/sql", {"sql": "SELECT b.document, b.amount FROM finance.bill b JOIN supply.receipt rc ON rc.bill_id = b.id "
+                                                      f"JOIN supply.purchase_order o ON o.id = rc.order_id WHERE o.number = {order}"}, self.token)
+            doc, amount = q["rows"][0]
+            day = datetime.date.today().strftime("%d/%m/%Y")
+            self.ok("finance.import_statement", bank_account="CAIXA", format="csv",
+                    content=f"data;histórico;valor\n{day};PAGTO {doc} FORNECEDOR;-{str(amount).replace('.', ',')}\n")
+            c = self.wait_case(case, lambda c: c["case"]["status"] == "done")
+            self.assertEqual(c["case"]["status"], "done")
             panel = self.ok("bpm.dashboard", process=code)
             self.assertGreaterEqual(panel["cases"]["started"], 1)
         finally:

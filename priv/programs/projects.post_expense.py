@@ -5,6 +5,7 @@
 (document PRJ-<code>); without balance → INSUFFICIENT_STOCK."""
 
 import datetime
+from decimal import Decimal
 
 from ana_lib.projects import access
 
@@ -72,4 +73,18 @@ def main(project, kind, description, unit_cost=None, quantity=1, rebillable=Fals
         "VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12) RETURNING id",
         p["id"], expense_date or datetime.date.today(), kind, description, supplier, product_id,
         movement_id, quantity, unit_cost, rebillable, markup_pct, ana.context.user)
-    return {"id": new_id, "stock_movement": movement_id}
+    bill = None
+    if supplier and not movement_id:
+        # Spec 038 (RF-038-10, L-09): bought from a supplier outside purchases → payable bill and entry, same transaction.
+        total = (Decimal(str(quantity)) * Decimal(str(unit_cost))).quantize(Decimal("0.01"))
+        doc = f"PRJ-{p['code']}-D{new_id}"
+        ana.sql("SELECT set_config('ana.cost_center', COALESCE((SELECT cost_center FROM projects.project WHERE id = $1), ''), true)", p["id"])
+        entry = ana.sql_value("INSERT INTO finance.journal_entry (memo, document, created_by) VALUES ($1, $2, $3) RETURNING id",
+                              f"Despesa do projeto {p['code']}: {description}"[:200], doc, ana.context.user)
+        ana.sql_batch("INSERT INTO finance.journal_line (entry_id, account, debit, credit) VALUES ($1, finance.account_for($2), $3, $4)",
+                      [[entry, "project_costs", total, 0], [entry, "suppliers", 0, total]])
+        days = ana.sql_value("SELECT COALESCE(default_payment_days, 30) FROM supply.policy WHERE id = 1") or 30
+        bill = ana.sql_value("INSERT INTO finance.bill (kind, party_id, document, due_date, amount, entry_id, account) "
+                             "VALUES ('payable', $1, $2, current_date + $3::int, $4, $5, finance.account_for('suppliers')) RETURNING id",
+                             supplier, doc, days, total, entry)
+    return {"id": new_id, "stock_movement": movement_id, "bill": bill}

@@ -8,6 +8,7 @@ at the average cost (spec 038: the database posts D inventory / C cost of goods 
 import datetime
 from decimal import Decimal, ROUND_HALF_UP
 
+from ana_lib.finance import banking
 from ana_lib.logistics import common
 
 PARAMS = {
@@ -62,4 +63,7 @@ def main(customer, items, reason, order=None, warehouse="CENTRAL", quarantine=Fa
                              customer, f"DEV-{r['number']}",
                              datetime.date.today() + datetime.timedelta(days=30), total, entry)
         ana.sql_exec("UPDATE logistics.customer_return SET entry_id = $2, bill_id = $3 WHERE id = $1", r["id"], entry, bill)
+        # Spec 038 (RF-038-05): the credit settles the customer's open bills right away (when the policy says so).
+        if banking.policy()["auto_offset"]:
+            banking.offset(customer, ana.context.user)
     return {"return": r["number"], "total": total, "warehouse": wh["code"], "credit_bill": bill}

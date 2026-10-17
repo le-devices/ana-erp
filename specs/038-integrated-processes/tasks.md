@@ -10,15 +10,15 @@
 - [x] T-038-07 Fechamento de período (RF-038-09, CA-038-11)
 
 ## Fase 2 — financeiro
-- [ ] T-038-08 Baixa exata: residual e tolerância; excedente vira crédito; compensação automática de créditos (RF-038-05, CA-038-06/07)
-- [ ] T-038-09 Extrato: saldo final, regras de lançamento para linhas sem título, transferência entre contas próprias, conciliação na importação e agendável (RF-038-06, CA-038-08)
-- [ ] T-038-10 Gateway: conta de valores a receber e casamento do repasse (RF-038-07, CA-038-09)
-- [ ] T-038-11 Cancelamento das faturas de pedido e de OS (RF-038-08, CA-038-10)
+- [x] T-038-08 Baixa exata: residual e tolerância; excedente vira crédito; compensação automática de créditos (RF-038-05, CA-038-06/07)
+- [x] T-038-09 Extrato: saldo final, regras de lançamento para linhas sem título, transferência entre contas próprias, conciliação na importação e agendável (RF-038-06, CA-038-08)
+- [x] T-038-10 Gateway: conta de valores a receber e casamento do repasse (RF-038-07, CA-038-09)
+- [x] T-038-11 Cancelamento das faturas de pedido e de OS (RF-038-08, CA-038-10)
 
 ## Fase 3 — compras e projetos
-- [ ] T-038-12 Nota do fornecedor por confronto, devolução ao fornecedor, despesa de projeto com título (RF-038-10, CA-038-12)
-- [ ] T-038-13 Apropriação mensal do custo das horas (RF-038-11)
-- [ ] T-038-14 Marco ligado ao entregável e esteira de projetos (RF-038-12, CA-038-13)
+- [x] T-038-12 Nota do fornecedor por confronto, devolução ao fornecedor, despesa de projeto com título (RF-038-10, CA-038-12)
+- [x] T-038-13 Apropriação mensal do custo das horas (RF-038-11)
+- [x] T-038-14 Marco ligado ao entregável e esteira de projetos (RF-038-12, CA-038-13)
 
 ## Fase 4 — rotinas
-- [ ] T-038-15 Agendamentos prontos do produto (RF-038-13)
+- [x] T-038-15 Agendamentos prontos do produto (RF-038-13)

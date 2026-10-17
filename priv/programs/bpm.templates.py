@@ -6,7 +6,7 @@
 COL, ROW, X0, Y0 = 170, 130, 70, 40
 
 
-def build(code, name, document, lanes, items, flows, start=None, description=""):
+def build(code, name, document, lanes, items, flows, start=None, description="", run_as="system"):
     """items: (id, type, name, lane index, column, props); flows: (from, to, extra dict or None)."""
     nodes = [{"id": i, "type": t, "name": n, "lane": lanes[l]["id"], "x": X0 + c * COL, "y": Y0 + l * ROW + 30,
               "props": dict(p or {})} for i, t, n, l, c, p in items]
@@ -14,7 +14,7 @@ def build(code, name, document, lanes, items, flows, start=None, description="")
     if start:
         nodes[0]["props"].update(start)
     return {"code": code, "name": name, "description": description,
-            "model": {"document": document, "run_as": "system", "lanes": lanes, "variables": [], "nodes": nodes, "edges": edges}}
+            "model": {"document": document, "run_as": run_as, "lanes": lanes, "variables": [], "nodes": nodes, "edges": edges}}
 
 
 def lane(i, name, role=None, group=None):
@@ -119,6 +119,25 @@ TEMPLATES = [
            ("aceito", "faturar", {"name": "sim", "condition": [{"field": "aceite_decision", "op": "=", "value": "approved"}]}),
            ("aceito", "prototipo", {"name": "ajustar", "default": True}), ("faturar", "fim", None)],
           description="Hardware e firmware em paralelo, protótipo com aceite do cliente (refaz até aceitar) e faturamento."),
+    build("faturamento_projeto", "Faturamento do projeto", "project",
+          [lane(1, "Faturamento automático"), lane(2, "Gestão do projeto", "user")],
+          [("inicio", "start", "Projeto criado", 0, 0, {"trigger": "document", "entity": "project"}),
+           ("pronto", "event_fact", "Algo a faturar (aceite do entregável, horas, despesas)", 0, 1, {"fact": "project.to_invoice"}),
+           ("faturar", "task_auto", "Faturar o projeto", 0, 2, {"program": "projects.invoice_project", "params": {"project": "{{code}}"}}),
+           ("encerrado", "gw_xor", "Projeto encerrado?", 0, 3, {}),
+           ("fim", "end", "Projeto faturado e encerrado", 0, 4, {}),
+           ("aguardar", "timer", "Aguardar 24 h", 1, 3, {"hours": 24}),
+           ("revisar", "task_human", "Ver por que não faturou", 1, 2, {"program": "projects.workspace", "params": {"project": "{{code}}", "view": "billing"},
+                                                                        "sla_hours": 24,
+                                                                        "instructions": "O faturamento automático falhou; corrija o cadastro (cliente, contrato) ou o apontamento e conclua."})],
+          [("inicio", "pronto", None), ("pronto", "faturar", None),
+           ("faturar", "encerrado", None),
+           ("faturar", "aguardar", {"name": "nada a faturar / erro", "on": "error"}),
+           ("encerrado", "fim", {"name": "sim", "condition": [{"field": "status", "op": "=", "value": "closed"}]}),
+           ("encerrado", "pronto", {"name": "não", "default": True}),
+           ("aguardar", "revisar", None), ("revisar", "pronto", None)],
+          description="O aceite do entregável conclui o marco e o projeto é faturado sem digitação; falha vira tarefa para a gestão.",
+          run_as="admin"),                       # invoicing is for the manager or an administrator
     build("fechamento_mes", "Fechamento do mês", "none",
           [lane(1, "Financeiro", "user"), lane(2, "Controladoria", "admin")],
           [("inicio", "start", "Início do fechamento", 0, 0, {"trigger": "manual"}),
