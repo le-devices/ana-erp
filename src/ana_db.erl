@@ -12,7 +12,7 @@
 -export([start_link/3, wait_for_database/0, connect/1, connect/2, connect_read/2, hosts/1]).
 -export([with_connection/1, with_connection/3, checkout/2, checkin/2, transaction/1,
          query/3, batch/3, squery/2, query_limited/3,
-         rows/2, one/2, exec/2, status/1, sql_error/1]).
+         rows/2, rows/3, one/2, exec/2, status/1, sql_error/1]).
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2, terminate/2]).
 
 -define(CACHE, ana_stmt_cache).
@@ -281,6 +281,14 @@ rows(Sql, Params) ->
             E -> E
         end
     end).
+
+%% The same inside a transaction (spec 039: the BPM engine moves a case under its lock).
+-spec rows(pid(), iodata(), [term()]) -> {ok, [map()]} | {error, map()}.
+rows(C, Sql, Params) ->
+    case query(C, Sql, Params) of
+        {ok, R} -> {ok, as_maps(R)};
+        E -> E
+    end.
 
 -spec one(iodata(), [term()]) -> {ok, map() | undefined} | {error, map()}.
 one(Sql, Params) ->

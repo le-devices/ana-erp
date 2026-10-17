@@ -21,6 +21,7 @@ x-ana-env: &ana-env
   ANA_INSTANCE: ${ANA_INSTANCE:-development}
   ANA_PUBLIC_URL: ${ANA_PUBLIC_URL:-http://localhost:8080}
   ANA_TIMEZONE: ${ANA_TIMEZONE:-America/Sao_Paulo}
+  ANA_BPM_SWEEP_MS: ${ANA_BPM_SWEEP_MS:-5000}       # dev/tests: facts of the ERP seen in 5 s (production: 30 s)
   # Vault of connector secrets (spec 017): 32 bytes in base64, the same on every node.
   # The default is for development only; generate one with: openssl rand -base64 32
   ANA_MASTER_KEY: ${ANA_MASTER_KEY:-ZGV2LW9ubHktbWFzdGVyLWtleS1jaGFuZ2UtbWUhISE=}

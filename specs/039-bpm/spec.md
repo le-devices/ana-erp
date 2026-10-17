@@ -249,3 +249,39 @@ tarefas humanas, prazos, papéis, simulação e medição.
   limites. Assim, o próprio cliente pode estender distribuições e métricas.
 - **As esteiras viram processos** de um único motor, em vez de manter os
   dois motores.
+
+## Situação (implementação, outubro/2026)
+Implementadas as quatro fases. Ficam pendentes T-039-16b e T-039-17b.
+
+Decisões do dono (confirmadas): editor próprio em SVG, sem biblioteca externa;
+simulador em Python dentro do ERP; esteiras executadas pelo mesmo motor.
+
+Como ficou:
+- **Motor único (`ana_bpm`).**
+  - Roda no líder, com um executor só para casos BPM e para as esteiras:
+    capacidade, lease, novas tentativas em falha técnica e varredura de fatos.
+    `ana_flows` virou biblioteca do motor.
+  - As esteiras continuam guardando a execução em `flow.*`, compatíveis com
+    as telas e os testes da spec 030. No catálogo, aparecem como processos
+    (somente leitura), com painel, calibração e descoberta.
+- **Navegação num único lugar**, sob trava do caso (`ana_bpm_model`). Telas
+  e programas apenas concluem tarefas.
+- **Junções paralelas e inclusivas** esperam enquanto houver outro ponto
+  ativo do caso capaz de alcançá-las (alcançabilidade calculada na
+  publicação). Funciona também quando uma decisão anterior desviou um ramo.
+- **Fatos do ERP** (`bpm.fact`, gerados das etapas das esteiras) completam
+  tarefas "concluída quando" e esperas. Documentos seguidos: pedido,
+  solicitação de compra, OS, ordem de produção e projeto, além do processo
+  avulso.
+- **Prazos em horas úteis** (seg–sex, 08–12 e 13–18, sem feriados do
+  agendamento), com aviso antes do vencimento e escalonamento depois: avisar,
+  passar a tarefa ou seguir o caminho de atraso.
+- **Simulação de eventos discretos.** Os casos chegam aleatoriamente ao longo
+  do tempo; pessoas por raia atendem em fila; repetições com semente; gargalo
+  apontado; animação.
+  - Na calibração, as durações medidas viram distribuição empírica e o tempo
+    é de calendário: a simulação reproduz o prazo médio real.
+- **BPMN 2.0** com o diagrama (BPMNDI). O que é próprio do ANA viaja em
+  atributos `ana:*`. DOCTYPE/ENTITY é recusado por segurança.
+- **Varredura** a cada `ANA_BPM_SWEEP_MS`: 30 s em produção, 5 s no
+  ambiente de desenvolvimento.

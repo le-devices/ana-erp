@@ -32,6 +32,7 @@
       el("div", { class: "home-head" },
         el("h1", { text: `Olá, ${user.name || user.username}` }),
         el("p", { class: "lead", text: "Suas rotinas favoritas e as usadas há pouco. Fixe novas com ☆ na própria rotina." })),
+      el("section", { class: "card wide", id: "home-tasks", hidden: true }),
       tileGroup("Favoritas", favs, "Fixe rotinas com ☆ para vê-las aqui."),
       tileGroup("Usadas recentemente", recentNames.map(routine), "Nada ainda."),
       el("section", { class: "card wide", id: "home-warnings", hidden: true }, el("h2", { text: "Avisos das minhas rotinas agendadas" }), el("div")),
@@ -43,6 +44,7 @@
           { label: "Duração (ms)", value: (x) => x.duration_ms ?? "…", class: "num" },
         ], executions.slice(0, 10), { empty: "Nenhuma execução ainda.",
           onRow: (x) => routine(x.program) && window.AnaStudio.go(`#/ops/${R.moduleOf(x.program)}/${x.program}`) })));
+    if (window.AnaBpm && $("#home-tasks")) window.AnaBpm.homeWidget($("#home-tasks"));    // spec 039: Minhas tarefas
     const warn = $("#home-warnings");
     if (warn && window.AnaScheduler) {
       const n = await window.AnaScheduler.notifications(warn.lastChild, true);

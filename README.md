@@ -382,6 +382,38 @@ OS. A fatura de pedido ou de OS tem PDF (itens, parcelas, vencimentos e dados
 de pagamento), gerado no faturamento e guardado na pasta "Faturas" do
 cliente — o título e Minhas faturas abrem o PDF numa aba.
 
+## Processos — BPM (spec 039)
+
+A área **Processos** mostra o **mapa** da empresa (cadeias de valor →
+processos → subprocessos) com dono, situação, casos abertos e atrasos. Cada
+processo tem as abas:
+
+- **Diagrama** — editor visual próprio (SVG): elementos com o significado da
+  notação BPMN (início/fim, tarefa de pessoa, aprovação, tarefa automática
+  que chama um programa do ERP, envio, regra, espera por tempo ou por fato
+  do ERP, subprocesso, decisão, paralelo, inclusivo), raias por papel ou
+  grupo, condições montadas sem código, validação enquanto se desenha,
+  desfazer/refazer, teclado completo, zoom, alinhamento automático,
+  exportação SVG/PNG/PDF e **BPMN 2.0** (importar e exportar). Seis
+  **modelos prontos**: do pedido ao recebimento, da compra ao pagamento,
+  atendimento em campo, produção, projeto de P&D com protótipo e fechamento
+  do mês. Rascunho → publicada → aposentada.
+- **Simulação** — chegadas, durações, caminhos, pessoas por raia e custo;
+  prazo médio e de 90 %, custo por caso, vazão, ocupação e gargalo, com
+  animação; cenários guardados lado a lado; **calibração** pelos casos reais.
+- **Casos**, **Painel** (prazo × meta, vazão semanal, **mapa de calor** no
+  diagrama), **Descoberta** (variantes reais, etapas puladas, retrabalho,
+  ordem fora do modelo; criar um modelo da variante principal) e
+  **Versões** (comparação visual, migração de casos).
+
+O motor executa o processo publicado: casos começam sozinhos quando o
+documento é criado (pedido, solicitação de compra, OS, ordem de produção,
+projeto) ou manualmente; tarefas automáticas rodam como o robô do processo;
+tarefas de pessoa aparecem em **Minhas tarefas** (também no Início e no
+sino de avisos) com prazo em horas úteis, aviso e escalonamento; tarefas
+podem concluir sozinhas quando o ERP registra o resultado. As **esteiras**
+(spec 030) rodam no mesmo motor e aparecem no mapa.
+
 ## Cadastros (spec 040)
 
 A área **Cadastros** reúne os dados mestres — clientes e fornecedores, itens,
@@ -722,7 +754,7 @@ correspondentes são só o valor inicial).
 
 ## Situação das specs
 
-Implementadas: 001–008, 011 (com usuários robô e dono obrigatório), 012, 018, 021, 019 (faltam alertas configuráveis e OpenTelemetry), 013, 014, 015, 016 (faltam S3 e antivírus), 017 (faltam SFTP/pasta/e-mail, mTLS, CNAB e pacotes de modelos), 022, 023, 024, 025, 026, 027, 028, 029, 030, 031, 032, 033, 035, 036, 037 (falta base OSV por conector), 034 (faltam agendamentos e migrações no pacote, envio por conector), 040 (cadastros padronizados; falta importação em lote rápida), 038 fase 1 (processos integrados: estoque valorizado com lançamento automático, inventário, frete, conciliações, fechamento), 010 (faltam PKCE com consentimento, TOTP, HTTP/2 e cache, disjuntor; vazão de 1.000 chamadas/s aguarda decisão); 020 parcial (falta próxima ação
+Implementadas: 001–008, 011 (com usuários robô e dono obrigatório), 012, 018, 021, 019 (faltam alertas configuráveis e OpenTelemetry), 013, 014, 015, 016 (faltam S3 e antivírus), 017 (faltam SFTP/pasta/e-mail, mTLS, CNAB e pacotes de modelos), 022, 023, 024, 025, 026, 027, 028, 029, 030, 031, 032, 033, 035, 036, 037 (falta base OSV por conector), 034 (faltam agendamentos e migrações no pacote, envio por conector), 039 (BPM: modelar, simular, executar e acompanhar processos), 040 (cadastros padronizados; falta importação em lote rápida), 038 fase 1 (processos integrados: estoque valorizado com lançamento automático, inventário, frete, conciliações, fechamento), 010 (faltam PKCE com consentimento, TOTP, HTTP/2 e cache, disjuntor; vazão de 1.000 chamadas/s aguarda decisão); 020 parcial (falta próxima ação
 sugerida, fluxos guiados e auditoria de acessibilidade).
 Na fila (ordem em [scripts/pending-work.prompt.md](scripts/pending-work.prompt.md)):
 009 licenciamento aguarda decisões; depois 020 (restante) e as tarefas adiadas.
