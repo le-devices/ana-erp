@@ -78,6 +78,12 @@ route(<<"DELETE">>, [<<"session">>], Req) ->
         _ -> ok
     end,
     cowboy_req:reply(204, Req);
+%% Spec 009 (RF-009-08): what the banner needs, for anyone signed in (no customer data, no limits).
+route(<<"GET">>, [<<"license">>], Req) ->
+    ana_http:require_any(Req, fun(_U) ->
+        L = ana_license:current(),
+        ana_http:json(200, maps:with([state, reason, days_left, environment, valid_until], L), Req)
+    end);
 route(<<"GET">>, [<<"me">>], Req) ->
     ana_http:require_any(Req, fun(U) ->
         Company = case ana_admin:get_company() of
@@ -147,7 +153,15 @@ route(<<"GET">>, [<<"programs">>, Name], Req) ->
 route(<<"PUT">>, [<<"programs">>, Name], Req) ->
     ana_http:require(Req, ?DEV, fun(U) -> transported(Req, fun() ->
         with_body(Req, fun(Fields, R) when is_map(Fields) ->
+            New = ana_program:get(Name) =:= {ok, undefined},
             case validate_program(Fields) of
+                ok when New ->
+                    case ana_seeds:reserved(Name) of
+                        true -> ana_http:reply_error(400, <<"PRODUCT_NAMESPACE">>,
+                                    <<"esse namespace é do produto: crie seus programas em outro, por exemplo cli."/utf8,
+                                      Name/binary>>, R);
+                        false -> save_reply(ana_program:save(Name, Fields, U), R)
+                    end;
                 ok -> save_reply(ana_program:save(Name, Fields, U), R);
                 {error, Msg} -> ana_http:reply_error(400, <<"INVALID">>, Msg, R)
             end;

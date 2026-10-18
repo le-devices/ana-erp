@@ -758,6 +758,13 @@ body[data-instance="test"] .shellbar { box-shadow: inset 0 3px 0 #b25e00; }
 .pick-list { max-height: 320px; overflow: auto; border: 1px solid var(--border); border-radius: var(--r-sm); padding: 6px 8px;
              display: grid; gap: 2px; background: var(--surface); }
 .pick-list label.check { font-size: 13px; }
+.license-band { font-size: 11px; font-weight: 600; padding: 3px 10px; border-radius: 999px; color: #fff; cursor: default;
+                white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 42vw; }
+.license-band[onclick], .license-band.warn, .license-band.bad { cursor: pointer; }
+.license-band.warn { background: #b25e00; }
+.license-band.bad { background: #b3261e; }
+.license-band.test { background: #5b5f97; }
+@media (max-width: 640px) { .license-band { font-size: 10px; padding: 2px 6px; max-width: 50vw; } }
 @media (max-width: 640px) { .instance-band { font-size: 10px; padding: 2px 6px; } }
 .card-pair { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 380px), 1fr)); gap: 16px; align-items: start; margin-bottom: 16px; }
 .card-pair .row-buttons { flex-wrap: wrap; }
@@ -937,3 +944,10 @@ button.link:hover { color: var(--accent); text-decoration: underline; }
   #area-bpm.two-col { grid-template-columns: 1fr; }
   #bpm-nav { flex-direction: row; flex-wrap: wrap; border-right: 0; border-bottom: 1px solid var(--border); }
 }
+
+/* Spec 009: license facts (label · value) */
+dl.facts { display: grid; grid-template-columns: max-content 1fr; gap: 6px 18px; margin: 12px 0 18px;
+           padding: 14px 16px; border: 1px solid var(--border); border-radius: 10px; background: var(--surface); }
+dl.facts dt { color: var(--muted, #667); font-size: 13px; }
+dl.facts dd { margin: 0; }
+@media (max-width: 640px) { dl.facts { grid-template-columns: 1fr; } dl.facts dt { margin-top: 6px; } }

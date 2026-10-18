@@ -175,7 +175,10 @@
       markRead: (id) => API.request("POST", `/api/scheduler/notifications/${id}/read`, {}),
     },
 
+    license: () => API.request("GET", "/api/license"),
     admin: {
+      license: () => API.request("GET", "/api/admin/license"),
+      installLicense: (text) => API.request("POST", "/api/admin/license", { text }),
       users: (search) => API.request("GET", "/api/admin/users" + query({ search })),
       createUser: (body) => API.request("POST", "/api/admin/users", body),
       updateUser: (u, body) => API.request("PUT", `/api/admin/users/${enc(u)}`, body),

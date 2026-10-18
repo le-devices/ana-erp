@@ -238,6 +238,12 @@ _DB_RULE = re.compile(r"([A-Z][A-Z0-9_]{2,40}): (.+)", re.S)
 
 class SqlError(Error):
     def __init__(self, message, sqlstate=None, detail=None):
+        if sqlstate == "25006":
+            # Spec 009 (RF-009-05): the license is in restricted mode, executions are read-only.
+            super().__init__("LICENSE_RESTRICTED", "licença vencida ou inválida: o ERP está somente para consulta "
+                             "(peça ao administrador para instalar a licença)", {"sqlstate": sqlstate})
+            self.sqlstate = sqlstate
+            return
         rule = _DB_RULE.fullmatch(message or "") if sqlstate in ("23514", "P0001") else None
         if rule:
             super().__init__(rule.group(1), rule.group(2), {"sqlstate": sqlstate, "detail": detail})

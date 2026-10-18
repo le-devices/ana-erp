@@ -33,7 +33,7 @@ Você trabalha no projeto ANA ERP em /home/andre/ana-erp: um ERP com núcleo Erl
 16a. 038 — processos integrados e conciliação automática (`specs/038-integrated-processes`) — implementada (fases 1–4)
 16b. 039 — BPM: modelagem, simulação e execução de processos (`specs/039-bpm`) — implementada; T-039-16b e 17b ficam para o fim da fila
 16c. 040 — dados mestres padronizados (`specs/040-master-data`) — implementada; T-040-10b, T-040-11b, T-039-16b e T-039-17b ficam para o fim da fila
-17. 009 — licenciamento (`specs/009-licensing`): é rascunho com decisões em aberto; NÃO implemente — liste as decisões necessárias no relatório e pare.
+17. 009 — licenciamento (`specs/009-licensing`): decisões tomadas; fase 1 implementada; fases 2 (T-009-08, 09) e 3 (T-009-10, 11) são os próximos itens desta spec.
 18. 020 — tarefas restantes da arquitetura da informação: próxima ação sugerida, fluxos guiados, continuidade (T-020-09..11) e auditoria de acessibilidade (T-020-07). Itens de fluxo podem ser adiantados quando a spec em andamento precisar deles.
 
 Escolha o **primeiro item da lista cuja `tasks.md` ainda tenha tarefas `[ ]`** (exceções: a T-023-09 é o item 5; as T-019-08b, T-019-09b, T-017-02b, T-017-02c, T-017-05b, T-017-08b, T-016-02b, T-016-04b, T-033-09b, T-034-07b, T-034-08b, T-034-09b, T-030-06b, T-032-06b, T-035-05b, T-036-07b, T-036-08b, T-037-06b, T-010-06b, T-010-10b, T-010-11b, T-010-12b, T-010-14b, T-040-10b, T-040-11b, T-039-16b e T-039-17b ficam para depois de todos os outros itens). Se tudo estiver `[x]`, apenas rode as suítes e relate.

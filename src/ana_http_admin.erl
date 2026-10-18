@@ -14,6 +14,17 @@ init(Req, admin) ->
            end,
     {ok, Req2, admin}.
 
+%% --- License (spec 009) -----------------------------------------------------
+route(<<"GET">>, [<<"license">>], _U, Req) ->
+    reply({ok, ana_license:detail()}, Req);
+route(<<"POST">>, [<<"license">>], #{username := Who}, Req) ->
+    with_body(Req, fun(B, R) ->
+        case maps:get(<<"text">>, B, null) of
+            T when is_binary(T), T =/= <<>> -> reply(ana_license:install(T, <<"screen">>, Who), R);
+            _ -> reply({error, <<"cole o texto da licença"/utf8>>}, R)
+        end
+    end);
+
 %% --- Users (RF-011-02) ----------------------------------------------------
 route(<<"GET">>, [<<"users">>], _U, Req) ->
     reply(ana_admin:list_users(ana_http:qs_map(Req)), Req);

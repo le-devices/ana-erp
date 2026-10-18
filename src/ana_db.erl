@@ -528,6 +528,10 @@ as_maps(#{columns := Cols, rows := Rows}) ->
     Names = [N || #{name := N} <- Cols],
     [maps:from_list(lists:zip(Names, R)) || R <- Rows].
 
+sql_error(#error{code = <<"25006">>}) ->
+    %% Spec 009 (RF-009-05): only the license's restricted mode opens read-only execution transactions.
+    #{code => <<"LICENSE_RESTRICTED">>, sqlstate => <<"25006">>,
+      message => <<"licença vencida ou inválida: o ERP está somente para consulta (peça ao administrador para instalar a licença)"/utf8>>};
 sql_error(#error{code = Code, message = Msg, extra = Extra}) ->
     Base = #{code => <<"SQL">>, sqlstate => Code, message => Msg},
     case proplists:get_value(detail, Extra) of

@@ -115,9 +115,10 @@ create_user(Fields, #{username := Who}) ->
         P when is_binary(P), P =/= <<>> -> {P, false};
         _ -> {generate_password(), true}
     end,
-    case lists:member(Role, ?ROLES) of
+    case lists:member(Role, ?ROLES) andalso ana_license:seat() of
         false -> {error, <<"papel inválido"/utf8>>};
-        true ->
+        {error, _} = Full -> Full;
+        ok ->
             case ana_security:check_policy(Username, Password) of
                 {error, _} = E -> E;
                 ok ->
@@ -157,6 +158,10 @@ do_update_user(Username, Fields, #{username := Who}) ->
             LosesAdmin = maps:get(<<"role">>, Before) =:= <<"admin">>
                          andalso maps:get(<<"active">>, Before) =:= true
                          andalso (Role =/= <<"admin">> orelse Active =/= true),
+            %% Spec 009 (RF-009-04): reactivating a person takes a named-user seat.
+            Reactivates = Active =:= true andalso maps:get(<<"active">>, Before) =/= true
+                          andalso Role =/= <<"external">> andalso maps:get(<<"kind">>, Before) =/= <<"robot">>,
+            _ = Reactivates andalso case ana_license:seat() of ok -> true; Full -> throw(Full) end,
             case (lists:member(Role, ?ROLES) orelse Role =:= <<"external">>) andalso is_boolean(Active) of
                 false -> {error, <<"dados inválidos"/utf8>>};
                 true when LosesAdmin ->

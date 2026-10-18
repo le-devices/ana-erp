@@ -116,6 +116,8 @@ def main(name="mundo"):
           if (p.exposed) item.append(el("span", { class: "tag exposed", text: p.public ? "público" : "exposto" }));
           if (p.restricted) item.append(el("span", { class: "tag restricted", text: "restrito" }));
           if (p.warning) item.append(el("span", { class: "tag warn", text: "!", title: p.warning }));
+          // Spec 009 (D8): a product program edited here.
+          if (p.customized) item.append(el("span", { class: "tag warn", text: "customizado", title: "Programa do produto alterado nesta instalação: fora do suporte padrão. As atualizações do produto pedem sua decisão." }));
           ul.append(el("li", {}, item));
         } else {
           const label = depth === 0 ? `${key} — ${R.moduleLabel(key)}` : key;
@@ -143,7 +145,8 @@ def main(name="mundo"):
       editor.markCurrent(null);
       fillProperties(p);
       markDirty(false);
-      notice(p.warning ? "⚠ " + p.warning : "", true);
+      notice(p.warning ? "⚠ " + p.warning
+             : p.customized ? "Programa do produto customizado nesta instalação — fora do suporte padrão." : "", true);
       buildParams(p.params);
       clearOutput();
       drawTree();

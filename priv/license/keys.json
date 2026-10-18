@@ -1,0 +1,4 @@
+{
+  "test-2026": {"public": "XF5K/C7eH1oAnCz+/3eY2aP4jPt8odMFpO4adlA7eE0=", "test": true,
+                "note": "chave de teste do fornecedor (privada em tests/integration/license_test.key): licenças dela valem só como não produção"}
+}

@@ -499,6 +499,36 @@ gravada não se altera nem se apaga.
 - Instalação existente: depois de atualizar, rode uma vez
   `finance.inventory_opening_adjustment` (ajuste inicial do estoque).
 
+## Licença (spec 009)
+
+Cada cliente tem a sua instância (banco próprio, local ou nuvem). A licença é
+um texto **assinado pelo fornecedor** (Ed25519) que funciona sem internet:
+o administrador cola em Administração → Licença, ou indica o arquivo em
+`ANA_LICENSE_FILE` (vale o mais novo; conferido na partida e a cada hora).
+
+- **Módulos**: o núcleo (plataforma, Estúdio, cadastros, financeiro, estoque,
+  agendamento, integrações e os programas do próprio cliente) está sempre
+  incluído; vendas, suprimentos, produção, logística e campo, projetos, BPM,
+  analítico, API pública e portal são contratados. Programa de módulo não
+  contratado responde `NOT_LICENSED`; as tabelas continuam legíveis.
+- **Usuários nomeados**: só pessoas internas ativas contam (robôs e contas do
+  portal não). No limite, criar ou reativar usuário é recusado.
+- **Vencimento**: aviso 30 dias antes, 15 dias de carência e depois **somente
+  consulta** — o banco recusa gravações, mas consultas, relatórios e
+  exportação continuam. Instalar a licença nova volta tudo na hora. Sem
+  licença: avaliação de 30 dias. Relógio do servidor atrasado não estende
+  nada.
+- **Versão**: a licença cobre versões até `max_version`; uma versão acima não
+  sobe (para antes das migrações) até a licença renovada ser indicada.
+- **Testes**: licença `non_production` para a instância de desenvolvimento e
+  testes (faixa na tela). Licenças da chave de teste valem só assim.
+- **Programas**: namespaces do produto (`sales`, `projects`, `finance`…) são
+  reservados; crie os seus em outro (ex.: `cli.*`). Programa do produto
+  editado aparece como **customizado — fora do suporte padrão**.
+- Fornecedor: `scripts/license.py keygen` gera o par de chaves (a privada
+  **fica fora do repositório**; a pública vai em `priv/license/keys.json`),
+  `issue` emite e `verify` confere uma licença.
+
 ## API pública (spec 010)
 
 Sites e sistemas de terceiros chamam programas **expostos** por `/rpc`
@@ -783,7 +813,7 @@ correspondentes são só o valor inicial).
 
 ## Situação das specs
 
-Implementadas: 001–008, 011 (com usuários robô e dono obrigatório), 012, 018, 021, 019 (faltam alertas configuráveis e OpenTelemetry), 013, 014, 015, 016 (faltam S3 e antivírus), 017 (faltam SFTP/pasta/e-mail, mTLS, CNAB e pacotes de modelos), 022, 023, 024, 025, 026, 027, 028, 029, 030, 031, 032, 033, 035, 036, 037 (falta base OSV por conector), 034 (faltam agendamentos e migrações no pacote, envio por conector), 039 (BPM: modelar, simular, executar e acompanhar processos), 040 (cadastros padronizados; falta importação em lote rápida), 038 (processos integrados: estoque valorizado com lançamento automático, inventário, frete, conciliações, fechamento, baixas exatas e compensação, extrato completo, gateway, cancelamento de faturas, nota do fornecedor por confronto, custo das horas, rotinas prontas), 010 (faltam PKCE com consentimento, TOTP, HTTP/2 e cache, disjuntor; vazão de 1.000 chamadas/s aguarda decisão); 020 parcial (falta próxima ação
+Implementadas: 001–008, 011 (com usuários robô e dono obrigatório), 012, 018, 021, 019 (faltam alertas configuráveis e OpenTelemetry), 013, 014, 015, 016 (faltam S3 e antivírus), 017 (faltam SFTP/pasta/e-mail, mTLS, CNAB e pacotes de modelos), 022, 023, 024, 025, 026, 027, 028, 029, 030, 031, 032, 033, 035, 036, 037 (falta base OSV por conector), 034 (faltam agendamentos e migrações no pacote, envio por conector), 039 (BPM: modelar, simular, executar e acompanhar processos), 040 (cadastros padronizados; falta importação em lote rápida), 038 (processos integrados: estoque valorizado com lançamento automático, inventário, frete, conciliações, fechamento, baixas exatas e compensação, extrato completo, gateway, cancelamento de faturas, nota do fornecedor por confronto, custo das horas, rotinas prontas), 009 fase 1 (licença assinada, módulos, usuários nomeados, modo somente consulta, namespaces do produto), 010 (faltam PKCE com consentimento, TOTP, HTTP/2 e cache, disjuntor; vazão de 1.000 chamadas/s aguarda decisão); 020 parcial (falta próxima ação
 sugerida, fluxos guiados e auditoria de acessibilidade).
 Na fila (ordem em [scripts/pending-work.prompt.md](scripts/pending-work.prompt.md)):
-009 licenciamento aguarda decisões; depois 020 (restante) e as tarefas adiadas.
+009 fases 2 (pontos de extensão, permissão por dado) e 3 (marca conjunta, telemetria); 020 (restante) e as tarefas adiadas.

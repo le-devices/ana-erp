@@ -1302,6 +1302,59 @@
       detail);
   }
 
+  // ------------------------------------------------------------------ license (spec 009)
+  const LICENSE_STATE = { trial: ["avaliação", "warn"], valid: ["válida", "ok"], expiring: ["vence em breve", "warn"],
+                          grace: ["vencida — em carência", "warn"], restricted: ["somente consulta", "off"] };
+  const LICENSE_REASON = { expired: "vencida além da carência", trial_over: "avaliação de 30 dias encerrada",
+                           clock: "relógio do servidor está atrás da última data vista: corrija a hora do servidor",
+                           version: "não cobre a versão instalada", not_yet: "ainda não começou a valer" };
+
+  async function license() {
+    const l = await API.admin.license();
+    const [label, tone] = LICENSE_STATE[l.state] || [l.state, ""];
+    const users = l.named_users === "unlimited" ? `${l.named_users_used} (sem limite)` : `${l.named_users_used} de ${l.named_users}`;
+    const days = l.days_left;
+    const when = l.state === "trial" ? `${days} dia(s) de avaliação`
+      : days === undefined || days === null ? "—"
+      : days >= 0 ? `${fmtDate(l.valid_until)} (${days} dia(s))` : `${fmtDate(l.valid_until)} (vencida há ${-days} dia(s))`;
+    const text = el("textarea", { rows: 6, placeholder: "-----BEGIN ANA LICENSE-----\n…\n-----END ANA LICENSE-----", spellcheck: "false" });
+    main().replaceChildren(
+      ...header("Licença", "O que esta instalação contratou. A licença vem assinada pelo fornecedor e funciona sem internet. Vencida, o ERP nunca prende seus dados: consultas, relatórios e exportação continuam."),
+      el("dl", { class: "facts" },
+        el("dt", { text: "Situação" }), el("dd", {}, pill(label, tone), l.reason ? el("span", { class: "muted", text: " " + (LICENSE_REASON[l.reason] || l.reason) }) : null),
+        el("dt", { text: "Cliente" }), el("dd", { text: l.customer || "— (sem licença instalada)" }),
+        el("dt", { text: "Validade" }), el("dd", { text: when }),
+        el("dt", { text: "Ambiente" }), el("dd", {}, l.environment === "non_production" ? pill("testes — não usar em produção", "warn") : "produção"),
+        el("dt", { text: "Usuários nomeados" }), el("dd", { text: users + " — robôs e contas do portal não contam" }),
+        el("dt", { text: "Versão" }), el("dd", { text: `${l.product_version} instalada` + (l.max_version ? `; a licença cobre até ${l.max_version}` : "") })),
+      el("h3", { text: "Módulos" }),
+      table([
+        { label: "Módulo", value: (m) => m.label },
+        { label: "Programas", value: (m) => el("span", {}, (m.namespaces.length ? m.namespaces : ["—"]).map((n) => el("code", { text: n === "—" ? n : n + ".* " }))) },
+        { label: "Situação", value: (m) => (m.module === "core" ? pill("sempre incluído", "ok")
+          : l.modules.includes(m.module) ? pill("contratado", "ok") : pill("não contratado", "off")) },
+      ], [{ module: "core", label: "Núcleo: plataforma, Estúdio, cadastros, financeiro, estoque, agendamento, integrações e os seus programas", namespaces: [] }]
+          .concat(l.catalog)),
+      el("h3", { text: "Instalar licença" }),
+      el("form", { class: "stack", onsubmit: (e) => { e.preventDefault(); guard(async () => {
+        const r = await API.admin.installLicense(text.value.trim());
+        toast(`Licença instalada: ${(LICENSE_STATE[r.state] || [r.state])[0]}.`);
+        license();
+      }); } },
+        field("Texto da licença (enviado pelo fornecedor)", text),
+        el("div", { class: "row-buttons" }, el("button", { class: "primary", type: "submit", text: "Instalar" }))),
+      el("p", { class: "muted", text: "Sem tela? Indique o arquivo em ANA_LICENSE_FILE: a licença mais nova é instalada na partida e a cada hora." }),
+      el("h3", { text: "Histórico" }),
+      table([
+        { label: "Instalada em", value: (h) => fmtDate(h.installed_at) },
+        { label: "Por", value: (h) => h.installed_by },
+        { label: "Origem", value: (h) => (h.source === "file" ? "arquivo" : "tela") },
+        { label: "Cliente", value: (h) => h.customer },
+        { label: "Validade", value: (h) => fmtDate(h.valid_until) },
+        { label: "", value: (h) => (h.active ? pill("em uso", "ok") : "") },
+      ], l.history, { empty: "Nenhuma licença instalada ainda." }));
+  }
+
   // ------------------------------------------------------------------ product updates (spec 028)
   /** Line diff (LCS) for the side-by-side comparison: [{t: "same"|"del"|"add", a, b}]. */
   function lineDiff(a, b) {
@@ -1577,7 +1630,7 @@
                        window.AnaScheduler.holidays(hol)]);
   }
 
-  const SECTIONS = { users, groups, settings, company, commands, remote, accounts, limits, consumption, scheduler, monitor, audit, retention, health, sqlperf, advice, updates, integrations, checks, transports, datacopy, publicapi };
+  const SECTIONS = { users, groups, settings, company, commands, remote, accounts, limits, consumption, scheduler, monitor, audit, retention, health, sqlperf, advice, updates, integrations, checks, transports, datacopy, publicapi, license };
 
   function show(section) {
     refreshUpdatesCount();

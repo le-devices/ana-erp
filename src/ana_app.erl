@@ -9,6 +9,7 @@ start(_Type, _Args) ->
         ok -> ok;
         {error, Reason} -> exit({database_unavailable, Reason})
     end,
+    ok = ana_license:boot_check(),                     % RF-009-07: before any migration
     {ok, Applied} = ana_migrate:run(),                % RF-001-01
     _ = Applied =/= [] andalso ok =:= logger:notice("migrations applied: ~p", [Applied]),
     ok = configure_roles(),

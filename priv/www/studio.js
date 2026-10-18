@@ -12,6 +12,7 @@
     settings: "Parâmetros", accounts: "Contas padrão", commands: "Comandos", remote: "Sistemas remotos",
     scheduler: "Agendamento", monitor: "Monitor", consumption: "Consumo", audit: "Auditoria", retention: "Retenção",
     health: "Saúde", sqlperf: "Desempenho do SQL", advice: "Dicas de otimização", updates: "Atualizações do produto",
+    license: "Licença",
     integrations: "Integrações", checks: "Verificações", transports: "Transportes", datacopy: "Cópia de dados para testes",
     publicapi: "API pública",
   };
@@ -68,6 +69,28 @@
     $("#password-form").elements.namedItem("current").focus();
   }
 
+  // Spec 009 (RF-009-08): evaluation, expiring, grace, restricted and test licenses are shown on every screen.
+  const LICENSE_REASON = { expired: "licença vencida", trial_over: "avaliação encerrada", clock: "relógio do servidor atrasado",
+                           version: "licença não cobre esta versão", not_yet: "licença ainda não começou a valer" };
+  async function refreshLicense() {
+    const band = $("#license-band");
+    if (!band || isExternal()) return;
+    let l;
+    try { l = await API.license(); } catch (_) { band.hidden = true; return; }
+    const d = l.days_left;
+    const text = {
+      trial: `Avaliação: ${d} dia(s) restantes`,
+      expiring: `Licença vence em ${d} dia(s)`,
+      grace: `Licença vencida há ${-d} dia(s): ${15 + d} dia(s) até o modo somente consulta`,
+      restricted: `Somente consulta — ${LICENSE_REASON[l.reason] || "licença inválida"}`,
+    }[l.state] || (l.environment === "non_production" ? "Licença de testes — não usar em produção" : "");
+    band.hidden = !text;
+    band.textContent = text;
+    band.className = "license-band " + (l.state === "restricted" ? "bad" : l.state === "valid" ? "test" : "warn");
+    band.title = state.user.role === "admin" ? "Administração → Licença" : "Fale com o administrador";
+    band.onclick = state.user.role === "admin" ? () => go("#/admin/license") : null;
+  }
+
   async function start() {
     try { state.user = await API.me(); } catch (_) { showLogin(); return; }
     if (state.user.must_change_password) { showPassword(true); return; }
@@ -96,6 +119,7 @@
     band.className = "instance-band " + (inst.role || "");
     band.title = inst.name ? `Instância ${inst.name} — não é a produção` : "";
     document.body.dataset.instance = inst.role || "production";
+    refreshLicense();
     showScreen("#app-screen");
     if (!isExternal()) await buildTargets();
     route();
