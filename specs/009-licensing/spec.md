@@ -2,7 +2,7 @@
 
 Situação: decisões tomadas (out/2026, recomendações aceitas pelo dono do
 produto). Fase 1 (licença, módulos, limites, expiração, versão, ambientes,
-camadas de programas) implementada; fases 2 e 3 especificadas abaixo.
+camadas de programas) e fase 2 (pontos de extensão, permissão por dado) implementadas; fase 3 especificada abaixo.
 Pendente do fornecedor: gerar a chave de produção (`scripts/license.py
 keygen`) e publicar a parte pública em `priv/license/keys.json`.
 
@@ -108,12 +108,33 @@ Ganchos antes/depois genéricos, sem copiar o programa do produto: o cliente
 registra um programa seu para um ponto (`before_*` pode recusar com erro de
 negócio ou ajustar parâmetros; `after_*` recebe o resultado), na mesma
 transação. Primeiros pontos: faturar pedido, receber compra, aprovar compra,
-faturar projeto e baixar título.
+faturar projeto e baixar título. Cadastro em Administração → Extensões; só
+programas do cliente (fora dos namespaces do produto); no programa do
+produto, `ana.extend(ponto, dados)`. Ajustáveis: documento e observação do
+recebimento; data e prazo do faturamento do projeto.
 
 ### D10 — Permissão por dado (fase 2)
-Dimensões: empresa (CNPJ), centro de custo, carteira do vendedor e projetos
+Dimensões: centro de custo (com os filhos), carteira do vendedor e projetos
 do gestor, atribuídas a grupos de acesso e aplicadas **pelo banco** (RLS),
 não pelo programa.
+- Quem está em grupos com restrição vê a soma deles; administradores e
+  quem não tem restrição veem tudo. Rotinas e processos rodam como
+  administrador ou robô do sistema: as integrações automáticas veem tudo.
+- Centro de custo: pedidos de venda, solicitações de compra, ordens de
+  produção e projetos. Documento sem centro conta como o centro da empresa.
+- Carteira: clientes (`base.party.salesperson`), seus pedidos
+  (`sales_order.salesperson`, do cliente ou de quem criou) e títulos a
+  receber. Cliente criado por quem só vê a carteira entra na carteira dele.
+- Projetos: os que gerencia ou em que é membro da equipe.
+- Gravar fora do escopo é recusado (`DATA_SCOPE`).
+- Só as execuções de quem tem restrição rodam no papel `ana_scoped`, ao
+  qual as políticas (restritivas) se aplicam; todas as outras mantêm os
+  mesmos planos e não pagam nada (RNF-009-01). Os privilégios do papel são
+  copiados do `ana_exec` depois de cada migração.
+- Lançamentos contábeis, saldos e o console analítico não são filtrados
+  (relatórios contábeis são de quem administra).
+- **Empresa (CNPJ)** fica para quando os documentos tiverem empresa: hoje
+  pedidos, títulos e lançamentos não carregam empresa.
 
 ### D11 — Marca conjunta (fase 3)
 Nome e logotipo do cliente no topo do Estúdio e nos PDFs, mantendo a
@@ -178,6 +199,14 @@ fornecedor configurado no conector de telemetria.
   customizado.
 - **CA-009-08** Licença com versão máxima menor que a do produto → recusada
   na instalação ("não cobre a versão").
+
+## Critérios de aceite (fase 2)
+- **CA-009-09** Uma regra "antes de faturar" recusa o pedido acima do valor
+  (nada é gravado) e a "depois" grava na mesma transação; uma regra "antes
+  de receber" ajusta o documento; programa do produto não pode ser extensão.
+- **CA-009-10** Restrito a um centro, o usuário vê os pedidos dele e dos
+  filhos e não cria fora dele; restrito à carteira, vê só os seus clientes e
+  títulos; restrito aos próprios projetos, vê só os que gerencia.
 
 ## Fases
 1. Licença, módulos, limites, expiração, versão, ambientes, camadas

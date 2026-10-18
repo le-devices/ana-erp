@@ -31,6 +31,10 @@ def main(project, through=None, payment_days=30):
     p = access.project(project, lock=True)
     access.require_manager(p)
     through = through or datetime.date.today()
+    # Spec 009 (D9): the customer's rules before invoicing; they may refuse or adjust the date and the term.
+    adj = ana.extend("before_invoice_project", {"project": p["code"], "through": through, "payment_days": payment_days})
+    through = datetime.date.fromisoformat(str(adj.get("through") or through)[:10])
+    payment_days = int(adj.get("payment_days") or payment_days)
 
     hours = ana.sql(
         "SELECT t.profile, rp.description, t.hourly_rate, sum(t.hours) AS hours, array_agg(t.id) AS ids "
@@ -106,8 +110,10 @@ def main(project, through=None, payment_days=30):
     ana.table([{"origem": l[0], "descrição": l[1], "qtd": l[2], "unitário": money(l[3]), "valor": money(l[4])}
                for l in lines], title=f"Fatura {inv['number']}")
     pdf = store_pdf(p, inv["number"], lines, total, tax, withheld, net, payment_days)
-    return {"number": inv["number"], "total": total, "service_tax": tax, "withheld": withheld,
-            "net_amount": net, "bill": bill, "entry": entry, "lines": len(lines), "pdf": pdf}
+    result = {"number": inv["number"], "total": total, "service_tax": tax, "withheld": withheld,
+              "net_amount": net, "bill": bill, "entry": entry, "lines": len(lines), "pdf": pdf}
+    ana.extend("after_invoice_project", {**result, "project": p["code"]})
+    return result
 
 
 def store_pdf(p, number, lines, total, tax, withheld, net, payment_days):

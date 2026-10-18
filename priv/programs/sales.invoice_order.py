@@ -26,6 +26,7 @@ def main(number, payment_days=30):
     v.require(order, "ORDER_NOT_FOUND", f"pedido {number} não encontrado")
     v.require(order["status"] == "OPEN", "ORDER_NOT_OPEN", f"pedido {number} está {order['status']}")
     terms.check_credit(order["customer_id"], 0, "invoice", order["id"])   # spec 031
+    ana.extend("before_invoice_order", {"number": number, "customer_id": order["customer_id"], "total": order["total"]})   # spec 009
 
     items = ana.sql(
         "SELECT i.product_id, p.code, p.kind, sum(i.quantity) AS quantity "
@@ -105,5 +106,7 @@ def main(number, payment_days=30):
                  order["id"])
     ana.log(f"pedido {number} faturado: {money(order['total'])}, vencimento {due}")
     pdf = invoice_pdf.store(document)          # spec 035: the invoice PDF in the customer's folder (portal sees it)
-    return {"number": number, "total": gross, "freight": freight, "bill": bill, "bills": [b["id"] for b in bills],
-            "installments": n, "entry": entry, "due_date": due, "charges": charges, "pdf": pdf}
+    result = {"number": number, "total": gross, "freight": freight, "bill": bill, "bills": [b["id"] for b in bills],
+              "installments": n, "entry": entry, "due_date": due, "charges": charges, "pdf": pdf}
+    ana.extend("after_invoice_order", result)
+    return result

@@ -414,10 +414,12 @@ prepare_run(P, L, St) ->
             Q = fun(V) -> binary:replace(iolist_to_binary(V), <<"'">>, <<"''">>, [global]) end,
             %% Spec 009 (RF-009-05): restricted license → the database itself refuses every write.
             ReadOnly = case ana_license:restricted() of true -> "SET TRANSACTION READ ONLY; "; false -> "" end,
+            %% Spec 009 (D10): the user's data scope, applied by the database's row policies.
+            Scope = iolist_to_binary(ana_access:scope_sql(St1#st.user)),
             Begin = io_lib:format(
-                "~s~sSET LOCAL statement_timeout = ~b; SET LOCAL lock_timeout = ~b; SET LOCAL ana.username = '~ts'; "
+                "~s~s~sSET LOCAL statement_timeout = ~b; SET LOCAL lock_timeout = ~b; SET LOCAL ana.username = '~ts'; "
                 "SET LOCAL ana.origin = '~ts'; SET LOCAL ana.execution_id = '~ts'",
-                [Snap, ReadOnly, maps:get(<<"sql_timeout_ms">>, L), maps:get(<<"lock_timeout_ms">>, L),
+                [Snap, ReadOnly, Scope, maps:get(<<"sql_timeout_ms">>, L), maps:get(<<"lock_timeout_ms">>, L),
                  Q(maps:get(username, St1#st.user)), Q(St1#st.origin), Q(St1#st.id)]),
             case lists:flatten([epgsql:squery(C, Begin)]) of
                 [{ok, [], []} | _] = Rs ->
@@ -554,6 +556,10 @@ request(<<"files">>, Id, A, St = #st{user = User}) when is_map(A) ->
     async(Id, fun(_C) -> files_reply(ana_files:program(User, A)) end, St);
 request(<<"library_source">>, Id, #{<<"name">> := Name}, St) ->
     respond(Id, {ok, ana_program:library_source(Name)}, St),
+    St;
+request(<<"extensions">>, Id, #{<<"point">> := Point}, St) when is_binary(Point) ->
+    %% Spec 009 (D9): the customer programs registered for a point of a product program.
+    respond(Id, {ok, ana_extensions:programs(Point)}, St),
     St;
 request(<<"savepoint">>, Id, A, St) ->
     savepoint(Id, A, St);

@@ -12,6 +12,7 @@ start(_Type, _Args) ->
     ok = ana_license:boot_check(),                     % RF-009-07: before any migration
     {ok, Applied} = ana_migrate:run(),                % RF-001-01
     _ = Applied =/= [] andalso ok =:= logger:notice("migrations applied: ~p", [Applied]),
+    ok = sync_scoped_role(Applied),                    % spec 009 (D10): new objects reach the scoped role
     ok = configure_roles(),
     {ok, Sup} = ana_sup:start_link(),
     ok = ana_settings:load(),                          % RF-011-05
@@ -57,3 +58,15 @@ configure_roles() ->
     end.
 
 escape(B) -> binary:replace(B, <<"'">>, <<"''">>, [global]).
+
+sync_scoped_role([]) -> ok;
+sync_scoped_role(_Applied) ->
+    {ok, C} = ana_db:connect(ana_config:db()),
+    try
+        case epgsql:squery(C, "SELECT ana_system.sync_scoped_role()") of
+            {ok, _, [{N}]} -> logger:notice("scoped role privileges synced: ~s", [N]), ok;
+            Other -> logger:warning("scoped role not synced: ~0p", [Other]), ok
+        end
+    after
+        epgsql:close(C)
+    end.

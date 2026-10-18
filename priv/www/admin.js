@@ -205,16 +205,26 @@
     const side = el("div");
     const showForm = (g) => side.replaceChildren(groupForm(g));
     main().replaceChildren(
-      ...header("Grupos de acesso", "Defina quais programas cada grupo executa. Programas marcados como \"restrito\" só rodam para membros de um grupo que os cubra."),
+      ...header("Grupos de acesso", "Defina quais programas cada grupo executa e, se quiser, quais dados seus membros veem. Programas marcados como \"restrito\" só rodam para membros de um grupo que os cubra; o escopo de dados vale para todos os programas e é aplicado pelo banco."),
       el("div", { class: "admin-toolbar" }, el("button", { class: "primary", text: "+ Novo grupo", onclick: () => showForm(null) })),
       el("div", { class: "admin-columns" },
         el("div", {}, table([
           { label: "Grupo", value: (g) => g.name },
           { label: "Descrição", value: (g) => g.description },
           { label: "Programas", value: (g) => el("span", {}, (g.program_patterns || []).map((p) => pill(p))) },
+          { label: "Dados", value: (g) => el("span", {}, scopePills(g)) },
           { label: "Membros", value: (g) => g.members, class: "num" },
         ], list, { onRow: showForm })), side));
     showForm(null);
+  }
+
+  // Spec 009 (D10): what the group's members see (nothing set = everything).
+  function scopePills(g) {
+    const out = [];
+    if (g.data_cost_centers && g.data_cost_centers.length) out.push(pill("centros: " + g.data_cost_centers.join(", "), "warn"));
+    if (g.data_portfolio) out.push(pill("só a carteira", "warn"));
+    if (g.data_own_projects) out.push(pill("só os próprios projetos", "warn"));
+    return out.length ? out : ["todos"];
   }
 
   function groupForm(g) {
@@ -223,12 +233,19 @@
     const description = el("input", { value: g ? g.description : "" });
     const patterns = el("textarea", { rows: 6, placeholder: "um por linha, ex.:\nprojects.*\nsales.create_order" });
     patterns.value = g ? (g.program_patterns || []).join("\n") : "";
+    const centers = el("input", { value: g && g.data_cost_centers ? g.data_cost_centers.join(", ") : "",
+                                  placeholder: "vazio = todos; ex.: COMERCIAL, FILIAL-SP (inclui os centros filhos)" });
+    const portfolio = el("input", { type: "checkbox" }); portfolio.checked = !!(g && g.data_portfolio);
+    const ownProjects = el("input", { type: "checkbox" }); ownProjects.checked = !!(g && g.data_own_projects);
     return el("form", { class: "form-card", onsubmit: async (e) => {
       e.preventDefault();
       await guard(async () => {
         await API.admin.saveGroup((g ? g.name : name.value).trim(), {
           description: description.value,
           program_patterns: patterns.value.split("\n").map((s) => s.trim()).filter(Boolean),
+          data_cost_centers: centers.value.split(",").map((s) => s.trim().toUpperCase()).filter(Boolean),
+          data_portfolio: portfolio.checked,
+          data_own_projects: ownProjects.checked,
         });
         toast("Grupo salvo.");
         await groups();
@@ -236,6 +253,11 @@
     } },
       el("h3", { text: isNew ? "Novo grupo" : `Editar ${g.name}` }),
       field("Nome", name), field("Descrição", description), field("Programas (nome ou prefixo.*)", patterns),
+      el("h4", { text: "Dados que os membros veem" }),
+      field("Centros de custo", centers),
+      check("Só os clientes da própria carteira (e seus pedidos e títulos)", portfolio),
+      check("Só os projetos que gerencia ou em que trabalha", ownProjects),
+      el("p", { class: "muted", text: "Administradores veem tudo. Quem está em vários grupos com restrição vê a soma deles." }),
       el("div", { class: "row-buttons" },
         el("button", { class: "primary", type: "submit", text: "Salvar" }),
         isNew ? null : el("button", { type: "button", class: "danger", text: "Excluir", onclick: () => guard(async () => {
@@ -1355,6 +1377,35 @@
       ], l.history, { empty: "Nenhuma licença instalada ainda." }));
   }
 
+  // ------------------------------------------------------------------ extension points (spec 009, D9)
+  async function extensions() {
+    const r = await API.admin.extensions();
+    const point = el("select", {}, r.points.map((p) => el("option", { value: p.point, text: `${p.label} — ${p.point}` })));
+    const program = el("input", { placeholder: "ex.: cli.validar_faturamento" });
+    const position = el("input", { type: "number", value: 100, min: 1 });
+    const byPoint = Object.fromEntries(r.points.map((p) => [p.point, p]));
+    main().replaceChildren(
+      ...header("Extensões", "Regras da sua empresa nos programas do produto, sem copiá-los: um programa seu roda no ponto escolhido, na mesma transação. Os de \"antes\" podem recusar (com ana.Error) ou ajustar os campos permitidos; os de \"depois\" recebem o resultado. O programa recebe main(point, data)."),
+      table([
+        { label: "Ponto", value: (x) => el("span", {}, (byPoint[x.point] || {}).label || x.point, " ", el("code", { class: "muted", text: x.point })) },
+        { label: "Programa", value: (x) => el("code", { text: x.program }) },
+        { label: "Ordem", value: (x) => x.position, class: "num" },
+        { label: "Por", value: (x) => x.created_by },
+        { label: "", value: (x) => el("button", { class: "danger small", text: "Remover", onclick: () => guard(async () => {
+          if (!confirm(`Desligar ${x.program} de ${x.point}?`)) return;
+          await API.admin.deleteExtension(x.id); toast("Extensão removida."); extensions();
+        }) }) },
+      ], r.extensions, { empty: "Nenhuma extensão: os programas do produto rodam como vieram." }),
+      el("form", { class: "form-card", onsubmit: (e) => { e.preventDefault(); guard(async () => {
+        await API.admin.saveExtension({ point: point.value, program: program.value.trim(), position: Number(position.value) || 100 });
+        toast("Extensão registrada."); extensions();
+      }); } },
+        el("h3", { text: "Ligar um programa seu" }),
+        field("Ponto", point), field("Programa (fora dos namespaces do produto)", program), field("Ordem (menor roda primeiro)", position),
+        el("p", { class: "muted", text: "Pontos que ajustam: " + r.points.filter((p) => p.adjust.length).map((p) => `${p.point} (${p.adjust.join(", ")})`).join("; ") }),
+        el("div", { class: "row-buttons" }, el("button", { class: "primary", type: "submit", text: "Registrar" }))));
+  }
+
   // ------------------------------------------------------------------ product updates (spec 028)
   /** Line diff (LCS) for the side-by-side comparison: [{t: "same"|"del"|"add", a, b}]. */
   function lineDiff(a, b) {
@@ -1630,7 +1681,7 @@
                        window.AnaScheduler.holidays(hol)]);
   }
 
-  const SECTIONS = { users, groups, settings, company, commands, remote, accounts, limits, consumption, scheduler, monitor, audit, retention, health, sqlperf, advice, updates, integrations, checks, transports, datacopy, publicapi, license };
+  const SECTIONS = { users, groups, settings, company, commands, remote, accounts, limits, consumption, scheduler, monitor, audit, retention, health, sqlperf, advice, updates, integrations, checks, transports, datacopy, publicapi, license, extensions };
 
   function show(section) {
     refreshUpdatesCount();

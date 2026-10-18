@@ -99,6 +99,9 @@ def settle_lines(items, rule, user):
     One entry per statement line; bills settled exactly; residuals and credits created; offsets applied."""
     if not items:
         return []
+    # Spec 009 (D9): the customer's rules before settling (they may refuse).
+    ana.extend("before_settle_bill", {"rule": rule, "lines": [{"line": i["line"]["id"], "amount": i["line"]["amount"],
+                                                                "bills": [b["id"] for b in i["bills"]]} for i in items]})
     tol = Decimal(policy()["tolerance"])
     ledgers = {r["code"]: r["account"] for r in ana.sql(
         "SELECT code, account FROM finance.bank_account WHERE code = ANY($1)", sorted({i["line"]["bank_account"] for i in items}))}
@@ -144,6 +147,7 @@ def settle_lines(items, rule, user):
         for p in sorted(parties):
             offset(p, user)
     settle_lines.last_report = report
+    ana.extend("after_settle_bill", {"rule": rule, "lines": [r[0] for r in line_rows], "bills": settle, "details": report})
     return line_rows
 
 

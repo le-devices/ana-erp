@@ -244,6 +244,12 @@ class SqlError(Error):
                              "(peça ao administrador para instalar a licença)", {"sqlstate": sqlstate})
             self.sqlstate = sqlstate
             return
+        if sqlstate == "42501" and "row-level security" in (message or ""):
+            # Spec 009 (D10): the document falls outside the user's data scope.
+            super().__init__("DATA_SCOPE", "o registro fica fora dos dados que você pode ver (centro de custo, carteira ou projetos)",
+                             {"sqlstate": sqlstate})
+            self.sqlstate = sqlstate
+            return
         rule = _DB_RULE.fullmatch(message or "") if sqlstate in ("23514", "P0001") else None
         if rule:
             super().__init__(rule.group(1), rule.group(2), {"sqlstate": sqlstate, "detail": detail})
@@ -437,6 +443,21 @@ def make_ana_module(channel, output, context):
     def call(program, **params):
         """Run another program in the same execution transaction (RF-002-08)."""
         return channel.request("call", {"program": program, "params": params})
+
+    def extend(point, data):
+        """Extension point of a product program (spec 009, D9). Runs the customer programs registered for
+        `point` (main(point, data)), in order, in the same transaction. A before_* program may refuse by
+        raising ana.Error, or return a dict whose allowed fields adjust `data`; after_* only receives it.
+        Returns the (possibly adjusted) data."""
+        reg = channel.request("extensions", {"point": point}) or {}
+        if not reg.get("programs"):
+            return dict(data or {})
+        data = json.loads(json.dumps(data or {}, default=str))      # dates and decimals travel as text
+        for program in reg.get("programs") or []:
+            r = channel.request("call", {"program": program, "params": {"point": point, "data": data}})
+            if point.startswith("before_") and isinstance(r, dict):
+                data.update({k: v for k, v in r.items() if k in (reg.get("adjust") or [])})
+        return data
 
     def remote(system, function, **params):
         """Call an exposed program on a registered remote system (RF-003-08)."""
@@ -707,6 +728,7 @@ def make_ana_module(channel, output, context):
     m.sql_exec = sql_exec
     m.sql_batch = sql_batch
     m.call = call
+    m.extend = extend
     m.remote = remote
     m.http = http
     m.send = send

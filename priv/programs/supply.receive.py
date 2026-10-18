@@ -45,6 +45,10 @@ def main(order, line=None, quantity=None, price=None, document=None, note=None, 
         "SELECT l.line, l.product_id, pr.code, pr.description, pr.kind, l.quantity, l.received_qty, l.price, "
         "  l.project_id, l.cost_center, l.rebillable FROM supply.purchase_order_line l "
         "JOIN base.product pr ON pr.id = l.product_id WHERE l.order_id = $1 ORDER BY l.line", o["id"])}
+    # Spec 009 (D9): the customer's rules before receiving; they may refuse or adjust document and note.
+    adj = ana.extend("before_receive_purchase", {"order": o["number"], "supplier_id": o["supplier_id"], "document": document,
+                                                 "note": note, "lines": lines})
+    document, note = adj.get("document", document), adj.get("note", note)
     if lines is None:
         if line is not None:
             lines = [{"line": line, "quantity": quantity, "price": price, "note": note}]
@@ -142,4 +146,6 @@ def main(order, line=None, quantity=None, price=None, document=None, note=None, 
     status = "partially_received" if pending else "received"
     ana.sql_exec("UPDATE supply.purchase_order SET status = $2 WHERE id = $1", o["id"], status)
     ana.table(rows, title=f"Recebimento {doc} — {o['supplier']}")
-    return {"receipt": receipt, "document": doc, "order_status": status, "total": total, "entry": entry, "bill": bill}
+    result = {"receipt": receipt, "document": doc, "order_status": status, "total": total, "entry": entry, "bill": bill}
+    ana.extend("after_receive_purchase", result)
+    return result

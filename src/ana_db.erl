@@ -532,6 +532,10 @@ sql_error(#error{code = <<"25006">>}) ->
     %% Spec 009 (RF-009-05): only the license's restricted mode opens read-only execution transactions.
     #{code => <<"LICENSE_RESTRICTED">>, sqlstate => <<"25006">>,
       message => <<"licença vencida ou inválida: o ERP está somente para consulta (peça ao administrador para instalar a licença)"/utf8>>};
+sql_error(#error{code = <<"42501">>, message = <<"new row violates row-level security", _/binary>>}) ->
+    %% Spec 009 (D10): writing a document outside the user's data scope.
+    #{code => <<"DATA_SCOPE">>, sqlstate => <<"42501">>,
+      message => <<"o registro fica fora dos dados que você pode ver (centro de custo, carteira ou projetos)"/utf8>>};
 sql_error(#error{code = Code, message = Msg, extra = Extra}) ->
     Base = #{code => <<"SQL">>, sqlstate => Code, message => Msg},
     case proplists:get_value(detail, Extra) of
