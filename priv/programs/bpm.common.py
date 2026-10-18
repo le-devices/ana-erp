@@ -79,6 +79,11 @@ def empty_model():
 
 
 # ---------------------------------------------------------------- validation (RF-039-03)
+# Program namespaces of the contracted modules (spec 009, D4; the same map as ana_license).
+LICENSE_MODULE = {"sales": "sales", "supply": "supply", "production": "production", "logistics": "logistics_field",
+                  "field": "logistics_field", "projects": "projects", "bpm": "bpm", "analytics": "analytics"}
+
+
 def validate(model, process_code=None):
     """[{level: error|warning, node?, edge?, message}] — errors block publication, never saving a draft."""
     issues = []
@@ -192,6 +197,13 @@ def validate(model, process_code=None):
             pr = (n.get("props") or {}).get("program")
             if pr and pr not in known:
                 add("error", f"programa {pr} inexistente ou inativo", k)
+        # Spec 009 (RF-009-03): a step in a module outside the license would stop the case — say it now.
+        licensed = set(ana.sql_value("SELECT bpm.licensed_modules()") or [])
+        for k, n in work.items():
+            pr = (n.get("props") or {}).get("program")
+            mod = LICENSE_MODULE.get((pr or "").split(".")[0])
+            if pr and mod and mod not in licensed:
+                add("warning", f"o programa {pr} é do módulo {mod}, que não está na licença: o caso vai parar neste passo", k)
     facts = {(n.get("props") or {}).get(f) for n in work.values() for f in ("fact", "done_fact") if (n.get("props") or {}).get(f)}
     if facts:
         known = {r["code"] for r in ana.sql("SELECT code FROM bpm.fact WHERE code = ANY($1)", sorted(facts))}

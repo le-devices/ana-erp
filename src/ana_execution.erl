@@ -412,10 +412,12 @@ prepare_run(P, L, St) ->
             %% ana.username / ana.origin / ana.execution_id: informational (outbox created_by, spec 017;
             %% master data history, spec 040); never used for authorization.
             Q = fun(V) -> binary:replace(iolist_to_binary(V), <<"'">>, <<"''">>, [global]) end,
+            %% Spec 009 (RF-009-05): restricted license → the database itself refuses every write.
+            ReadOnly = case ana_license:restricted() of true -> "SET TRANSACTION READ ONLY; "; false -> "" end,
             Begin = io_lib:format(
-                "~sSET LOCAL statement_timeout = ~b; SET LOCAL lock_timeout = ~b; SET LOCAL ana.username = '~ts'; "
+                "~s~sSET LOCAL statement_timeout = ~b; SET LOCAL lock_timeout = ~b; SET LOCAL ana.username = '~ts'; "
                 "SET LOCAL ana.origin = '~ts'; SET LOCAL ana.execution_id = '~ts'",
-                [Snap, maps:get(<<"sql_timeout_ms">>, L), maps:get(<<"lock_timeout_ms">>, L),
+                [Snap, ReadOnly, maps:get(<<"sql_timeout_ms">>, L), maps:get(<<"lock_timeout_ms">>, L),
                  Q(maps:get(username, St1#st.user)), Q(St1#st.origin), Q(St1#st.id)]),
             case lists:flatten([epgsql:squery(C, Begin)]) of
                 [{ok, [], []} | _] = Rs ->
@@ -439,13 +441,35 @@ load(Name, User) ->
                 #{role := <<"external">>} -> maps:get(<<"portal">>, P, false) =:= true;
                 _ -> ana_security:has_role(User, Min) andalso ana_access:allowed(User, P)
             end,
-            case Allowed of
-                true -> {ok, P};
-                false -> {error, err(<<"FORBIDDEN">>, <<"sem permissão para o programa"/utf8>>)}
+            %% The public API and the portal are modules too: their callers need them in the license.
+            Module = case User of
+                #{api := _} -> first_missing([<<"public_api">>, ana_license:module_of(Name)]);
+                #{role := <<"external">>} -> first_missing([<<"portal">>, ana_license:module_of(Name)]);
+                _ -> ana_license:module_of(Name)
+            end,
+            case {Allowed, ana_license:allowed(Module)} of
+                {false, _} -> {error, err(<<"FORBIDDEN">>, <<"sem permissão para o programa"/utf8>>)};
+                {true, false} ->
+                    %% Spec 009 (RF-009-03): a module not in the license; its tables stay readable.
+                    {error, err(<<"NOT_LICENSED">>, <<"o módulo "/utf8, (module_label(Module))/binary,
+                                                       " não está na licença desta instalação"/utf8>>)};
+                {true, true} -> {ok, P}
             end;
         _ ->
             {error, err(<<"PROGRAM_NOT_FOUND">>,
                           <<"programa inexistente, inativo ou não executável"/utf8>>)}
+    end.
+
+first_missing(Modules) ->
+    case [M || M <- Modules, not ana_license:allowed(M)] of
+        [M | _] -> M;
+        [] -> lists:last(Modules)
+    end.
+
+module_label(M) ->
+    case [L || #{module := X, label := L} <- ana_license:modules(), X =:= M] of
+        [L | _] -> L;
+        [] -> M
     end.
 
 open_frame(P, RequestId, Savepoint, St = #st{stack = Stack}) ->

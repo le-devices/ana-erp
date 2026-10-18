@@ -31,13 +31,16 @@ valid_name(_) -> false.
 list(IncludeInactive) ->
     ana_db:rows(
         "SELECT name, description, kind, exposed, public, restricted, min_role, active, version, warning, "
-        "       updated_at, updated_by "
+        "       updated_at, updated_by, "
+        %% Spec 009 (D8): a product program edited here is "customized — outside standard support".
+        "       (seed_hash IS NOT NULL AND seed_hash <> encode(sha256(convert_to(source, 'UTF8')), 'hex')) AS customized "
         "FROM ana_system.program WHERE active OR $1 ORDER BY name", [IncludeInactive]).
 
 get(Name) ->
     ana_db:one(
         "SELECT name, description, kind, exposed, public, restricted, min_role, active, in_menu, version, source, "
-        "       params, docs, warning, limits, lint, updated_at, updated_by "
+        "       params, docs, warning, limits, lint, updated_at, updated_by, "
+        "       (seed_hash IS NOT NULL AND seed_hash <> encode(sha256(convert_to(source, 'UTF8')), 'hex')) AS customized "
         "FROM ana_system.program WHERE name = $1", [Name]).
 
 versions(Name) ->

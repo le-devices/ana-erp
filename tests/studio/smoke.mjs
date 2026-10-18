@@ -250,9 +250,13 @@ for (const [section, marker] of [["groups", "Grupos de acesso"], ["limits", "Per
                                  ["settings", "ceiling_cpu_ms"], ["accounts", "service_revenue"], ["commands", "hello"],
                                  ["remote", "Sistemas remotos"], ["scheduler", "Feriados"], ["monitor", "Execuções ativas"], ["consumption", "CPU total"],
                                  ["retention", "Expurgos recentes"], ["health", "Mudanças de estado"], ["sqlperf", "Desempenho do SQL"],
-                                 ["advice", "Dicas de otimização"], ["updates", "Atualizações do produto"], ["integrations", "Chamadas 24 h"], ["audit", "Auditoria"]]) {
+                                 ["advice", "Dicas de otimização"], ["updates", "Atualizações do produto"], ["license", "Usuários nomeados"], ["integrations", "Chamadas 24 h"], ["audit", "Auditoria"]]) {
   await go(w, `#/admin/${section}`);
   await until(() => text("#admin-main").includes(marker), section, jsErrors);
+  if (section === "license") {
+    ok(text("#admin-main").includes("Núcleo") && text("#admin-main").includes("Instalar licença"),
+       "licença mostra situação, módulos e instalação (spec 009)");
+  }
   if (section === "integrations") {
     [...d.querySelectorAll("#admin-main .sub-tabs button")].find((b) => b.textContent === "Conectores").click();
     await until(() => text("#admin-main").includes("Segredos (só escrita)"), "connectors", jsErrors);
@@ -273,6 +277,10 @@ for (const [section, marker] of [["groups", "Grupos de acesso"], ["limits", "Per
   }
 }
 [...d.querySelectorAll("#admin-main .sub-tabs button")].find((b) => b.textContent === "Tarefas internas").click();
+// Filtered by prefix: on a busy instance the latest 100 tasks may all be periodic ones.
+await until(() => d.querySelector('#admin-main input[placeholder="Tarefa (prefixo)"]'), "internal tasks filter", jsErrors);
+d.querySelector('#admin-main input[placeholder="Tarefa (prefixo)"]').value = "seed.";
+[...d.querySelectorAll("#admin-main button")].find((b) => b.textContent === "Filtrar").click();
 await until(() => text("#admin-main tbody").includes("seed.programs"), "internal tasks", jsErrors);
 ok(text("#admin-main tbody").includes("system"), "tarefas internas têm dono (P14)");
 [...d.querySelectorAll("#admin-main .sub-tabs button")].find((b) => b.textContent === "Requisições").click();

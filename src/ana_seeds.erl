@@ -11,7 +11,7 @@
 %%   # ana:public yes          (anonymous browsers with a publishable key may call it, spec 010)
 %% Only creates what does not exist: never overwrites studio changes.
 -module(ana_seeds).
--export([apply/0, files/0, metadata/1]).
+-export([apply/0, files/0, metadata/1, reserved/1]).
 
 
 apply() ->
@@ -73,6 +73,21 @@ ensure_routines() ->
                                                             [length(Results) - length(Failed), length(Failed)]))};
         _ -> {ok, <<"sem administrador ainda: rotinas ficam para a próxima partida"/utf8>>}
     end.
+
+%% Spec 009 (D8, RF-009-09): a new program may not take a namespace of the product (first segment of any
+%% product program), unless it is a product program itself.
+-spec reserved(binary()) -> boolean().
+reserved(Name) ->
+    {Names, Spaces} = case persistent_term:get({?MODULE, namespaces}, undefined) of
+        undefined ->
+            Dir = filename:join(code:priv_dir(ana), "programs"),
+            Ns = [list_to_binary(filename:basename(F, ".py")) || F <- filelib:wildcard(filename:join(Dir, "*.py"))],
+            V = {Ns, lists:usort([hd(binary:split(N, <<".">>)) || N <- Ns])},
+            persistent_term:put({?MODULE, namespaces}, V),
+            V;
+        V -> V
+    end,
+    lists:member(hd(binary:split(Name, <<".">>)), Spaces) andalso not lists:member(Name, Names).
 
 %% Seed files: [{Name, Source}].
 -spec files() -> [{binary(), binary()}].

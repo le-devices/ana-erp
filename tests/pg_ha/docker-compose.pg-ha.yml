@@ -8,7 +8,7 @@ services:
       PGPASSWORD: ${ANA_TEST_REPL_PASSWORD:-repl-test-password}
     # Data in memory: a throwaway replica (and no SSD wear, P15).
     tmpfs:
-      - /var/lib/postgresql/data:size=1g,mode=0700,uid=999,gid=999
+      - /var/lib/postgresql/data:size=3g,mode=0700,uid=999,gid=999
     user: postgres
     entrypoint: ["sh", "-c"]
     command:

@@ -5031,6 +5031,136 @@ class TestIntegratedFinance(Base):
         self.assertEqual(self.scalar(f"SELECT count(*) FROM finance.bill b JOIN base.party p ON p.id = b.party_id WHERE p.id = {cust}"), 1)
 
 
+# ---------------------------------------------------------------- spec 009
+def license_text(**over):
+    """A license signed with the vendor's test key (always non-production, D2)."""
+    import base64 as b64
+    from cryptography.hazmat.primitives import serialization
+    today = datetime.date.today()
+    payload = {"id": f"T{SUFFIX}{len(over)}{time.time_ns() % 100000}", "kid": "test-2026", "customer": "Suíte de testes",
+               "issued_at": today.isoformat(), "valid_from": (today - datetime.timedelta(days=1)).isoformat(),
+               "valid_until": (today + datetime.timedelta(days=365)).isoformat(), "max_version": "0.9",
+               "modules": ["sales", "supply", "production", "logistics_field", "projects", "bpm", "analytics", "public_api", "portal"],
+               "limits": {"named_users": 0}, "environment": "production"}
+    payload.update(over)
+    with open(os.path.join(os.path.dirname(__file__), "license_test.key"), "rb") as f:
+        key = serialization.load_pem_private_key(f.read(), password=None)
+    u = lambda b: b64.urlsafe_b64encode(b).rstrip(b"=").decode()
+    body = u(json.dumps(payload, ensure_ascii=False).encode())
+    return f"-----BEGIN ANA LICENSE-----\n{body}.{u(key.sign(body.encode()))}\n-----END ANA LICENSE-----\n"
+
+
+class TestLicensing(Base):
+    """License, modules, named users, restricted mode, product namespaces (spec 009, phase 1)."""
+
+    @classmethod
+    def tearDownClass(cls):
+        # The development instance keeps a full test license: it never falls into restricted mode.
+        s, c, _ = http("POST", "/api/admin/license", {"text": license_text()}, cls.token)
+        assert s == 200, c
+
+    def install(self, **over):
+        s, c, _ = http("POST", "/api/admin/license", {"text": license_text(**over)}, self.token)
+        self.assertEqual(s, 200, c)
+        return c
+
+    def state(self):
+        s, c, _ = http("GET", "/api/admin/license", token=self.token)
+        self.assertEqual(s, 200, c)
+        return c
+
+    def run_code(self, name, params=None):
+        s, c, _ = self.run_program(name, params or {})
+        return c.get("error", {}).get("code") if "error" in c else "OK"
+
+    def test_ca_009_01_06_install_valid_refuse_tampered_and_test_key_is_non_production(self):
+        r = self.install()
+        self.assertEqual((r["state"], r["environment"]), ("valid", "non_production"))     # CA-009-06
+        st = self.state()
+        self.assertEqual(st["customer"], "Suíte de testes")
+        self.assertIn("projects", st["modules"])
+        active = [h for h in st["history"] if h["active"]][0]["license"]
+        good = license_text()
+        body, sig = good.split("\n")[1].split(".")
+        tampered = good.replace(body, body[:-2] + ("A" if body[-2] != "A" else "B") + body[-1])
+        s, c, _ = http("POST", "/api/admin/license", {"text": tampered}, self.token)
+        self.assertEqual(s, 400, c)
+        self.assertEqual([h for h in self.state()["history"] if h["active"]][0]["license"], active)   # the previous stays
+        s, c, _ = http("POST", "/api/admin/license", {"text": license_text(max_version="0.0")}, self.token)
+        self.assertEqual(s, 400, c)                                                       # CA-009-08
+        self.assertIn("não cobre a versão", c["error"]["message"])
+        s, c, _ = http("GET", "/api/license", token=self.token)                            # the banner, for anyone
+        self.assertEqual((s, c["environment"]), (200, "non_production"))
+        self.assertNotIn("customer", c)
+
+    def test_ca_009_02_module_outside_the_license(self):
+        mine = f"test.lic_core_{SUFFIX}"
+        self.save(mine, "def main():\n    return ana.sql_value('SELECT 1')\n")
+        self.install(modules=["sales"])
+        try:
+            self.assertEqual(self.run_code("projects.lookup", {"kind": "projects"}), "NOT_LICENSED")
+            self.assertEqual(self.run_code("finance.trial_balance"), "OK")                  # the core
+            self.assertEqual(self.run_code(mine), "OK")                                       # the customer's programs
+            self.assertEqual(self.run_code("sales.lookup", {"kind": "products"}), "OK")
+            s, c, _ = self.run_program("projects.lookup", {"kind": "projects"})
+            self.assertIn("Projetos", c["error"]["message"])
+        finally:
+            self.install()
+        self.assertEqual(self.run_code("projects.lookup", {"kind": "projects"}), "OK")
+
+    def test_ca_009_03_named_users_limit(self):
+        used = self.state()["named_users_used"]
+        self.install(limits={"named_users": used})
+        try:
+            s, c, _ = http("POST", "/api/admin/users", {"username": f"lic{SUFFIX}", "password": "Initial-pass-1", "role": "user"}, self.token)
+            self.assertEqual(s, 400, c)
+            self.assertIn("LICENSE_LIMIT", c["error"]["message"])
+            s, c, _ = http("POST", "/api/admin/users", {"username": f"licr{SUFFIX}", "kind": "robot", "role": "user"}, self.token)
+            self.assertEqual(s, 200, c)                                                       # robots do not count
+            http("PUT", f"/api/admin/users/licr{SUFFIX}", {"active": False}, self.token)
+            self.assertEqual(self.state()["named_users"], used)
+        finally:
+            self.install()
+
+    def test_ca_009_04_05_expired_is_read_only_and_grace_still_works(self):
+        reader, writer = f"test.lic_read_{SUFFIX}", f"test.lic_write_{SUFFIX}"
+        self.save(reader, "def main():\n    return ana.sql_value('SELECT count(*) FROM base.party')\n")
+        self.save(writer, "def main():\n    return ana.sql_value(\"INSERT INTO base.party (kind, name) VALUES ('customer', 'Licença teste') RETURNING id\")\n")
+        today = datetime.date.today()
+        r = self.install(valid_from=(today - datetime.timedelta(days=400)).isoformat(),
+                         valid_until=(today - datetime.timedelta(days=5)).isoformat())
+        self.assertEqual(r["state"], "grace")                                                 # CA-009-05
+        self.assertEqual(self.run_code(writer), "OK")
+        r = self.install(valid_from=(today - datetime.timedelta(days=400)).isoformat(),
+                         valid_until=(today - datetime.timedelta(days=20)).isoformat())
+        try:
+            self.assertEqual((r["state"], r["reason"]), ("restricted", "expired"))
+            self.assertEqual(self.run_code(reader), "OK")                                     # reading never stops
+            self.assertEqual(self.run_code(writer), "LICENSE_RESTRICTED")
+            self.assertEqual(self.run_code("finance.trial_balance"), "OK")                  # reports too
+        finally:
+            r = self.install()
+        self.assertEqual(r["state"], "valid")
+        self.assertEqual(self.run_code(writer), "OK")                                         # back at once
+
+    def test_ca_009_07_product_namespace_and_customized_mark(self):
+        s, c, _ = http("PUT", f"/api/programs/sales.lic_{SUFFIX}", {"source": "def main():\n    return 1\n"}, self.token)
+        self.assertEqual(s, 400, c)
+        self.assertEqual(c["error"]["code"], "PRODUCT_NAMESPACE")
+        s, p, _ = http("GET", "/api/programs/finance.trial_balance", token=self.token)
+        self.assertFalse(p["customized"])
+        original = p["source"]
+        try:
+            s, c, _ = http("PUT", "/api/programs/finance.trial_balance", {"source": original + "\n# ajuste local (teste)\n"}, self.token)
+            self.assertEqual(s, 200, c)
+            s, p, _ = http("GET", "/api/programs/finance.trial_balance", token=self.token)
+            self.assertTrue(p["customized"])
+        finally:
+            http("PUT", "/api/programs/finance.trial_balance", {"source": original}, self.token)
+        s, p, _ = http("GET", "/api/programs/finance.trial_balance", token=self.token)
+        self.assertFalse(p["customized"])
+
+
 # ---------------------------------------------------------------- spec 040
 def cnpj(base12):
     """A valid CNPJ for 12 digits (test data must pass the check digits, as real data does)."""
