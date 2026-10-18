@@ -78,6 +78,13 @@ route(<<"DELETE">>, [<<"session">>], Req) ->
         _ -> ok
     end,
     cowboy_req:reply(204, Req);
+%% Spec 009 (D11): the customer's logo, public (shown on the sign-in screen too); cached briefly.
+route(<<"GET">>, [<<"company">>, <<"logo">>], Req) ->
+    case ana_admin:logo() of
+        {ok, Jpeg} -> cowboy_req:reply(200, #{<<"content-type">> => <<"image/jpeg">>, <<"cache-control">> => <<"max-age=300">>},
+                                       Jpeg, Req);
+        none -> ana_http:reply_error(404, <<"NOT_FOUND">>, <<"sem logotipo">>, Req)
+    end;
 %% Spec 009 (RF-009-08): what the banner needs, for anyone signed in (no customer data, no limits).
 route(<<"GET">>, [<<"license">>], Req) ->
     ana_http:require_any(Req, fun(_U) ->
@@ -86,12 +93,14 @@ route(<<"GET">>, [<<"license">>], Req) ->
     end);
 route(<<"GET">>, [<<"me">>], Req) ->
     ana_http:require_any(Req, fun(U) ->
-        Company = case ana_admin:get_company() of
-            {ok, #{<<"legal_name">> := N}} -> N;
-            _ -> null
+        {Company, Logo} = case ana_admin:get_company() of
+            {ok, #{<<"legal_name">> := N, <<"display_name">> := D, <<"has_logo">> := L}} ->
+                {case D of null -> N; _ -> D end, L =:= true};
+            _ -> {null, false}
         end,
-        %% Spec 034: the screen marks development/test instances.
-        ana_http:json(200, (maps:without([trace, key_id], U))#{company => Company, instance => ana_instance:info()}, Req)
+        %% Spec 034: the screen marks development/test instances. Spec 009 (D11): the customer's brand.
+        ana_http:json(200, (maps:without([trace, key_id], U))#{company => Company, company_logo => Logo,
+                                                               instance => ana_instance:info()}, Req)
     end);
 route(<<"POST">>, [<<"me">>, <<"password">>], Req) ->
     ana_http:require_any(Req, fun(U) ->

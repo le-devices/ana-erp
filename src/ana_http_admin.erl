@@ -25,6 +25,19 @@ route(<<"POST">>, [<<"license">>], #{username := Who}, Req) ->
         end
     end);
 
+%% --- Telemetry (spec 009, D13) ----------------------------------------------
+route(<<"GET">>, [<<"telemetry">>], _U, Req) ->
+    reply(ana_telemetry:status(), Req);
+route(<<"PUT">>, [<<"telemetry">>], U, Req) ->
+    with_body(Req, fun(B, R) ->
+        case maps:get(<<"enabled">>, B, null) of
+            E when is_boolean(E) -> reply(ana_telemetry:set(E, U), R);
+            _ -> reply({error, <<"informe enabled (true/false)">>}, R)
+        end
+    end);
+route(<<"POST">>, [<<"telemetry">>, <<"send">>], U, Req) ->
+    reply(ana_telemetry:send_now(U), Req);
+
 %% --- Extension points (spec 009, D9) ---------------------------------------
 route(<<"GET">>, [<<"extensions">>], _U, Req) ->
     reply(ana_extensions:list(), Req);
@@ -91,6 +104,8 @@ route(<<"GET">>, [<<"company">>], _U, Req) ->
         {ok, undefined} -> ana_http:json(200, #{}, Req);
         Other -> reply(Other, Req)
     end;
+route(<<"PUT">>, [<<"company">>, <<"logo">>], U, Req) ->
+    with_body(Req, fun(B, R) -> reply(ana_admin:save_logo(maps:get(<<"logo">>, B, null), U), R) end);
 route(<<"PUT">>, [<<"company">>], U, Req) ->
     with_body(Req, fun(B, R) -> reply(ana_admin:save_company(B, U), R) end);
 

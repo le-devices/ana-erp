@@ -179,6 +179,10 @@
     admin: {
       license: () => API.request("GET", "/api/admin/license"),
       installLicense: (text) => API.request("POST", "/api/admin/license", { text }),
+      saveLogo: (logo) => API.request("PUT", "/api/admin/company/logo", { logo }),
+      telemetry: () => API.request("GET", "/api/admin/telemetry"),
+      setTelemetry: (enabled) => API.request("PUT", "/api/admin/telemetry", { enabled }),
+      sendTelemetry: () => API.request("POST", "/api/admin/telemetry/send", {}),
       extensions: () => API.request("GET", "/api/admin/extensions"),
       saveExtension: (body) => API.request("POST", "/api/admin/extensions", body),
       deleteExtension: (id) => API.request("DELETE", `/api/admin/extensions/${id}`),

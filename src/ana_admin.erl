@@ -8,7 +8,7 @@
          list_users/1, get_user/1, create_user/2, update_user/3, reset_password/2,
          revoke_sessions/2, unlock_user/2, unlock_ip/2, list_keys/1, create_key/3, revoke_key/2,
          list_groups/0, save_group/3, delete_group/2,
-         get_company/0, save_company/2,
+         get_company/0, save_company/2, save_logo/2, logo/0,
          list_default_accounts/0, save_default_account/3,
          list_remote_systems/0, save_remote_system/3,
          audit_executions/1, audit_logins/1, audit_changes/1, audit_tasks/1,
@@ -343,8 +343,28 @@ delete_group(Name, #{username := Who}) ->
 %% ==========================================================================
 
 get_company() ->
-    ana_db:one("SELECT id, legal_name, tax_id, address, city, state, email, phone, latitude, longitude, public_url "
+    ana_db:one("SELECT id, legal_name, tax_id, address, city, state, email, phone, latitude, longitude, public_url, "
+               "  display_name, logo IS NOT NULL AS has_logo "
                "FROM base.company ORDER BY id LIMIT 1", []).
+
+%% Spec 009 (D11): the customer's logo (JPEG in base64, converted and shrunk by the browser), or null to remove.
+save_logo(Logo, #{username := Who}) when Logo =:= null; is_binary(Logo) ->
+    Valid = Logo =:= null orelse (byte_size(Logo) =< 400000 andalso binary:part(Logo, 0, min(4, byte_size(Logo))) =:= <<"/9j/">>),
+    case Valid andalso ana_db:exec("UPDATE base.company SET logo = $1", [Logo]) of
+        false -> {error, <<"envie o logotipo como JPEG de até 300 KB"/utf8>>};
+        {ok, 0} -> {error, <<"cadastre a empresa antes do logotipo">>};
+        {ok, _} ->
+            log(Who, <<"company.logo">>, <<"company">>, null, #{removed => Logo =:= null}),
+            {ok, #{logo => Logo =/= null}};
+        {error, _} -> {error, <<"logotipo inválido: use JPEG de até 300 KB"/utf8>>}
+    end;
+save_logo(_, _) -> {error, <<"logotipo inválido"/utf8>>}.
+
+logo() ->
+    case ana_db:one("SELECT logo FROM base.company WHERE logo IS NOT NULL ORDER BY id LIMIT 1", []) of
+        {ok, #{<<"logo">> := L}} -> {ok, base64:decode(L)};
+        _ -> none
+    end.
 
 save_company(Fields, #{username := Who}) ->
     Cols = [<<"legal_name">>, <<"tax_id">>, <<"address">>, <<"city">>, <<"state">>,
@@ -362,17 +382,22 @@ save_company(Fields, #{username := Who}) ->
         U0 when is_binary(U0) -> case string:trim(U0) of <<>> -> null; T -> string:trim(T, trailing, "/") end;
         _ -> null
     end,
-    Values = [maps:get(C, Fields, null) || C <- Cols] ++ [Coord(<<"latitude">>), Coord(<<"longitude">>), Url],
+    %% Spec 009 (D11): short name shown beside ANA's brand and on the documents (empty = the legal name).
+    Display = case maps:get(<<"display_name">>, Fields, null) of
+        D0 when is_binary(D0) -> case string:trim(D0) of <<>> -> null; D -> D end;
+        _ -> null
+    end,
+    Values = [maps:get(C, Fields, null) || C <- Cols] ++ [Coord(<<"latitude">>), Coord(<<"longitude">>), Url, Display],
     {ok, Before} = get_company(),
     R = case Before of
         undefined ->
-            ana_db:exec("INSERT INTO base.company (legal_name, tax_id, address, city, state, email, phone, latitude, longitude, public_url) "
-                        "VALUES ($1, $2, $3, $4, $5, $6, $7, $8::text::numeric, $9::text::numeric, $10)",
+            ana_db:exec("INSERT INTO base.company (legal_name, tax_id, address, city, state, email, phone, latitude, longitude, public_url, "
+                        "  display_name) VALUES ($1, $2, $3, $4, $5, $6, $7, $8::text::numeric, $9::text::numeric, $10, $11)",
                         [case V of N when is_number(N) -> list_to_binary(io_lib:format("~p", [N])); _ -> V end || V <- Values]);
         #{<<"id">> := Id} ->
             ana_db:exec("UPDATE base.company SET legal_name = $2, tax_id = $3, address = $4, city = $5, "
                         "state = $6, email = $7, phone = $8, latitude = $9::text::numeric, longitude = $10::text::numeric, "
-                        "public_url = $11 WHERE id = $1",
+                        "public_url = $11, display_name = $12 WHERE id = $1",
                         [Id | [case V of N when is_number(N) -> list_to_binary(io_lib:format("~p", [N])); _ -> V end || V <- Values]])
     end,
     case R of
@@ -382,7 +407,7 @@ save_company(Fields, #{username := Who}) ->
             log(Who, <<"company.save">>, <<"company">>, Before, After),
             {ok, After};
         {error, #{sqlstate := <<"23514">>}} ->
-            {error, <<"endereço público inválido: use https://nome[:porta], sem caminho"/utf8>>};
+            {error, <<"endereço público inválido (https://nome[:porta], sem caminho) ou nome de exibição fora de 2 a 60 letras"/utf8>>};
         {error, E} -> {error, E}
     end.
 

@@ -12,7 +12,7 @@ from decimal import Decimal, ROUND_HALF_UP
 
 from ana_lib.projects import access
 from ana_lib.util.format import money
-from ana_lib.util.pdf import Pdf
+from ana_lib.util.pdf import Pdf, company as letterhead_company
 
 PARAMS = {
     "project": {"type": "str", "required": True, "label": "projeto", "lookup": {"program": "projects.lookup", "params": {"kind": "projects"}}},
@@ -119,12 +119,10 @@ def main(project, through=None, payment_days=30):
 def store_pdf(p, number, lines, total, tax, withheld, net, payment_days):
     """Spec 016 (CA-016-05): the invoice as PDF in the customer's folder (Faturas is shared
     with the customer's portal accounts). A storage problem never undoes the invoice."""
-    company = ana.sql_one("SELECT legal_name, tax_id FROM base.company ORDER BY id LIMIT 1") or {}
+    company = letterhead_company()
     customer = ana.sql_one("SELECT name, tax_id FROM base.party WHERE id = $1", p["customer_id"])
     doc = Pdf(title=f"Fatura {number}")
-    doc.text(50, 790, company.get("legal_name") or "Fatura de serviços", size=14, bold=True)
-    if company.get("tax_id"):
-        doc.text(50, 774, f"CNPJ {company['tax_id']}", size=9)
+    doc.letterhead(company)                                                                  # spec 009 (D11)
     doc.text(400, 790, f"Fatura nº {number}", size=12, bold=True)
     doc.text(400, 774, f"Emissão {datetime.date.today():%d/%m/%Y}", size=9)
     doc.text(50, 745, f"Cliente: {customer['name']}" + (f" — {customer['tax_id']}" if customer.get("tax_id") else ""), size=10)

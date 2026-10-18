@@ -8,7 +8,7 @@ import datetime
 
 from ana_lib.finance import invoice_pdf
 from ana_lib.util.format import compact, money
-from ana_lib.util.pdf import Pdf
+from ana_lib.util.pdf import Pdf, company as letterhead_company
 
 STATUS = {"open": "em aberto", "settled": "pago", "cancelled": "cancelado"}
 
@@ -18,13 +18,8 @@ class Internal(Exception):
 
 
 def _header(pdf, title, number, date, party, ref=None):
-    company = ana.sql_one("SELECT legal_name, tax_id, address, city, state, phone, email FROM base.company ORDER BY id LIMIT 1") or {}
-    pdf.text(50, 790, company.get("legal_name") or "", size=14, bold=True)
-    if company.get("tax_id"):
-        pdf.text(50, 776, f"CNPJ {company['tax_id']}", size=9)
-    contact = " · ".join(x for x in (company.get("phone"), company.get("email")) if x)
-    if contact:
-        pdf.text(50, 764, contact, size=8)
+    company = letterhead_company()
+    pdf.letterhead(company, [" · ".join(x for x in (company.get("phone"), company.get("email")) if x)])   # spec 009 (D11)
     pdf.text(360, 790, f"{title} {number}", size=12, bold=True)
     pdf.text(360, 776, f"Data {date:%d/%m/%Y}", size=9)
     p = ana.sql_one("SELECT name, tax_id, address, city, state FROM base.party WHERE id = $1", party)

@@ -39,7 +39,7 @@ inglês, como no código (constituição, P2a).
 | 006 | [Módulos de negócio](006-business-modules/spec.md) | Cadastros, estoque, vendas, financeiro | implementada |
 | 007 | [Camada analítica](007-analytics/spec.md) | Visões analíticas, colunar opcional | implementada |
 | 008 | [Serviços e projetos](008-services-projects/spec.md) | P&D, horas, despesas, protótipos, faturamento | implementada |
-| 009 | [Licenciamento](009-licensing/spec.md) | Implantação por cliente, licença assinada sem internet, módulos, usuários nomeados, vencimento com modo somente consulta, versão máxima, camadas de programas; extensões, permissão por dado, marca e telemetria | fases 1 e 2 implementadas (fase 3: marca conjunta, telemetria) |
+| 009 | [Licenciamento](009-licensing/spec.md) | Implantação por cliente, licença assinada sem internet, módulos, usuários nomeados, vencimento com modo somente consulta, versão máxima, camadas de programas; extensões, permissão por dado, marca e telemetria | implementada (empresa/CNPJ na permissão por dado aguarda documentos por empresa) |
 | 010 | [API pública](010-public-api/spec.md) | Chamadas pela internet por sites e sistemas de terceiros: clientes com segredo e token Ed25519, chave publicável para sites, escopos, limites e cota, idempotência, assinatura HMAC, auditoria | implementada (faltam PKCE, TOTP, HTTP/2 e cache, disjuntor; vazão-alvo depende de decisão) |
 | 011 | [Administração](011-administration/spec.md) | Usuários e robôs (chaves de API), grupos, parâmetros, monitor, auditoria pela UI; dono obrigatório em toda execução | implementada |
 | 012 | [Governança de execução](012-execution-governance/spec.md) | Limites finos de tempo, CPU, memória, SQL, concorrência e cotas | implementada |

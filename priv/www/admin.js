@@ -291,7 +291,8 @@
   // ------------------------------------------------------------------ company
   async function company() {
     const c = await API.admin.company();
-    const fields = [["legal_name", "Razão social"], ["tax_id", "CNPJ / documento"], ["address", "Endereço"],
+    const fields = [["legal_name", "Razão social"], ["display_name", "Nome de exibição (ao lado da marca do ANA e nos documentos; vazio = razão social)"],
+                    ["tax_id", "CNPJ / documento"], ["address", "Endereço"],
                     ["city", "Cidade"], ["state", "UF"], ["email", "E-mail"], ["phone", "Telefone"],
                     ["latitude", "Latitude (ex.: -23,5505)"], ["longitude", "Longitude (ex.: -46,6333)"],
                     ["public_url", "Endereço público do ERP (ex.: https://erp.empresa.com.br) — usado nos links enviados a clientes"]];
@@ -304,10 +305,52 @@
           const body = Object.fromEntries(Object.entries(inputs).map(([k, i]) => [k, i.value || null]));
           await API.admin.saveCompany(body);
           toast("Dados da empresa salvos.");
-          window.AnaStudio && window.AnaStudio.refreshTitle(body.legal_name);
+          window.AnaStudio && window.AnaStudio.refreshTitle(body.display_name || body.legal_name);
         });
       } }, fields.map(([k, label]) => field(label, inputs[k])),
-        el("div", { class: "row-buttons" }, el("button", { class: "primary", type: "submit", text: "Salvar" }))));
+        el("div", { class: "row-buttons" }, el("button", { class: "primary", type: "submit", text: "Salvar" }))),
+      logoCard(c));
+  }
+
+  // Spec 009 (D11): any image becomes a small JPEG in the browser (white background, at most 480×160).
+  function toJpeg(file) {
+    return new Promise((resolve, reject) => {
+      const img = new Image();
+      img.onload = () => {
+        const scale = Math.min(1, 480 / img.width, 160 / img.height);
+        const cv = document.createElement("canvas");
+        cv.width = Math.max(1, Math.round(img.width * scale)); cv.height = Math.max(1, Math.round(img.height * scale));
+        const ctx = cv.getContext("2d");
+        ctx.fillStyle = "#fff"; ctx.fillRect(0, 0, cv.width, cv.height);
+        ctx.drawImage(img, 0, 0, cv.width, cv.height);
+        URL.revokeObjectURL(img.src);
+        resolve(cv.toDataURL("image/jpeg", 0.88).split(",")[1]);
+      };
+      img.onerror = () => reject(new Error("imagem ilegível"));
+      img.src = URL.createObjectURL(file);
+    });
+  }
+
+  function logoCard(c) {
+    const preview = el("img", { class: "logo-preview", alt: "logotipo atual", hidden: !c.has_logo });
+    if (c.has_logo) preview.src = "/api/company/logo?v=" + Date.now();
+    const input = el("input", { type: "file", accept: "image/*", onchange: () => guard(async () => {
+      if (!input.files[0]) return;
+      const logo = await toJpeg(input.files[0]);
+      await API.admin.saveLogo(logo);
+      toast("Logotipo salvo: aparece no topo e nos documentos.");
+      company();
+      window.AnaStudio && window.AnaStudio.refreshTitle(c.display_name || c.legal_name, true);
+    }) });
+    return el("div", { class: "form-card" },
+      el("h3", { text: "Logotipo" }),
+      el("p", { class: "muted", text: "Fica ao lado da marca do ANA, no topo do Estúdio, e no timbre dos PDFs (pedidos, faturas, recibos). Qualquer imagem serve: o navegador a reduz e converte." }),
+      preview, field("Escolher imagem", input),
+      c.has_logo ? el("div", { class: "row-buttons" }, el("button", { type: "button", class: "danger", text: "Remover logotipo", onclick: () => guard(async () => {
+        if (!confirm("Remover o logotipo?")) return;
+        await API.admin.saveLogo(null); toast("Logotipo removido."); company();
+        window.AnaStudio && window.AnaStudio.refreshTitle(c.display_name || c.legal_name, false);
+      }) })) : null);
   }
 
   // ------------------------------------------------------------------ commands
@@ -1377,6 +1420,32 @@
       ], l.history, { empty: "Nenhuma licença instalada ainda." }));
   }
 
+  // ------------------------------------------------------------------ telemetry (spec 009, D13)
+  const CONNECTOR_STATE = { ready: ["conector pronto", "ok"], inactive: ["conector inativo", "warn"], missing: ["sem conector \"telemetry\"", "warn"] };
+
+  async function telemetry() {
+    const t = await API.admin.telemetry();
+    const [cl, ct] = CONNECTOR_STATE[t.connector] || [t.connector, ""];
+    main().replaceChildren(
+      ...header("Telemetria", "Opcional e desligada por padrão. Ligada, envia uma vez por dia ao suporte do fornecedor só o que aparece abaixo: versões, situação da licença, saúde e contagens de execuções e de códigos de erro. Nunca dados do negócio, nomes, mensagens ou usuários."),
+      el("dl", { class: "facts" },
+        el("dt", { text: "Situação" }), el("dd", {}, t.enabled ? pill("ligada", "ok") : pill("desligada", "off"),
+          t.changed_by ? el("span", { class: "muted", text: ` por ${t.changed_by} em ${fmtDate(t.changed_at)}` }) : null),
+        el("dt", { text: "Destino" }), el("dd", {}, pill(cl, ct), el("span", { class: "muted", text: " — configure o endereço do fornecedor em Integrações → Conectores, nome telemetry" })),
+        el("dt", { text: "Último envio" }), el("dd", { text: t.last_sent_at ? `${fmtDate(t.last_sent_at)} — ${t.last_status}` : "nunca" }),
+        el("dt", { text: "Instância" }), el("dd", {}, el("code", { text: t.instance_id }), el("span", { class: "muted", text: " (identificador anônimo, não é o cliente)" }))),
+      el("div", { class: "row-buttons" },
+        el("button", { class: t.enabled ? "danger" : "primary", text: t.enabled ? "Desligar" : "Ligar", onclick: () => guard(async () => {
+          if (!t.enabled && !confirm("Enviar uma vez por dia ao fornecedor os dados mostrados abaixo?")) return;
+          await API.admin.setTelemetry(!t.enabled); telemetry();
+        }) }),
+        t.enabled ? el("button", { text: "Enviar agora", onclick: () => guard(async () => {
+          const r = await API.admin.sendTelemetry(); toast(`Envio: ${r.last_status}`, r.last_status !== "enviado"); telemetry();
+        }) }) : null),
+      el("h3", { text: "Exatamente o que é enviado" }),
+      el("pre", { class: "json form-card", text: JSON.stringify(t.preview, null, 2) }));
+  }
+
   // ------------------------------------------------------------------ extension points (spec 009, D9)
   async function extensions() {
     const r = await API.admin.extensions();
@@ -1681,7 +1750,7 @@
                        window.AnaScheduler.holidays(hol)]);
   }
 
-  const SECTIONS = { users, groups, settings, company, commands, remote, accounts, limits, consumption, scheduler, monitor, audit, retention, health, sqlperf, advice, updates, integrations, checks, transports, datacopy, publicapi, license, extensions };
+  const SECTIONS = { users, groups, settings, company, commands, remote, accounts, limits, consumption, scheduler, monitor, audit, retention, health, sqlperf, advice, updates, integrations, checks, transports, datacopy, publicapi, license, extensions, telemetry };
 
   function show(section) {
     refreshUpdatesCount();
