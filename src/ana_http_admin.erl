@@ -25,6 +25,14 @@ route(<<"POST">>, [<<"license">>], #{username := Who}, Req) ->
         end
     end);
 
+%% --- Extension points (spec 009, D9) ---------------------------------------
+route(<<"GET">>, [<<"extensions">>], _U, Req) ->
+    reply(ana_extensions:list(), Req);
+route(<<"POST">>, [<<"extensions">>], U, Req) ->
+    with_body(Req, fun(B, R) -> reply(ana_extensions:save(B, U), R) end);
+route(<<"DELETE">>, [<<"extensions">>, Id], U, Req) ->
+    with_int(Id, Req, fun(N) -> reply(ana_extensions:delete(N, U), Req) end);
+
 %% --- Users (RF-011-02) ----------------------------------------------------
 route(<<"GET">>, [<<"users">>], _U, Req) ->
     reply(ana_admin:list_users(ana_http:qs_map(Req)), Req);

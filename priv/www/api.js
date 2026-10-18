@@ -179,6 +179,9 @@
     admin: {
       license: () => API.request("GET", "/api/admin/license"),
       installLicense: (text) => API.request("POST", "/api/admin/license", { text }),
+      extensions: () => API.request("GET", "/api/admin/extensions"),
+      saveExtension: (body) => API.request("POST", "/api/admin/extensions", body),
+      deleteExtension: (id) => API.request("DELETE", `/api/admin/extensions/${id}`),
       users: (search) => API.request("GET", "/api/admin/users" + query({ search })),
       createUser: (body) => API.request("POST", "/api/admin/users", body),
       updateUser: (u, body) => API.request("PUT", `/api/admin/users/${enc(u)}`, body),

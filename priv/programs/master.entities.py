@@ -45,6 +45,8 @@ ENTITIES = {
             {"name": "address", "label": "Endereço (rua, número, bairro)", "type": "text", "max": 300},
             {"name": "latitude", "label": "Latitude", "type": "decimal", "help": "ex.: -23,5505"},
             {"name": "longitude", "label": "Longitude", "type": "decimal", "help": "ex.: -46,6333"},
+            {"name": "salesperson", "label": "Vendedor (login)", "type": "text", "max": 63,
+             "help": "dono da carteira: quem só vê a própria carteira vê este cliente"},
         ],
         "tabs": [
             {"label": "Crédito", "kind": "one", "table": "finance.credit_profile", "fk": "party_id",

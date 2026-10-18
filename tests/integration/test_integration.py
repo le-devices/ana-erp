@@ -5161,6 +5161,126 @@ class TestLicensing(Base):
         self.assertFalse(p["customized"])
 
 
+class TestExtensions(Base):
+    """Extension points: the customer's programs before/after product programs (spec 009, D9)."""
+
+    def register(self, point, program):
+        s, c, _ = http("POST", "/api/admin/extensions", {"point": point, "program": program}, self.token)
+        self.assertEqual(s, 200, c)
+        return c["id"]
+
+    def unregister(self, ext):
+        http("DELETE", f"/api/admin/extensions/{ext}", token=self.token)
+
+    def test_ca_009_09_before_refuses_after_sees_and_before_adjusts(self):
+        c = self.client
+        customer = c.call("base.save_party", name=f"Cliente Extensão {SUFFIX}")["id"]
+        service = f"SVX{SUFFIX}"
+        c.call("base.save_product", code=service, description="Serviço com regra", price="1", kind="service")
+        block, after = f"test.ext_block_{SUFFIX}", f"test.ext_after_{SUFFIX}"
+        self.save(block, "from decimal import Decimal\n"
+                         "def main(point, data):\n"
+                         "    if Decimal(str(data['total'])) > 1000:\n"
+                         "        raise ana.Error('ABOVE_COMPANY_RULE', 'pedido acima de R$ 1.000 exige contrato assinado')\n")
+        self.save(after, "def main(point, data):\n"
+                         "    ana.sql_exec(\"INSERT INTO base.party (kind, name) VALUES ('supplier', $1)\", 'depois do pedido ' + str(data['number']))\n")
+        e1, e2 = self.register("before_invoice_order", block), self.register("after_invoice_order", after)
+        try:
+            big = c.call("sales.create_order", customer=customer, items=[{"product": service, "quantity": 1, "price": "2000"}])
+            with self.assertRaises(AnaRemoteError) as ctx:
+                c.call("sales.invoice_order", number=big["number"])
+            self.assertIn("ABOVE_COMPANY_RULE", str(ctx.exception))
+            self.assertEqual(self.scalar(f"SELECT status FROM sales.sales_order WHERE number = {big['number']}"), "OPEN")  # nothing done
+            small = c.call("sales.create_order", customer=customer, items=[{"product": service, "quantity": 1, "price": "100"}])
+            c.call("sales.invoice_order", number=small["number"])
+            self.assertEqual(self.count("base.party", f"name = 'depois do pedido {small['number']}'"), 1)       # same transaction
+        finally:
+            self.unregister(e1)
+            self.unregister(e2)
+        c.call("sales.invoice_order", number=big["number"])                                   # rule removed: invoices again
+        # A before_* point adjusts only what it allows: the receipt's document.
+        sup = c.call("base.save_party", kind="supplier", name=f"Fornecedor Extensão {SUFFIX}")["id"]
+        prod = f"PX{SUFFIX}"
+        c.call("base.save_product", code=prod, description="Item com regra", price="10")
+        c.call("supply.save_supplier_item", product=prod, supplier=sup, price="5", preferred=True)
+        adjust = f"test.ext_doc_{SUFFIX}"
+        self.save(adjust, "def main(point, data):\n    return {'document': 'NF-REGRA-' + str(data['order']), 'order': 0}\n")
+        e3 = self.register("before_receive_purchase", adjust)
+        try:
+            _, rt = new_user("user")
+            q = Ana(URL, token=rt).call("supply.request_purchase", reason="extensão", product=prod, quantity=2)
+            c.call("supply.approve_request", request=q["number"])
+            order = c.call("supply.create_orders", requests=[q["number"]])["orders"][0]
+            r = c.call("supply.receive", order=order)
+            self.assertEqual(self.scalar(f"SELECT document FROM supply.receipt WHERE id = {r['receipt']}"), f"NF-REGRA-{order}")
+        finally:
+            self.unregister(e3)
+        s, c2, _ = http("POST", "/api/admin/extensions", {"point": "before_invoice_order", "program": "sales.lookup"}, self.token)
+        self.assertEqual(s, 400, c2)                                                          # only the customer's programs
+        s, c2, _ = http("POST", "/api/admin/extensions", {"point": "before_nothing", "program": block}, self.token)
+        self.assertEqual(s, 400, c2)
+
+
+class TestDataScope(Base):
+    """Permission by data, applied by the database (spec 009, D10)."""
+
+    def group(self, name, **scope):
+        s, c, _ = http("PUT", f"/api/admin/groups/{name}", {"description": "escopo de dados (teste)", "program_patterns": [], **scope},
+                       self.token)
+        self.assertEqual(s, 200, c)
+
+    def test_ca_009_10_cost_center_portfolio_and_own_projects(self):
+        c = self.client
+        a, b = f"TA{SUFFIX}", f"TB{SUFFIX}"
+        c.call("finance.save_cost_center", code=a, name="Filial A (teste)")
+        c.call("finance.save_cost_center", code=f"{a}-1", name="Filial A, loja 1 (teste)", parent=a)
+        c.call("finance.save_cost_center", code=b, name="Filial B (teste)")
+        customer = c.call("base.save_party", name=f"Cliente Escopo {SUFFIX}")["id"]
+        service = f"SVS{SUFFIX}"
+        c.call("base.save_product", code=service, description="Serviço escopo", price="1", kind="service")
+        orders = {cc: c.call("sales.create_order", customer=customer, cost_center=cc,
+                             items=[{"product": service, "quantity": 1, "price": "10"}])["number"] for cc in (f"{a}-1", b)}
+        g_cc, g_pf, g_pr = f"scc{SUFFIX}", f"spf{SUFFIX}", f"spr{SUFFIX}"
+        self.group(g_cc, data_cost_centers=[a])
+        self.group(g_pf, data_portfolio=True)
+        self.group(g_pr, data_own_projects=True)
+        reader = f"test.scope_read_{SUFFIX}"
+        self.save(reader, "def main(sql, args=None):\n    return [list(r.values())[0] for r in ana.sql(sql, *(args or []))]\n")
+        def see(tok, sql, *args):                                          # the same program, run by each user
+            st, r, _ = self.run_program(reader, {"sql": sql, "args": list(args)}, token=tok)
+            self.assertEqual(st, 200, r)
+            return r["result"]
+        try:
+            u_cc, t_cc = new_user("user", [g_cc])
+            got = see(t_cc, "SELECT number FROM sales.sales_order WHERE number = ANY($1) ORDER BY number", list(orders.values()))
+            self.assertEqual(got, [orders[f"{a}-1"]])                                         # child center included, B hidden
+            s, r, _ = self.run_program("sales.create_order", {"customer": customer, "cost_center": b,
+                                                              "items": [{"product": service, "quantity": 1, "price": "5"}]}, token=t_cc)
+            self.assertEqual(r["error"]["code"], "DATA_SCOPE")                                 # cannot create outside it
+            # The administrator sees everything.
+            self.assertEqual(len(see(self.token, "SELECT number FROM sales.sales_order WHERE number = ANY($1)", list(orders.values()))), 2)
+            # Portfolio: only the salesperson's customers (a customer created by them is theirs).
+            u_pf, t_pf = new_user("user", [g_pf])
+            s, mine, _ = self.run_program("base.save_party", {"name": f"Cliente da carteira {SUFFIX}"}, token=t_pf)
+            self.assertEqual(s, 200, mine)
+            got = see(t_pf, "SELECT id FROM base.party WHERE id = ANY($1) ORDER BY id", [customer, mine["result"]["id"]])
+            self.assertEqual(got, [mine["result"]["id"]])
+            bills = see(t_pf, "SELECT count(*) FROM finance.bill WHERE party_id = $1 AND kind = 'receivable'", customer)
+            self.assertEqual(bills, [0])
+            # Own projects: only those managed or worked on.
+            employee = c.call("projects.save_employee", name=f"Eng Escopo {SUFFIX}", profile="HW", hourly_cost="80")["id"]
+            u_pr, t_pr = new_user("user", [g_pr])
+            for code, manager in ((f"SX{SUFFIX}", "admin"), (f"SY{SUFFIX}", u_pr)):
+                c.call("projects.save_project", code=code, name="Projeto escopo", customer=customer, manager=manager, status="active",
+                       billing="hourly", tasks=[{"code": "1", "name": "Trabalho"}], team=[{"employee": employee, "profile": "HW"}],
+                       rates={"HW": "200"})
+            got = see(t_pr, "SELECT code FROM projects.project WHERE code = ANY($1) ORDER BY code", [f"SX{SUFFIX}", f"SY{SUFFIX}"])
+            self.assertEqual(got, [f"SY{SUFFIX}"])
+        finally:
+            for g in (g_cc, g_pf, g_pr):
+                http("DELETE", f"/api/admin/groups/{g}", token=self.token)
+
+
 # ---------------------------------------------------------------- spec 040
 def cnpj(base12):
     """A valid CNPJ for 12 digits (test data must pass the check digits, as real data does)."""

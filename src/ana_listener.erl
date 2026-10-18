@@ -12,7 +12,8 @@
                    {<<"ana_setting">>, ana_settings},
                    {<<"ana_access">>, ana_access},
                    {<<"ana_flow">>, ana_bpm}, {<<"ana_bpm">>, ana_bpm},
-                   {<<"ana_api">>, ana_api}, {<<"ana_license">>, ana_license}]).
+                   {<<"ana_api">>, ana_api}, {<<"ana_license">>, ana_license},
+                   {<<"ana_extension">>, ana_extensions}]).
 
 start_link() ->
     gen_server:start_link({local, ?MODULE}, ?MODULE, [], []).

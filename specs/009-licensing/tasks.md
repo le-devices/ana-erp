@@ -10,8 +10,8 @@
 - [x] T-009-07 Namespaces reservados e selo "customizado" (RF-009-09, CA-009-07)
 
 ## Fase 2 — extensões e permissão por dado
-- [ ] T-009-08 Pontos de extensão antes/depois (D9)
-- [ ] T-009-09 Permissão por dado com RLS: empresa, centro de custo, carteira, projetos do gestor (D10)
+- [x] T-009-08 Pontos de extensão antes/depois (D9)
+- [x] T-009-09 Permissão por dado com RLS: centro de custo, carteira, projetos do gestor (D10; empresa aguarda documentos por empresa)
 
 ## Fase 3 — marca e telemetria
 - [ ] T-009-10 Marca conjunta no Estúdio e nos PDFs (D11)

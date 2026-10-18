@@ -32,6 +32,7 @@ def main(request, decision="approve", reason=None):
         return {"number": r["number"], "status": "rejected"}
     if decision != "approve":
         raise ana.Error("INVALID_PARAMETER", "decisão deve ser approve ou reject")
+    ana.extend("before_approve_purchase", {"number": r["number"], "requester": r["requester"], "total": r["total"]})   # spec 009
     limit = common.approval_limit()
     if limit is not None and r["total"] > limit:
         raise ana.Error("ABOVE_APPROVAL_LIMIT",
@@ -40,4 +41,5 @@ def main(request, decision="approve", reason=None):
     ana.sql_exec("UPDATE supply.purchase_request SET status = 'approved', approved_by = $2, approved_at = now() "
                  "WHERE id = $1", r["id"], ana.context.user)
     ana.actions([{"label": "Gerar ordens de compra", "program": "supply.create_orders", "params": {"requests": [r["number"]]}}])
+    ana.extend("after_approve_purchase", {"number": r["number"], "status": "approved", "total": r["total"]})
     return {"number": r["number"], "status": "approved", "total": r["total"]}
