@@ -14,5 +14,5 @@
 - [x] T-009-09 Permissão por dado com RLS: centro de custo, carteira, projetos do gestor (D10; empresa aguarda documentos por empresa)
 
 ## Fase 3 — marca e telemetria
-- [ ] T-009-10 Marca conjunta no Estúdio e nos PDFs (D11)
-- [ ] T-009-11 Telemetria opcional e consentida (D13)
+- [x] T-009-10 Marca conjunta no Estúdio e nos PDFs (D11)
+- [x] T-009-11 Telemetria opcional e consentida (D13)

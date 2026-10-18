@@ -8,7 +8,7 @@ import datetime
 
 from ana_lib.docs import common as docs
 from ana_lib.util.format import compact, money
-from ana_lib.util.pdf import Pdf
+from ana_lib.util.pdf import Pdf, company as letterhead_company
 
 
 def base(document):
@@ -33,7 +33,7 @@ def build(document):
     if not bills:
         raise ana.Error("BILL_NOT_FOUND", f"fatura {doc_base} não encontrada")
     party = bills[0]["party_id"]
-    company = ana.sql_one("SELECT legal_name, tax_id, address, city, state FROM base.company ORDER BY id LIMIT 1") or {}
+    company = letterhead_company()
     customer = ana.sql_one("SELECT name, tax_id, address, city, state FROM base.party WHERE id = $1", party)
     origin = docs.of_text(doc_base)
     items = []
@@ -47,11 +47,8 @@ def build(document):
                  for r in ana.sql("SELECT l.description, l.quantity, l.unit_price, l.amount FROM field.invoice_line l "
                                   "JOIN field.service_order o ON o.id = l.order_id WHERE o.number = $1 ORDER BY l.line", int(origin[1]))]
     pdf = Pdf(title=f"Fatura {doc_base}")
-    pdf.text(50, 790, company.get("legal_name") or "Fatura", size=14, bold=True)
-    if company.get("tax_id"):
-        pdf.text(50, 774, f"CNPJ {company['tax_id']}", size=9)
-    if company.get("city"):
-        pdf.text(50, 762, f"{company.get('address') or ''} {company['city']}/{company.get('state') or ''}".strip(), size=9)
+    pdf.letterhead(company, [f"{company.get('address') or ''} {company['city']}/{company.get('state') or ''}".strip()
+                             if company.get("city") else None])                                    # spec 009 (D11)
     pdf.text(400, 790, f"Fatura {doc_base}", size=12, bold=True)
     pdf.text(400, 774, f"Emissão {bills[0]['issue_date']:%d/%m/%Y}", size=9)
     pdf.text(50, 735, f"Cliente: {customer['name']}" + (f" — {customer['tax_id']}" if customer.get("tax_id") else ""), size=10)

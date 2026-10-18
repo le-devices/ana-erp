@@ -2,7 +2,7 @@
 
 Situação: decisões tomadas (out/2026, recomendações aceitas pelo dono do
 produto). Fase 1 (licença, módulos, limites, expiração, versão, ambientes,
-camadas de programas) e fase 2 (pontos de extensão, permissão por dado) implementadas; fase 3 especificada abaixo.
+camadas de programas), fase 2 (pontos de extensão, permissão por dado) e fase 3 (marca conjunta, telemetria) implementadas.
 Pendente do fornecedor: gerar a chave de produção (`scripts/license.py
 keygen`) e publicar a parte pública em `priv/license/keys.json`.
 
@@ -138,7 +138,11 @@ não pelo programa.
 
 ### D11 — Marca conjunta (fase 3)
 Nome e logotipo do cliente no topo do Estúdio e nos PDFs, mantendo a
-identidade do ANA (spec 029).
+identidade do ANA (spec 029). Administração → Empresa: nome de exibição e
+logotipo (qualquer imagem; o navegador reduz para no máximo 480×160 e
+converte em JPEG). Os PDFs usam o timbre comum (`util.pdf.letterhead`) e
+todas as páginas terminam com "Emitido com ANA ERP". O logotipo é público
+(`/api/company/logo`), para aparecer também na entrada.
 
 ### D12 — Idioma, moeda e fuso
 Só pt-BR e BRL por enquanto (fuso já configurável). Nenhum trabalho de
@@ -147,7 +151,12 @@ tradução agora.
 ### D13 — Telemetria (fase 3)
 Desligada por padrão; ligada pelo administrador, envia só versão, saúde e
 contagem de erros (nunca dados de negócio ou de pessoas) para o endpoint do
-fornecedor configurado no conector de telemetria.
+fornecedor configurado no conector de telemetria. Uma vez por dia, pelo nó
+líder, via conector `telemetry` (hosts permitidos e credenciais da spec
+017). Conteúdo: identificador anônimo da instância, versões (produto, OTP,
+PostgreSQL), nós, situação e identificador da licença, estados de saúde e
+contagens de execuções e de códigos de erro em 24 h. A tela mostra
+exatamente o que é enviado e o último resultado.
 
 ## Requisitos (fase 1)
 - **RF-009-01** Verificação da licença (formato, assinatura, chave
@@ -207,6 +216,15 @@ fornecedor configurado no conector de telemetria.
 - **CA-009-10** Restrito a um centro, o usuário vê os pedidos dele e dos
   filhos e não cria fora dele; restrito à carteira, vê só os seus clientes e
   títulos; restrito aos próprios projetos, vê só os que gerencia.
+
+## Critérios de aceite (fase 3)
+- **CA-009-11** Com nome de exibição e logotipo, o topo do Estúdio e o
+  timbre dos PDFs mostram a marca do cliente, e os PDFs terminam com
+  "Emitido com ANA ERP"; imagem que não é JPEG é recusada; removido, o
+  logotipo some.
+- **CA-009-12** Telemetria vem desligada e não envia nada; a prévia contém
+  só os campos previstos (nenhum dado do cliente); ligada, envia pelo
+  conector e registra o resultado.
 
 ## Fases
 1. Licença, módulos, limites, expiração, versão, ambientes, camadas

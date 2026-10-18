@@ -951,3 +951,8 @@ dl.facts { display: grid; grid-template-columns: max-content 1fr; gap: 6px 18px;
 dl.facts dt { color: var(--muted, #667); font-size: 13px; }
 dl.facts dd { margin: 0; }
 @media (max-width: 640px) { dl.facts { grid-template-columns: 1fr; } dl.facts dt { margin-top: 6px; } }
+
+/* Spec 009 (D11): the customer's logo beside ANA's brand */
+.brand-logo { height: 22px; max-width: 96px; object-fit: contain; margin-left: 8px; border-radius: 4px; background: #fff; }
+.logo-preview { display: block; max-height: 64px; max-width: 240px; margin: 6px 0 10px; border: 1px solid var(--border); border-radius: 6px; padding: 4px; background: #fff; }
+@media (max-width: 640px) { .brand-logo { height: 18px; max-width: 64px; } }

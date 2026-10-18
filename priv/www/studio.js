@@ -12,7 +12,7 @@
     settings: "Parâmetros", accounts: "Contas padrão", commands: "Comandos", remote: "Sistemas remotos",
     scheduler: "Agendamento", monitor: "Monitor", consumption: "Consumo", audit: "Auditoria", retention: "Retenção",
     health: "Saúde", sqlperf: "Desempenho do SQL", advice: "Dicas de otimização", updates: "Atualizações do produto",
-    license: "Licença", extensions: "Extensões",
+    license: "Licença", extensions: "Extensões", telemetry: "Telemetria",
     integrations: "Integrações", checks: "Verificações", transports: "Transportes", datacopy: "Cópia de dados para testes",
     publicapi: "API pública",
   };
@@ -110,7 +110,7 @@
     $("#user-avatar").title = `${display} — minha conta`;
     $("#notices-btn").hidden = isExternal();
     refreshNotices();
-    refreshTitle(state.user.company);
+    refreshTitle(state.user.company, state.user.company_logo);
     // Spec 034 (RF-034-01): development and test instances are marked on every screen.
     const inst = state.user.instance || {};
     const band = $("#instance-band");
@@ -125,8 +125,14 @@
     route();
   }
 
-  function refreshTitle(company) {
+  // Spec 009 (D11): the customer's logo and name beside ANA's brand.
+  function refreshTitle(company, logo) {
     $("#brand-company").textContent = company || "ERP";
+    const img = $("#brand-logo");
+    if (img && logo !== undefined) {
+      img.hidden = !logo;
+      if (logo) img.src = "/api/company/logo?v=" + Date.now();
+    }
     document.title = company ? `ANA — ${company}` : "ANA";
   }
 

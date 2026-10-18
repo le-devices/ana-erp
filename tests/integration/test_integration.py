@@ -558,6 +558,8 @@ class TestBusiness(Base):
 # ---------------------------------------------------------------- spec 007
 class TestAnalytics(Base):
     def test_ca_007_01_view_reflects_sale(self):
+        # The test brings its own unit: every run sells one, the demo stock would run out.
+        self.client.call("inventory.stock_in", product="CAFE-500", quantity=1, unit_cost="10")
         o = self.client.call("sales.create_order", customer=3, items=[{"product": "CAFE-500", "quantity": 1}])
         self.client.call("sales.invoice_order", number=o["number"])
         for _ in range(3):
@@ -5279,6 +5281,75 @@ class TestDataScope(Base):
         finally:
             for g in (g_cc, g_pf, g_pr):
                 http("DELETE", f"/api/admin/groups/{g}", token=self.token)
+
+
+TINY_JPEG = ("/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDAAoHBwgHBgoICAgLCgoLDhgQDg0NDh0VFhEYIx8lJCIfIiEmKzcvJik0KSEiMEExNDk7Pj4+JS5ESUM8SDc9Pjv/2wBDAQoLCw4NDhwQEBw7KCIoOzs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozv/wAARCAAYAEADASIAAhEBAxEB/8QAHwAAAQUBAQEBAQEAAAAAAAAAAAECAwQFBgcICQoL/8QAtRAAAgEDAwIEAwUFBAQAAAF9AQIDAAQRBRIhMUEGE1FhByJxFDKBkaEII0KxwRVS0fAkM2JyggkKFhcYGRolJicoKSo0NTY3ODk6Q0RFRkdISUpTVFVWV1hZWmNkZWZnaGlqc3R1dnd4eXqDhIWGh4iJipKTlJWWl5iZmqKjpKWmp6ipqrKztLW2t7i5usLDxMXGx8jJytLT1NXW19jZ2uHi4+Tl5ufo6erx8vP09fb3+Pn6/8QAHwEAAwEBAQEBAQEBAQAAAAAAAAECAwQFBgcICQoL/8QAtREAAgECBAQDBAcFBAQAAQJ3AAECAxEEBSExBhJBUQdhcRMiMoEIFEKRobHBCSMzUvAVYnLRChYkNOEl8RcYGRomJygpKjU2Nzg5OkNERUZHSElKU1RVVldYWVpjZGVmZ2hpanN0dXZ3eHl6goOEhYaHiImKkpOUlZaXmJmaoqOkpaanqKmqsrO0tba3uLm6wsPExcbHyMnK0tPU1dbX2Nna4uPk5ebn6Onq8vP09fb3+Pn6/9oADAMBAAIRAxEAPwDhqKKK+mPJCiiigAooooAKKKKACiiigAooooAKKKKACiiigD//2Q==")
+
+
+class TestBrandTelemetry(Base):
+    """The customer's brand beside ANA's, and optional telemetry (spec 009, phase 3)."""
+
+    def test_ca_009_11_display_name_and_logo_in_studio_and_pdfs(self):
+        s, before, _ = http("GET", "/api/admin/company", token=self.token)
+        self.assertEqual(s, 200, before)
+        fields = {k: before.get(k) for k in ("legal_name", "tax_id", "address", "city", "state", "email", "phone",
+                                             "latitude", "longitude", "public_url", "display_name")}
+        try:
+            s, c, _ = http("PUT", "/api/admin/company", {**fields, "display_name": f"Marca {SUFFIX}"}, self.token)
+            self.assertEqual(s, 200, c)
+            s, c, _ = http("PUT", "/api/admin/company/logo", {"logo": "iVBORw0KGgoAAAANSUhEUg=="}, self.token)
+            self.assertEqual(s, 400, c)                                                     # only JPEG (the browser converts)
+            s, c, _ = http("PUT", "/api/admin/company/logo", {"logo": TINY_JPEG}, self.token)
+            self.assertEqual(s, 200, c)
+            req = urllib.request.Request(URL + "/api/company/logo")
+            with urllib.request.urlopen(req, timeout=10) as r:                              # public: the sign-in screen too
+                self.assertEqual((r.status, r.headers.get("content-type")), (200, "image/jpeg"))
+                self.assertEqual(r.read()[:2], b"\xff\xd8")
+            s, me, _ = http("GET", "/api/me", token=self.token)
+            self.assertEqual((me["company"], me["company_logo"]), (f"Marca {SUFFIX}", True))
+            maker = f"test.brand_pdf_{SUFFIX}"
+            self.save(maker, "import base64\nfrom ana_lib.util.pdf import Pdf, company\n"
+                             "def main():\n    d = Pdf('timbre')\n    d.letterhead(company())\n"
+                             "    return base64.b64encode(d.build()).decode()\n")
+            pdf = base64.b64decode(self.run_program(maker)[1]["result"])
+            self.assertIn(b"/Subtype /Image", pdf)                                          # the customer's logo
+            self.assertIn(f"Marca {SUFFIX}".encode(), pdf)
+            self.assertIn(b"Emitido com ANA ERP", pdf)                                      # ANA's identity stays
+            s, c, _ = http("PUT", "/api/admin/company/logo", {"logo": None}, self.token)
+            self.assertEqual(s, 200, c)
+            with self.assertRaises(urllib.error.HTTPError) as ctx:
+                urllib.request.urlopen(URL + "/api/company/logo", timeout=10)
+            self.assertEqual(ctx.exception.code, 404)
+        finally:
+            http("PUT", "/api/admin/company/logo", {"logo": None}, self.token)
+            http("PUT", "/api/admin/company", fields, self.token)
+
+    def test_ca_009_12_telemetry_off_by_default_shows_what_it_sends(self):
+        s, t, _ = http("GET", "/api/admin/telemetry", token=self.token)
+        self.assertEqual(s, 200, t)
+        self.assertFalse(t["enabled"])
+        preview = t["preview"]
+        self.assertEqual(set(preview), {"instance", "product_version", "otp", "postgres", "nodes", "license", "health",
+                                        "executions_24h", "error_codes_24h", "uptime_s"})
+        s, comp, _ = http("GET", "/api/admin/company", token=self.token)
+        self.assertNotIn(comp["legal_name"], json.dumps(preview, ensure_ascii=False))      # never the customer's data
+        s, c, _ = http("POST", "/api/admin/telemetry/send", {}, self.token)
+        self.assertEqual(s, 400, c)                                                         # off: nothing leaves
+        # On, through the connector "telemetry" (here: this server, which answers anything but 2xx).
+        s, c, _ = http("PUT", "/api/admin/connectors/telemetry", {"kind": "http_api", "base_url": "http://localhost:8080/health",
+                                                                   "auth": "none", "active": True}, self.token)
+        self.assertEqual(s, 200, c)
+        try:
+            http("PUT", "/api/admin/telemetry", {"enabled": True}, self.token)
+            s, r, _ = http("POST", "/api/admin/telemetry/send", {}, self.token)
+            self.assertEqual(s, 200, r)
+            self.assertEqual(r["connector"], "ready")
+            self.assertIsNotNone(r["last_sent_at"])
+            self.assertTrue(r["last_status"])
+        finally:
+            http("PUT", "/api/admin/telemetry", {"enabled": False}, self.token)
+            http("PUT", "/api/admin/connectors/telemetry", {"kind": "http_api", "base_url": "http://localhost:8080/health",
+                                                            "auth": "none", "active": False}, self.token)
 
 
 # ---------------------------------------------------------------- spec 040

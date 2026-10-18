@@ -26,6 +26,7 @@ init([]) ->
           start => {ana_db, start_link, [ana_db_exec, fun() -> ana_config:db_role(exec) end, PoolExec]}},
         worker(ana_listener, []),
         worker(ana_license, []),
+        worker(ana_telemetry, []),
         worker(ana_api, []),
         worker(ana_py_pool, []),
         #{id => ana_execution_sup, start => {ana_execution_sup, start_link, []}, type => supervisor},
