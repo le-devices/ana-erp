@@ -28,7 +28,7 @@
     size :: pos_integer(),
     open = 0 :: non_neg_integer(),
     refill :: reference() | undefined,      % single reconnection timer
-    backoff = 500 :: pos_integer()          % exponential backoff (ms)
+    backoff = 250 :: pos_integer()          % exponential backoff (ms)
 }).
 
 %% ==========================================================================
@@ -166,7 +166,8 @@ first_ok([H | Rest], Config, _) ->
     end.
 
 probe(H, Config) ->
-    case safe_connect(Config#{host => H}) of
+    %% A host going down (or shutting down) must not hold the switch-over: 3 s at most per address.
+    case safe_connect(Config#{host => H, timeout => min(maps:get(timeout, Config, 5000), 3000)}) of
         {ok, C} ->
             case epgsql:squery(C, "SELECT pg_is_in_recovery(), CASE WHEN pg_is_in_recovery() THEN 0 ELSE "
                                   "('x' || substring(pg_walfile_name(pg_current_wal_lsn()) from 1 for 8))::bit(32)::int END") of
@@ -451,7 +452,7 @@ discard(C) ->
     unlink(C),
     catch epgsql:close(C).
 
-open_up_to(St = #st{open = O, size = S}) when O >= S -> St#st{backoff = 500};
+open_up_to(St = #st{open = O, size = S}) when O >= S -> St#st{backoff = 250};
 open_up_to(St = #st{open = O, config = Config, name = Name}) ->
     case connect(Config()) of
         {ok, C} ->
@@ -462,10 +463,10 @@ open_up_to(St = #st{open = O, config = Config, name = Name}) ->
             schedule_refill(St)
     end.
 
-%% A single pending timer, exponential backoff up to 5 s (RNF-023-02: the core
-%% is back within seconds after the database returns).
+%% A single pending timer, exponential backoff up to 2 s (RNF-023-02: the core is back within seconds
+%% after the database returns or a replica is promoted; a longer pause only delays the recovery).
 schedule_refill(St = #st{refill = undefined, backoff = B}) ->
-    St#st{refill = erlang:send_after(B, self(), refill), backoff = min(B * 2, 5000)};
+    St#st{refill = erlang:send_after(B, self(), refill), backoff = min(B * 2, 2000)};
 schedule_refill(St) ->
     St.
 

@@ -123,7 +123,10 @@ start_link(Args) ->
 run(Program, Params, User, Options) ->
     Debug = maps:get(debug, Options, false) =:= true,
     Async = Debug orelse maps:get(async, Options, false) =:= true,
-    case ana_security:owner(User) =:= ok andalso admit(Debug) of
+    Owner = ana_security:owner(User),
+    case Owner =:= ok andalso admit(Debug) of
+        false when Owner =:= {error, unavailable} ->
+            {error, err(<<"DB_UNAVAILABLE">>, <<"banco de dados indisponível no momento: tente de novo em instantes"/utf8>>)};
         false ->
             {error, err(<<"NO_OWNER">>, <<"toda execução precisa de um usuário dono ativo (pessoa ou robô)"/utf8>>)};
         ok ->

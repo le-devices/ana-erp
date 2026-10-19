@@ -49,6 +49,7 @@ grant(#{<<"grant_type">> := <<"client_credentials">>} = P, Basic, Ip, Req) ->
                     end;
                 false -> failed(Id, Ip, Req)
             end;
+        {error, unavailable} -> fail(503, <<"temporarily_unavailable">>, Req);        % spec 023: try again
         _ -> _ = ana_security:verify_password(<<"x">>, <<"pbkdf2_sha256$210000$AAAAAAAAAAAAAAAAAAAAAA$AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA">>),
              failed(Id, Ip, Req)                           % same time whether the client exists or not
     end;

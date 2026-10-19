@@ -282,6 +282,9 @@ class TestChaos(unittest.TestCase):
         slow = [r for r in load.results if down_at <= r[0] <= up_at and r[2] > 6]
         self.assertEqual(slow, [], f"durante a queda as requisições devem falhar rápido: {slow[:3]}")
         self.assertLess(recovered_at - up_at, 30, "o núcleo deveria voltar sozinho em segundos")
+        # The database being away is "try again" (503), never a sign-out (401).
+        signed_out = [r for r in load.results if r[1] == 401]
+        self.assertEqual(signed_out, [], f"queda do banco não pode invalidar a sessão: {signed_out[:3]}")
         self.assertEqual(load.failures(since=recovered_at + 1), [], "depois da volta tudo deve funcionar")
         after = {s: subprocess.run(["docker", "inspect", "-f", "{{.State.StartedAt}}", cid], capture_output=True,
                                    text=True).stdout.strip() for s, cid in started.items()}

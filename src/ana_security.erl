@@ -140,16 +140,22 @@ clear_cache() ->
 %% ==========================================================================
 
 %% RF-001-05, RF-001-09, RF-011-09
--spec login(binary(), binary(), binary()) -> {ok, binary(), map()} | {error, credentials | locked}.
+-spec login(binary(), binary(), binary()) -> {ok, binary(), map()} | {error, credentials | locked | unavailable}.
 login(Username, Password, Ip) ->
     case locked(Username, Ip) of
         true ->
             audit_login(Username, Ip, false, <<"locked">>),
             {error, locked};
         false ->
-            {ok, Rec} = ana_db:one(
-                "SELECT username, name, password_hash, role, must_change_password, kind, party_id "
-                "FROM ana_system.app_user WHERE username = $1 AND active", [Username]),
+            case ana_db:one(
+                   "SELECT username, name, password_hash, role, must_change_password, kind, party_id "
+                   "FROM ana_system.app_user WHERE username = $1 AND active", [Username]) of
+                {ok, Rec} -> login_user(Rec, Username, Password, Ip);
+                {error, _} -> {error, unavailable}           % spec 023: try again; never counted as a wrong password
+            end
+    end.
+
+login_user(Rec, Username, Password, Ip) ->
             Hash = case Rec of undefined -> ?DUMMY_HASH; #{<<"password_hash">> := H} -> H end,
             Valid = verify_password(Password, Hash) andalso Rec =/= undefined,
             case Valid andalso maps:get(<<"kind">>, Rec) =:= <<"robot">> of
@@ -158,22 +164,24 @@ login(Username, Password, Ip) ->
                     audit_login(Username, Ip, false, <<"robot">>),
                     {error, credentials};
                 false -> login_checked(Valid, Rec, Username, Ip)
-            end
-    end.
+            end.
 
 login_checked(Valid, Rec, Username, Ip) ->
             case Valid of
                 true ->
                     clear_failures(Username),
                     Token = b64(crypto:strong_rand_bytes(32)),
-                    {ok, 1} = ana_db:exec(
-                        "INSERT INTO ana_system.session (token_hash, username, expires_at) "
-                        "VALUES ($1, $2, now() + make_interval(hours => $3))",
-                        [crypto:hash(sha256, Token), Username, ana_settings:get(session_hours)]),
-                    _ = ana_db:exec("UPDATE ana_system.app_user SET last_login_at = now() WHERE username = $1",
-                                    [Username]),
-                    audit_login(Username, Ip, true, null),
-                    {ok, Token, user(Rec)};
+                    case ana_db:exec(
+                           "INSERT INTO ana_system.session (token_hash, username, expires_at) "
+                           "VALUES ($1, $2, now() + make_interval(hours => $3))",
+                           [crypto:hash(sha256, Token), Username, ana_settings:get(session_hours)]) of
+                        {ok, 1} ->
+                            _ = ana_db:exec("UPDATE ana_system.app_user SET last_login_at = now() WHERE username = $1",
+                                            [Username]),
+                            audit_login(Username, Ip, true, null),
+                            {ok, Token, user(Rec)};
+                        _ -> {error, unavailable}
+                    end;
                 false ->
                     record_failure(Username, Ip),
                     audit_login(Username, Ip, false, <<"credentials">>),
@@ -201,15 +209,19 @@ validate(Token) when byte_size(Token) > 20, byte_size(Token) < 100 ->
                     U = user(Rec),
                     ets:insert(?CACHE, {H, U, Now + ?CACHE_TTL_MS}),
                     {ok, U};
-                _ ->
-                    {error, invalid}
+                {ok, undefined} ->
+                    {error, invalid};
+                {error, _} ->
+                    %% Spec 023: the database did not answer (e.g. a primary switching over). The session is
+                    %% not invalid: the caller gets "try again" (503), never a sign-out (401).
+                    {error, unavailable}
             end
     end;
 validate(_) -> {error, invalid}.
 
 %% P14 / RF-011-16: every execution has an owner — an active user (person or
 %% robot). Cached like sessions; deactivation clears the cache.
--spec owner(map()) -> ok | {error, no_owner}.
+-spec owner(map()) -> ok | {error, no_owner | unavailable}.
 owner(#{username := U}) when is_binary(U), U =/= <<>> ->
     Now = erlang:monotonic_time(millisecond),
     case ets:lookup(?CACHE, {owner, U}) of
@@ -219,6 +231,7 @@ owner(#{username := U}) when is_binary(U), U =/= <<>> ->
                 {ok, #{<<"ok">> := 1}} ->
                     ets:insert(?CACHE, {{owner, U}, true, Now + ?CACHE_TTL_MS}),
                     ok;
+                {error, _} -> {error, unavailable};                % spec 023: try again, not "no owner"
                 _ -> {error, no_owner}
             end
     end;
@@ -253,6 +266,7 @@ validate_key(<<"ana_rk_", _/binary>> = Key, Ip) when byte_size(Key) < 120 ->
                                                     "WHERE id = $1 AND (last_used_at IS NULL OR "
                                                     "last_used_at < now() - interval '1 minute')", [Id]) end),
                     {ok, U};
+                {error, _} -> {error, unavailable};                % spec 023: try again (503)
                 _ -> {error, invalid}
             end
     end;

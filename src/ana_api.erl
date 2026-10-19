@@ -37,7 +37,7 @@ notify(Payload) -> _ = ana_db:exec("SELECT pg_notify('ana_api', $1)", [Payload])
 
 %% ---------------------------------------------------------------- clients (cache)
 
--spec client(term()) -> {ok, map()} | {error, not_found}.
+-spec client(term()) -> {ok, map()} | {error, not_found | unavailable}.
 client(Id) when is_binary(Id) ->
     Now = erlang:monotonic_time(millisecond),
     case ets:lookup(?CLIENTS, Id) of
@@ -68,14 +68,16 @@ load_client(Id, Now) ->
             C = (maps:without([<<"signing_ct">>, <<"signing_nonce">>, <<"signing_tag">>], R))#{signing => Signing},
             ets:insert(?CLIENTS, {Id, C, Now}),
             {ok, C};
+        {error, _} -> {error, unavailable};               % spec 023: the database did not answer (503)
         _ -> {error, not_found}
     end.
 
--spec by_publishable(binary()) -> {ok, map()} | {error, not_found}.
+-spec by_publishable(binary()) -> {ok, map()} | {error, not_found | unavailable}.
 by_publishable(<<"ana_pk_", _/binary>> = Key) ->
     Hash = sha_hex(Key),
     case ana_db:one("SELECT client_id FROM ana_system.api_client WHERE publishable_hash = $1 AND kind = 'publishable'", [Hash]) of
         {ok, #{<<"client_id">> := Id}} -> client(Id);
+        {error, _} -> {error, unavailable};
         _ -> {error, not_found}
     end;
 by_publishable(_) -> {error, not_found}.
