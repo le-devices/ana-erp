@@ -1,7 +1,7 @@
 /* ANA Studio — no external dependencies (RNF-005-01) */
 :root {
   /* Linha ANA (spec 029): own palette, system font, ERP density */
-  --bg: #eef1f5; --surface: #ffffff; --surface-2: #f3f5f8; --band: #f8fafc; --border: #dce2ea; --border-strong: #b6c0cc;
+  --bg: #eef1f5; --surface: #ffffff; --surface-2: #f3f5f8; --band: #f8fafc; --border: #dce2ea; --border-strong: #8c949d;
   --text: #1e2a39; --text-2: #5a6878; --accent: #1468c2; --accent-hover: #0f57a6; --accent-text: #ffffff;
   --accent-soft: #e7f0fb; --row-hover: #f2f7fd; --shell: #ffffff; --neutral: #7a8796;
   --shadow-1: 0 0 1px rgba(30, 42, 57, .16), 0 1px 2px rgba(30, 42, 57, .08);
@@ -10,7 +10,7 @@
   /* Chart palette (spec 026), validated for color-vision deficiency (validate_palette.js) */
   --series-1: #2a78d6; --series-2: #eb6834; --series-3: #1baf7a; --series-4: #eda100;
   --series-5: #e87ba4; --series-6: #008300; --series-7: #4a3aa7; --series-8: #e34948;
-  --danger: #c62828; --warn: #a35200; --ok: #2b7a2f;
+  --danger: #c62828; --warn: #a35200; --ok: #2b7a2f; --on-ok: #ffffff;
   --current-line: rgba(255, 200, 0, .28); --error-line: rgba(196, 43, 28, .14);
   --breakpoint: #d1242f;
   --k: #8250df; --s: #0a7a3c; --n: #b35900; --c: #6e7781; --f: #0f6cbd; --d: #953800; --b: #0550ae;
@@ -21,13 +21,13 @@
 }
 @media (prefers-color-scheme: dark) {
   :root {
-    --bg: #0e131a; --surface: #161d26; --surface-2: #1c2430; --band: #121921; --border: #2a3442; --border-strong: #3d4a5b;
+    --bg: #0e131a; --surface: #161d26; --surface-2: #1c2430; --band: #121921; --border: #2a3442; --border-strong: #606b79;
     --text: #e4e9ef; --text-2: #9aa7b6; --accent: #5aa8ff; --accent-hover: #7bbaff; --accent-text: #08121f;
     --accent-soft: #15263a; --row-hover: #1a2533; --shell: #161d26; --neutral: #8794a3;
     --shadow-1: 0 0 0 1px rgba(0, 0, 0, .35); --shadow-2: 0 10px 28px rgba(0, 0, 0, .5);
     --series-1: #3987e5; --series-2: #d95926; --series-3: #199e70; --series-4: #c98500;
     --series-5: #d55181; --series-6: #008300; --series-7: #9085e9; --series-8: #e66767;
-    --danger: #ff6b5e; --warn: #e3b341; --ok: #3fb950;
+    --danger: #ff6b5e; --warn: #e3b341; --ok: #3fb950; --on-ok: #08121f;
     --current-line: rgba(255, 200, 0, .18); --error-line: rgba(255, 107, 94, .16);
     --breakpoint: #ff5f56;
     --k: #c297ff; --s: #7ee787; --n: #ffa657; --c: #8b949e; --f: #79c0ff; --d: #ffa198; --b: #a5d6ff;
@@ -956,3 +956,24 @@ dl.facts dd { margin: 0; }
 .brand-logo { height: 22px; max-width: 96px; object-fit: contain; margin-left: 8px; border-radius: 4px; background: #fff; }
 .logo-preview { display: block; max-height: 64px; max-width: 240px; margin: 6px 0 10px; border: 1px solid var(--border); border-radius: 6px; padding: 4px; background: #fff; }
 @media (max-width: 640px) { .brand-logo { height: 18px; max-width: 64px; } }
+
+/* RF-020-11: process stages */
+.steps-box { margin: 12px 0 16px; }
+.steps { list-style: none; display: flex; flex-wrap: wrap; gap: 6px; padding: 0; margin: 8px 0 0; counter-reset: none; }
+.step { display: flex; align-items: center; gap: 8px; flex: 1 1 150px; min-width: 140px; padding: 10px 12px;
+        border: 1px solid var(--border); border-radius: 10px; background: var(--surface); }
+.step .step-mark { display: inline-grid; place-items: center; width: 24px; height: 24px; flex: 0 0 24px; border-radius: 50%;
+                   font-weight: 700; font-size: 12px; border: 2px solid var(--border); color: var(--text-2, var(--text)); }
+.step .step-text { display: flex; flex-direction: column; min-width: 0; }
+.step .step-hint { font-size: 12px; color: var(--text-2, var(--text)); }
+.step.done .step-mark { background: var(--ok); border-color: var(--ok); color: var(--on-ok); }
+.step.current { border-color: var(--accent); box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 25%, transparent); }
+.step.current .step-mark { border-color: var(--accent); color: var(--accent); }
+.step.todo { opacity: .85; }
+.sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0; }
+
+/* RF-020-09: skip link, visible only when focused */
+.skip-link { position: absolute; left: 8px; top: -48px; z-index: 100; padding: 8px 14px; border-radius: var(--r-sm);
+             background: var(--accent); color: var(--accent-text); border: 0; font-weight: 600; }
+.skip-link:focus { top: 8px; }
+.node:focus-visible, [role="tab"]:focus-visible, tr.row-open:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }

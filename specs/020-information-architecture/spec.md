@@ -1,5 +1,7 @@
 # 020 — Arquitetura da informação e experiência de uso
 
+Situação: implementada.
+
 ## Problema
 A interface cresceu por acréscimo: propriedades acima do editor, versões e
 execuções misturadas com a saída, administração numa lista longa e plana,
@@ -105,3 +107,17 @@ desenvolvedor e administrador —, com as coisas relacionadas juntas.
   ao clicar, abre o faturamento com o número preenchido.
 - **CA-020-07** O fluxo "Venda" mostra as etapas e destaca a etapa atual de um
   pedido escolhido.
+
+## Notas da implementação (T-020-07, 09..11)
+- `NEXT` é declarativo: `{{result.campo}}` e `{{params.campo}}` preenchem os
+  parâmetros, o rótulo e a confirmação; ação sem valor (ou com `when` falso)
+  não aparece; só o programa da tela mostra os seus (chamadas aninhadas não).
+  `ana.actions` continua para os casos dinâmicos.
+- `flows.guide` calcula as etapas pelos fatos do próprio documento (as mesmas
+  regras das esteiras), com a esteira ligada ou não; `ana.steps` desenha as
+  etapas (`aria-current="step"` na atual). O documento e o pedido levam a ele.
+- Acessibilidade: tokens de cor auditados nos dois temas (texto 4,5:1, partes
+  da interface 3:1; borda dos campos escurecida; `--on-ok`); um só ponto
+  (`AnaUI.enhance`) dá papéis e setas às abas, foco e Enter às árvores e nome
+  acessível aos campos sem rótulo, também no que é desenhado depois.
+- Voltar devolve a rolagem da tela de onde se saiu.

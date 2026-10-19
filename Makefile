@@ -25,7 +25,8 @@ teste-runtime:    ## runtime Python isolado (sem banco)
 teste-integracao: ## requer `make subir`
 	python3 -m unittest discover -s tests/integration -v
 
-teste-estudio:    ## DOM real (jsdom) contra o Estúdio; requer `make subir`
+teste-estudio:    ## contraste dos temas (WCAG) e DOM real (jsdom) contra o Estúdio; requer `make subir`
+	python3 tests/a11y/contrast.py
 	docker run --rm --network host -v $(PWD)/tests/studio:/t -w /t node:22-alpine \
 	  sh -c "npm i --silent --no-save jsdom@24 >/dev/null 2>&1 && node smoke.mjs"
 

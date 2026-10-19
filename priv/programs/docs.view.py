@@ -74,9 +74,13 @@ def pdf_actions(kind, key):
 
 
 def flow_actions(flow, key):
-    if ana.context.party or not ana.sql_value("SELECT count(*) FROM flow.instance WHERE flow_code = $1 AND doc_key = $2", flow, str(key)):
+    if ana.context.party:
         return []
-    return [{"label": "Ver na esteira", "program": "flows.board", "params": {"flow": flow, "document": str(key)}, "open": True}]
+    # RF-020-11: where the document is in its process, always; the esteira when it follows the document.
+    out = [{"label": "Etapas do processo", "program": "flows.guide", "params": {"flow": flow, "document": str(key)}, "open": True}]
+    if ana.sql_value("SELECT count(*) FROM flow.instance WHERE flow_code = $1 AND doc_key = $2", flow, str(key)):
+        out.append({"label": "Ver na esteira", "program": "flows.board", "params": {"flow": flow, "document": str(key)}, "open": True})
+    return out
 
 
 # ---------------------------------------------------------------- documents

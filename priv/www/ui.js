@@ -198,5 +198,55 @@
     return svg;
   }
 
-  window.AnaUI = { $, $$, el, fmtDate, errorText, toast, table, dataTable, pill, splitter, icon };
+  // ------------------------------------------------------------------ keyboard and screen readers (RF-020-09)
+  // Applied once to everything on screen, also to what is drawn later: tabs (roles, arrow keys, roving
+  // focus), tree items (focusable, Enter/Space, expanded state) and fields without a label (name from the
+  // placeholder). Screens keep using plain buttons and divs; this keeps them accessible.
+  const TABLISTS = ".tabs, .sub-tabs, .shell-tabs";
+  function enhance(root) {
+    for (const list of $$(TABLISTS, root)) {
+      list.setAttribute("role", "tablist");
+      const tabs = [...list.children].filter((b) => b.tagName === "BUTTON" && !b.hidden);
+      const any = tabs.some((b) => b.classList.contains("active"));
+      tabs.forEach((b, i) => {
+        const on = b.classList.contains("active") || (!any && i === 0);
+        b.setAttribute("role", "tab");
+        b.setAttribute("aria-selected", on ? "true" : "false");
+        b.tabIndex = on ? 0 : -1;
+      });
+    }
+    for (const n of $$(".node", root)) {
+      if (n.tabIndex < 0 || !n.hasAttribute("tabindex")) n.tabIndex = 0;
+      n.setAttribute("role", n.classList.contains("folder") ? "treeitem" : "link");
+      if (n.classList.contains("folder")) n.setAttribute("aria-expanded", n.classList.contains("closed") ? "false" : "true");
+    }
+    for (const f of $$("input:not([type=hidden]), select, textarea", root)) {
+      if (f.labels && f.labels.length) continue;
+      if (f.hasAttribute("aria-label") || f.hasAttribute("aria-labelledby")) continue;
+      const name = f.getAttribute("placeholder") || f.getAttribute("title") || f.name;
+      if (name) f.setAttribute("aria-label", name);
+    }
+  }
+  document.addEventListener("keydown", (e) => {
+    const t = e.target;
+    if (t && t.getAttribute && t.getAttribute("role") === "tab" && ["ArrowLeft", "ArrowRight", "Home", "End"].includes(e.key)) {
+      const tabs = [...t.parentElement.children].filter((b) => b.getAttribute("role") === "tab" && !b.hidden && !b.disabled);
+      const i = tabs.indexOf(t);
+      const next = { ArrowLeft: tabs[(i - 1 + tabs.length) % tabs.length], ArrowRight: tabs[(i + 1) % tabs.length],
+                     Home: tabs[0], End: tabs[tabs.length - 1] }[e.key];
+      if (next) { e.preventDefault(); next.focus(); next.click(); }
+    } else if (t && t.classList && t.classList.contains("node") && (e.key === "Enter" || e.key === " ")) {
+      e.preventDefault();
+      t.click();
+    }
+  });
+  let pending = false;
+  new MutationObserver(() => {
+    if (pending) return;
+    pending = true;
+    setTimeout(() => { pending = false; enhance(document); }, 30);
+  }).observe(document.documentElement, { childList: true, subtree: true, attributes: true, attributeFilter: ["class", "hidden"] });
+  document.addEventListener("DOMContentLoaded", () => enhance(document));
+
+  window.AnaUI = { $, $$, el, fmtDate, errorText, toast, table, dataTable, pill, splitter, icon, enhance };
 })();

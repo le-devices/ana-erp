@@ -403,6 +403,43 @@ class _Savepoint:
         return False
 
 
+_NEXT_FIELD = re.compile(r"\{\{(result|params)\.([A-Za-z_][A-Za-z0-9_]*)\}\}")
+
+
+def _next_actions(spec, result, params, output):
+    """RF-020-10: `NEXT = [{"program", "label", "params": {"field": "{{result.x}}" | "{{params.y}}" | value},
+    "when"?: "result.x", "style"?, "confirm"?, "open"?}]` becomes the "Próximo passo" buttons with the context
+    filled in. An action whose value is missing (or whose `when` is false) is left out."""
+    if not spec or not isinstance(spec, (list, tuple)):
+        return
+    sources = {"result": result if isinstance(result, dict) else {}, "params": params or {}}
+
+    def value(v):
+        if isinstance(v, str):
+            whole = _NEXT_FIELD.fullmatch(v)
+            if whole:
+                return sources[whole.group(1)].get(whole.group(2))
+            return _NEXT_FIELD.sub(lambda m: str(sources[m.group(1)].get(m.group(2), "")), v)
+        return v
+
+    items = []
+    for a in spec:
+        if not isinstance(a, dict) or not a.get("program") or not a.get("label"):
+            continue
+        when = a.get("when")
+        if when and not value("{{" + when + "}}"):
+            continue
+        filled = {k: value(v) for k, v in (a.get("params") or {}).items()}
+        if any(v is None or v == "" for v in filled.values()):
+            continue
+        items.append({**{k: a[k] for k in ("style", "open") if k in a},
+                      **({"confirm": str(value(a["confirm"]))} if a.get("confirm") else {}),
+                      "label": str(value(a["label"])), "program": a["program"], "params": filled})
+    if items:
+        output.flush()
+        output.emit("actions", {"title": "Próximo passo", "items": items})
+
+
 def make_ana_module(channel, output, context):
     m = types.ModuleType("ana", "ANA ERP API for programs.")
 
@@ -596,6 +633,11 @@ def make_ana_module(channel, output, context):
         output.flush()
         output.emit("metrics", {"title": title, "items": list(items)})
 
+    def steps(items, title=None):
+        """Stages of a process (RF-020-11): [{"label", "status": done|current|todo, "hint"?}]."""
+        output.flush()
+        output.emit("steps", {"title": title, "items": [{k: i.get(k) for k in ("label", "status", "hint")} for i in items]})
+
     def board(columns, cards, title=None):
         """Kanban: columns [{"key", "label"}]; cards [{"column", "title", "subtitle"?,
         "badges"?, "actions"?}]."""
@@ -728,6 +770,7 @@ def make_ana_module(channel, output, context):
     m.sql_exec = sql_exec
     m.sql_batch = sql_batch
     m.call = call
+    m.steps = steps
     m.extend = extend
     m.remote = remote
     m.http = http
@@ -1153,6 +1196,8 @@ def run(channel, msg, output_limit):
             finally:
                 if profiler:
                     profiler.disable()
+        if (msg.get("context") or {}).get("depth", 0) == 0:
+            _next_actions(module_globals.get("NEXT"), result, params, output)
         output.flush()
         try:
             to_json(result)

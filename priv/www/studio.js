@@ -16,7 +16,7 @@
     integrations: "Integrações", checks: "Verificações", transports: "Transportes", datacopy: "Cópia de dados para testes",
     publicapi: "API pública",
   };
-  const state = { user: null, targets: new Map(), trail: [] };
+  const state = { user: null, targets: new Map(), trail: [], scroll: new Map(), here: null };
 
   // ------------------------------------------------------------------ shell menus (spec 029)
   function closeMenus() {
@@ -147,11 +147,33 @@
   // one level: routine → module → Operation → Home.
   function noteNav(hash) {
     const t = state.trail;
-    if (t.length >= 2 && t[t.length - 2] === hash) t.pop();
+    let back = false;
+    if (t.length >= 2 && t[t.length - 2] === hash) { t.pop(); back = true; }
     else if (t[t.length - 1] !== hash) t.push(hash);
     if (t.length > 50) t.splice(0, t.length - 50);
     const parent = parentOf(hash);
     $("#back").hidden = t.length < 2 && !parent;
+    return back;
+  }
+
+  // RF-020-12: coming back to a list returns to where it was (scroll of the area's panels and of the page).
+  const SCROLLERS = ".page-main, .home, .page-pad, .data-view";
+  function scrollers() {
+    const area = [...$$(".area-page")].find((a) => !a.hidden);
+    if (!area) return [document.scrollingElement].filter(Boolean);
+    return [document.scrollingElement, ...(area.matches(SCROLLERS) ? [area] : []), ...area.querySelectorAll(SCROLLERS)].filter(Boolean);
+  }
+  function saveScroll(hash) {
+    if (hash) state.scroll.set(hash, scrollers().map((e) => e.scrollTop));
+    if (state.scroll.size > 100) state.scroll.delete(state.scroll.keys().next().value);
+  }
+  function restoreScroll(hash) {
+    const want = state.scroll.get(hash);
+    if (!want || !want.some((v) => v > 0)) return;
+    // Results arrive after the screen: try a few times, never pulling back someone who already scrolled further.
+    for (const ms of [0, 150, 400, 900, 1600]) setTimeout(() => {
+      scrollers().forEach((e, i) => { if (want[i] && e.scrollTop < want[i]) e.scrollTop = want[i]; });
+    }, ms);
   }
 
   function parentOf(hash) {
@@ -178,7 +200,9 @@
 
   async function route() {
     if ($("#app-screen").hidden) return;
-    noteNav(location.hash || "#/home");
+    saveScroll(state.here);
+    state.here = location.hash || "#/home";
+    const back = noteNav(state.here);
     // RF-020-12: "#/ops/m/routine?project=PRJ-001" carries routine parameters.
     const [path, search] = location.hash.replace(/^#\/?/, "").split("?");
     const query = Object.fromEntries(new URLSearchParams(search || ""));
@@ -203,6 +227,7 @@
       else if (area === "bpm") await window.AnaBpm.show(rest, query);
       else if (area === "dev") await window.AnaDev.show(rest);
       else if (area === "admin") window.AnaAdmin.show(rest[0] || "users");
+      if (back) restoreScroll(state.here);
     } catch (e) { toast(window.AnaUI.errorText(e), true); }
   }
 
@@ -288,6 +313,14 @@
       $("#command").value = "";
     });
     window.addEventListener("hashchange", route);
+    // RF-020-09: keyboard users jump over the top bar to the screen's content.
+    $("#skip-link").addEventListener("click", () => {
+      const area = [...$$(".area-page")].find((a) => !a.hidden);
+      const target = area && (area.querySelector("main, .page-main, .home") || area);
+      if (!target) return;
+      if (!target.hasAttribute("tabindex")) target.tabIndex = -1;
+      target.focus();
+    });
   }
 
   window.AnaStudio = { go, replace, back, noteNav, refreshTitle, user: () => state.user, refreshTargets: buildTargets, canSee };

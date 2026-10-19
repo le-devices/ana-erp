@@ -276,6 +276,31 @@ for (const [section, marker] of [["groups", "Grupos de acesso"], ["limits", "Per
     ok(ops === "same,add,del,same,same,add" || ops === "same,del,add,same,same,add", "comparação linha a linha: " + ops);
   }
 }
+// CA-020-06 / CA-020-07: the order offers its next step and the sale shows its stages.
+await w.AnaApi.run("base.save_product", { params: { code: "SMOKEGUIA", description: "Serviço do teste de fumaça", price: "1", kind: "service" } });
+const created = await w.AnaApi.run("sales.create_order", { params: { customer: 3, items: [{ product: "SMOKEGUIA", quantity: 1, price: "5" }] } });
+const nextStep = (created.events || []).filter((e) => e.kind === "actions").pop();
+ok(nextStep && nextStep.data.items.some((a) => a.label === "Faturar este pedido" && String(a.params.number) === String(created.result.number)),
+   "após criar o pedido: Faturar este pedido, com o número (CA-020-06)");
+await go(w, `#/ops/flows/flows.guide?flow=sales&document=${created.result.number}`);
+await until(() => d.querySelector("#area-ops .steps li[aria-current='step']"), "process stages", jsErrors);
+ok(d.querySelector("#area-ops .steps li[aria-current='step']").textContent.includes("Faturamento"),
+   "etapas da venda com a etapa atual destacada (CA-020-07)");
+await go(w, "#/admin/audit");
+await until(() => d.querySelector("#admin-main .sub-tabs"), "audit again", jsErrors);
+// RF-020-09 (T-020-07): tabs are tabs for screen readers and the keyboard; every field has a name.
+await until(() => [...d.querySelectorAll("#admin-main .sub-tabs button")].every((b) => b.getAttribute("role") === "tab"), "a11y tab roles", jsErrors);
+const selectedTabs = () => [...d.querySelectorAll("#admin-main .sub-tabs button")].filter((b) => b.getAttribute("aria-selected") === "true");
+ok(selectedTabs().length === 1 && d.querySelector("#admin-main .sub-tabs").getAttribute("role") === "tablist",
+   "abas com papéis e uma só selecionada (teclado e leitor de tela)");
+const firstTab = selectedTabs()[0].textContent;
+selectedTabs()[0].dispatchEvent(new w.KeyboardEvent("keydown", { key: "ArrowRight", bubbles: true }));
+await until(() => selectedTabs().length === 1 && selectedTabs()[0].textContent !== firstTab, "arrow moves tab", jsErrors);
+ok(true, "seta para a direita leva à próxima aba: " + selectedTabs()[0].textContent);
+const unnamed = [...d.querySelectorAll("#admin-main input:not([type=hidden]), #admin-main select, #admin-main textarea")]
+  .filter((f) => !(f.labels && f.labels.length) && !f.getAttribute("aria-label") && !f.getAttribute("aria-labelledby"));
+ok(unnamed.length === 0, "todo campo tem nome acessível" + (unnamed.length ? ": " + unnamed.map((f) => f.outerHTML.slice(0, 60)).join(" | ") : ""));
+ok(d.querySelector("#skip-link") && d.querySelector("#skip-link").textContent.includes("Pular"), "atalho para pular ao conteúdo");
 [...d.querySelectorAll("#admin-main .sub-tabs button")].find((b) => b.textContent === "Tarefas internas").click();
 // Filtered by prefix: on a busy instance the latest 100 tasks may all be periodic ones.
 await until(() => d.querySelector('#admin-main input[placeholder="Tarefa (prefixo)"]'), "internal tasks filter", jsErrors);
