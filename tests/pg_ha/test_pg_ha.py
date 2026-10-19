@@ -50,6 +50,18 @@ class TestPrimaryFailover(unittest.TestCase):
         for base in (NODE1, NODE2, LB):
             wait_ready(base)
         cls.token = login()
+        # The load runs above the default per-user quota (600/min): lifted for this suite only, as in the chaos suite.
+        http(LB, "PUT", "/api/admin/quotas/admin", {"max_concurrent": 0, "runs_per_minute": 0}, cls.token)
+
+    @classmethod
+    def tearDownClass(cls):
+        for base in (LB, NODE1, NODE2):
+            try:
+                s, _ = http(base, "PUT", "/api/admin/quotas/admin", {"max_concurrent": None, "runs_per_minute": None}, login(base))
+                if s == 200:
+                    break
+            except Exception:                    # a node may still be restarting after case (c)
+                continue
 
     def marker_program(self, base, token, tag):
         name = "test.pg_ha_marker"
@@ -80,6 +92,9 @@ class TestPrimaryFailover(unittest.TestCase):
             compose("stop", "db")
             switched = time.time()
             time.sleep(15)
+        # While the replica takes over, the session stays valid: "try again" (503), never a sign-out (401).
+        signed_out = [r for r in load.results if r[1] == 401]
+        self.assertEqual(signed_out, [], f"a troca de primário não pode invalidar a sessão: {signed_out[:3]}")
         late = load.failures(since=switched + 10)
         self.assertEqual(late, [], f"depois de 10 s o núcleo deveria estar no novo primário: {late[:5]}")
         self.assertGreater(len(load.results), 30)

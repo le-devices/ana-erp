@@ -18,4 +18,5 @@
   com `pg_rewind`. Suíte `tests/pg_ha` (`make teste-pg-ha`): (a), (b) e (c) automatizados;
   (d) não automatizado (documentado). Escolha do primário pela linha do tempo mais nova evita
   usar um primário antigo que volte sem ser rebaixado.
-
+- [x] T-023-10 Falha momentânea do banco responde 503 (nunca 401) na autenticação, entrada e dono da execução;
+  reconexão mais rápida (espera de 250 ms a 2 s, sondagem de 3 s); caos e pg-ha exigem zero 401 (RF-023-08, CA-023-07)

@@ -77,7 +77,7 @@ read_raw(Req, Max) ->
     end.
 
 %% RF-001-06
--spec authenticate(cowboy_req:req()) -> {ok, map()} | {error, invalid | tls}.
+-spec authenticate(cowboy_req:req()) -> {ok, map()} | {error, invalid | tls | unavailable}.
 %% The authenticated user carries `trace` (ip, auth, key_id) so executions
 %% record where they came from (RF-024-04); the request is tagged for the
 %% access log (RF-024-01).
@@ -114,6 +114,7 @@ api_token(Token, Req, Ip) ->
             case ana_api:client(Id) of
                 {ok, #{<<"usable">> := true, <<"kind">> := Kind, <<"scopes">> := Now} = C} when Kind =/= <<"publishable">> ->
                     api_gate(C#{<<"scopes">> => [S || S <- Now, lists:member(S, Scp)]}, <<"api_token">>, Req, Ip);
+                {error, unavailable} -> {error, unavailable};
                 _ -> {error, invalid}
             end;
         _ -> {error, invalid}
@@ -126,6 +127,7 @@ publishable(Key, Req, Ip) ->
                 true -> api_gate(C, <<"publishable">>, Req, Ip);
                 false -> {error, invalid}
             end;
+        {error, unavailable} -> {error, unavailable};
         _ -> {error, invalid}
     end.
 
@@ -166,6 +168,10 @@ require_any(Req, Fun) ->
     case authenticate(Req) of
         {ok, U} -> Fun(U);
         {error, tls} -> reply_error(403, <<"HTTPS_REQUIRED">>, <<"chamadas públicas só por HTTPS"/utf8>>, Req);
+        {error, unavailable} ->
+            %% Spec 023: the credential could not be checked (database switching over): try again, stay signed in.
+            reply_error(503, <<"DB_UNAVAILABLE">>, <<"banco de dados indisponível no momento: tente de novo em instantes"/utf8>>,
+                        cowboy_req:set_resp_header(<<"retry-after">>, <<"2">>, Req));
         {error, _} -> reply_error(401, <<"NOT_AUTHENTICATED">>, <<"credencial ausente ou inválida"/utf8>>, Req)
     end.
 

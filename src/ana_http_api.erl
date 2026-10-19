@@ -68,7 +68,10 @@ route(<<"POST">>, [<<"session">>], Req) ->
                 {error, locked} ->
                     ana_http:reply_error(429, <<"LOCKED">>, <<"muitas tentativas; aguarde alguns minutos">>, R);
                 {error, credentials} ->
-                    ana_http:reply_error(401, <<"CREDENTIALS">>, <<"login ou senha inválidos"/utf8>>, R)
+                    ana_http:reply_error(401, <<"CREDENTIALS">>, <<"login ou senha inválidos"/utf8>>, R);
+                {error, unavailable} ->
+                    ana_http:reply_error(503, <<"DB_UNAVAILABLE">>, <<"banco de dados indisponível no momento: tente de novo em instantes"/utf8>>,
+                                         cowboy_req:set_resp_header(<<"retry-after">>, <<"2">>, R))
             end;
         (_, R) -> invalid(R)
     end);

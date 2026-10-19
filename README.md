@@ -799,8 +799,10 @@ confirmação explícita; "aceitar as não alteradas" atualiza o resto de uma ve
   o da linha do tempo mais nova — um primário antigo que volte sem ser
   rebaixado nunca recebe gravações; testado com cluster local em
   `make teste-pg-ha`); `ANA_DB_READ_HOSTS` leva o console SQL
-  às réplicas; banco fora → erro imediato (`DB_UNAVAILABLE`, 503) e volta
-  sozinho em segundos.
+  às réplicas; banco fora → erro imediato (`DB_UNAVAILABLE`, 503 com
+  `Retry-After`) e volta sozinho em segundos. Durante a queda ou a troca de
+  primário ninguém é deslogado: sessão, chaves e tokens nunca viram
+  "credencial inválida" (401) por falha momentânea do banco.
 - **Execuções interrompidas** pela queda de um nó ficam registradas como
   `INTERRUPTED`; sistemas remotos com falha abrem um disjuntor
   (`REMOTE_UNAVAILABLE`) em vez de prender execuções.

@@ -81,8 +81,15 @@ def new_user(role, groups=()):
 CREATED_USERS = []
 
 
+def setUpModule():
+    # The suite runs ~600 programs a minute as admin, the default per-user quota: lifted for the suite only,
+    # so a busy minute never fails unrelated tests (spec 012 quotas have their own tests with their own users).
+    http("PUT", "/api/admin/quotas/admin", {"max_concurrent": 0, "runs_per_minute": 0}, admin_token())
+
+
 def tearDownModule():
     t = admin_token()
+    http("PUT", "/api/admin/quotas/admin", {"max_concurrent": None, "runs_per_minute": None}, t)
     # The suite fails logins on purpose (brute force, robots): clear this address's counter.
     http("POST", "/api/admin/security/unlock-ip", {"ip": "self"}, t)
     for name in sorted(CREATED_PROGRAMS):
