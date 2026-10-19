@@ -84,6 +84,8 @@ internal(_) -> false.
 %% JSON-RPC codes (spec 003 plan).
 jsonrpc_code(<<"NOT_FOUND">>) -> -32601;
 jsonrpc_code(<<"PROGRAM_NOT_FOUND">>) -> -32601;
+jsonrpc_code(<<"PROGRAM_INACTIVE">>) -> -32601;
+jsonrpc_code(<<"NOT_EXECUTABLE">>) -> -32601;
 jsonrpc_code(<<"INVALID_PARAMETER">>) -> -32602;
 jsonrpc_code(<<"INVALID_REQUEST">>) -> -32600;
 jsonrpc_code(<<"FORBIDDEN">>) -> -32003;

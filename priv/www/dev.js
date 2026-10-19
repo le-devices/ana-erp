@@ -167,6 +167,7 @@ def main(name="mundo"):
     $("#p-restricted").checked = !!p.restricted;
     $("#p-active").checked = p.active !== false;
     $("#purge").disabled = !p.version;
+    runButtons(false);
     loadLimits(p);
     loadProgramCommands(p);
   }
@@ -323,14 +324,28 @@ def main(name="mundo"):
     e.className = "run-state " + cls;
   }
 
+  // A library is imported by programs (from ana_lib.<namespace> import <name>); it never runs by itself.
+  const LIBRARY_HINT = "Biblioteca: não executa sozinha — é usada pelos programas (from ana_lib.<módulo> import <nome>). Para testá-la, rode um programa que a importe.";
+  function isLibrary() {
+    return !!state.current && ($("#p-kind").value || state.current.kind) === "library";
+  }
+  function runButtons(running) {
+    const lib = isLibrary();
+    for (const id of ["#run", "#debug"]) {
+      $(id).disabled = running || lib;
+      $(id).title = lib ? LIBRARY_HINT : id === "#run" ? "Executar (F5)" : "Depurar (Ctrl+F5)";
+    }
+  }
+
   function debugButtons(paused, running) {
     for (const b of $$(".dbg")) b.disabled = !paused;
     $("#dbg-stop").disabled = !running;
-    for (const id of ["#run", "#debug"]) $(id).disabled = running;
+    runButtons(running);
   }
 
   async function run(debug = false) {
     if (!state.current) return;
+    if (isLibrary()) { notice(LIBRARY_HINT, true); return; }
     if (state.dirty) {
       await save();
       if (state.dirty) return;
@@ -575,6 +590,7 @@ def main(name="mundo"):
     $("#new-program").addEventListener("click", newProgram);
     $("#save").addEventListener("click", save);
     $("#purge").addEventListener("click", purge);
+    $("#p-kind").addEventListener("change", () => runButtons(false));
     $("#run").addEventListener("click", () => run(false));
     $("#debug").addEventListener("click", () => run(true));
     $("#dbg-continue").addEventListener("click", () => debugCommand("continue"));

@@ -460,9 +460,14 @@ load(Name, User) ->
                                                        " não está na licença desta instalação"/utf8>>)};
                 {true, true} -> {ok, P}
             end;
+        {ok, #{<<"kind">> := <<"library">>}} ->
+            %% A library is imported by programs; running it by itself is a mistake worth explaining.
+            {error, err(<<"NOT_EXECUTABLE">>, <<"é uma biblioteca: não executa sozinha, é usada pelos programas "
+                                                "(from ana_lib.<módulo> import <nome>)"/utf8>>)};
+        {ok, #{<<"active">> := false}} ->
+            {error, err(<<"PROGRAM_INACTIVE">>, <<"programa inativo: reative-o em Propriedades para executar"/utf8>>)};
         _ ->
-            {error, err(<<"PROGRAM_NOT_FOUND">>,
-                          <<"programa inexistente, inativo ou não executável"/utf8>>)}
+            {error, err(<<"PROGRAM_NOT_FOUND">>, <<"programa inexistente"/utf8>>)}
     end.
 
 first_missing(Modules) ->
