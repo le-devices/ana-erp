@@ -18,6 +18,14 @@ from ana_lib.util import validation as v
 from ana_lib.util.format import compact, money
 from ana_lib.docs import pdfs
 
+# RF-020-10: the next steps of the sale, with this order filled in.
+NEXT = [{"label": "Faturar este pedido", "program": "sales.invoice_order", "params": {"number": "{{result.number}}"},
+         "style": "primary", "confirm": "Faturar o pedido {{result.number}}?"},
+        {"label": "Expedir", "program": "logistics.ship", "params": {"order": "{{result.number}}", "_form": "1"}, "open": True},
+        {"label": "Abrir pedido", "program": "docs.view", "params": {"kind": "order", "key": "{{result.number}}"}, "open": True},
+        {"label": "Etapas da venda", "program": "flows.guide", "params": {"flow": "sales", "document": "{{result.number}}"},
+         "open": True}]
+
 PARAMS = {
     "customer": {"type": "int", "required": True, "label": "cliente", "order": 1,
                  "lookup": {"program": "sales.lookup", "params": {"kind": "customers"}}},
@@ -129,11 +137,6 @@ def main(customer, items, warehouse="CENTRAL", payment_term=None, fulfill="warn"
         sched = terms.schedule(terms.adjusted(total, term), term)
         ana.table([{"parcela": f"{n}/{len(sched)}", "vencimento (se faturado hoje)": d, "valor": val} for n, d, val in sched],
                   title=f"Parcelas — {term['name']}")
-    ana.actions([{"label": "Abrir pedido", "program": "docs.view", "params": {"kind": "order", "key": str(order["number"])}, "open": True},
-                 {"label": "Faturar agora", "program": "sales.invoice_order", "params": {"number": order["number"]},
-                  "style": "primary", "confirm": f"Faturar o pedido {order['number']}?"},
-                 {"label": "Expedir", "program": "logistics.ship", "params": {"order": order["number"], "_form": "1"}, "open": True}],
-                title="Próximo passo")
     pdfs.publish_quietly("order", order["number"])     # spec 037: confirmation for the customer
     return {"number": order["number"], "total": total, "items": len(lines), "payment_term": term and term["code"],
             "shortages": [{"product": by_code[s["product_id"]]["code"], "missing": s["missing"]} for s in short],

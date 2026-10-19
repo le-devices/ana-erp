@@ -333,6 +333,7 @@
     else if (ev.kind === "gantt") node = drawGantt(ev.data);
     else if (ev.kind === "tabs") node = drawTabs(ev.data, ctx);
     else if (ev.kind === "actions") node = drawActions(ev.data, ctx);
+    else if (ev.kind === "steps") node = drawSteps(ev.data);
     if (!node) return;
     const atEnd = container.scrollTop + container.clientHeight >= container.scrollHeight - 8;
     container.append(node);
@@ -422,6 +423,19 @@
       return el("button", { class: key === d.current || a.label === d.current ? "active" : "", text: a.label,
         onclick: () => ctx && ctx.open(a.program, a.params || {}) });
     }));
+  }
+
+  // RF-020-11: stages of a process; the current one is announced to screen readers (aria-current="step").
+  function drawSteps(d) {
+    const label = { done: "concluída", current: "etapa atual", todo: "a fazer" };
+    return el("section", { class: "steps-box", "aria-label": d.title || "Etapas" },
+      d.title ? el("h3", { text: d.title }) : null,
+      el("ol", { class: "steps" }, (d.items || []).map((s, i) => el("li", {
+        class: "step " + (s.status || "todo"), ...(s.status === "current" ? { "aria-current": "step" } : {}),
+      }, el("span", { class: "step-mark", "aria-hidden": "true", text: s.status === "done" ? "✓" : String(i + 1) }),
+         el("span", { class: "step-text" }, el("strong", { text: s.label }),
+            el("span", { class: "step-hint", text: s.hint || label[s.status] || "" }),
+            el("span", { class: "sr-only", text: ` (${label[s.status] || ""})` }))))));
   }
 
   function drawActions(d, ctx) {

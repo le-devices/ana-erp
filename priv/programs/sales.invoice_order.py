@@ -13,6 +13,13 @@ from ana_lib.finance import invoice_pdf, terms
 from ana_lib.util import validation as v
 from ana_lib.util.format import money
 
+# RF-020-10: after invoicing, collect and follow the order.
+NEXT = [{"label": "Emitir cobrança", "program": "finance.charge_document", "params": {"document": "ORD-{{result.number}}"},
+         "style": "primary"},
+        {"label": "Abrir pedido", "program": "docs.view", "params": {"kind": "order", "key": "{{result.number}}"}, "open": True},
+        {"label": "Etapas da venda", "program": "flows.guide", "params": {"flow": "sales", "document": "{{result.number}}"},
+         "open": True}]
+
 PARAMS = {
     "number": {"type": "int", "required": True, "label": "pedido", "lookup": {"program": "sales.lookup", "params": {"kind": "orders"}}},
     "payment_days": {"type": "int", "default": 30, "label": "prazo em dias (só sem condição de pagamento)"},

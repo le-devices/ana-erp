@@ -168,6 +168,16 @@ por linha em `ana.table` (abrir rotina com parâmetros, ou pedir campos e
 executar na própria tela). O endereço `#/ops/<módulo>/<rotina>?param=valor`
 abre e executa a rotina.
 
+O próximo passo do processo pode ser declarado no programa (spec 020):
+
+```python
+NEXT = [{"label": "Faturar este pedido", "program": "sales.invoice_order",
+         "params": {"number": "{{result.number}}"}, "confirm": "Faturar o pedido {{result.number}}?"}]
+```
+
+e `ana.steps` mostra as etapas de um processo; `etapas` (`flows.guide`) faz
+isso para venda, compra, atendimento e produção de qualquer documento.
+
 ## Execução paralela (spec 022)
 
 ```python
@@ -838,7 +848,6 @@ correspondentes são só o valor inicial).
 
 ## Situação das specs
 
-Implementadas: 001–008, 011 (com usuários robô e dono obrigatório), 012, 018, 021, 019 (faltam alertas configuráveis e OpenTelemetry), 013, 014, 015, 016 (faltam S3 e antivírus), 017 (faltam SFTP/pasta/e-mail, mTLS, CNAB e pacotes de modelos), 022, 023, 024, 025, 026, 027, 028, 029, 030, 031, 032, 033, 035, 036, 037 (falta base OSV por conector), 034 (faltam agendamentos e migrações no pacote, envio por conector), 039 (BPM: modelar, simular, executar e acompanhar processos), 040 (cadastros padronizados; falta importação em lote rápida), 038 (processos integrados: estoque valorizado com lançamento automático, inventário, frete, conciliações, fechamento, baixas exatas e compensação, extrato completo, gateway, cancelamento de faturas, nota do fornecedor por confronto, custo das horas, rotinas prontas), 009 (licença assinada, módulos, usuários nomeados, modo somente consulta, namespaces do produto, pontos de extensão, permissão por dado, marca conjunta, telemetria opcional), 010 (faltam PKCE com consentimento, TOTP, HTTP/2 e cache, disjuntor; vazão de 1.000 chamadas/s aguarda decisão); 020 parcial (falta próxima ação
-sugerida, fluxos guiados e auditoria de acessibilidade).
+Implementadas: 001–008, 011 (com usuários robô e dono obrigatório), 012, 018, 021, 019 (faltam alertas configuráveis e OpenTelemetry), 013, 014, 015, 016 (faltam S3 e antivírus), 017 (faltam SFTP/pasta/e-mail, mTLS, CNAB e pacotes de modelos), 022, 023, 024, 025, 026, 027, 028, 029, 030, 031, 032, 033, 035, 036, 037 (falta base OSV por conector), 034 (faltam agendamentos e migrações no pacote, envio por conector), 039 (BPM: modelar, simular, executar e acompanhar processos), 040 (cadastros padronizados; falta importação em lote rápida), 038 (processos integrados: estoque valorizado com lançamento automático, inventário, frete, conciliações, fechamento, baixas exatas e compensação, extrato completo, gateway, cancelamento de faturas, nota do fornecedor por confronto, custo das horas, rotinas prontas), 009 (licença assinada, módulos, usuários nomeados, modo somente consulta, namespaces do produto, pontos de extensão, permissão por dado, marca conjunta, telemetria opcional), 010 (faltam PKCE com consentimento, TOTP, HTTP/2 e cache, disjuntor; vazão de 1.000 chamadas/s aguarda decisão), 020 (próxima ação declarada nos programas, etapas do processo, acessibilidade auditada).
 Na fila (ordem em [scripts/pending-work.prompt.md](scripts/pending-work.prompt.md)):
-020 (restante) e as tarefas adiadas.
+as tarefas adiadas (T-…b).

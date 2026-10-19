@@ -5283,6 +5283,44 @@ class TestDataScope(Base):
                 http("DELETE", f"/api/admin/groups/{g}", token=self.token)
 
 
+class TestGuidedProcess(Base):
+    """Next step declared by the program and the stages of a process (spec 020, RF-020-10/11)."""
+
+    def test_ca_020_06_07_next_step_and_stages(self):
+        c = self.client
+        customer = c.call("base.save_party", name=f"Cliente Etapas {SUFFIX}")["id"]
+        service = f"SVE{SUFFIX}"
+        c.call("base.save_product", code=service, description="Serviço etapas", price="1", kind="service")
+        s, r, _ = self.run_program("sales.create_order", {"customer": customer, "items": [{"product": service, "quantity": 1, "price": "30"}]})
+        self.assertEqual(s, 200, r)
+        number = r["result"]["number"]
+        nxt = [e for e in r["events"] if e.get("kind") == "actions"][-1]["data"]
+        first = nxt["items"][0]
+        self.assertEqual((nxt["title"], first["label"], first["program"], first["params"]),
+                         ("Próximo passo", "Faturar este pedido", "sales.invoice_order", {"number": number}))
+        self.assertEqual(first["confirm"], f"Faturar o pedido {number}?")
+        def stages():
+            st, g, _ = self.run_program("flows.guide", {"flow": "sales", "document": str(number)})
+            self.assertEqual(st, 200, g)
+            return g["result"], [e for e in g["events"] if e.get("kind") == "steps"][0]["data"]["items"]
+        res, items = stages()
+        self.assertEqual(res["current"], "invoice")                      # a service: nothing to ship, invoicing is next
+        self.assertEqual([i["status"] for i in items], ["done", "current", "todo", "todo"])
+        c.call("sales.invoice_order", number=number)
+        res, items = stages()
+        self.assertIn("invoice", res["done"])
+        self.assertNotEqual(res["current"], "invoice")
+        s, g, _ = self.run_program("flows.guide", {"flow": "sales", "document": "999999999"})
+        self.assertEqual(g["error"]["code"], "NOT_FOUND")
+        # A nested call never shows the inner program's next steps (only the screen's program does).
+        wrapper = f"test.guide_wrap_{SUFFIX}"
+        self.save(wrapper, "def main(customer, product):\n"
+                           "    return ana.call('sales.create_order', customer=customer, items=[{'product': product, 'quantity': 1, 'price': '1'}])\n")
+        s, r, _ = self.run_program(wrapper, {"customer": customer, "product": service})
+        self.assertEqual(s, 200, r)
+        self.assertFalse([e for e in r["events"] if e.get("kind") == "actions" and e["data"]["title"] == "Próximo passo"])
+
+
 TINY_JPEG = ("/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDAAoHBwgHBgoICAgLCgoLDhgQDg0NDh0VFhEYIx8lJCIfIiEmKzcvJik0KSEiMEExNDk7Pj4+JS5ESUM8SDc9Pjv/2wBDAQoLCw4NDhwQEBw7KCIoOzs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozv/wAARCAAYAEADASIAAhEBAxEB/8QAHwAAAQUBAQEBAQEAAAAAAAAAAAECAwQFBgcICQoL/8QAtRAAAgEDAwIEAwUFBAQAAAF9AQIDAAQRBRIhMUEGE1FhByJxFDKBkaEII0KxwRVS0fAkM2JyggkKFhcYGRolJicoKSo0NTY3ODk6Q0RFRkdISUpTVFVWV1hZWmNkZWZnaGlqc3R1dnd4eXqDhIWGh4iJipKTlJWWl5iZmqKjpKWmp6ipqrKztLW2t7i5usLDxMXGx8jJytLT1NXW19jZ2uHi4+Tl5ufo6erx8vP09fb3+Pn6/8QAHwEAAwEBAQEBAQEBAQAAAAAAAAECAwQFBgcICQoL/8QAtREAAgECBAQDBAcFBAQAAQJ3AAECAxEEBSExBhJBUQdhcRMiMoEIFEKRobHBCSMzUvAVYnLRChYkNOEl8RcYGRomJygpKjU2Nzg5OkNERUZHSElKU1RVVldYWVpjZGVmZ2hpanN0dXZ3eHl6goOEhYaHiImKkpOUlZaXmJmaoqOkpaanqKmqsrO0tba3uLm6wsPExcbHyMnK0tPU1dbX2Nna4uPk5ebn6Onq8vP09fb3+Pn6/9oADAMBAAIRAxEAPwDhqKKK+mPJCiiigAooooAKKKKACiiigAooooAKKKKACiiigD//2Q==")
 
 
