@@ -51,3 +51,16 @@ uma pessoa, conforme a regra da empresa.
   esteira com o motivo; falha técnica tem novas tentativas com espera.
 - Expedição automática usa a transportadora padrão (marcada no cadastro da
   transportadora).
+
+## Recebimento e pagamento como etapas automáticas (T-030-06b)
+As etapas de recebimento (venda, campo) e de pagamento (compra) rodam
+`finance.reconcile_document`: os títulos em aberto do documento são procurados
+nas linhas abertas do extrato de todas as contas ativas, com as regras da
+conciliação bancária. Só o que é certo é baixado (identificador da cobrança ou
+documento do título na linha, valor exato, uma linha para um título); um
+crédito que bate só por valor e data nunca é baixado aqui — a etapa espera e
+diz qual crédito pode ser, para uma pessoa confirmar na bancada. A espera
+mostra o motivo (o que o programa devolve em `waiting`). Pagamentos que chegam
+depois são baixados pela importação do extrato (spec 038) e a varredura conclui
+a etapa. A migração 044 só muda etapas que continuam como vieram (aguardando,
+sem programa).

@@ -5,4 +5,4 @@
 - [x] T-030-03 `finance.charge_document` e transportadora padrão para a expedição automática
 - [x] T-030-04 Quadro da esteira, configuração e ações (reprocessar, executar agora, pular) (RF-030-05)
 - [x] T-030-05 Testes CA-030-01..04, condição, outras esteiras; retenção
-- [ ] T-030-06b Conciliação bancária automática como etapa (hoje o recebimento espera a baixa feita pela conciliação)
+- [x] T-030-06b Conciliação bancária automática como etapa: recebimento (venda, campo) e pagamento (compra) rodam `finance.reconcile_document`; baixa só o certo; a espera diz o motivo

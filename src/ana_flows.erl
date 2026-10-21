@@ -76,7 +76,11 @@ do_step(#{<<"instance_id">> := I, <<"seq">> := Seq, <<"attempts">> := Attempts, 
                                     %% e.g. a partial shipment: the program ran, the step is not over yet.
                                     {ok, _} = ana_db:exec("UPDATE flow.instance_step SET execution_id = $3::text::uuid, result = $4 "
                                                           "WHERE instance_id = $1 AND seq = $2", [I, Seq, Exec, small(Res)]),
-                                    wait(I, Seq, <<"o programa rodou, mas a etapa ainda não terminou"/utf8>>)
+                                    %% The program may say what the step is waiting for (e.g. the payment in the statement).
+                                    wait(I, Seq, case Res of
+                                                     #{<<"waiting">> := W} when is_binary(W), W =/= <<>> -> W;
+                                                     _ -> <<"o programa rodou, mas a etapa ainda não terminou"/utf8>>
+                                                 end)
                             end;
                         {error, E} ->
                             Code = code(E),
