@@ -92,8 +92,10 @@ class Load:
         while not self.stop_flag.is_set():
             method, path, body = self.make()
             t0 = time.time()
-            s, _ = http(self.base, method, path, body, self.token, timeout=30)
-            self.results.append((t0, s, time.time() - t0))
+            s, answer = http(self.base, method, path, body, self.token, timeout=30)
+            err = answer.get("error") if isinstance(answer, dict) else None
+            code = (err.get("code") if isinstance(err, dict) else None) or ""
+            self.results.append((t0, s, time.time() - t0, code))      # the code says which path answered
             time.sleep(self.pause)
 
     def __enter__(self):

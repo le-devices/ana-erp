@@ -38,7 +38,9 @@ def main(key=None):
     if not opening_done() and any(r["key"] in ("inventory", "work_in_process") and abs(r["difference"]) >= CENT for r in rows):
         ana.actions([{"label": "Ajuste inicial de estoque", "program": "finance.inventory_opening_adjustment", "open": True}],
                     title="Estoque ainda sem ajuste inicial")
-    ana.actions([{"label": "Regras do extrato (tarifas, IOF, rendimentos)", "program": "finance.statement_rules", "open": True},
+    ana.actions([{"label": "Fontes automáticas de extrato (pasta OFX/CNAB ou API do banco)", "program": "finance.statement_sources",
+                  "open": True},
+                 {"label": "Regras do extrato (tarifas, IOF, rendimentos)", "program": "finance.statement_rules", "open": True},
                  {"label": "Tolerância e compensação automática", "program": "finance.settlement_policy", "open": True},
                  {"label": "Compensar créditos agora", "program": "finance.offset_credits"}],
                 title="O que concilia sozinho")

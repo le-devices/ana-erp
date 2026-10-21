@@ -49,9 +49,11 @@ faz checkout, monitora o processo cliente (se morrer, a conexão é reciclada co
   json/jsonb → objeto decodificado, null → `null`.
 
 ## Sessões
-Tabela `ana_system.session` **UNLOGGED** (dado efêmero, escrita rápida, sem WAL —
-se o banco cair, usuários apenas fazem login de novo). Token = 32 bytes
-aleatórios em base64url; guardado como SHA-256.
+Tabela `ana_system.session` registrada no WAL. Até a spec 023 era **UNLOGGED**
+("se o banco cair, usuários apenas fazem login de novo"); com réplica e troca
+de primário isso deslogava todo mundo na troca, e a migração 046 a tornou
+registrada (escrita só no login e no logout: custo desprezível). Token = 32
+bytes aleatórios em base64url; guardado como SHA-256.
 
 ## Riscos
 - Pool esgotado por execuções em depuração longas → pool configurável e

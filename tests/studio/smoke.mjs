@@ -296,6 +296,13 @@ ok(d.querySelector("#area-ops .steps li[aria-current='step']").textContent.inclu
    "etapas da venda com a etapa atual destacada (CA-020-07)");
 await go(w, "#/admin/audit");
 await until(() => d.querySelector("#admin-main .sub-tabs"), "audit again", jsErrors);
+// T-017-05b: statement sources per bank account (folder of OFX/CNAB 240 files or bank API).
+await go(w, "#/ops/finance/finance.statement_sources?active=true");   // with a parameter the routine runs
+await until(() => text("#area-ops").includes("Usar pasta de arquivos"), "statement sources", jsErrors);
+ok(text("#area-ops").includes("Usar pasta de arquivos") && text("#area-ops").includes("Usar API do banco"),
+   "fontes de extrato: pasta de arquivos ou API do banco, por conta");
+await go(w, "#/admin/audit");
+await until(() => d.querySelector("#admin-main .sub-tabs"), "audit (after sources)", jsErrors);
 // RF-020-09 (T-020-07): tabs are tabs for screen readers and the keyboard; every field has a name.
 await until(() => [...d.querySelectorAll("#admin-main .sub-tabs button")].every((b) => b.getAttribute("role") === "tab"), "a11y tab roles", jsErrors);
 const selectedTabs = () => [...d.querySelectorAll("#admin-main .sub-tabs button")].filter((b) => b.getAttribute("aria-selected") === "true");

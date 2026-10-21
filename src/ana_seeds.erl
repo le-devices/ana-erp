@@ -34,7 +34,9 @@ apply() ->
 %% inactive (the company turns each one on in Agendamento), never recreated after being deleted or renamed.
 %% They run as an administrator because they post and invoice.
 routines() ->
-    [{<<"conciliacao.bancaria">>, <<"finance.reconcile_all">>, #{}, <<"0 6 * * *">>,
+    [{<<"extratos.buscar">>, <<"finance.fetch_statements">>, #{}, <<"0 7-19 * * 1-5">>,
+      <<"Busca de extratos: lê de hora em hora, nos dias úteis, as pastas de arquivos (OFX, CNAB 240) e as APIs dos bancos de cada conta e concilia."/utf8>>},
+     {<<"conciliacao.bancaria">>, <<"finance.reconcile_all">>, #{}, <<"0 6 * * *">>,
       <<"Conciliação bancária diária: concilia todas as contas pelos extratos importados e compensa créditos."/utf8>>},
      {<<"compensacao.creditos">>, <<"finance.offset_credits">>, #{}, <<"30 6 * * *">>,
       <<"Compensação de créditos: créditos de clientes e com fornecedores abatem os títulos em aberto do mesmo parceiro."/utf8>>},

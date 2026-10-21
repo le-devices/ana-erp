@@ -1929,8 +1929,10 @@ class TestObservability(Base):
         if not psql_available():
             self.skipTest("psql no contêiner indisponível")
         tag = f"obs{SUFFIX}"
-        psql(f"INSERT INTO base.party (kind, name, city) SELECT 'customer', '{tag}-' || g, '{tag}-city-' || (g % 300) "
-             f"FROM generate_series(1, 30000) g; ANALYZE base.party")
+        # Load data, not master data being edited: the history (spec 040) is off for this statement only.
+        psql(f"ALTER TABLE base.party DISABLE TRIGGER master_log; "
+             f"INSERT INTO base.party (kind, name, city) SELECT 'customer', '{tag}-' || g, '{tag}-city-' || (g % 300) "
+             f"FROM generate_series(1, 30000) g; ALTER TABLE base.party ENABLE TRIGGER master_log; ANALYZE base.party")
         name = f"test.obs_slow_{SUFFIX}"
         self.save(name, f"def main():\n    return len(ana.sql('SELECT id FROM base.party WHERE city = $1', '{tag}-city-7'))\n")
         old = self.setting("slow_sql_ms", 1)
@@ -1967,7 +1969,8 @@ class TestObservability(Base):
             self.assertGreater(growth[0]["evidence"]["projected_rows_180d"], growth[0]["evidence"]["table_rows"])
         finally:
             self.setting("slow_sql_ms", old)
-            psql(f"DELETE FROM base.party WHERE name LIKE '{tag}-%'; ANALYZE base.party; "
+            psql(f"ALTER TABLE base.party DISABLE TRIGGER master_log; DELETE FROM base.party WHERE name LIKE '{tag}-%'; "
+                 f"ALTER TABLE base.party ENABLE TRIGGER master_log; ANALYZE base.party; "
                  "DELETE FROM ana_system.table_growth WHERE table_name = 'base.party' AND day = current_date - 2")
 
     def test_ca_019_05_profile_shows_costliest_function(self):
@@ -3118,7 +3121,8 @@ class TestProduction(Base):
                          "    per = [100, 400, 1500, 3000, 5000]\n"
                          "    codes = [[f'{tag}L{l}N{i}' for i in range(n)] for l, n in enumerate(per)]\n"
                          "    flat = [c for lvl in codes for c in lvl]\n"
-                         "    ana.sql('INSERT INTO base.product (code, description, price) SELECT c, c, 1 FROM unnest($1::text[]) c', flat)\n"
+                         "    ana.sql('INSERT INTO base.product (code, description, price) SELECT c, c, 1 FROM unnest($1::text[]) c '\n"
+                         "            'ON CONFLICT (code) DO NOTHING', flat)\n"
                          "    ids = {r['code']: r['id'] for r in ana.sql('SELECT id, code FROM base.product WHERE code = ANY($1)', flat)}\n"
                          "    parents = [c for lvl in codes[:-1] for c in lvl]\n"
                          "    sids = {r['product_id']: r['id'] for r in ana.sql(\"INSERT INTO production.structure (product_id, version, created_by) \"\n"
@@ -3143,6 +3147,13 @@ class TestProduction(Base):
                          "    r = ana.call('production.plan', scenario=scen, horizon_weeks=8)\n"
                          "    return {'seconds': time.monotonic() - t0, 'n': len(r['suggestions'])}\n",
                   limits={"timeout_ms": 180000, "sql_timeout_ms": 120000, "output_kb": 65536})
+        if psql_available():
+            # Load data, not master data being edited: created without filling the history (spec 040).
+            psql("ALTER TABLE base.product DISABLE TRIGGER master_log; "
+                 "INSERT INTO base.product (code, description, price) SELECT c, c, 1 FROM ("
+                 f"SELECT '{tag}L' || l || 'N' || i AS c FROM (VALUES (0, 100), (1, 400), (2, 1500), (3, 3000), (4, 5000)) v(l, n), "
+                 "generate_series(0, 4999) i WHERE i < v.n) x ON CONFLICT (code) DO NOTHING; "
+                 "ALTER TABLE base.product ENABLE TRIGGER master_log")
         try:
             s, c, _ = self.run_program(build, {"tag": tag})                 # inside try: cleaned up even if it fails
             self.assertEqual((s, c.get("result")), (200, 10000), c)
@@ -3154,15 +3165,18 @@ class TestProduction(Base):
             print(f"\n  MRP 10k itens × 5 níveis: {c['result']['seconds']:.1f} s, {c['result']['n']} sugestões", file=sys.stderr)
         finally:
             purge = f"test.mrp_purge_{SUFFIX}"
-            self.save(purge, "def main(tag, scen):\n"
+            self.save(purge, "def main(tag, scen, products=True):\n"
                              "    like = tag + 'L%'\n"
                              "    ana.sql_exec('DELETE FROM production.suggestion WHERE scenario = $1 OR product_id IN "
                              "(SELECT id FROM base.product WHERE code LIKE $2)', scen, like)\n"
                              "    ana.sql_exec('DELETE FROM production.forecast WHERE product_id IN (SELECT id FROM base.product WHERE code LIKE $1)', like)\n"
                              "    ana.sql_exec('DELETE FROM production.structure WHERE product_id IN (SELECT id FROM base.product WHERE code LIKE $1)', like)\n"
-                             "    return ana.sql_exec('DELETE FROM base.product WHERE code LIKE $1', like)\n",
+                             "    return ana.sql_exec('DELETE FROM base.product WHERE code LIKE $1', like) if products else 0\n",
                       limits={"timeout_ms": 120000, "sql_timeout_ms": 120000})
-            self.run_program(purge, {"tag": tag, "scen": f"perf{self.sfx}"})
+            self.run_program(purge, {"tag": tag, "scen": f"perf{self.sfx}", "products": not psql_available()})
+            if psql_available():
+                psql("ALTER TABLE base.product DISABLE TRIGGER master_log; "
+                     f"DELETE FROM base.product WHERE code LIKE '{tag}L%'; ALTER TABLE base.product ENABLE TRIGGER master_log")
 
 
 # ---------------------------------------------------------------- spec 015
@@ -3934,7 +3948,8 @@ class TestFlows(Base):
     def test_t_030_06b_receipt_step_reconciles_the_document(self):
         self.configure("sales", {1: "auto", 2: "auto", 3: "auto"})
         n = self.order()["number"]
-        st = self.steps("sales", n, lambda s: s["receipt"]["status"] == "waiting")
+        st = self.steps("sales", n, lambda s: s["receipt"]["status"] == "waiting", timeout=120)
+        self.assertEqual(st["receipt"]["status"], "waiting", st)
         self.assertIn("aguardando o pagamento no extrato", st["receipt"]["reason"])        # says what it waits for
         # The payment is in the statement but was not reconciled at import (e.g. it arrived before the invoice).
         bills = self.ok("finance.reconcile_document", flow="sales", key=str(n))
@@ -5307,6 +5322,131 @@ class TestDataScope(Base):
         finally:
             for g in (g_cc, g_pf, g_pr):
                 http("DELETE", f"/api/admin/groups/{g}", token=self.token)
+
+
+def cnab240_statement(day, items, balance):
+    """A FEBRABAN CNAB 240 bank statement: header, batch header, segment E per (amount, history, document),
+    batch trailer with the closing balance, file trailer."""
+    d = day.strftime("%d%m%Y")
+    def rec(prefix, fill=240):
+        return prefix.ljust(fill)[:fill]
+    lines = [rec("34100000" + " " * 9 + "2" + "12345678000195"), rec("34100011" + "E04")]
+    for n, (amount, history, document) in enumerate(items, start=1):
+        r = list(" " * 240)
+        def put(pos, text):
+            for i, ch in enumerate(text):
+                r[pos - 1 + i] = ch
+        put(1, "341"); put(4, "0001"); put(8, "3"); put(9, f"{n:05d}"); put(14, "E")
+        put(138, d); put(146, d); put(154, f"{int(abs(amount) * 100):018d}"); put(172, "D" if amount < 0 else "C")
+        put(180, history.ljust(25)[:25]); put(205, (document or "").ljust(36)[:36])
+        lines.append("".join(r))
+    t = list(" " * 240)
+    for pos, text in ((1, "341"), (4, "0001"), (8, "5"), (143, d), (151, f"{int(abs(balance) * 100):018d}"),
+                      (169, "D" if balance < 0 else "C")):
+        for i, ch in enumerate(text):
+            t[pos - 1 + i] = ch
+    lines.append("".join(t))
+    lines.append(rec("34199999"))
+    return "\r\n".join(lines) + "\r\n"
+
+
+class TestStatementSources(Base):
+    """Bank statements fetched by themselves: a folder of OFX/CNAB 240 files or the bank's API (T-017-05b)."""
+
+    @classmethod
+    def setUpClass(cls):
+        super().setUpClass()
+        gl = f"test.src_gl_{SUFFIX}"
+        CREATED_PROGRAMS.add(gl)
+        s, r, _ = http("PUT", f"/api/programs/{gl}", {"exposed": True, "source":
+            "def main(code, description):\n"
+            "    ana.sql_exec(\"INSERT INTO finance.account (code, description, nature) VALUES ($1, $2, 'asset') \"\n"
+            "                 \"ON CONFLICT (code) DO NOTHING\", code, description)\n"}, cls.token)
+        assert s == 200, r
+        cls.banks = []
+        for n in (1, 2, 3):
+            code, account = f"S{n}{SUFFIX}", f"1.1.8{n}.{SUFFIX}"
+            cls.client.call(gl, code=account, description=f"Banco fonte {n}")
+            s, c, _ = http("POST", "/api/programs/finance.save_bank_account/run",
+                           {"params": {"code": code, "name": f"Banco fonte {n}", "account": account}}, cls.token)
+            assert s == 200, c
+            cls.banks.append((code, account))
+
+    @classmethod
+    def tearDownClass(cls):
+        for code, account in cls.banks:
+            http("POST", "/api/programs/finance.statement_sources/run", {"params": {"bank_account": code, "remove": True}}, cls.token)
+            http("POST", "/api/programs/finance.save_bank_account/run",
+                 {"params": {"code": code, "name": "fonte de teste (desligada)", "account": account, "active": False}}, cls.token)
+
+    def ok(self, program, **params):
+        s, c, _ = self.run_program(program, params)
+        self.assertEqual(s, 200, c)
+        return c["result"]
+
+    def test_cnab240_statement_with_closing_balance_and_no_duplicates(self):
+        bank = self.banks[0][0]
+        content = cnab240_statement(datetime.date.today(), [(Decimal("150.00"), "PIX RECEBIDO", "ORD-1"),
+                                                            (Decimal("-12.34"), "TARIFA PACOTE", None)], Decimal("137.66"))
+        r = self.ok("finance.import_statement", bank_account=bank, content=content, reconcile=False)
+        self.assertEqual((r["format"], r["lines"], Decimal(str(r["closing_balance"]))), ("cnab240", 2, Decimal("137.66")))
+        again = self.ok("finance.import_statement", bank_account=bank, content=content, reconcile=False)
+        self.assertEqual((again["lines"], again["duplicates"]), (0, 2))
+        s, c, _ = self.run_program("finance.import_statement", {"bank_account": bank, "content": content.replace("\r\n", "\r\n ", 1)[:250],
+                                                               "format": "cnab240"})
+        self.assertIn(c["error"]["code"], ("INVALID_FILE", "EMPTY_STATEMENT"))
+
+    def test_folder_source_reads_each_file_once_and_reconciles(self):
+        bank = self.banks[1][0]
+        src = self.ok("finance.statement_sources", bank_account=bank, kind="folder")
+        folder = next(x["folder"] for x in src["sources"] if x["code"] == bank)
+        self.assertEqual(folder, f"/Extratos/{bank}")
+        customer = self.client.call("base.save_party", name=f"Cliente Fonte {SUFFIX}")["id"]
+        service = f"SVF{SUFFIX}X"
+        self.client.call("base.save_product", code=service, description="Serviço fonte", price="1", kind="service")
+        o = self.client.call("sales.create_order", customer=customer, items=[{"product": service, "quantity": 1, "price": "77.70"}])
+        self.client.call("sales.invoice_order", number=o["number"])
+        today = datetime.date.today().strftime("%Y%m%d")
+        ofx = ("OFXHEADER:100\nDATA:OFXSGML\n<OFX><BANKMSGSRSV1><STMTTRNRS><STMTRS><BANKTRANLIST>\n"
+               f"<STMTTRN><TRNTYPE>CREDIT<DTPOSTED>{today}120000<TRNAMT>77.70<FITID>FS{SUFFIX}<MEMO>PIX ORD-{o['number']} CLIENTE</STMTTRN>\n"
+               "</BANKTRANLIST></STMTRS></STMTTRNRS></BANKMSGSRSV1></OFX>")
+        dropper = f"test.src_drop_{SUFFIX}"
+        self.save(dropper, "def main(folder, name, text):\n    return ana.files.put(name, text, folder=folder)\n")
+        self.ok(dropper, folder=folder, name="extrato.ofx", text=ofx)
+        self.ok(dropper, folder=folder, name="quebrado.ofx", text="isto não é um extrato")
+        r = self.ok("finance.fetch_statements", bank_account=bank)
+        self.assertEqual((r["lines"], r["failed"]), (1, []))
+        self.assertEqual(self.scalar(f"SELECT status FROM finance.bill WHERE document = 'ORD-{o['number']}'"), "settled")   # reconciled
+        self.assertEqual(self.ok("finance.fetch_statements", bank_account=bank)["lines"], 0)   # each file once
+        src = self.ok("finance.statement_sources")
+        self.assertEqual(self.scalar(f"SELECT count(*) FROM finance.statement_file WHERE bank_account = '{bank}' AND status = 'failed'"), 1)
+
+    def test_api_source_fetches_since_last_time_without_duplicates(self):
+        bank = self.banks[2][0]
+        adapter = f"test.src_bank_{SUFFIX}"
+        self.save(adapter, "import datetime\n"
+                           "def main(connector, bank_account, since=None, options=None):\n"
+                           "    today = datetime.date.today().isoformat()\n"
+                           "    return {'format': 'lines', 'closing_balance': '310.00', 'closing_date': today,\n"
+                           "            'lines': [{'id': 'A1', 'date': today, 'amount': '300.00', 'description': 'TED RECEBIDA'},\n"
+                           "                      {'id': 'A2', 'date': today, 'amount': '10.00', 'description': 'RENDIMENTO'}]}\n")
+        s, c, _ = http("PUT", f"/api/admin/connectors/t{SUFFIX}_bank", {"kind": "http_api", "base_url": "http://localhost:8080/health",
+                                                                       "auth": "none", "active": True}, self.token)
+        self.assertEqual(s, 200, c)
+        try:
+            self.ok("finance.statement_sources", bank_account=bank, kind="api", connector=f"t{SUFFIX}_bank", adapter=adapter,
+                    account_at_bank="0001-12345")
+            r = self.ok("finance.fetch_statements", bank_account=bank)
+            self.assertEqual((r["lines"], r["failed"]), (2, []))
+            self.assertEqual(self.ok("finance.fetch_statements", bank_account=bank)["lines"], 0)          # the import deduplicates
+            self.assertEqual(self.scalar(f"SELECT since FROM finance.statement_source WHERE bank_account = '{bank}'"),
+                             (datetime.date.today() - datetime.timedelta(days=1)).isoformat())
+            # The generic adapter goes through the connector (here: an endpoint without transactions).
+            g = self.ok("finance.bank_api_generic", connector=f"t{SUFFIX}_bank", bank_account=bank, options={"path": ""})
+            self.assertEqual((g["format"], g["lines"]), ("lines", []))
+        finally:
+            http("PUT", f"/api/admin/connectors/t{SUFFIX}_bank", {"kind": "http_api", "base_url": "http://localhost:8080/health",
+                                                                 "auth": "none", "active": False}, self.token)
 
 
 class TestRunErrors(Base):
