@@ -645,6 +645,12 @@ a regra da empresa.
   fazer agora (abre a rotina com o documento preenchido), executar
   automaticamente, reprocessar, pular com motivo. O que alguém fizer à mão,
   fora da esteira, também a faz andar.
+- **Recebimento e pagamento** são etapas automáticas: a esteira procura os
+  títulos do documento no extrato (todas as contas) e baixa o que é certo
+  (cobrança ou documento citado, valor exato); o resto espera dizendo o quê —
+  o pagamento ainda não chegou, ou um crédito que pode ser dele para alguém
+  confirmar na bancada. Pagamentos que chegam depois são baixados na
+  importação do extrato e a esteira anda sozinha.
 - A esteira começa na mesma transação que cria o documento; o motor roda no
   nó líder, com nova tentativa em falhas técnicas e retomada se um nó cair.
 

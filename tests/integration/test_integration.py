@@ -3931,6 +3931,25 @@ class TestFlows(Base):
         st = self.steps("sales", n, lambda s: s["receipt"]["status"] == "waiting")
         self.assertEqual(st["invoice"]["status"], "done")
 
+    def test_t_030_06b_receipt_step_reconciles_the_document(self):
+        self.configure("sales", {1: "auto", 2: "auto", 3: "auto"})
+        n = self.order()["number"]
+        st = self.steps("sales", n, lambda s: s["receipt"]["status"] == "waiting")
+        self.assertIn("aguardando o pagamento no extrato", st["receipt"]["reason"])        # says what it waits for
+        # The payment is in the statement but was not reconciled at import (e.g. it arrived before the invoice).
+        bills = self.ok("finance.reconcile_document", flow="sales", key=str(n))
+        self.assertEqual(bills["settled"], 0)
+        s, c, _ = http("POST", "/api/sql", {"sql": f"SELECT document, amount FROM finance.bill WHERE (document = 'ORD-{n}' "
+                                                  f"OR document LIKE 'ORD-{n}/%') AND status = 'open' ORDER BY id"}, self.token)
+        day = datetime.date.today().strftime("%d/%m/%Y")
+        csv = "data;histórico;valor\n" + "".join(f"{day};PIX {doc} CLIENTE;{str(amount).replace('.', ',')}\n" for doc, amount in c["rows"])
+        self.ok("finance.import_statement", bank_account="CAIXA", format="csv", content=csv, reconcile=False)
+        self.ok("flows.act", instance=st["receipt"]["id"], seq=st["receipt"]["seq"], action="run")   # the stage itself settles it
+        st = self.steps("sales", n, lambda s: s["receipt"]["status"] == "done")
+        self.assertEqual(st["receipt"]["status"], "done", st)
+        self.assertEqual(self.scalar(f"SELECT count(*) FROM finance.bill WHERE (document = 'ORD-{n}' OR document LIKE 'ORD-{n}/%') "
+                                     "AND status = 'open'"), 0)
+
     def test_ca_030_04_blocked_customer_stops_at_invoice(self):
         self.configure("sales", {1: "auto", 2: "auto", 3: "auto"})
         cust = self.client.call("base.save_party", name=f"Cliente Bloqueado Esteira {SUFFIX}", state="SP")["id"]
@@ -3977,8 +3996,8 @@ class TestFlows(Base):
         self.ok("flows.configure", flow="production", action="deactivate")
         r = self.ok("flows.configure", flow="sales")
         self.assertEqual([s["code"] for s in r["steps"]], ["ship", "invoice", "charge", "receipt"])
-        s, c, _ = self.run_program("flows.configure", {"flow": "sales", "action": "mode", "step": 4, "mode": "auto"})
-        self.assertEqual(c["error"]["code"], "INVALID_OPERATION")                # a waiting step has no mode
+        s, c, _ = self.run_program("flows.configure", {"flow": "field", "action": "mode", "step": 2, "mode": "auto"})
+        self.assertEqual(c["error"]["code"], "INVALID_OPERATION")                # a waiting step (execution) has no mode
         u, t = new_user("user")
         s, c, _ = self.run_program("flows.configure", {"flow": "sales"}, token=t)
         self.assertIn(s, (403, 422))
