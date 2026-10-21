@@ -487,7 +487,16 @@ gravada não se altera nem se apaga.
 - **Extrato**: importar já concilia o que é certo; o saldo final (OFX ou
   informado) é conferido com a conta contábil; **regras do extrato**
   (`finance.statement_rules`) lançam tarifas, IOF e rendimentos; a
-  transferência entre contas próprias é casada sozinha.
+  transferência entre contas próprias é casada sozinha. Formatos: OFX,
+  CNAB 240 (FEBRABAN, com o saldo final) e CSV — reconhecidos pelo conteúdo.
+- **Extrato sem ninguém importar** (`extratos_fontes`): cada conta escolhe a
+  fonte — **pasta de arquivos** (OFX ou CNAB 240 enviados por qualquer
+  pessoa ou sistema à pasta `/Extratos/<conta>` da área Arquivos; cada
+  arquivo é lido uma vez, arquivo com defeito fica registrado com o motivo)
+  ou **API do banco** (conector da spec 017 + programa adaptador; o genérico
+  lê JSON ou OFX, e cada banco pode ter o seu). A rotina `extratos.buscar`
+  (de hora em hora nos dias úteis, nasce desligada) ou "Buscar agora" lê
+  todas as fontes e concilia.
 - **Gateway**: a cobrança paga fica em "valores a receber do gateway" (líquido
   da tarifa) até o **repasse** aparecer no extrato, que é casado sozinho.
 - **Cancelar fatura** (`cancelar_fatura` para pedido; `field.cancel_invoice`
