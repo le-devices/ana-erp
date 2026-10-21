@@ -40,7 +40,11 @@ auditoria fora da transação.
   entrada e dono da execução respondem "tente de novo" (503 com
   `Retry-After`, código `DB_UNAVAILABLE`) e a sessão continua valendo. As
   conexões voltam com espera crescente de 250 ms até 2 s e cada endereço
-  candidato a primário tem no máximo 3 s para responder.
+  candidato a primário tem no máximo 3 s para responder. Sessões e nonces
+  anti-repetição da API pública são tabelas registradas no WAL (nunca
+  UNLOGGED): chegam à réplica, sobrevivem à troca de primário e à
+  recuperação depois de uma queda — ninguém é deslogado, e uma chamada
+  assinada capturada antes da troca não pode ser repetida.
 - **RF-023-07** Proteção contra sobrecarga em cascata: disjuntores para
   dependências externas (sistemas remotos, conectores), filas com limite e
   rejeição rápida (503/429) em vez de degradação.

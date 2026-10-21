@@ -3948,7 +3948,8 @@ class TestFlows(Base):
     def test_t_030_06b_receipt_step_reconciles_the_document(self):
         self.configure("sales", {1: "auto", 2: "auto", 3: "auto"})
         n = self.order()["number"]
-        st = self.steps("sales", n, lambda s: s["receipt"]["status"] == "waiting")
+        st = self.steps("sales", n, lambda s: s["receipt"]["status"] == "waiting", timeout=120)
+        self.assertEqual(st["receipt"]["status"], "waiting", st)
         self.assertIn("aguardando o pagamento no extrato", st["receipt"]["reason"])        # says what it waits for
         # The payment is in the statement but was not reconciled at import (e.g. it arrived before the invoice).
         bills = self.ok("finance.reconcile_document", flow="sales", key=str(n))
