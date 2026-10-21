@@ -5290,6 +5290,21 @@ class TestDataScope(Base):
                 http("DELETE", f"/api/admin/groups/{g}", token=self.token)
 
 
+class TestRunErrors(Base):
+    """Running what cannot run says why (a library, an inactive program, a missing one)."""
+
+    def test_library_inactive_and_missing_programs_explain_themselves(self):
+        s, c, _ = self.run_program("util.pdf")
+        self.assertEqual((s, c["error"]["code"]), (404, "NOT_EXECUTABLE"))
+        self.assertIn("biblioteca", c["error"]["message"])
+        name = f"test.inactive_{SUFFIX}"
+        self.save(name, "def main():\n    return 1\n", active=False)
+        s, c, _ = self.run_program(name)
+        self.assertEqual((s, c["error"]["code"]), (404, "PROGRAM_INACTIVE"))
+        s, c, _ = self.run_program(f"test.nao_existe_{SUFFIX}")
+        self.assertEqual((s, c["error"]["code"]), (404, "PROGRAM_NOT_FOUND"))
+
+
 class TestGuidedProcess(Base):
     """Next step declared by the program and the stages of a process (spec 020, RF-020-10/11)."""
 

@@ -78,16 +78,24 @@
     let l;
     try { l = await API.license(); } catch (_) { band.hidden = true; return; }
     const d = l.days_left;
-    const text = {
+    // Short labels: the band only competes for room when it asks for attention; the detail is in the tooltip.
+    const long = {
       trial: `Avaliação: ${d} dia(s) restantes`,
-      expiring: `Licença vence em ${d} dia(s)`,
+      expiring: `A licença vence em ${d} dia(s)`,
       grace: `Licença vencida há ${-d} dia(s): ${15 + d} dia(s) até o modo somente consulta`,
       restricted: `Somente consulta — ${LICENSE_REASON[l.reason] || "licença inválida"}`,
-    }[l.state] || (l.environment === "non_production" ? "Licença de testes — não usar em produção" : "");
+    }[l.state];
+    const short = { trial: `Avaliação: ${d} d`, expiring: `Licença: ${d} d`, grace: "Licença vencida", restricted: "Somente consulta" }[l.state];
+    const inst = $("#instance-band");
+    const test = l.environment === "non_production";
+    // A test license on a development/test instance is already said by the instance band.
+    if (inst && !inst.hidden && test) inst.title = (inst.title ? inst.title + " · " : "") + "licença de testes (não usar em produção)";
+    const text = short || (test && (!inst || inst.hidden) ? "Licença de testes" : "");
     band.hidden = !text;
     band.textContent = text;
+    band.setAttribute("aria-label", long || (test ? "Licença de testes — não usar em produção" : ""));
     band.className = "license-band " + (l.state === "restricted" ? "bad" : l.state === "valid" ? "test" : "warn");
-    band.title = state.user.role === "admin" ? "Administração → Licença" : "Fale com o administrador";
+    band.title = (long || "Licença de testes — não usar em produção") + (state.user.role === "admin" ? " (Administração → Licença)" : " (fale com o administrador)");
     band.onclick = state.user.role === "admin" ? () => go("#/admin/license") : null;
   }
 

@@ -66,8 +66,16 @@ await go(w, "#/home");
 await until(() => text("#area-home").includes("Programa de demonstração"), "favorite in home", jsErrors);
 ok(true, "favorito aparece no Início (CA-020-05)");
 
+// A library opens for editing, but Executar/Depurar say it is not run by itself.
+await go(w, "#/dev/program/util.pdf");
+await until(() => text("#program-name") === "util.pdf", "library", jsErrors);
+ok(d.querySelector("#run").disabled && d.querySelector("#debug").disabled && d.querySelector("#run").title.includes("Biblioteca"),
+   "biblioteca: Executar e Depurar desativados, com a explicação");
+
 // Development: program tabs (RF-020-04)
 await go(w, "#/dev/program/demo.hello");
+await until(() => text("#program-name") === "demo.hello", "program after library", jsErrors);
+ok(!d.querySelector("#run").disabled, "programa comum volta a ter Executar");
 await until(() => text("#program-name") === "demo.hello", "program", jsErrors);
 ok(d.querySelector("#editor textarea").value.includes("def main"), "código no editor");
 ok([...d.querySelectorAll("[data-ptab]")].map((b) => b.textContent).join("|") === "Código|Propriedades e limites|Versões|Execuções|Agendamentos|Desempenho", "abas do programa");

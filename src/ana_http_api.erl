@@ -322,7 +322,9 @@ run(Name, U, Req) ->
                         ana_http:json(503, #{error => E}, R);
                     {error, #{<<"code">> := C} = E} when C =:= <<"QUOTA_EXCEEDED">>; C =:= <<"PROGRAM_BUSY">> ->
                         ana_http:json(429, #{error => E}, R);
-                    {error, #{<<"code">> := <<"PROGRAM_NOT_FOUND">>} = E} -> ana_http:json(404, #{error => E}, R);
+                    {error, #{<<"code">> := C} = E} when C =:= <<"PROGRAM_NOT_FOUND">>; C =:= <<"PROGRAM_INACTIVE">>;
+                                                         C =:= <<"NOT_EXECUTABLE">> ->
+                        ana_http:json(404, #{error => E}, R);
                     {error, #{<<"code">> := <<"FORBIDDEN">>} = E} -> ana_http:json(403, #{error => E}, R);
                     {error, E} -> ana_http:json(422, #{error => E}, R)
                 end
