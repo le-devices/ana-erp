@@ -19,3 +19,9 @@
 - [ ] T-020-15 Definição com simulação ao lado: regras do extrato, condições de esteira e escopo de dados (RF-020-13, CA-020-08)
 - [ ] T-020-16 Grade de planejamento por período (dimensões fixas, períodos pelo intervalo, edição, colar planilha, totais, lote, salvar só o mudado) (RF-020-15, CA-020-10)
 - [ ] T-020-17 Gráfico ligado à grade (planejado × consumido × disponível, negativo em destaque, um eixo) e primeiros usos: orçamento, previsão, alocação de horas (RF-020-16, CA-020-11)
+
+## Organização por áreas e categorias (RF-020-19..23)
+- [ ] T-020-18 Áreas do negócio e categorias do produto (`ana:category` nos programas, área pelo namespace; nomes de área para bpm, master e demais) (RF-020-19, CA-020-13)
+- [ ] T-020-19 Categorias pessoais e da empresa (visíveis a todos ou a grupos), renomear, reordenar, recolher, excluir (RF-020-20, CA-020-15)
+- [ ] T-020-20 Seleção de várias rotinas e "Copiar para categoria…" (atalho; parâmetros pré-preenchidos e nome próprio opcionais) (RF-020-21, CA-020-14, CA-020-17)
+- [ ] T-020-21 Favoritos do Início por categoria, arrastar para ordenar e mover; busca do topo acha atalhos; nunca mostra o que não pode usar (RF-020-22, RF-020-23, CA-020-16)

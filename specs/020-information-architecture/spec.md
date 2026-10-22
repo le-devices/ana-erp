@@ -1,6 +1,6 @@
 # 020 — Arquitetura da informação e experiência de uso
 
-Situação: implementada (RF-020-01..12); padrões de telas de produtividade (RF-020-13..18) especificados, a implementar.
+Situação: implementada (RF-020-01..12); padrões de telas de produtividade (RF-020-13..18) e organização por áreas e categorias (RF-020-19..23) especificados, a implementar.
 
 ## Problema
 A interface cresceu por acréscimo: propriedades acima do editor, versões e
@@ -201,3 +201,59 @@ componente único, usado por todas as telas que precisarem dele.
   destaque, em um só eixo.
 - **CA-020-12** Colunas escolhidas, ordem e uma variante salva voltam ao
   reabrir a tela; o divisor dos painéis volta à posição deixada.
+
+## Organização das rotinas por áreas e categorias (out/2026)
+Hoje a Operação mostra todas as rotinas numa grade só, com o módulo técnico
+como rótulo, e os favoritos do Início são uma lista sem divisão. Quem usa o
+ERP pensa por **área do negócio** e pelo **próprio trabalho** ("fechamento do
+mês", "rotina da expedição") — e cada empresa e cada pessoa organiza isso do
+seu jeito.
+
+- **RF-020-19 Áreas do negócio e categorias do produto.** A Operação agrupa
+  as rotinas por **área do negócio** (Vendas, Compras, Estoque, Produção,
+  Logística e campo, Projetos, Financeiro, Contabilidade, Cadastros,
+  Processos, Analítico, Integrações) e, dentro de cada área, por
+  **categoria** (ex.: Financeiro → Contas a receber, Conciliação bancária,
+  Contabilidade, Fechamento). Cada programa do produto declara área e
+  categoria no cabeçalho (`# ana:category Financeiro/Conciliação bancária`);
+  sem declaração, vale a área do namespace. Nenhum rótulo técnico aparece
+  ("bpm", "master"): sempre o nome da área.
+- **RF-020-20 Categorias criadas pela empresa e pela pessoa.** Qualquer
+  usuário cria **categorias pessoais** (só ele vê); o administrador — ou quem
+  tiver a permissão — cria **categorias da empresa**, visíveis a todos ou a
+  grupos de acesso escolhidos. Categorias podem ser renomeadas, reordenadas
+  (arrastar), recolhidas e excluídas (excluir a categoria nunca exclui a
+  rotina).
+- **RF-020-21 Copiar rotinas para uma categoria.** Na grade da Operação (e
+  na lista lateral) o operador **seleciona uma ou mais rotinas** e escolhe
+  "Copiar para categoria…" — uma existente ou uma nova criada ali mesmo.
+  Copiar cria um **atalho**: a rotina continua uma só (mesma versão,
+  permissões e histórico) e passa a aparecer também na categoria; o mesmo
+  atalho pode estar em várias categorias. Opcionalmente o atalho guarda
+  **parâmetros pré-preenchidos** e um nome próprio ("Faturar pedidos da
+  filial SP"), abrindo a rotina com eles.
+- **RF-020-22 Favoritos por categoria no Início.** Os favoritos do Início se
+  organizam nas mesmas categorias (pessoais e da empresa): fixar com ☆
+  pergunta a categoria (ou usa "Favoritas"); a tela de Início mostra as
+  categorias como seções recolhíveis, com arrastar para reordenar e mover
+  atalhos entre elas, e o mesmo "Copiar para categoria…" com seleção de
+  várias.
+- **RF-020-23 Nunca mostra o que a pessoa não pode usar.** Uma categoria da
+  empresa só exibe as rotinas que o usuário pode executar (papel, grupos de
+  acesso, licença — spec 009); uma rotina desativada ou excluída some do
+  atalho com aviso discreto; a busca do topo ("Ir para…") encontra também os
+  atalhos pelo nome dado.
+
+### Critérios de aceite (RF-020-19..23)
+- **CA-020-13** A Operação abre agrupada por área do negócio e categoria; o
+  rótulo de cada rotina é o nome da área (nenhum "bpm" ou "master").
+- **CA-020-14** O operador seleciona três rotinas, escolhe "Copiar para
+  categoria…", cria "Fechamento do mês" e as três aparecem lá, continuando
+  nas áreas de origem; remover a categoria não remove as rotinas.
+- **CA-020-15** O administrador cria a categoria da empresa "Expedição" para
+  o grupo da logística: quem é do grupo a vê; quem não é, não; uma rotina
+  sem permissão para o usuário não aparece nela.
+- **CA-020-16** No Início, fixar uma rotina pergunta a categoria; arrastar
+  muda a ordem e move entre categorias; a ordem volta ao recarregar.
+- **CA-020-17** Um atalho com parâmetros pré-preenchidos e nome próprio abre
+  a rotina com esses parâmetros e é encontrado pela busca do topo.
