@@ -1,6 +1,6 @@
 # 020 — Arquitetura da informação e experiência de uso
 
-Situação: implementada.
+Situação: implementada (RF-020-01..12); padrões de telas de produtividade (RF-020-13..18) especificados, a implementar.
 
 ## Problema
 A interface cresceu por acréscimo: propriedades acima do editor, versões e
@@ -121,3 +121,83 @@ desenvolvedor e administrador —, com as coisas relacionadas juntas.
   (`AnaUI.enhance`) dá papéis e setas às abas, foco e Enter às árvores e nome
   acessível aos campos sem rótulo, também no que é desenhado depois.
 - Voltar devolve a rolagem da tela de onde se saiu.
+
+## Padrões de telas de produtividade (out/2026)
+Referência de usabilidade pedida pelo dono do produto: telas de planejamento e
+definição de conjuntos de ERPs de mercado (definição de um conjunto por
+critérios com a simulação ao lado; grade de planejamento por período com
+gráfico de consumo). O ANA adota os **padrões de uso**, com nomes e desenho
+próprios (sem nomenclatura de terceiros). Valem para todo o ERP; cada um é um
+componente único, usado por todas as telas que precisarem dele.
+
+- **RF-020-13 Definição com simulação ao lado.** Quem define algo que
+  seleciona registros (regras do extrato, condições das esteiras, escopo de
+  dados dos grupos, regras de rateio, reposição de estoque, público de uma
+  campanha…) edita à esquerda e vê à direita, **sem salvar**, o resultado:
+  "Simular" mostra a tabela dos registros que a definição pega (contagem no
+  título, busca, colunas da entidade, chave clicável que abre o documento),
+  com data e hora da simulação. Salvar é um passo separado. Painéis
+  redimensionáveis e recolhíveis (o da simulação pode ocupar a tela).
+- **RF-020-14 Construtor de condições padronizado.** Linhas "campo ·
+  operador · valor", com o valor por ajuda de valores (a mesma busca dos
+  cadastros, spec 040) e operadores do tipo do campo (é, não é, entre,
+  contém, maior que…); adicionar e remover linha ao lado de cada uma;
+  vários **critérios** (abas "Critério 1, 2…"): dentro de um critério as
+  linhas valem juntas (E), entre critérios basta um (OU); **condições de
+  exclusão** separadas ("exceto…"). O resultado vira a regra restrita já
+  usada pelas esteiras e pelo BPM (nunca código); o texto da regra aparece em
+  português ("Filial é AK01 ou AK02, exceto cliente bloqueado").
+- **RF-020-15 Grade de planejamento por período.** Linhas = combinações de
+  dimensões (ex.: canal × região, centro de custo × conta, item × depósito),
+  com as colunas de dimensões **fixas à esquerda** e ajuda de valores nas
+  células; colunas de **períodos** geradas pelo intervalo escolhido (mês,
+  semana) com rolagem horizontal; colunas de situação e comentário; edição
+  em linha com validação (números no formato brasileiro, negativos
+  recusados onde não cabem); seleção de linhas para ações em lote (incluir,
+  copiar, mudar situação, excluir); totais por período e por linha; colar um
+  bloco vindo de planilha; exportar e importar planilha; salvar grava só o
+  que mudou (com aviso de alterações não salvas e controle de edição
+  concorrente).
+- **RF-020-16 Gráfico ligado à grade.** Abaixo da grade, o gráfico da linha
+  selecionada (ou da soma da seleção): por período, **planejado × consumido
+  × disponível**, com o disponível negativo destacado (cor de alerta e
+  rótulo), legenda e dica ao passar o mouse; **um só eixo** (as séries têm a
+  mesma unidade — regra do guia de gráficos do ANA: nunca dois eixos);
+  alternar gráfico/tabela, ampliar e tela cheia; seguir a seleção sem
+  recarregar a tela.
+- **RF-020-17 Barra da tabela padronizada.** Toda tabela de trabalho tem:
+  título com contagem, busca, filtros por coluna, escolha e ordem das colunas
+  e ordenação **lembradas por usuário** (variantes com nome, uma padrão),
+  exportar planilha e ações sobre a seleção; o mesmo componente na Operação,
+  nos Cadastros e na Administração.
+- **RF-020-18 Cabeçalho e painéis com estado.** Cabeçalho da tela fixável
+  (filtros e intervalo sempre à vista ao rolar), painéis com divisor
+  arrastável e botão de recolher; a posição dos divisores e o cabeçalho
+  fixado ficam lembrados por tela e usuário.
+
+### Onde o ANA usa esses padrões primeiro
+- Grade de planejamento + gráfico: orçamento por centro de custo × conta
+  (spec 027, orçado × realizado × saldo), previsão de vendas e produção por
+  item × semana (spec 014, previsto × consumido), alocação de horas por
+  pessoa × semana (spec 021, planejado × apontado × disponível) e cotas de
+  venda por canal × região (planejado × vendido × disponível).
+- Definição + simulação: regras do extrato (quais linhas a regra pega),
+  condições das esteiras e do BPM (quais documentos entrariam), escopo de
+  dados dos grupos (o que o membro passaria a ver), regras de rateio (quanto
+  iria a cada centro) e regras de reposição.
+
+### Critérios de aceite (RF-020-13..18)
+- **CA-020-08** Ao editar uma regra do extrato, "Simular" mostra as linhas
+  abertas que ela pegaria, com contagem, sem gravar nada; salvar grava a
+  regra.
+- **CA-020-09** Duas linhas no critério 1 (E), um critério 2 (OU) e uma
+  exclusão produzem a regra restrita equivalente e o texto em português; a
+  mesma regra roda na esteira.
+- **CA-020-10** No orçamento, escolher o intervalo gera as colunas de meses;
+  editar células, colar um bloco da planilha e salvar grava só as mudadas; o
+  total por mês acompanha a edição.
+- **CA-020-11** Selecionar uma linha da grade mostra o gráfico planejado ×
+  consumido × disponível dessa linha, com o disponível negativo em
+  destaque, em um só eixo.
+- **CA-020-12** Colunas escolhidas, ordem e uma variante salva voltam ao
+  reabrir a tela; o divisor dos painéis volta à posição deixada.
