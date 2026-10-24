@@ -242,6 +242,7 @@
       open: (program, params) => window.AnaStudio.go(routineHash(program, params)),
       refresh: () => lastRun && run(lastRun, true),
       lookup,
+      screen: "out:" + r.name,
     };
 
     async function run(params, quiet) {
@@ -293,21 +294,24 @@
     }
 
     const I = window.AnaUI.icon;
+    const band = el("section", { class: "page-band" });
+    layout.append(band);
+    band.append(
+      el("div", { class: "page-header" },
+        el("div", { class: "page-title" }, el("div", { class: "breadcrumb", text: `${R.areaOf(r)} · ${R.categoryOf(r)}` }),
+          el("h1", {}, title(r), " ", fav,
+            el("button", { type: "button", class: "quiet small copy-to-cat", title: "Copiar para uma categoria sua ou da empresa",
+                           onclick: () => window.AnaCategories.copyDialog([r.name]) }, "Copiar para categoria…"))),
+        el("div", { class: "page-meta" }, status,
+          el("span", { class: "muted small", text: `${r.command ? "comando " + r.command + " · " : ""}${r.exposed ? "integração · " : ""}F8 executa · F3 volta` }),
+          window.AnaUI.pinnable(band, "routine." + r.name))),
+      el("section", { class: "params-card filter-bar" },
+        el("div", { class: "filter-head" }, I("filter", 16), el("strong", { text: "Filtros" })), form.node),
+      el("div", { class: "params-summary" },
+        el("button", { type: "button", class: "quiet small icon-text", onclick: expand, title: "Alterar os filtros" }, I("edit", 16), el("span", { text: "Filtros" })),
+        summaryText,
+        el("button", { type: "button", class: "quiet small icon-text", onclick: () => lastRun && run(lastRun) }, I("refresh", 16), el("span", { text: "Executar de novo" }))));
     layout.append(
-      el("section", { class: "page-band" },
-        el("div", { class: "page-header" },
-          el("div", { class: "page-title" }, el("div", { class: "breadcrumb", text: `${R.areaOf(r)} · ${R.categoryOf(r)}` }),
-            el("h1", {}, title(r), " ", fav,
-              el("button", { type: "button", class: "quiet small copy-to-cat", title: "Copiar para uma categoria sua ou da empresa",
-                             onclick: () => window.AnaCategories.copyDialog([r.name]) }, "Copiar para categoria…"))),
-          el("div", { class: "page-meta" }, status,
-            el("span", { class: "muted small", text: `${r.command ? "comando " + r.command + " · " : ""}${r.exposed ? "integração · " : ""}F8 executa · F3 volta` }))),
-        el("section", { class: "params-card filter-bar" },
-          el("div", { class: "filter-head" }, I("filter", 16), el("strong", { text: "Filtros" })), form.node),
-        el("div", { class: "params-summary" },
-          el("button", { type: "button", class: "quiet small icon-text", onclick: expand, title: "Alterar os filtros" }, I("edit", 16), el("span", { text: "Filtros" })),
-          summaryText,
-          el("button", { type: "button", class: "quiet small icon-text", onclick: () => lastRun && run(lastRun) }, I("refresh", 16), el("span", { text: "Executar de novo" })))),
       el("section", { class: "result-card page-body" }, output,
         el("details", { class: "json-box" }, el("summary", { text: "dados retornados (JSON)" }), resultJson)));
     $("#ops-main").replaceChildren(

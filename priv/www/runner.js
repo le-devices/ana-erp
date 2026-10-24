@@ -356,12 +356,14 @@
       if (test || !a) return !!a;
       return ctx.open(a.program, a.params || {});
     } : null;
-    if (!d.row_actions) return dataTable(d.columns, d.rows, d.title, null, onOpen);
+    // The layout each user leaves on this table (columns, order, filters, variants) comes back (RF-020-17).
+    const screen = ctx && ctx.screen ? `${ctx.screen}:${d.title || "itens"}` : null;
+    if (!d.row_actions) return dataTable(d.columns, d.rows, d.title, null, onOpen, screen);
     const box = dataTable(d.columns, d.rows, d.title, (i) => {
       const slot = el("div", { class: "action-form-row", hidden: true });
       const wrap = el("div", {}, (d.row_actions[i] || []).map((a) => actionButton(a, ctx, slot)), slot);
       return wrap;
-    }, onOpen);
+    }, onOpen, screen);
     return box;
   }
 

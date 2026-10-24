@@ -5520,6 +5520,45 @@ class TestRoutineCategories(Base):
             http("DELETE", f"/api/admin/groups/{g}", token=self.token)
 
 
+class TestUiVariants(Base):
+    """Table variants and screen state per user (spec 020, RF-020-17/18)."""
+
+    def test_ca_020_12_variants_and_screen_state_come_back_per_user(self):
+        u1, t1 = new_user("user")
+        u2, t2 = new_user("user")
+        screen = f"out:finance.receivables:Títulos {SUFFIX}"
+        state = {"cols": ["Vencimento", "Cliente", "Valor"], "sort": {"key": "Valor", "asc": False}, "filters": {"Valor": ">100"}}
+        s, c, _ = http("POST", "/api/ui/variants", {"screen": screen, "name": "Em atraso", "state": state, "default": True}, t1)
+        self.assertEqual(s, 200, c)
+        first = c["id"]
+        http("POST", "/api/ui/variants", {"screen": screen, "name": "Todas", "state": {"cols": ["Cliente"]}}, t1)
+        s, c, _ = http("POST", "/api/ui/variants", {"screen": screen, "name": " em atraso ", "state": {"cols": ["Valor"]}}, t1)
+        self.assertEqual(c["id"], first)                                       # same name (any case): replaced, still the default
+        s, rows, _ = http("GET", "/api/ui/variants?screen=" + urllib.parse.quote(screen), token=t1)
+        self.assertEqual([(v["name"], v["is_default"]) for v in rows], [("Em atraso", True), ("Todas", False)])
+        self.assertEqual(rows[0]["state"], {"cols": ["Valor"]})
+        s, c, _ = http("POST", "/api/ui/variants", {"screen": screen, "name": "Todas", "state": {"cols": ["Cliente"]}, "default": True}, t1)
+        s, rows, _ = http("GET", "/api/ui/variants?screen=" + urllib.parse.quote(screen), token=t1)
+        self.assertEqual([v["name"] for v in rows if v["is_default"]], ["Todas"])  # one default per screen
+        # Another person sees none of it and cannot remove it.
+        self.assertEqual(http("GET", "/api/ui/variants?screen=" + urllib.parse.quote(screen), token=t2)[1], [])
+        self.assertEqual(http("DELETE", f"/api/ui/variants/{first}", token=t2)[0], 404)
+        self.assertEqual(http("DELETE", f"/api/ui/variants/{first}", token=t1)[0], 200)
+        # Bounds: a name is required and the state has a size limit.
+        self.assertEqual(http("POST", "/api/ui/variants", {"screen": screen, "name": " ", "state": {}}, t1)[0], 400)
+        self.assertEqual(http("POST", "/api/ui/variants", {"screen": screen, "name": "Grande", "state": {"x": "y" * 40000}}, t1)[0], 400)
+        # Screen state: divider and pinned header return on the next session (any computer).
+        self.assertEqual(http("PUT", "/api/ui/settings", {"key": "split.ops-nav", "value": {"w": 320, "collapsed": False}}, t1)[0], 200)
+        self.assertEqual(http("PUT", "/api/ui/settings", {"key": "pin.routine.finance.receivables", "value": True}, t1)[0], 200)
+        t1b = login(u1, "Changed-pass-1")
+        s, prefs, _ = http("GET", "/api/ui/settings", token=t1b)
+        self.assertEqual((prefs["split.ops-nav"], prefs["pin.routine.finance.receivables"]), ({"w": 320, "collapsed": False}, True))
+        self.assertEqual(http("GET", "/api/ui/settings", token=t2)[1], {})
+        http("PUT", "/api/ui/settings", {"key": "pin.routine.finance.receivables", "value": None}, t1)
+        self.assertNotIn("pin.routine.finance.receivables", http("GET", "/api/ui/settings", token=t1)[1])
+        self.assertEqual(http("PUT", "/api/ui/settings", {"key": "x", "value": "y" * 5000}, t1)[0], 400)
+
+
 class TestRunErrors(Base):
     """Running what cannot run says why (a library, an inactive program, a missing one)."""
 

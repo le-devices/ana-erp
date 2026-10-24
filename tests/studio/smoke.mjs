@@ -158,6 +158,59 @@ await go(w, "#/ops/projects/projects.workspace?project=PRJ-001&view=structure");
 await until(() => d.querySelector("#ops-main .table-box button"), "table tools", jsErrors);
 ok([...d.querySelectorAll("#ops-main .table-box button")].some((b) => b.textContent.includes("CSV")) && d.querySelector("#ops-main th.sortable"),
    "tabelas com ordenação e exportação CSV");
+// Work table (RF-020-17, CA-020-12): choose columns, filter, save a variant; the layout comes back on reopening.
+{
+  const box = () => d.querySelector("#ops-main .work-box");
+  const heads = () => box().querySelectorAll("thead tr:first-child th.sortable").length;
+  const btn = (label) => [...box().querySelectorAll(".table-tools button")].find((b) => b.textContent.includes(label));
+  const before = heads();
+  ok(before >= 2 && btn("Colunas") && btn("Filtros") && btn("Variante") && box().querySelector(".table-search"), "barra da tabela: busca, filtros, colunas, variantes e CSV");
+  btn("Colunas").click();
+  await until(() => !box().querySelector(".table-pop").hidden, "columns panel", jsErrors);
+  const boxes = box().querySelectorAll(".col-list input[type=checkbox]");
+  boxes[1].checked = false;
+  boxes[1].dispatchEvent(new w.Event("change"));
+  await until(() => heads() === before - 1, "column hidden", jsErrors);
+  ok(true, "escolha das colunas muda a tabela");
+  btn("Filtros").click();
+  const f = box().querySelector(".col-filter");
+  f.value = "zzz-nada-assim";
+  f.dispatchEvent(new w.Event("input"));
+  await until(() => box().textContent.includes("Nenhuma linha com essa busca ou filtro"), "column filter", jsErrors);
+  ok(box().querySelector(".table-count").textContent.includes(" de "), "filtro por coluna, com a contagem do que aparece");
+  f.value = "";
+  f.dispatchEvent(new w.Event("input"));
+  await until(() => !box().textContent.includes("Nenhuma linha com essa busca"), "filter cleared", jsErrors);
+  btn("Variante").click();
+  await until(() => box().querySelector(".variant-save input"), "variants panel", jsErrors);
+  box().querySelector(".variant-save input").value = "Teste estúdio";
+  [...box().querySelectorAll(".variant-save button")].find((b) => b.textContent === "Salvar variante").click();
+  await until(() => btn("Variante").textContent.includes("Teste estúdio"), "variant saved", jsErrors);
+  await go(w, "#/ops/projects/projects.workspace?project=PRJ-001&view=board");
+  await until(() => d.querySelectorAll("#ops-main .board-card").length > 0, "board (leave table)", jsErrors);
+  await go(w, "#/ops/projects/projects.workspace?project=PRJ-001&view=structure");
+  await until(() => box() && heads() === before - 1, "layout back", jsErrors);
+  ok(btn("Variante").textContent.includes("Teste estúdio"), "colunas e variante voltam ao reabrir a tela (CA-020-12)");
+  btn("Variante").click();
+  await until(() => [...box().querySelectorAll(".variant-save button")].some((b) => b.textContent.includes("Excluir")), "variant delete", jsErrors);
+  [...box().querySelectorAll(".variant-save button")].find((b) => b.textContent.includes("Excluir")).click();
+  await until(() => btn("Variante").textContent.includes("atual"), "variant removed", jsErrors);
+  btn("Colunas").click();
+  await until(() => !box().querySelector(".table-pop").hidden, "columns panel again", jsErrors);
+  [...box().querySelectorAll(".table-pop button")].find((b) => b.textContent === "Restaurar padrão").click();
+  await until(() => heads() === before, "layout restored", jsErrors);
+  ok(true, "variante excluída e colunas de volta ao padrão");
+  // Screen state (RF-020-18): collapsible side panel and pinned header, remembered.
+  const side = d.querySelector("#area-ops .split-toggle");
+  side.click();
+  ok(d.querySelector("#area-ops").classList.contains("split-collapsed") && side.getAttribute("aria-expanded") === "false", "painel lateral recolhe");
+  side.click();
+  ok(!d.querySelector("#area-ops").classList.contains("split-collapsed"), "e volta");
+  const pin = d.querySelector("#ops-main .pin-toggle");
+  pin.click();
+  ok(d.querySelector("#ops-main .page-band").classList.contains("pinned") && w.AnaPrefs.get("pin.routine.projects.workspace") === true, "cabeçalho fixado e lembrado");
+  pin.click();
+}
 await go(w, "#/ops/projects/projects.workspace?project=PRJ-001&view=board");
 await until(() => d.querySelectorAll("#ops-main .board-card").length > 0, "board again", jsErrors);
 ok([...d.querySelectorAll("#ops-main .output-tabs button")].map((b) => b.textContent).includes("Viabilidade"), "abas do projeto, incluindo Viabilidade");
@@ -232,6 +285,12 @@ d.querySelector("#admin-main tbody tr").click();
 await until(() => text("#admin-main .form-card").includes("Cota de execução"), "user card", jsErrors);
 ok(text("#admin-main .form-card").includes("Redefinir senha") && text("#admin-main .form-card").includes("Grupos"), "ficha do usuário reúne grupos, cota e acesso");
 // Robots (RF-011-12, RF-011-16): built-in robot is protected; new robots get API keys.
+{
+  const find = d.querySelector("#admin-main .table-search");      // the table's own search (many users in a test database)
+  find.value = "robo interno";
+  find.dispatchEvent(new w.Event("input"));
+  await until(() => [...d.querySelectorAll("#admin-main tbody tr")].some((r) => r.textContent.includes("robô interno")), "search robot", jsErrors);
+}
 [...d.querySelectorAll("#admin-main tbody tr")].find((r) => r.textContent.includes("robô interno")).click();
 await until(() => text("#admin-main .form-card").includes("Robô interno"), "system robot card", jsErrors);
 ok(!text("#admin-main .form-card").includes("Gerar chave") && !text("#admin-main .form-card").includes("Redefinir senha"),
@@ -244,6 +303,10 @@ ok(!text("#admin-main .form-card").includes("Gerar chave") && !text("#admin-main
     body: JSON.stringify({ username: rname, kind: "robot", role: "user" }) });
   await go(w, "#/admin/audit");
   await go(w, "#/admin/users");
+  await until(() => text("#admin-main .table-title") === "Usuários", "users table", jsErrors);
+  const find = d.querySelector("#admin-main .table-search");
+  find.value = rname;
+  find.dispatchEvent(new w.Event("input"));
   await until(() => text("#admin-main tbody").includes(rname), "robot row", jsErrors);
   [...d.querySelectorAll("#admin-main tbody tr")].find((r) => r.textContent.includes(rname)).click();
   await until(() => text("#admin-main .form-card").includes("Gerar chave"), "robot card", jsErrors);
