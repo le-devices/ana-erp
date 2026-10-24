@@ -155,6 +155,19 @@ route(<<"PUT">>, [<<"shortcuts">>, Id], Req) ->
         with_body(Req, fun(B, R) -> category_reply(ana_categories:update_shortcut(U, N, B), R) end) end) end);
 route(<<"DELETE">>, [<<"shortcuts">>, Id], Req) ->
     ana_http:require(Req, ?USER, fun(U) -> with_id(Id, Req, fun(N) -> category_reply(ana_categories:delete_shortcut(U, N), Req) end) end);
+%% Table variants and screen state per user (RF-020-17/18).
+route(<<"GET">>, [<<"ui">>, <<"variants">>], Req) ->
+    ana_http:require(Req, ?USER, fun(U) ->
+        ok_json(ana_ui_state:variants(U, maps:get(<<"screen">>, ana_http:qs_map(Req), <<>>)), Req) end);
+route(<<"POST">>, [<<"ui">>, <<"variants">>], Req) ->
+    ana_http:require(Req, ?USER, fun(U) -> with_body(Req, fun(B, R) -> category_reply(ana_ui_state:save_variant(U, B), R) end) end);
+route(<<"DELETE">>, [<<"ui">>, <<"variants">>, Id], Req) ->
+    ana_http:require(Req, ?USER, fun(U) -> with_id(Id, Req, fun(N) -> category_reply(ana_ui_state:delete_variant(U, N), Req) end) end);
+route(<<"GET">>, [<<"ui">>, <<"settings">>], Req) ->
+    ana_http:require(Req, ?USER, fun(U) -> ok_json(ana_ui_state:settings(U), Req) end);
+route(<<"PUT">>, [<<"ui">>, <<"settings">>], Req) ->
+    ana_http:require(Req, ?USER, fun(U) -> with_body(Req, fun(B, R) ->
+        category_reply(ana_ui_state:put_setting(U, maps:get(<<"key">>, B, null), maps:get(<<"value">>, B, null)), R) end) end);
 route(<<"GET">>, [<<"me">>, <<"favorites">>], Req) ->
     ana_http:require(Req, ?USER, fun(#{username := Who}) ->
         ok_json(ana_db:rows("SELECT f.program, p.description FROM ana_system.user_favorite f "

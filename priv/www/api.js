@@ -184,6 +184,11 @@
     addShortcuts: (id, items) => API.request("POST", `/api/categories/${id}/shortcuts`, { items }),
     updateShortcut: (id, body) => API.request("PUT", `/api/shortcuts/${id}`, body),
     deleteShortcut: (id) => API.request("DELETE", `/api/shortcuts/${id}`),
+    variants: (screen) => API.request("GET", `/api/ui/variants?screen=${encodeURIComponent(screen)}`),
+    saveVariant: (body) => API.request("POST", "/api/ui/variants", body),
+    deleteVariant: (id) => API.request("DELETE", `/api/ui/variants/${id}`),
+    uiSettings: () => API.request("GET", "/api/ui/settings"),
+    putUiSetting: (key, value) => API.request("PUT", "/api/ui/settings", { key, value }),
     admin: {
       license: () => API.request("GET", "/api/admin/license"),
       installLicense: (text) => API.request("POST", "/api/admin/license", { text }),

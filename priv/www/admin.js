@@ -46,7 +46,7 @@
       { label: "Situação", value: (u) => el("span", {}, u.active ? pill("ativo", "ok") : pill("bloqueado", "off"),
                                               u.must_change_password ? pill("trocar senha", "warn") : null) },
       { label: "Último acesso", value: (u) => fmtDate(u.last_login_at) || "—" },
-    ], list, { onRow: (u) => showForm(u) });
+    ], list, { onRow: (u) => showForm(u), screen: "admin.users", title: "Usuários" });
 
     main().replaceChildren(
       ...header("Usuários", "Inclua pessoas, defina papel e grupos, bloqueie acessos e redefina senhas."),
@@ -631,7 +631,7 @@
         i.addEventListener("keydown", (e) => { if (e.key === "Enter") apply(); });
         return i;
       }), el("button", { text: "Filtrar", onclick: apply })),
-      kind === "trail" && !filters.username ? el("p", { class: "muted", text: "Informe o usuário (ou abra pela ficha dele em Usuários → Ver trilha)." }) : table(columns, rows, { onRow }),
+      kind === "trail" && !filters.username ? el("p", { class: "muted", text: "Informe o usuário (ou abra pela ficha dele em Usuários → Ver trilha)." }) : table(columns, rows, { onRow, screen: "admin.audit." + kind, title: "Registros" }),
       detail);
   }
 

@@ -1,6 +1,6 @@
 # 020 — Arquitetura da informação e experiência de uso
 
-Situação: implementada (RF-020-01..12); organização por áreas e categorias (RF-020-19..23) implementada; padrões de telas de produtividade (RF-020-13..18) a implementar.
+Situação: implementada (RF-020-01..12); organização por áreas e categorias (RF-020-19..23) implementada; padrões de telas de produtividade: barra de tabela e painéis com estado (RF-020-17/18) implementados; RF-020-13..16 a implementar.
 
 ## Problema
 A interface cresceu por acréscimo: propriedades acima do editor, versões e
@@ -174,6 +174,14 @@ componente único, usado por todas as telas que precisarem dele.
   (filtros e intervalo sempre à vista ao rolar), painéis com divisor
   arrastável e botão de recolher; a posição dos divisores e o cabeçalho
   fixado ficam lembrados por tela e usuário.
+
+Decisões de implementação (RF-020-17/18): o estado deixado na tela (colunas, ordem,
+ordenação, filtros; divisores, painéis recolhidos, cabeçalho fixado) fica **no
+servidor, por usuário** — volta em qualquer computador; variantes são retratos
+com nome desse estado (até 30 por tela, uma padrão). Filtro por coluna aceita
+`texto` (contém), `=texto`, `!texto`, `>10`, `<=5`, `10..20`; números no formato
+brasileiro. A tabela desenha 2000 linhas por vez ("Mostrar todas"); busca,
+filtro e exportação valem para todas.
 
 ### Onde o ANA usa esses padrões primeiro
 - Grade de planejamento + gráfico: orçamento por centro de custo × conta

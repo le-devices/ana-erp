@@ -206,55 +206,48 @@
       .map(([v, l]) => el("option", { value: v, text: l })));
     status.value = query.active || "true";
     const count = el("span", { class: "muted" });
-    const tbody = el("tbody");
-    const head = el("tr");
+    const holder = el("div", { class: "md-list" });
     const more = el("button", { type: "button", class: "quiet", text: "Mostrar mais", hidden: true });
-    const selected = new Set();
-    const bulk = el("div", { class: "row-buttons md-bulk", hidden: true });
-    let offset = 0, columns = [];
+    let offset = 0, loaded = [], columns = [];
     const toolbar = el("div", { class: "md-toolbar" }, q, status,
       e.can_edit ? el("button", { type: "button", class: "primary", text: "Novo (N)", onclick: () => go(`#/master/${e.name}/novo`) }) : null,
       e.can_edit ? el("button", { type: "button", class: "quiet", text: "Importar", onclick: () => go(`#/master/_import?entity=${e.name}`) }) : null,
-      el("button", { type: "button", class: "quiet", text: "Exportar CSV", onclick: () => exportCsv(e, q.value, status.value) }), count);
-    const table = el("table", { class: "data-table md-list" }, el("thead", {}, head), tbody);
-    main().replaceChildren(el("h1", { text: e.plural }), toolbar, bulk, el("div", { class: "table-box" }, table), more);
+      el("button", { type: "button", class: "quiet", text: "Exportar tudo (CSV)", title: "Todos os cadastros da busca, não só os carregados",
+                     onclick: () => exportCsv(e, q.value, status.value) }), count);
+    main().replaceChildren(el("h1", { text: e.plural }), toolbar, holder, more);
 
-    const drawBulk = () => {
-      bulk.hidden = !selected.size || !e.can_edit;
-      bulk.replaceChildren(el("span", { text: `${selected.size} selecionado(s)` }),
-        el("button", { type: "button", class: "quiet", text: status.value === "false" ? "Reativar" : "Desativar", onclick: async () => {
-          const activate = status.value === "false";
-          if (!confirm(`${activate ? "Reativar" : "Desativar"} ${selected.size} cadastro(s)?`)) return;
-          try { const r = await call("master.set_active", { entity: e.name, keys: [...selected], active: activate }); toast(`${r.changed} alterado(s).`); selected.clear(); load(true); }
-          catch (err) { toast(err.message, true); }
-        } }));
+    // The work table (RF-020-17) over the loaded page(s): columns, order, filters and variants per user.
+    const draw = () => {
+      const cellOf = (c) => (row) => {
+        const v = row.values[c.name + "__title"] ?? row.values[c.name];
+        return c.type === "choice" ? ((c.choices || []).find(([k]) => String(k) === String(v)) || [null, v])[1] : show(c, v);
+      };
+      const activate = status.value === "false";
+      holder.replaceChildren(window.AnaTable.create({
+        title: e.plural, screen: "md:" + e.name, rows: loaded,
+        columns: [...columns.map((c) => ({ key: c.name, label: c.label, value: cellOf(c), num: ["money", "decimal", "int", "percent"].includes(c.type) })),
+                  { key: "_active", label: "Situação", value: (row) => (row.active ? "ativo" : "inativo"),
+                    render: (row) => (row.active ? pill("ativo", "ok") : pill("inativo", "off")) }],
+        onOpen: (row) => go(`#/master/${e.name}/${enc(row.key)}`),
+        empty: q.value ? "Nada encontrado com esse texto." : "Nenhum cadastro ainda.",
+        bulk: e.can_edit ? [{ label: activate ? "Reativar" : "Desativar", run: async (rows) => {
+          if (!confirm(`${activate ? "Reativar" : "Desativar"} ${rows.length} cadastro(s)?`)) return;
+          const r = await call("master.set_active", { entity: e.name, keys: rows.map((x) => String(x.key)), active: activate });
+          toast(`${r.changed} alterado(s).`);
+          load(true);
+        } }] : null,
+      }));
     };
     async function load(reset) {
-      if (reset) { offset = 0; tbody.replaceChildren(); selected.clear(); drawBulk(); }
+      if (reset) { offset = 0; loaded = []; }
       try {
         const r = await call("master.search", { entity: e.name, q: q.value || null, active: status.value, offset, limit: 50 });
         columns = r.columns;
-        head.replaceChildren(el("th", { class: "md-sel" }), ...columns.map((c) => el("th", { text: c.label })), el("th", { text: "Situação" }));
-        for (const row of r.rows) {
-          const box = el("input", { type: "checkbox", "aria-label": "Selecionar " + row.title });
-          box.addEventListener("click", (ev) => { ev.stopPropagation(); box.checked ? selected.add(String(row.key)) : selected.delete(String(row.key)); drawBulk(); });
-          const tr = el("tr", { class: "row-open", tabindex: "0", title: "Abrir (Enter)" }, el("td", { class: "md-sel" }, box),
-            ...columns.map((c) => {
-              const v = row.values[c.name + "__title"] ?? row.values[c.name];
-              const text = c.type === "choice" ? ((c.choices || []).find(([k]) => String(k) === String(v)) || [null, v])[1] : show(c, v);
-              return el("td", { class: ["money", "decimal", "int", "percent"].includes(c.type) ? "num" : "", text: text ?? "" });
-            }),
-            el("td", {}, row.active ? pill("ativo", "ok") : pill("inativo", "off")));
-          const open = () => go(`#/master/${e.name}/${enc(row.key)}`);
-          tr.addEventListener("click", open);
-          tr.addEventListener("keydown", (ev) => { if (ev.key === "Enter") open(); });
-          tbody.append(tr);
-        }
+        loaded = loaded.concat(r.rows);
         offset += r.rows.length;
         count.textContent = `${r.total} cadastro(s)`;
         more.hidden = offset >= r.total;
-        if (!r.total) tbody.append(el("tr", {}, el("td", { colspan: columns.length + 2, class: "muted",
-          text: q.value ? "Nada encontrado com esse texto." : "Nenhum cadastro ainda." })));
+        draw();
       } catch (err) { toast(err.message, true); }
     }
     let t = null;

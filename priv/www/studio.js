@@ -128,6 +128,7 @@
     band.title = inst.name ? `Instância ${inst.name} — não é a produção` : "";
     document.body.dataset.instance = inst.role || "production";
     refreshLicense();
+    await window.AnaPrefs.load();
     showScreen("#app-screen");
     if (!isExternal()) await buildTargets();
     route();

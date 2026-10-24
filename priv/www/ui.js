@@ -42,8 +42,14 @@
     toastTimer = setTimeout(() => { t.hidden = true; }, isError ? 7000 : 3500);
   }
 
-  // Generic table: columns = [{label, value: row => text|Node, class}]
+  // Generic table: columns = [{label, value: row => text|Node, class}]. With `options.screen` it is the work
+  // table (RF-020-17: search, filters, columns, variants per user; `title`, `bulk` as in AnaTable.create).
   function table(columns, rows, options = {}) {
+    if (options.screen && window.AnaTable) {
+      return window.AnaTable.create({ title: options.title, screen: options.screen, rows, empty: options.empty,
+        onRow: options.onRow, bulk: options.bulk,
+        columns: columns.map((c, i) => ({ key: c.key || c.label || "#" + i, label: c.label, value: c.value, class: c.class })) });
+    }
     const t = el("table", { class: "grid-table" });
     t.append(el("thead", {}, el("tr", {}, columns.map((c) => el("th", { class: c.class || "", text: c.label })))));
     const tb = el("tbody");
@@ -62,83 +68,62 @@
   }
 
   const cellText = (v) => (v === null || v === undefined ? "" : typeof v === "object" ? JSON.stringify(v) : String(v));
-  const NUMERIC = /^-?[\d.]+(,\d+)?$|^-?\d+(\.\d+)?$/;
-  // Decimals as programs return them ("2829426.98", "21.000"): shown in pt-BR ("2.829.426,98", "21").
-  // Money keeps its 2 places; quantities lose trailing zeros. Integers stay as they are (codes, years).
-  const DECIMAL = /^-?\d+\.\d{2,6}$/;
-  const brDecimal = (s) => {
-    const f = s.split(".")[1];
-    const places = f.length > 2 ? f.replace(/0+$/, "").length : f.length;
-    return Number(s).toLocaleString("pt-BR", { minimumFractionDigits: places, maximumFractionDigits: places });
+
+  // ------------------------------------------------------------------ screen state per user (RF-020-17/18)
+  // Dividers, collapsed panels, pinned headers and the last table layout come back on any computer: kept on
+  // the server per user, loaded once after login (screens drawn before that re-apply on "ana:prefs").
+  // The browser copy only covers the moment before the load and a server that cannot answer.
+  const prefs = { data: {}, timers: {} };
+  const Prefs = {
+    async load() {
+      try { prefs.data = await window.AnaApi.uiSettings(); } catch (_) { prefs.data = {}; }
+      document.dispatchEvent(new CustomEvent("ana:prefs"));
+    },
+    get(key) {
+      if (key in prefs.data) return prefs.data[key];
+      try { const v = localStorage.getItem("ana.pref." + key); return v === null ? undefined : JSON.parse(v); } catch (_) { return undefined; }
+    },
+    /** value undefined/null forgets it. Writes are debounced per key (dragging sends one request). */
+    set(key, value) {
+      if (value === undefined || value === null) delete prefs.data[key]; else prefs.data[key] = value;
+      try { if (value === undefined || value === null) localStorage.removeItem("ana.pref." + key); else localStorage.setItem("ana.pref." + key, JSON.stringify(value)); } catch (_) { /* storage blocked */ }
+      clearTimeout(prefs.timers[key]);
+      prefs.timers[key] = setTimeout(() => {
+        window.AnaApi.putUiSetting(key, value === undefined ? null : value).catch(() => { /* kept locally */ });
+      }, 400);
+    },
   };
 
-  /** Program output table: sortable columns, numbers to the right, CSV export,
-   *  resizable box. `extra(i)` may return a node for an extra last cell. */
-  /** onOpen(i) → true when row i opens a document (spec 035): the row is clickable and focusable. */
-  function dataTable(columns, rows, title, extra, onOpen) {
-    const t = el("table", { class: "data-table" });
-    const tb = el("tbody");
-    let order = rows.map((_, i) => i);
-    let sortCol = -1, asc = true;
-    const draw = () => {
-      tb.replaceChildren(...order.map((i) => {
-        const opens = onOpen && onOpen(i, true);
-        const tr = el("tr", opens ? { class: "row-open", tabindex: "0", title: "Abrir o documento (Enter)" } : {},
-          rows[i].map((v, ci) => {
-            const s = cellText(v);
-            return el("td", { class: (NUMERIC.test(s) ? "num" : "") + (opens && ci === 0 ? " doc-link" : ""),
-                              text: v === null ? "—" : DECIMAL.test(s) ? brDecimal(s) : s });
-          }),
-          extra ? el("td", { class: "cell-actions" }, extra(i)) : null);
-        if (opens) {
-          tr.addEventListener("click", (ev) => { if (!ev.target.closest("button,input,select,a,textarea,form")) onOpen(i); });
-          tr.addEventListener("keydown", (ev) => { if (ev.key === "Enter" && ev.target === tr) { ev.preventDefault(); onOpen(i); } });
-        }
-        return tr;
-      }));
-      if (!rows.length) tb.append(el("tr", {}, el("td", { colspan: columns.length + (extra ? 1 : 0), class: "muted", text: "Nada para mostrar." })));
+  /** Draggable divider with a collapse button: sets a CSS variable (px) on `host`; width and collapsed state
+   *  remembered per user (RF-020-18). Collapsing hides the panel before the divider (`collapsedClass` on host). */
+  function splitter(host, cssVar, { min = 160, max = 900, key, initial, collapsible = true } = {}) {
+    const prefKey = key ? "split." + key : null;
+    const bar = el("div", { class: "splitter", role: "separator", "aria-orientation": "vertical",
+                            title: "Arraste para redimensionar (duplo clique: tamanho padrão)" });
+    const toggle = collapsible ? el("button", { type: "button", class: "split-toggle", "aria-label": "Recolher o painel", title: "Recolher o painel" }, "‹") : null;
+    if (toggle) bar.append(toggle);
+    const state = () => (prefKey && Prefs.get(prefKey)) || {};
+    const apply = () => {
+      const s = state();
+      const w = typeof s === "number" ? s : s.w;            // older value: just the width
+      const collapsed = !!s.collapsed;
+      if (collapsed) host.style.setProperty(cssVar, "0px");
+      else if (w || initial) host.style.setProperty(cssVar, (w || initial) + "px");
+      else host.style.removeProperty(cssVar);
+      host.classList.toggle("split-collapsed", collapsed);
+      if (toggle) {
+        toggle.textContent = collapsed ? "›" : "‹";
+        toggle.setAttribute("aria-label", collapsed ? "Mostrar o painel" : "Recolher o painel");
+        toggle.title = toggle.getAttribute("aria-label");
+        toggle.setAttribute("aria-expanded", collapsed ? "false" : "true");
+      }
     };
-    const key = (v) => {
-      const s = cellText(v);
-      if (DECIMAL.test(s)) return Number(s);          // raw decimal: the dot is the decimal point
-      const n = Number(s.replace(/\./g, "").replace(",", "."));
-      return NUMERIC.test(s) && !isNaN(n) ? n : s.toLowerCase();
-    };
-    const head = el("tr", {}, columns.map((c, ci) => el("th", { class: "sortable", text: c, title: "Ordenar", onclick: () => {
-      asc = sortCol === ci ? !asc : true;
-      sortCol = ci;
-      order = rows.map((_, i) => i).sort((a, b) => { const x = key(rows[a][ci]), y = key(rows[b][ci]); return (x < y ? -1 : x > y ? 1 : 0) * (asc ? 1 : -1); });
-      for (const th of head.children) th.classList.remove("asc", "desc");
-      head.children[ci].classList.add(asc ? "asc" : "desc");
-      draw();
-    } })), extra ? el("th", { text: "" }) : null);
-    t.append(el("thead", {}, head), tb);
-    draw();
-    const csv = () => {
-      const q = (s) => /[";\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
-      const text = [columns, ...order.map((i) => rows[i])].map((r) => r.map((v) => q(cellText(v))).join(";")).join("\n");
-      const a = el("a", { href: "data:text/csv;charset=utf-8," + encodeURIComponent("\ufeff" + text),
-                          download: (title || "dados").replace(/[^\w\- ]+/g, "").trim().replace(/\s+/g, "_") + ".csv" });
-      document.body.append(a); a.click(); a.remove();
-    };
-    const exportBtn = el("button", { type: "button", class: "quiet small icon-text", title: "Exportar para planilha (CSV)", onclick: csv },
-      icon("download", 16), el("span", { text: "CSV" }));
-    return el("div", { class: "table-box" },
-      el("div", { class: "table-head" },
-        el("strong", { class: "table-title", text: title || "Itens" }),
-        el("span", { class: "table-count", text: `(${rows.length})` }),
-        el("span", { class: "muted", text: `${rows.length} linha(s)` }),
-        el("div", { class: "table-tools" }, exportBtn)),
-      el("div", { class: "resizable" }, t));
-  }
-
-  /** Draggable divider: sets a CSS variable (px) on `host`; remembered per viewer. */
-  function splitter(host, cssVar, { min = 160, max = 900, key, initial } = {}) {
-    let saved = null;
-    try { saved = key ? parseInt(localStorage.getItem("ana.split." + key), 10) : null; } catch (_) { /* storage blocked */ }
-    if (saved || initial) host.style.setProperty(cssVar, (saved || initial) + "px");
-    const bar = el("div", { class: "splitter", role: "separator", title: "Arraste para redimensionar (duplo clique: tamanho padrão)" });
+    const save = (patch) => { if (prefKey) { const s = state(); Prefs.set(prefKey, { ...(typeof s === "number" ? { w: s } : s), ...patch }); } };
+    apply();
+    document.addEventListener("ana:prefs", apply);
+    if (toggle) toggle.addEventListener("click", (e) => { e.stopPropagation(); save({ collapsed: !state().collapsed }); apply(); });
     bar.addEventListener("pointerdown", (e) => {
+      if (e.target === toggle || host.classList.contains("split-collapsed")) return;
       e.preventDefault();
       const start = e.clientX;
       const base = parseInt(getComputedStyle(host).getPropertyValue(cssVar), 10) || bar.previousElementSibling.getBoundingClientRect().width;
@@ -146,16 +131,34 @@
       const up = () => {
         window.removeEventListener("pointermove", move);
         window.removeEventListener("pointerup", up);
-        try { if (key) localStorage.setItem("ana.split." + key, parseInt(getComputedStyle(host).getPropertyValue(cssVar), 10)); } catch (_) { /* ignore */ }
+        save({ w: parseInt(getComputedStyle(host).getPropertyValue(cssVar), 10) || undefined });
       };
       window.addEventListener("pointermove", move);
       window.addEventListener("pointerup", up);
     });
-    bar.addEventListener("dblclick", () => {
+    bar.addEventListener("dblclick", (e) => {
+      if (e.target === toggle || host.classList.contains("split-collapsed")) return;
       host.style.removeProperty(cssVar);
-      try { if (key) localStorage.removeItem("ana.split." + key); } catch (_) { /* ignore */ }
+      save({ w: undefined });
     });
     return bar;
+  }
+
+  /** Pin button for a screen header: pinned, it stays in sight while the page scrolls (filters and range
+   *  always visible); remembered per screen and user (RF-020-18). */
+  function pinnable(header, key) {
+    const prefKey = "pin." + key;
+    const btn = el("button", { type: "button", class: "quiet small pin-toggle" });
+    const apply = () => {
+      const on = !!Prefs.get(prefKey);
+      header.classList.toggle("pinned", on);
+      btn.textContent = on ? "Desafixar cabeçalho" : "Fixar cabeçalho";
+      btn.setAttribute("aria-pressed", on ? "true" : "false");
+      btn.title = on ? "O cabeçalho volta a rolar com a página" : "Mantém filtros e título à vista ao rolar";
+    };
+    btn.addEventListener("click", () => { Prefs.set(prefKey, Prefs.get(prefKey) ? null : true); apply(); });
+    apply();
+    return btn;
   }
 
   function pill(text, kind = "") { return el("span", { class: "pill " + kind, text }); }
@@ -248,5 +251,6 @@
   }).observe(document.documentElement, { childList: true, subtree: true, attributes: true, attributeFilter: ["class", "hidden"] });
   document.addEventListener("DOMContentLoaded", () => enhance(document));
 
-  window.AnaUI = { $, $$, el, fmtDate, errorText, toast, table, dataTable, pill, splitter, icon, enhance };
+  window.AnaPrefs = Prefs;
+  window.AnaUI = { $, $$, el, fmtDate, errorText, toast, table, pill, splitter, pinnable, icon, enhance, cellText };
 })();
