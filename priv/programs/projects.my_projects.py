@@ -1,6 +1,7 @@
 # ana:description Meus projetos: andamento, marcos, próximos passos e riscos (portal do cliente)
 # ana:portal yes
 # ana:command meusprojetos
+# ana:category Projetos/Meu trabalho
 """Spec 021 (H8, RF-021-09, CA-021-07) on the portal of spec 016: the customer's projects with
 the latest status report marked visible to the customer. Never costs, rates or margin
 (RNF-021-02): only what the status report stores, which is client-safe by construction."""

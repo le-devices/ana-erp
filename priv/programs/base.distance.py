@@ -1,5 +1,6 @@
 # ana:description Distância aproximada da empresa (ou de um depósito) até um cliente: reta, rodoviária e tempo
 # ana:command distancia
+# ana:category Cadastros/Distâncias
 """RF-032-02, CA-032-01. Straight line by the haversine formula; road ≈ straight × factor
 (base.geo_settings); time by average speed. Without external services."""
 

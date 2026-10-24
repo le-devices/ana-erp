@@ -1,5 +1,6 @@
 # ana:description Processos: ações de quem cuida do caso — reprocessar tarefa com falha, pular com justificativa, cancelar, migrar de versão
 # ana:exposed yes
+# ana:category Processos/Acompanhamento
 """Spec 039 (RF-039-06, RF-039-14). Administrators, developers and the process owner."""
 
 PARAMS = {"case": {"type": "int", "required": True, "label": "caso"},

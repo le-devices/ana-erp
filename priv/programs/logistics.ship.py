@@ -1,6 +1,7 @@
 # ana:description Expedição de pedido de venda (total ou parcial): separar, embalar e despachar
 # ana:exposed yes
 # ana:command expedir
+# ana:category Logística e campo/Expedição
 """RF-015-02/03, CA-015-02. Without lines, ships everything still pending of the order. The freight
 comes from the carrier's table (customer's state, weight) when not given. Stock leaves at shipment
 when logistics.policy.stock_out_on = 'shipment' (otherwise at invoicing, as before). stage: picking

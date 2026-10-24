@@ -1,6 +1,7 @@
 # ana:description Solicitação de compra (mercadorias ou serviços), com envio para aprovação
 # ana:exposed yes
 # ana:command solicitar
+# ana:category Compras/Solicitações
 """RF-013-02. One item through the form (product/quantity) or several through `items`
 ([{"product", "quantity", "price"?, "supplier"?, "rebillable"?}]). Estimated price = the
 preferred supplier's catalog price. Cost center: project → warehouse → company (spec 027)."""

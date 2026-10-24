@@ -1,5 +1,6 @@
 # ana:description Projeto: visão geral, estrutura, alocação, quadro, linha do tempo, andamento, mudanças, riscos
 # ana:command proj
+# ana:category Projetos/Planejamento
 """RF-021-10/11: everything about one client project in tabs of the same
 screen, with the guided flow (current stage and next step)."""
 

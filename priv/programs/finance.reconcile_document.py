@@ -1,5 +1,6 @@
 # ana:description Concilia no extrato os títulos de um documento (pedido, OS, compra): a etapa de recebimento ou pagamento da esteira
 # ana:exposed yes
+# ana:category Financeiro/Conciliação bancária
 """T-030-06b. The receipt (sales, field) and payment (purchase) stages of the esteiras run this program instead
 of only waiting: the document's open bills are looked for in the open statement lines of every active bank
 account, with the rules of the bank reconciliation (finance.reconcile_rules). Only what is certain is settled —

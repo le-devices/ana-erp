@@ -1,5 +1,6 @@
 # ana:description Quadro de alocação: pessoas × semanas em todos os projetos, sobrealocação e folga
 # ana:command alocacao
+# ana:category Projetos/Planejamento
 """RF-021-03/03a. Allocated / capacity per person and week, all projects;
 demand still allocated only to profiles (no person yet)."""
 

@@ -1,5 +1,6 @@
 # ana:description Aponta operação da ordem: horas, quantidade boa e refugo
 # ana:exposed yes
+# ana:category Produção/Ordens de produção
 """RF-014-06. Hours × the resource's cost per hour: D work_in_process / C production_absorbed
 (cost center of the order)."""
 

@@ -1,5 +1,6 @@
 # ana:description Cria ou altera fase ou atividade do projeto (responsável, horas, datas, dependências)
 # ana:exposed yes
+# ana:category Projetos/Planejamento
 """RF-021-01. Predecessors: list of codes, optionally with lag in working
 days ("1.2+3"). Cycles are refused. Only the project manager or an admin."""
 

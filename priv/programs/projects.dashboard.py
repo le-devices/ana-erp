@@ -1,5 +1,6 @@
 # ana:description Painel de projetos: orçado × realizado, custo, faturado e margem
 # ana:command projects
+# ana:category Projetos/Acompanhamento
 """RF-008-14. Cost and margin appear only for projects the user manages
 (or for admins) — RNF-008-02."""
 

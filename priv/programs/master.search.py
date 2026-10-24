@@ -1,5 +1,6 @@
 # ana:description Cadastros: busca padrão de qualquer entidade mestre (texto, filtros, ativos/inativos, páginas)
 # ana:exposed yes
+# ana:category Cadastros/Dados mestres
 """Spec 040 (RF-040-02). The same list for every entity."""
 
 from ana_lib.master import core

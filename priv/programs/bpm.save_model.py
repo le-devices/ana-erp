@@ -1,5 +1,6 @@
 # ana:description Processos: grava o rascunho do modelo (desenho), com a validação; publicada nunca muda
 # ana:exposed yes
+# ana:category Processos/Modelagem
 """Spec 039 (RF-039-02, 03, 06). Saving always works for a draft (even with errors: they block only the
 publication). base_updated_at protects against overwriting someone else's edit."""
 

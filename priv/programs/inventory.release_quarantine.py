@@ -1,6 +1,7 @@
 # ana:description Libera mercadoria da quarentena para um depósito ou a descarta (com valor e lançamento automáticos)
 # ana:exposed yes
 # ana:command quarentena
+# ana:category Estoque/Movimentações
 """Spec 038 (RF-038-02). Returned goods wait in QUARENTENA (spec 015). After the inspection they are
 released to a warehouse (a transfer: same cost, no entry) or scrapped (D inventory losses / C
 inventory, posted by the database). Without product: lists what is in quarantine, with the actions."""

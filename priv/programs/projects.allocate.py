@@ -1,6 +1,7 @@
 # ana:description Aloca pessoa (ou perfil) a uma atividade: horas por semana ou distribuídas no período
 # ana:exposed yes
 # ana:command alocar
+# ana:category Projetos/Planejamento
 """RF-021-03/03a, CA-021-02/02a.
 
 - `week` + `hours`: hours of that week (0 removes).

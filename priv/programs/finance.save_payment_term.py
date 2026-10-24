@@ -1,6 +1,7 @@
 # ana:description Condição de pagamento: forma, parcelas e prazos, entrada, desconto/acréscimo e taxa
 # ana:exposed yes
 # ana:command condicao
+# ana:category Financeiro/Crédito e condições
 """RF-031-01. installments: "30/60/90" (equal parts) or [{"days": 30, "pct": 50}, …]; the
 database checks that installments + down payment add up to 100 %."""
 

@@ -1,5 +1,6 @@
 # ana:description Portfólio: saúde de todos os projetos (prazo, custo, escopo), margem e alocação
 # ana:command portfolio
+# ana:category Projetos/Acompanhamento
 """RF-021-10 (diretor). Health from aggregates in SQL (no per-project CPM),
 so 500 projects stay well under 2 s (RNF-021-01). Margin only for projects
 the user manages or for admins (RNF-021-02)."""

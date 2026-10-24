@@ -1,5 +1,6 @@
 # ana:description Aceite do cliente: conclui a OS (exige o checklist obrigatório respondido)
 # ana:exposed yes
+# ana:category Logística e campo/Serviços em campo
 """RF-015-08. Name, document and time of whoever accepted on site; the order becomes done."""
 
 from ana_lib.field import common

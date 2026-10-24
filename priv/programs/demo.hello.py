@@ -1,6 +1,7 @@
 # ana:description Programa de demonstração (bom para experimentar o depurador)
 # ana:exposed yes
 # ana:command hello
+# ana:category Demonstração/Exemplos
 """Greets and does a little math — set a breakpoint and debug it!"""
 
 PARAMS = {

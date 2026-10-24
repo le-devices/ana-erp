@@ -1,6 +1,7 @@
 # ana:description Cria ou atualiza cliente/fornecedor
 # ana:exposed yes
 # ana:command party
+# ana:category Cadastros/Clientes, fornecedores e itens
 """Creates a party (no `id`) or updates an existing one (with `id`)."""
 
 from ana_lib.util import validation as v

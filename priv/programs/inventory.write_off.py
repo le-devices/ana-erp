@@ -1,6 +1,7 @@
 # ana:description Baixa de estoque por perda ou descarte, com valor e lançamento automáticos
 # ana:exposed yes
 # ana:command baixa_estoque
+# ana:category Estoque/Movimentações
 """Spec 038 (RF-038-02). Loss (theft, damage, expiry) or scrap: the item leaves at the average cost
 and the database posts D inventory losses / C inventory, with the warehouse's cost center."""
 

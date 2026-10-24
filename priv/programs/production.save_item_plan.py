@@ -1,5 +1,6 @@
 # ana:description Parâmetros de planejamento do item: fazer ou comprar, prazo, lote, segurança e custo padrão
 # ana:exposed yes
+# ana:category Produção/Engenharia do produto
 """RF-014-05 (lot sizing) and the standard cost used by the production orders."""
 
 from ana_lib.production import common

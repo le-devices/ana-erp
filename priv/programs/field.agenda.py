@@ -1,5 +1,6 @@
 # ana:description Agenda da semana: técnicos × dias, conflitos e deslocamentos
 # ana:command agenda
+# ana:category Logística e campo/Serviços em campo
 """RF-015-06, RNF-015-03: one query for the whole week (100 technicians < 1 s)."""
 
 import datetime

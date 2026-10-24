@@ -1,6 +1,7 @@
 # ana:description Fatura todos os projetos ativos com algo a faturar (rotina mensal)
 # ana:exposed yes
 # ana:role admin
+# ana:category Projetos/Faturamento e custos
 """Spec 038 (RF-038-12, phase 4). Every active project with completed milestones, approved billable hours
 or rebillable expenses up to `through` is invoiced by projects.invoice_project, each in its own savepoint:
 one project that fails (customer without data, contract…) is listed and never stops the others."""

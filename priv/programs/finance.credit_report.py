@@ -1,5 +1,6 @@
 # ana:description Crédito e inadimplência: clientes com atraso, bloqueados e uso do limite
 # ana:command credito
+# ana:category Financeiro/Crédito e condições
 """RF-031-06. One set-based query over open receivables; actions on the row."""
 
 from ana_lib.util.format import money

@@ -1,6 +1,7 @@
 # ana:description Bloqueia ou desbloqueia cliente, ou libera um pedido específico de um cliente bloqueado
 # ana:exposed yes
 # ana:role developer
+# ana:category Financeiro/Crédito e condições
 """RF-031-05, CA-031-04. Every action records who, when and why. A release is used once (the
 next order or invoicing of that customer, or of the given order)."""
 

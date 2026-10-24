@@ -123,14 +123,38 @@ route(<<"POST">>, [<<"me">>, <<"password">>], Req) ->
 route(<<"GET">>, [<<"routines">>], Req) ->
     ana_http:require(Req, ?USER, fun(U = #{username := Who}) ->
         {ok, Rows} = ana_db:rows(
-            "SELECT p.name, p.description, p.docs, p.params, p.min_role, p.restricted, p.exposed, "
+            "SELECT p.name, p.description, p.docs, p.params, p.min_role, p.restricted, p.exposed, p.category, "
             "  (SELECT c.code FROM ana_system.command c WHERE c.program = p.name ORDER BY c.code LIMIT 1) AS command, "
             "  EXISTS (SELECT 1 FROM ana_system.user_favorite f WHERE f.program = p.name AND f.username = $1) AS favorite "
             "FROM ana_system.program p WHERE p.active AND p.kind = 'program' AND p.in_menu ORDER BY p.name", [Who]),
         ana_http:json(200, [maps:without([<<"min_role">>, <<"restricted">>], R)
-                            || R = #{<<"min_role">> := M} <- Rows,
-                               ana_security:has_role(U, M), ana_access:allowed(U, R)], Req)
+                            || R = #{<<"min_role">> := M, <<"name">> := N} <- Rows,
+                               ana_security:has_role(U, M), ana_access:allowed(U, R),
+                               %% RF-020-23: a module outside the license is not offered (spec 009).
+                               ana_license:allowed(ana_license:module_of(N))], Req)
     end);
+
+%% --- Categories of routines (spec 020, RF-020-20..23) ---------------------
+route(<<"GET">>, [<<"categories">>], Req) ->
+    ana_http:require(Req, ?USER, fun(U) -> ok_json(ana_categories:list(U), Req) end);
+route(<<"POST">>, [<<"categories">>], Req) ->
+    ana_http:require(Req, ?USER, fun(U) -> with_body(Req, fun(B, R) -> category_reply(ana_categories:create(U, B), R) end) end);
+route(<<"PUT">>, [<<"categories">>, <<"order">>], Req) ->
+    ana_http:require(Req, ?USER, fun(U) -> with_body(Req, fun(B, R) ->
+        category_reply(ana_categories:reorder(U, maps:get(<<"ids">>, B, [])), R) end) end);
+route(<<"PUT">>, [<<"categories">>, Id], Req) ->
+    ana_http:require(Req, ?USER, fun(U) -> with_id(Id, Req, fun(N) ->
+        with_body(Req, fun(B, R) -> category_reply(ana_categories:update(U, N, B), R) end) end) end);
+route(<<"DELETE">>, [<<"categories">>, Id], Req) ->
+    ana_http:require(Req, ?USER, fun(U) -> with_id(Id, Req, fun(N) -> category_reply(ana_categories:delete(U, N), Req) end) end);
+route(<<"POST">>, [<<"categories">>, Id, <<"shortcuts">>], Req) ->
+    ana_http:require(Req, ?USER, fun(U) -> with_id(Id, Req, fun(N) ->
+        with_body(Req, fun(B, R) -> category_reply(ana_categories:add_shortcuts(U, N, maps:get(<<"items">>, B, [])), R) end) end) end);
+route(<<"PUT">>, [<<"shortcuts">>, Id], Req) ->
+    ana_http:require(Req, ?USER, fun(U) -> with_id(Id, Req, fun(N) ->
+        with_body(Req, fun(B, R) -> category_reply(ana_categories:update_shortcut(U, N, B), R) end) end) end);
+route(<<"DELETE">>, [<<"shortcuts">>, Id], Req) ->
+    ana_http:require(Req, ?USER, fun(U) -> with_id(Id, Req, fun(N) -> category_reply(ana_categories:delete_shortcut(U, N), Req) end) end);
 route(<<"GET">>, [<<"me">>, <<"favorites">>], Req) ->
     ana_http:require(Req, ?USER, fun(#{username := Who}) ->
         ok_json(ana_db:rows("SELECT f.program, p.description FROM ana_system.user_favorite f "
@@ -489,6 +513,16 @@ save_reply({error, #{} = E}, Req) ->
 
 simple_reply({ok, _}, Req) -> ana_http:json(200, #{ok => true}, Req);
 simple_reply({error, E}, Req) -> ana_http:json(400, #{error => E}, Req).
+
+category_reply({ok, V}, Req) -> ana_http:json(200, V, Req);
+category_reply({error, not_found}, Req) -> ana_http:reply_error(404, <<"NOT_FOUND">>, <<"não encontrado"/utf8>>, Req);
+category_reply({error, Msg}, Req) when is_binary(Msg) -> ana_http:reply_error(400, <<"INVALID">>, Msg, Req).
+
+with_id(Id, Req, Fun) ->
+    case catch binary_to_integer(Id) of
+        N when is_integer(N) -> Fun(N);
+        _ -> ana_http:reply_error(400, <<"INVALID">>, <<"identificador inválido"/utf8>>, Req)
+    end.
 
 ok_json({ok, V}, Req) -> ana_http:json(200, V, Req);
 ok_json({error, E}, Req) -> ana_http:json(500, #{error => E}, Req).

@@ -1,5 +1,6 @@
 # ana:description Perfil de crédito do cliente: limite, tolerância de atraso, bloqueio automático e condições
 # ana:exposed yes
+# ana:category Financeiro/Crédito e condições
 """RF-031-04. Empty limit = no limit; empty grace/auto block = the policy's. allowed_terms
 restricts the terms the customer may use (empty = all active)."""
 

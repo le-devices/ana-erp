@@ -1,6 +1,7 @@
 # ana:description Processos: mapa da empresa (cadeia de valor → processos → subprocessos) com dono, situação e indicadores
 # ana:exposed yes
 # ana:command processos
+# ana:category Processos/Modelagem
 """Spec 039 (RF-039-01, H1). One row per process with its published version, open cases and late tasks."""
 
 from ana_lib.bpm import common

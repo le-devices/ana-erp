@@ -1,6 +1,7 @@
 # ana:description Aprova ou rejeita horas pendentes de um projeto
 # ana:exposed yes
 # ana:command approve
+# ana:category Projetos/Faturamento e custos
 """Approval freezes hourly rate (project → profile) and hourly cost (RF-008-09).
 
 Without `ids`, acts on every pending entry up to `through` (default: today).

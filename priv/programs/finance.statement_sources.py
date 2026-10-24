@@ -2,6 +2,7 @@
 # ana:exposed yes
 # ana:role admin
 # ana:command extratos_fontes
+# ana:category Financeiro/Conciliação bancária
 """T-017-05b. Without parameters: each bank account with its source, last fetch and result. With bank_account and
 kind: configures the source — "folder" (files OFX or CNAB 240 sent to a folder of the file repository, by anyone
 or any system; default /Extratos/<account>) or "api" (connector of the bank + adapter program; the generic one

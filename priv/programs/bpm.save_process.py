@@ -1,5 +1,6 @@
 # ana:description Processos: cria ou altera a ficha de um processo do mapa (nome, nível, dono, objetivo, indicadores) — opcionalmente a partir de um modelo pronto
 # ana:exposed yes
+# ana:category Processos/Modelagem
 """Spec 039 (RF-039-01, RF-039-07). A new process starts with a draft: empty, or a product template."""
 
 from ana_lib.bpm import common

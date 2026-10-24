@@ -1,6 +1,7 @@
 # ana:description Carga × capacidade por recurso e semana, com sobrecarga e data sugerida
 # ana:exposed yes
 # ana:command carga
+# ana:category Produção/Planejamento
 """RF-014-07, CA-014-04. Load = remaining standard hours of the operations of planned, released
 and in-progress orders, in the week the order starts. Capacity = hours per day × working days
 (holidays of the scheduler, resource exceptions) × efficiency. Above 100 % is an overload; a

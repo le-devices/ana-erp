@@ -1,6 +1,7 @@
 # ana:description Etapas do processo de um documento: o que já foi feito, onde está e o que falta
 # ana:exposed yes
 # ana:command etapas
+# ana:category Processos/Esteiras
 """RF-020-11, CA-020-07. The stages of a process (sale, purchase, field service, production) for one
 document, computed from the document's own facts — the same rules the esteiras use to know that a stage
 happened — so it works whether the esteira is on or off. The current stage offers "Fazer agora" with the

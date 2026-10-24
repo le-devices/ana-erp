@@ -2,6 +2,7 @@
 # ana:exposed yes
 # ana:portal yes
 # ana:command os
+# ana:category Logística e campo/Serviços em campo
 """RF-015-05, RF-015-11, RF-031-06. Exposed (app, integration) and on the customer portal: a portal account
 opens calls only for its own company. due_at = opened_at + SLA hours (customer contract, else the
 priority policy). client_key makes a retried call create nothing twice (RNF-015-02)."""

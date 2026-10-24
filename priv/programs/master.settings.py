@@ -1,6 +1,7 @@
 # ana:description Cadastros: aprovação de campos sensíveis por cadastro e campos próprios da empresa (clientes e itens)
 # ana:exposed yes
 # ana:role admin
+# ana:category Cadastros/Dados mestres
 """Spec 040 (RF-040-01, RF-040-08). Without parameters: shows the policy of each entity and the custom fields."""
 
 import re

@@ -1,6 +1,7 @@
 # ana:description Conciliações automáticas: cada razão auxiliar (clientes, fornecedores, estoque…) contra a contabilidade, com o que diverge
 # ana:exposed yes
 # ana:command conciliacoes
+# ana:category Contabilidade/Lançamentos e fechamento
 """Spec 038 (RF-038-04, RNF-038-05). One look answers "does everything match?": green when the
 difference is zero; otherwise it says what diverges and opens the documents that explain it."""
 

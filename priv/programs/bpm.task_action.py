@@ -1,5 +1,6 @@
 # ana:description Minhas tarefas: pegar, devolver, concluir, aprovar, recusar, delegar ou comentar uma tarefa
 # ana:exposed yes
+# ana:category Processos/Minhas tarefas
 """Spec 039 (RF-039-12). The task only changes state here; the engine moves the case on (single place).
 vars: values the task writes into the case (they feed the decisions ahead)."""
 

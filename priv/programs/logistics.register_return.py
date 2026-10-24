@@ -1,6 +1,7 @@
 # ana:description Devolução de cliente: entrada no estoque (ou quarentena) e crédito ao cliente
 # ana:exposed yes
 # ana:command devolucao
+# ana:category Logística e campo/Devoluções
 """RF-015-04. D sales_returns / C customer_credits and a payable bill to the customer (the credit,
 control account customer_credits); goods enter the chosen warehouse, or QUARENTENA to be inspected,
 at the average cost (spec 038: the database posts D inventory / C cost of goods sold)."""

@@ -1,6 +1,7 @@
 # ana:description Transferência entre depósitos com trânsito: criar, despachar e receber
 # ana:exposed yes
 # ana:command transferir
+# ana:category Logística e campo/Expedição
 """RF-015-01, CA-015-01. ship: origin → TRANSITO; receive: TRANSITO → destination, with the
 received quantities (divergence = shipped − received, recorded; the difference stays in
 transit until an adjustment)."""

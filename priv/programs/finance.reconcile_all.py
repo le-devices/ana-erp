@@ -1,6 +1,7 @@
 # ana:description Concilia todas as contas bancárias ativas e compensa créditos (rotina diária)
 # ana:exposed yes
 # ana:role admin
+# ana:category Financeiro/Conciliação bancária
 """Spec 038 (RF-038-06, phase 4). Runs finance.reconcile for every active bank account (each in its own
 savepoint: one failing account never stops the others), then own transfers between accounts and the
 offset of credits. What is not certain stays in the workbench, with its suggestions."""

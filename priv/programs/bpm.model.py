@@ -1,5 +1,6 @@
 # ana:description Processos: modelo de um processo (rascunho ou versão), com a validação e as opções para o editor
 # ana:exposed yes
+# ana:category Processos/Modelagem
 """Spec 039 (RF-039-02..04). version: a number, "draft", "published" or empty (draft, else published)."""
 
 from ana_lib.bpm import common

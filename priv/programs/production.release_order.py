@@ -1,5 +1,6 @@
 # ana:description Libera ordem de produção: reserva os componentes e mostra faltas
 # ana:exposed yes
+# ana:category Produção/Ordens de produção
 """RF-014-06. Reserved quantities count in inventory.reserved (specs 013/015). Shortages are
 shown (reserved anyway: purchasing sees them in the replenishment suggestion)."""
 

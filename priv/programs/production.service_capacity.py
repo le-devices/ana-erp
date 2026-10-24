@@ -1,6 +1,7 @@
 # ana:description Capacidade de serviços: horas alocadas × disponíveis por colaborador e por perfil
 # ana:exposed yes
 # ana:command capacidade
+# ana:category Produção/Planejamento
 """RF-014-08, CA-014-05. Demand = weekly allocations of all projects (spec 021); capacity =
 weekly hours × working days (holidays) minus absences. By profile, allocations still without a
 person count as demand of the profile. Never shows hourly costs (confidential)."""

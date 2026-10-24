@@ -1,6 +1,7 @@
 # ana:description Cadastros: mescla dois registros duplicados (move pedidos, títulos e demais referências; desativa o duplicado)
 # ana:exposed yes
 # ana:role admin
+# ana:category Cadastros/Dados mestres
 """Spec 040 (RF-040-07, CA-040-03). One transaction; refused, saying where, when a reference cannot move."""
 
 from ana_lib.master import core

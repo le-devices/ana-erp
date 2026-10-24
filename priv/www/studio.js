@@ -249,6 +249,9 @@
       if (r.command) add(r.command, hash);
       add(`${r.description || r.name} — ${R.moduleLabel(R.moduleOf(r.name))}`, hash);
     }
+    // RF-020-23: shortcuts of the categories are found by the name given to them.
+    await window.AnaCategories.load();
+    for (const [label, hash] of window.AnaCategories.targets(window.AnaOps.routineOf, window.AnaOps.routineHash)) add(label, hash);
     if (canSee("developer")) {
       const programs = await API.programs(false).catch(() => []);
       for (const p of programs) add(p.name, `#/dev/program/${p.name}`);

@@ -21,7 +21,8 @@
   async function home() {
     const main = $("#area-home");
     main.replaceChildren(el("p", { class: "muted", text: "Carregando…" }));
-    let [routines, executions] = await Promise.all([loadRoutines(), API.executions(null, true).catch(() => [])]);
+    let [routines, executions] = await Promise.all([loadRoutines(), API.executions(null, true).catch(() => []),
+                                                    window.AnaCategories.load()]);
     const favs = routines.filter((r) => state.favorites.has(r.name));
     const recentNames = [...new Set(executions.map((x) => x.program))].filter((n) => routine(n)).slice(0, 8);
     // Only routines of the menu: helpers (lookups of forms, libraries) are not something the user ran.
@@ -31,9 +32,11 @@
     main.replaceChildren(
       el("div", { class: "home-head" },
         el("h1", { text: `Olá, ${user.name || user.username}` }),
-        el("p", { class: "lead", text: "Suas rotinas favoritas e as usadas há pouco. Fixe novas com ☆ na própria rotina." })),
+        el("p", { class: "lead", text: "Suas rotinas favoritas, suas categorias e as da empresa, e as usadas há pouco. Fixe com ☆ ou use “Copiar para categoria…” na rotina." })),
       el("section", { class: "card wide", id: "home-tasks", hidden: true }),
       tileGroup("Favoritas", favs, "Fixe rotinas com ☆ para vê-las aqui."),
+      // RF-020-22: the user's and the company's categories, with their shortcuts (drag to reorder and move).
+      ...window.AnaCategories.sections(routine, shortcutTile, () => home()),
       tileGroup("Usadas recentemente", recentNames.map(routine), "Nada ainda."),
       el("section", { class: "card wide", id: "home-warnings", hidden: true }, el("h2", { text: "Avisos das minhas rotinas agendadas" }), el("div")),
       el("section", { class: "card wide table-card" }, el("h2", {}, "Minhas últimas execuções ", el("span", { class: "table-count", text: `(${Math.min(executions.length, 10)})` })),
@@ -54,18 +57,32 @@
 
   const STATUS_LABEL = { success: "concluída", error: "erro", timeout: "tempo esgotado", aborted: "interrompida", running: "executando" };
 
-  /** Launch tile of a routine (spec 029, RF-029-06). */
-  function tile(r) {
-    return el("button", { class: "tile", title: r.name, onclick: () => window.AnaStudio.go(`#/ops/${R.moduleOf(r.name)}/${r.name}`) },
+  /** Launch tile of a routine (spec 029, RF-029-06); with `select`, a check box to pick it (RF-020-21). */
+  function tile(r, select) {
+    const t = el("button", { class: "tile", title: r.name, onclick: () => window.AnaStudio.go(`#/ops/${R.moduleOf(r.name)}/${r.name}`) },
       el("span", { class: "tile-title", text: title(r) }),
-      el("span", { class: "tile-sub", text: R.moduleLabel(R.moduleOf(r.name)) }),
+      el("span", { class: "tile-sub", text: `${R.areaOf(r)} · ${R.categoryOf(r)}` }),
       el("span", { class: "tile-foot" }, window.AnaUI.icon("chart", 20),
         el("span", { class: "tile-cmd", text: r.command || "" })));
+    if (!select) return t;
+    const box = el("input", { type: "checkbox", "aria-label": `Selecionar ${title(r)}` });
+    box.checked = select.has(r.name);
+    box.addEventListener("change", () => { box.checked ? select.add(r.name) : select.delete(r.name); select.onchange(); });
+    return el("div", { class: "tile-wrap" + (box.checked ? " picked" : "") }, t, el("label", { class: "tile-pick", title: "Selecionar" }, box));
+  }
+
+  /** Tile of a shortcut in a category: its own name and pre-filled parameters (RF-020-21). */
+  function shortcutTile(s, r) {
+    const hasParams = s.params && Object.keys(s.params).length;
+    return el("button", { class: "tile", title: r.name, onclick: () => window.AnaStudio.go(routineHash(s.program, s.params || {})) },
+      el("span", { class: "tile-title", text: s.label || title(r) }),
+      el("span", { class: "tile-sub", text: hasParams ? "com parâmetros salvos" : `${R.areaOf(r)} · ${R.categoryOf(r)}` }),
+      el("span", { class: "tile-foot" }, window.AnaUI.icon("chart", 20), el("span", { class: "tile-cmd", text: r.command || "" })));
   }
 
   function tileGroup(name, routines, empty) {
     return el("section", { class: "tile-group" }, el("h2", { text: name }),
-      routines.length ? el("div", { class: "tiles" }, routines.map(tile)) : el("p", { class: "muted", text: empty }));
+      routines.length ? el("div", { class: "tiles" }, routines.map((r) => tile(r))) : el("p", { class: "muted", text: empty }));
   }
 
   // ------------------------------------------------------------------ operation
@@ -74,13 +91,44 @@
     drawNav(module, name);
     runCurrent = null;
     if (name && routine(name)) return openRoutine(routine(name), query);
-    const list = state.routines.filter((r) => !module || R.moduleOf(r.name) === module);
+    await window.AnaCategories.load();
+    // "#/ops/~Área" lists one business area; a namespace (old addresses) lists its area too.
+    const area = module ? (module.startsWith("~") ? decodeURIComponent(module.slice(1)) : R.moduleLabel(module)) : null;
+    const list = state.routines.filter((r) => !area || R.areaOf(r) === area);
+    const select = new Set();
+    const bar = el("div", { class: "pick-bar", hidden: true });
+    select.onchange = () => {
+      bar.hidden = !select.size;
+      bar.replaceChildren(el("strong", { text: `${select.size} selecionada(s)` }),
+        el("button", { type: "button", class: "primary", text: "Copiar para categoria…", onclick: async () => {
+          if (await window.AnaCategories.copyDialog([...select])) { select.clear(); ops(module); }
+        } }),
+        el("button", { type: "button", class: "quiet", text: "Limpar seleção", onclick: () => ops(module) }));
+      for (const w of $("#ops-main").querySelectorAll(".tile-wrap")) w.classList.toggle("picked", !!w.querySelector("input:checked"));
+    };
+    // Area → category → routines (RF-020-19), areas in the business order.
+    const byArea = new Map();
+    for (const r of list) {
+      const a = R.areaOf(r), c = R.categoryOf(r);
+      if (!byArea.has(a)) byArea.set(a, new Map());
+      if (!byArea.get(a).has(c)) byArea.get(a).set(c, []);
+      byArea.get(a).get(c).push(r);
+    }
+    const areas = [...byArea.keys()].sort((a, b) => R.areaRank(a) - R.areaRank(b) || a.localeCompare(b));
     $("#ops-main").replaceChildren(
       el("section", { class: "page-band" },
         el("div", { class: "breadcrumb", text: "Operação" }),
-        el("h1", { text: module ? R.moduleLabel(module) : "Todas as rotinas" }),
-        el("p", { class: "lead", text: module ? `${list.length} rotina(s) neste módulo.` : "Escolha um módulo à esquerda ou uma rotina abaixo." })),
-      el("div", { class: "page-body" }, el("div", { class: "tiles routine-grid" }, list.map(tile))));
+        el("h1", { text: area || "Todas as rotinas" }),
+        el("p", { class: "lead", text: area ? `${list.length} rotina(s) nesta área.`
+          : "Rotinas por área do negócio. Marque uma ou mais e use “Copiar para categoria…” para montar as suas." })),
+      el("div", { class: "page-body" },
+        bar,
+        area ? null : el("div", { class: "cat-sections" }, ...window.AnaCategories.sections(routine, shortcutTile, () => ops(module))),
+        ...areas.map((a) => el("section", { class: "area-block" },
+          area ? null : el("h2", { class: "area-title" }, el("a", { href: `#/ops/~${encodeURIComponent(a)}`, text: a })),
+          ...[...byArea.get(a).keys()].sort((x, y) => x.localeCompare(y)).map((c) => el("div", { class: "tile-group" },
+            el("h3", { class: "cat-title", text: c }),
+            el("div", { class: "tiles routine-grid" }, byArea.get(a).get(c).map((r) => tile(r, select)))))))));
   }
 
   function drawNav(activeModule, activeName) {
@@ -90,16 +138,19 @@
     const groups = {};
     const f = state.filter.toLowerCase();
     for (const r of state.routines) {
-      if (f && !(title(r).toLowerCase().includes(f) || r.name.includes(f) || (r.command || "").includes(f))) continue;
-      (groups[R.moduleOf(r.name)] ||= []).push(r);
+      if (f && !(title(r).toLowerCase().includes(f) || r.name.includes(f) || (r.command || "").includes(f)
+                 || R.categoryOf(r).toLowerCase().includes(f))) continue;
+      (groups[R.areaOf(r)] ||= []).push(r);
     }
-    const sections = Object.keys(groups).sort((a, b) => R.moduleLabel(a).localeCompare(R.moduleLabel(b))).map((m) =>
+    const activeArea = activeModule ? (activeModule.startsWith("~") ? decodeURIComponent(activeModule.slice(1)) : R.moduleLabel(activeModule)) : null;
+    const sections = Object.keys(groups).sort((a, b) => R.areaRank(a) - R.areaRank(b) || a.localeCompare(b)).map((a) =>
       el("div", { class: "nav-module" },
-        el("button", { class: "nav-group-link" + (m === activeModule && !activeName ? " active" : ""), text: R.moduleLabel(m),
-                       onclick: () => window.AnaStudio.go(`#/ops/${m}`) }),
-        groups[m].map((r) => el("button", { class: "nav-link" + (r.name === activeName ? " active" : ""),
-          title: r.name, onclick: () => window.AnaStudio.go(`#/ops/${m}/${r.name}`) },
-          state.favorites.has(r.name) ? "★ " : "", title(r)))));
+        el("button", { class: "nav-group-link" + (a === activeArea && !activeName ? " active" : ""), text: a,
+                       onclick: () => window.AnaStudio.go(`#/ops/~${encodeURIComponent(a)}`) }),
+        groups[a].sort((x, y) => R.categoryOf(x).localeCompare(R.categoryOf(y)) || title(x).localeCompare(title(y))).map((r) =>
+          el("button", { class: "nav-link" + (r.name === activeName ? " active" : ""),
+            title: `${R.categoryOf(r)} — ${title(r)}`, onclick: () => window.AnaStudio.go(`#/ops/${R.moduleOf(r.name)}/${r.name}`) },
+            state.favorites.has(r.name) ? "★ " : "", title(r)))));
     nav.replaceChildren(filter, ...sections);
   }
 
@@ -245,8 +296,10 @@
     layout.append(
       el("section", { class: "page-band" },
         el("div", { class: "page-header" },
-          el("div", { class: "page-title" }, el("div", { class: "breadcrumb", text: R.moduleLabel(R.moduleOf(r.name)) }),
-            el("h1", {}, title(r), " ", fav)),
+          el("div", { class: "page-title" }, el("div", { class: "breadcrumb", text: `${R.areaOf(r)} · ${R.categoryOf(r)}` }),
+            el("h1", {}, title(r), " ", fav,
+              el("button", { type: "button", class: "quiet small copy-to-cat", title: "Copiar para uma categoria sua ou da empresa",
+                             onclick: () => window.AnaCategories.copyDialog([r.name]) }, "Copiar para categoria…"))),
           el("div", { class: "page-meta" }, status,
             el("span", { class: "muted small", text: `${r.command ? "comando " + r.command + " · " : ""}${r.exposed ? "integração · " : ""}F8 executa · F3 volta` }))),
         el("section", { class: "params-card filter-bar" },
@@ -277,5 +330,5 @@
     }
   });
 
-  window.AnaOps = { home, ops, loadRoutines, routineHash, routines: () => state.routines };
+  window.AnaOps = { routineOf: (n) => routine(n), home, ops, loadRoutines, routineHash, routines: () => state.routines };
 })();

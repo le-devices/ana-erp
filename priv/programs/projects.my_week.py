@@ -1,5 +1,6 @@
 # ana:description Minha semana: minhas atividades, alocação e apontamento em um clique
 # ana:command semana
+# ana:category Projetos/Meu trabalho
 """RF-021-10, CA-021-06: the consultant logs hours and updates progress
 right here, without going to other screens."""
 

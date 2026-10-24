@@ -1,5 +1,6 @@
 # ana:description Salva cenário de projeção do projeto (ou ajusta o otimista/pessimista deste projeto)
 # ana:exposed yes
+# ana:category Projetos/Planejamento
 """RF-021-14/14a. kind=optimistic|pessimistic overrides the company policy
 for this project; custom scenarios are compared side by side."""
 

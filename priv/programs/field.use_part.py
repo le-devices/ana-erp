@@ -1,5 +1,6 @@
 # ana:description Registra peça usada na OS: baixa do depósito do técnico (idempotente)
 # ana:exposed yes
+# ana:category Logística e campo/Serviços em campo
 """RF-015-08, CA-015-04. Stock leaves the technician's vehicle/kit warehouse."""
 
 from decimal import Decimal

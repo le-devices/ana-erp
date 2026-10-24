@@ -1,6 +1,7 @@
 # ana:description Registra entrada de mercadoria no estoque (sobra, achado ou saldo de abertura), com valor e lançamento automáticos
 # ana:exposed yes
 # ana:command stockin
+# ana:category Estoque/Movimentações
 """Stock receipt outside purchases and production; returns the new balance of the product in the
 warehouse. Spec 038: the database values the entry (cost given, else the average) and posts
 D inventory / C inventory gains (or opening balances)."""

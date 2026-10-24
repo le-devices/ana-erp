@@ -1,6 +1,7 @@
 # ana:description Cria ou atualiza projeto com tarefas, equipe e valores-hora
 # ana:exposed yes
 # ana:command project
+# ana:category Projetos/Planejamento
 """Upsert by code. Creating requires admin; changing requires manager or admin.
 
 Example:

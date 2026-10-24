@@ -1,5 +1,6 @@
 # ana:description Conciliação bancária automática por regras (cobrança, documento, valor e data)
 # ana:exposed yes
+# ana:category Financeiro/Conciliação bancária
 """RF-017-07. Candidates for every open line in a few set-based queries:
 1. charge id found in the line (confidence 1.0) — a charge already paid by the gateway is only
    linked to its entry (no second posting);

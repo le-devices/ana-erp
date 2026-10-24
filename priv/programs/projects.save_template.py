@@ -1,5 +1,6 @@
 # ana:description Cria ou atualiza modelo de projeto (fases, atividades, horas típicas)
 # ana:exposed yes
+# ana:category Projetos/Planejamento
 """RF-021-02. Templates are data of each client (P13); admin only.
 
 Example items:

@@ -1,5 +1,6 @@
 # ana:description Processos: painel de um caso — caminho percorrido no diagrama, linha do tempo, dados, tarefas e ações
 # ana:exposed yes
+# ana:category Processos/Acompanhamento
 """Spec 039 (RF-039-14). For esteiras use the Esteiras board (flows.board)."""
 
 PARAMS = {"case": {"type": "int", "required": True, "label": "caso"}}

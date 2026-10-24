@@ -1,5 +1,6 @@
 # ana:description Cadastros: possíveis duplicados de um registro (mesmo documento, nome parecido, mesmo e-mail)
 # ana:exposed yes
+# ana:category Cadastros/Dados mestres
 """Spec 040 (RF-040-07)."""
 
 from ana_lib.master import core

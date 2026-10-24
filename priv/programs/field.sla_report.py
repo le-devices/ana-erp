@@ -1,6 +1,7 @@
 # ana:description Indicadores de serviços em campo: SLA, tempo de resposta, tempo em campo, visitas e retornos
 # ana:exposed yes
 # ana:command sla
+# ana:category Logística e campo/Serviços em campo
 """RF-015-10, CA-015-05. An order is late when it is not done and now > due_at, or when it was
 done after due_at. Response = first trip/work − opening. Return = another order of the same
 customer and equipment within 30 days."""

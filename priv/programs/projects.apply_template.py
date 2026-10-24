@@ -1,5 +1,6 @@
 # ana:description Monta a estrutura do projeto a partir de um modelo
 # ana:exposed yes
+# ana:category Projetos/Planejamento
 """RF-021-02, CA-021-01. Copies phases, activities, hours, durations and
 dependencies; codes that already exist in the project are kept as they are."""
 

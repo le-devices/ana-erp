@@ -1,5 +1,6 @@
 # ana:description Cadastra conta bancária (ligada a uma conta contábil) para extratos e conciliação
 # ana:role admin
+# ana:category Financeiro/Conciliação bancária
 """Spec 017. The ledger account must be a postable asset account."""
 
 PARAMS = {

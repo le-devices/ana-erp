@@ -1,6 +1,7 @@
 # ana:description Orçamento por centro de custo, conta e mês
 # ana:exposed yes
 # ana:role admin
+# ana:category Contabilidade/Custos e orçamento
 """RF-027-05. months: list of "AAAA-MM" (or a single month); amount per month."""
 
 import datetime

@@ -1,6 +1,7 @@
 # ana:description Lista mercadorias e serviços (com saldo só para mercadorias)
 # ana:exposed yes
 # ana:command products
+# ana:category Cadastros/Clientes, fornecedores e itens
 """Item listing (RF-006-09). Items without movements show balance 0;
 services never have a stock balance."""
 

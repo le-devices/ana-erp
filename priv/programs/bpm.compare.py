@@ -1,5 +1,6 @@
 # ana:description Processos: o que mudou entre duas versões de um processo (elementos e ligações acrescentados, removidos, alterados)
 # ana:exposed yes
+# ana:category Processos/Modelagem
 """Spec 039 (RF-039-06, H9). The screen paints the difference on the diagram."""
 
 from ana_lib.bpm import common

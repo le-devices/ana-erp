@@ -296,6 +296,30 @@ ok(d.querySelector("#area-ops .steps li[aria-current='step']").textContent.inclu
    "etapas da venda com a etapa atual destacada (CA-020-07)");
 await go(w, "#/admin/audit");
 await until(() => d.querySelector("#admin-main .sub-tabs"), "audit again", jsErrors);
+// RF-020-19..22: routines by business area and category; pick two, copy them to a new category; it shows on Início.
+await go(w, "#/ops");
+await until(() => text("#ops-main").includes("Conciliação bancária") && d.querySelector("#ops-main .area-title"), "areas", jsErrors);
+ok([...d.querySelectorAll("#ops-main .area-title")].some((h) => h.textContent === "Financeiro")
+   && ![...d.querySelectorAll("#ops-main .tile-sub")].some((t) => /^(bpm|master)\b/.test(t.textContent)),
+   "Operação por área do negócio e categoria, sem nome técnico (CA-020-13)");
+const picks = [...d.querySelectorAll("#ops-main .tile-pick input")].slice(0, 2);
+for (const p of picks) { p.checked = true; p.dispatchEvent(new w.Event("change", { bubbles: true })); }
+await until(() => text("#ops-main .pick-bar").includes("2 selecionada(s)"), "pick bar", jsErrors);
+[...d.querySelectorAll("#ops-main .pick-bar button")].find((b) => b.textContent.startsWith("Copiar")).click();
+await until(() => d.querySelector(".cat-dialog"), "copy dialog", jsErrors);
+const catName = "Fumaça " + Date.now().toString(36);
+const fresh = d.querySelector('.cat-dialog input[value="new"]');
+fresh.checked = true; fresh.dispatchEvent(new w.Event("change", { bubbles: true }));
+d.querySelector('.cat-dialog .cat-new input[aria-label="Nome da nova categoria"]').value = catName;
+[...d.querySelectorAll(".cat-dialog button")].find((b) => b.textContent === "Copiar").click();
+await until(() => !d.querySelector(".cat-dialog") && text("#ops-main .cat-sections").includes(catName), "category made", jsErrors);
+ok(d.querySelectorAll("#ops-main .cat-sections .cat-group .tile").length >= 2, "duas rotinas copiadas para a categoria nova (CA-020-14)");
+await go(w, "#/home");
+await until(() => text("#area-home").includes(catName), "category on home", jsErrors);
+ok(true, "categoria aparece no Início com os atalhos (RF-020-22)");
+const made = (await w.AnaApi.categories()).find((c) => c.name === catName);
+if (made) await w.AnaApi.deleteCategory(made.id);
+
 // T-017-05b: statement sources per bank account (folder of OFX/CNAB 240 files or bank API).
 await go(w, "#/ops/finance/finance.statement_sources?active=true");   // with a parameter the routine runs
 await until(() => text("#area-ops").includes("Usar pasta de arquivos"), "statement sources", jsErrors);
@@ -324,7 +348,7 @@ d.querySelector('#admin-main input[placeholder="Tarefa (prefixo)"]').value = "se
 await until(() => text("#admin-main tbody").includes("seed.programs"), "internal tasks", jsErrors);
 ok(text("#admin-main tbody").includes("system"), "tarefas internas têm dono (P14)");
 [...d.querySelectorAll("#admin-main .sub-tabs button")].find((b) => b.textContent === "Requisições").click();
-await until(() => text("#admin-main tbody").includes("/api/"), "access log", jsErrors);
+await until(() => text("#admin-main tbody").includes("/api/"), "access log", jsErrors, 30000);   // busy right after the integration suites
 ok(true, "auditoria mostra as requisições (spec 024)");
 [...d.querySelectorAll("#admin-main .sub-tabs button")].find((b) => b.textContent === "Execuções").click();
 await until(() => d.querySelectorAll("#admin-main tbody tr.clickable").length > 0, "executions", jsErrors);

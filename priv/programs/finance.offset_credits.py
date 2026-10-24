@@ -1,6 +1,7 @@
 # ana:description Compensa créditos de clientes (devoluções, pagamentos a mais) e créditos com fornecedores com os títulos em aberto do mesmo parceiro
 # ana:exposed yes
 # ana:command compensar
+# ana:category Financeiro/Contas a receber e a pagar
 """Spec 038 (RF-038-05, CA-038-07). Oldest first, one entry per pair, residual when partial. Without a party:
 every party with credits and open bills (the scheduled routine)."""
 

@@ -1,5 +1,6 @@
 # ana:description Esteira: onde está cada documento, o que espera uma pessoa e o que falhou
 # ana:command esteiras
+# ana:category Processos/Esteiras
 """RF-030-04, RF-030-05, H6. One column per step with the open documents; each card says why
 it is waiting (manual step, condition not met, outside event) or the failure, with the next
 action: do it now (opens the step's routine with the document filled in), run automatically

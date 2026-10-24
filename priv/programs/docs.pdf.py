@@ -1,5 +1,6 @@
 # ana:description PDF de documento para cliente ou fornecedor (pedido, fatura, entrega, atendimento, recibo, extrato, ordem de compra)
 # ana:portal yes
+# ana:category Documentos e arquivos/Documentos
 """Spec 037. Internal users generate and publish the PDF in the partner's folder for that kind
 and open it; a portal account opens only PDFs already published for its own company. Internal
 documents (entries, production orders, transfers…) are refused: INTERNAL_DOCUMENT."""

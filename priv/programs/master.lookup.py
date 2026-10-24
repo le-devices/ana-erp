@@ -1,5 +1,6 @@
 # ana:description Cadastros: busca única para campos de escolha (registros ativos, mesmo texto e ordem em todo o ERP)
 # ana:exposed yes
+# ana:category Cadastros/Dados mestres
 """Spec 040 (RF-040-04)."""
 
 from ana_lib.master import core

@@ -1,5 +1,6 @@
 # ana:description Cria ordem de produção (componentes e operações copiados da estrutura e do roteiro ativos)
 # ana:exposed yes
+# ana:category Produção/Ordens de produção
 """RF-014-06. The order keeps its own copy of components (phantoms crossed, scrap included),
 operations and unit costs, so later changes to structure or routing never alter it.
 Standard cost = components × cost + standard hours × resource cost per hour."""

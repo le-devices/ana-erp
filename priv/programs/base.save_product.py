@@ -1,6 +1,7 @@
 # ana:description Cria ou atualiza item (mercadoria ou serviço) pelo código
 # ana:exposed yes
 # ana:command product
+# ana:category Cadastros/Clientes, fornecedores e itens
 """Upsert of a product by code. kind: goods (stock-controlled) | service."""
 
 from ana_lib.util import validation as v

@@ -1,6 +1,7 @@
 # ana:description Cancela pedido ainda não faturado
 # ana:exposed yes
 # ana:command cancel
+# ana:category Vendas/Pedidos
 from ana_lib.util import validation as v
 
 PARAMS = {

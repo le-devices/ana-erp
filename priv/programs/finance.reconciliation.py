@@ -1,5 +1,6 @@
 # ana:description Bancada de conciliação: linhas do extrato em aberto com as sugestões de títulos
 # ana:command conciliar
+# ana:category Financeiro/Conciliação bancária
 """H3: each open line shows its suggestions (best rule first) with the action on the row;
 lines without a suggestion can be matched by bill number or ignored."""
 

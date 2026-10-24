@@ -1,5 +1,6 @@
 # ana:description Parâmetros de distância: fator rodoviário, velocidade média e serviço de geocodificação
 # ana:role admin
+# ana:category Cadastros/Distâncias
 """RF-032-02, RF-032-04. Without parameters, shows the current values. The geocoder is an
 integration connector (spec 017): nothing is sent outside unless one is chosen here."""
 

@@ -1,5 +1,6 @@
 # ana:description Processos: exporta um processo em BPMN 2.0 (XML) ou importa um XML BPMN como rascunho, avisando o que não é suportado
 # ana:exposed yes
+# ana:category Processos/Modelagem
 """Spec 039 (RF-039-07, CA-039-06). Elements with BPMN meaning go both ways, with the diagram (BPMNDI);
 what ANA needs beyond BPMN (programs, facts, rules) travels in extension attributes (ana:props,
 ana:condition). Unsupported elements are listed, never dropped silently. DOCTYPE is refused (no

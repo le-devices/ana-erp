@@ -176,6 +176,14 @@
     },
 
     license: () => API.request("GET", "/api/license"),
+    categories: () => API.request("GET", "/api/categories"),
+    createCategory: (body) => API.request("POST", "/api/categories", body),
+    updateCategory: (id, body) => API.request("PUT", `/api/categories/${id}`, body),
+    deleteCategory: (id) => API.request("DELETE", `/api/categories/${id}`),
+    orderCategories: (ids) => API.request("PUT", "/api/categories/order", { ids }),
+    addShortcuts: (id, items) => API.request("POST", `/api/categories/${id}/shortcuts`, { items }),
+    updateShortcut: (id, body) => API.request("PUT", `/api/shortcuts/${id}`, body),
+    deleteShortcut: (id) => API.request("DELETE", `/api/shortcuts/${id}`),
     admin: {
       license: () => API.request("GET", "/api/admin/license"),
       installLicense: (text) => API.request("POST", "/api/admin/license", { text }),

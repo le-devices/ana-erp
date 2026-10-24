@@ -1,6 +1,7 @@
 # ana:description Cria ou altera marco de valor fixo (ex.: protótipo)
 # ana:exposed yes
 # ana:command milestone
+# ana:category Projetos/Planejamento
 from ana_lib.projects import access
 
 PARAMS = {

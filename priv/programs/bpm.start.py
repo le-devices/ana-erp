@@ -1,5 +1,6 @@
 # ana:description Processos: inicia um caso de um processo publicado (avulso ou seguindo um documento do ERP)
 # ana:exposed yes
+# ana:category Processos/Minhas tarefas
 """Spec 039 (RF-039-11). Processes started by a document start by themselves when the document is created;
 this program starts the others (and lets integrations start any)."""
 

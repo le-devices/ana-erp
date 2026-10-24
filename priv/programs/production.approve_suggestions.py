@@ -1,5 +1,6 @@
 # ana:description Aprova sugestões do planejamento: gera ordens de produção e solicitações de compra
 # ana:exposed yes
+# ana:category Produção/Planejamento
 """RF-014-05. "make" → planned production order; "buy" → purchase request (origin planning,
 spec 013), one per need week and warehouse. Without ids, every open suggestion of the scenario."""
 

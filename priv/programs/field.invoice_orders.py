@@ -1,5 +1,6 @@
 # ana:description Fatura ordens de serviço concluídas (horas, deslocamento e peças) ou lança no projeto
 # ana:exposed yes
+# ana:category Logística e campo/Serviços em campo
 """RF-015-09, CA-015-04. Standalone order: lines hours (work hours × the technician profile's
 rate), travel (hours × travel rate + km × km rate, logistics.policy) and parts (× price); bill
 and entry (D customers / C service_revenue and sales_revenue), document OS-n. Order of a

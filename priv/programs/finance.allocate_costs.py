@@ -1,6 +1,7 @@
 # ana:description Rateio de custos do mês entre centros de custo (prévia ou execução)
 # ana:exposed yes
 # ana:role admin
+# ana:category Contabilidade/Custos e orçamento
 """RF-027-06. For each rule, the month's balance of the source center in the accounts of the
 rule is moved to the targets by percentage (per account; cents remainder to the last target).
 Preview by default; one allocation per rule and month (document RATEIO-<rule>-<AAAA-MM>)."""

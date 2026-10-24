@@ -1,5 +1,6 @@
 # ana:description Conclui marco (fica disponível para faturamento)
 # ana:exposed yes
+# ana:category Projetos/Planejamento
 import datetime
 
 from ana_lib.projects import access

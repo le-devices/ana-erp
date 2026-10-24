@@ -1,5 +1,6 @@
 # ana:description Requisita componentes da ordem: baixa do estoque e lançamento em produtos em elaboração
 # ana:exposed yes
+# ana:category Produção/Ordens de produção
 """RF-014-06, CA-014-03. Without lines, issues everything still pending. D work_in_process /
 C inventory at the unit cost frozen in the order. The database refuses issuing above the
 required quantity plus tolerance (RNF-014-03); balances are checked with the products locked."""

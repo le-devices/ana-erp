@@ -1,5 +1,6 @@
 # ana:description Parâmetros de reposição por item e depósito
 # ana:exposed yes
+# ana:category Compras/Reposição
 """RF-013-07. Reorder point (minimum), safety stock, maximum, method and consumption window."""
 
 from ana_lib.supply import common

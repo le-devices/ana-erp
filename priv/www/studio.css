@@ -982,3 +982,27 @@ dl.facts dd { margin: 0; }
              background: var(--accent); color: var(--accent-text); border: 0; font-weight: 600; }
 .skip-link:focus { top: 8px; }
 .node:focus-visible, [role="tab"]:focus-visible, tr.row-open:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+
+/* Spec 020 (RF-020-19..22): areas, categories, picking routines */
+.area-block { margin: 6px 0 26px; }
+.area-title { font-size: 18px; font-weight: 700; margin: 18px 0 4px; }
+.area-title a { color: var(--text); text-decoration: none; }
+.area-title a:hover { color: var(--accent); }
+.cat-title { font-size: 13px; font-weight: 600; color: var(--text-2); margin: 10px 0 8px; text-transform: none; }
+.tile-wrap { position: relative; }
+.tile-wrap .tile { width: 100%; }
+.tile-pick { position: absolute; top: 8px; right: 8px; padding: 2px; border-radius: 4px; background: var(--surface); line-height: 0; }
+.tile-wrap.picked .tile { border-color: var(--accent); box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 30%, transparent); }
+.pick-bar { position: sticky; top: 0; z-index: 5; display: flex; align-items: center; gap: 10px; flex-wrap: wrap; padding: 10px 14px;
+            margin-bottom: 12px; border: 1px solid var(--accent); border-radius: var(--r); background: var(--accent-soft); }
+.cat-group > summary { display: flex; align-items: center; gap: 8px; cursor: pointer; font-size: 15px; font-weight: 600; margin-bottom: 10px; list-style: none; }
+.cat-group > summary::-webkit-details-marker { display: none; }
+.cat-group > summary::before { content: "▾"; color: var(--text-2); }
+.cat-group:not([open]) > summary::before { content: "▸"; }
+.cat-kind { font-size: 12px; font-weight: 400; }
+.cat-tools { margin-left: auto; display: inline-flex; gap: 4px; }
+.cat-tiles.drop { outline: 2px dashed var(--accent); outline-offset: 4px; border-radius: var(--r); min-height: 60px; }
+.tile.dragging { opacity: .5; }
+.cat-dialog .cat-choices { display: grid; gap: 6px; margin: 10px 0; max-height: 40vh; overflow: auto; }
+.cat-dialog .cat-new { display: grid; gap: 8px; margin-bottom: 12px; }
+.copy-to-cat { margin-left: 8px; font-size: 12px; vertical-align: middle; }

@@ -1,6 +1,7 @@
 # ana:description Cancela a fatura de um pedido de venda: estorno do lançamento, dos títulos e das cobranças, volta do estoque com o mesmo valor
 # ana:exposed yes
 # ana:command cancelar_fatura
+# ana:category Vendas/Faturamento
 """Spec 038 (RF-038-08, CA-038-10). Only while every bill of the order is open and no charge was paid.
 Never deletes history: a reversal entry, bills and charges cancelled, the goods that left at invoicing
 come back at the cost they left (the database posts D inventory / C cost of goods sold), the order is

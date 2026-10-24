@@ -1,5 +1,6 @@
 # ana:description Processos: publica o rascunho (passa a valer para casos novos); a versão anterior é aposentada
 # ana:exposed yes
+# ana:category Processos/Modelagem
 """Spec 039 (RF-039-06). Only without errors. Running cases keep their version (bpm.migrate moves them on purpose)."""
 
 from ana_lib.bpm import common

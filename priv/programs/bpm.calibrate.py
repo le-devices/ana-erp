@@ -1,5 +1,6 @@
 # ana:description Processos: calibra a simulação pela realidade — durações, caminhos e chegadas medidos nos casos e documentos do ERP
 # ana:exposed yes
+# ana:category Processos/Simulação e descoberta
 """Spec 039 (RF-039-10, CA-039-05). Durations are the observed lead times of each element (empirical
 distribution: the simulation reproduces the real mean), probabilities come from the paths taken,
 arrivals from the cases started. Time in calendar hours (hours_per_day = 24) with ample capacity: the

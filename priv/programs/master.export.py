@@ -1,5 +1,6 @@
 # ana:description Cadastros: exporta uma entidade mestre em CSV, no formato que a importação lê de volta
 # ana:exposed yes
+# ana:category Cadastros/Dados mestres
 """Spec 040 (RF-040-09, RNF-040-04). Header with the field labels (the import recognizes them); text cells
 that a spreadsheet would run as a formula (= + - @) are neutralized with a leading apostrophe."""
 

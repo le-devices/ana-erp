@@ -1,5 +1,6 @@
 # ana:description Simula uma condição de pagamento: parcelas, vencimentos e valor líquido
 # ana:exposed yes
+# ana:category Financeiro/Contas a receber e a pagar
 """RF-031-02. Shows installments, due dates, the adjusted total and what is left after the
 operator's fee (cards)."""
 

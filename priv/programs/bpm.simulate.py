@@ -1,5 +1,6 @@
 # ana:description Processos: simula um processo (chegadas, durações, caminhos, pessoas e custo) e guarda o cenário para comparar
 # ana:exposed yes
+# ana:category Processos/Simulação e descoberta
 """Spec 039 (RF-039-08, 09, CA-039-04). params (all optional): days, hours_per_day, arrivals_per_day, runs,
 seed, resources {lane: {count, cost_hour}}, durations {node: {dist, ...}}, probabilities {edge: p},
 fixed_cost {node: value}, automate [node]. Without params: the ones saved with the model. save=True keeps

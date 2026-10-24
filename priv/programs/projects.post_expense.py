@@ -1,6 +1,7 @@
 # ana:description Lança despesa ou material de protótipo no projeto
 # ana:exposed yes
 # ana:command expense
+# ana:category Projetos/Faturamento e custos
 """Project expense (RF-008-10). With `product`, consumes stock from `warehouse`
 (document PRJ-<code>); without balance → INSUFFICIENT_STOCK."""
 

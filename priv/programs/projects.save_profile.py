@@ -1,6 +1,7 @@
 # ana:description Cria ou atualiza perfil profissional e seu valor-hora padrão
 # ana:exposed yes
 # ana:command profile
+# ana:category Projetos/Pessoas e políticas
 from ana_lib.projects import access
 
 PARAMS = {

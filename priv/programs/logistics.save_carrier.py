@@ -1,5 +1,6 @@
 # ana:description Transportadora e tabela de frete por região e peso
 # ana:exposed yes
+# ana:category Logística e campo/Expedição
 """RF-015-03. rates: [{"region": "SP" | "*", "max_weight_kg": 30, "price": 45}] (replaces the table).
 Spec 038: every carrier is also a supplier party (found by tax id or name, else created), so the
 freight of each shipment becomes a payable bill without any manual registration."""
