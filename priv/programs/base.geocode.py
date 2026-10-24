@@ -1,5 +1,6 @@
 # ana:description Busca coordenadas de clientes pelo endereço, pelo conector de geocodificação configurado
 # ana:exposed yes
+# ana:category Cadastros/Distâncias
 """RF-032-04. Uses the connector chosen in base.geo_settings (spec 017: allowed hosts,
 credentials in the vault, limits). Contract: GET /search?q=<address>&format=json&limit=1
 answering [{"lat", "lon"}] (or {"lat", "lon"}) — the common geocoders' format. Without a

@@ -1,5 +1,6 @@
 # ana:description Desempenho de fornecedores: pontualidade, prazo real × prometido, divergências
 # ana:command fornecedores
+# ana:category Compras/Fornecedores
 """RF-013-09. A line is on time when the receipt that completed it happened on or before the
 promised date. Divergences: received quantity × ordered (closed lines) and invoice price × order price."""
 

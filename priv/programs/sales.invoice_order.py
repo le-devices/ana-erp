@@ -1,6 +1,7 @@
 # ana:description Fatura pedido: baixa estoque, gera título e lançamento contábil
 # ana:exposed yes
 # ana:command invoice
+# ana:category Vendas/Faturamento
 """Invoicing in a single execution transaction (RF-006-04, RF-008-01/02).
 
 Locks the order and, ordered by product, the product rows (RNF-006-01) so that

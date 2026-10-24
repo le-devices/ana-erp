@@ -1,5 +1,6 @@
 # ana:description Processos: avisos de tarefas (nova, perto do prazo, atrasada) da pessoa conectada
 # ana:exposed yes
+# ana:category Processos/Minhas tarefas
 """Spec 039 (RF-039-12)."""
 
 PARAMS = {"read": {"type": "list", "label": "marcar como lidos (ids; vazio = nenhum)"},

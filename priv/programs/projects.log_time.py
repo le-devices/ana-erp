@@ -1,6 +1,7 @@
 # ana:description Aponta horas de um colaborador numa tarefa de projeto
 # ana:exposed yes
 # ana:command logtime
+# ana:category Projetos/Meu trabalho
 """Time entry (RF-008-07). Without `employee`, logs for the current user.
 
 Passing `id` edits an entry that is still pending or rejected (it goes back

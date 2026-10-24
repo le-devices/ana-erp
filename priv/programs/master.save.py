@@ -1,5 +1,6 @@
 # ana:description Cadastros: salva um registro mestre (validação padrão, duplicados, versão, aprovação de campos sensíveis)
 # ana:exposed yes
+# ana:category Cadastros/Dados mestres
 """Spec 040 (RF-040-03, 07, 08). Without key: creates. values: {field: value}; tabs: {tab label: values or
 rows}; version: the one read with master.get (refused when someone changed it meanwhile)."""
 

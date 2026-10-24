@@ -1,5 +1,6 @@
 # ana:description Clientes por distância a partir da empresa ou de um depósito (e quem ainda não tem coordenadas)
 # ana:command clientes_distancia
+# ana:category Cadastros/Distâncias
 """RF-032-03. One set-based query (distance computed in the database)."""
 
 from ana_lib.base import geo

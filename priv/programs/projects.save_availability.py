@@ -1,5 +1,6 @@
 # ana:description Jornada semanal e ausências (férias, licenças) de um colaborador
 # ana:exposed yes
+# ana:category Projetos/Planejamento
 """RF-021-03: capacity = weekly hours × working days / 5, minus absences and
 holidays (scheduler.holiday). Admin, or the person for their own absences."""
 

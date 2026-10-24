@@ -1,5 +1,6 @@
 # ana:description Processos: painel de um processo — casos, prazo médio e de 90 % contra a meta, vazão por semana e mapa de calor por elemento
 # ana:exposed yes
+# ana:category Processos/Acompanhamento
 """Spec 039 (RF-039-15). For esteiras the numbers come from their steps (same engine, spec 030)."""
 
 import datetime

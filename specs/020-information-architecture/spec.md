@@ -1,6 +1,6 @@
 # 020 — Arquitetura da informação e experiência de uso
 
-Situação: implementada (RF-020-01..12); padrões de telas de produtividade (RF-020-13..18) e organização por áreas e categorias (RF-020-19..23) especificados, a implementar.
+Situação: implementada (RF-020-01..12); organização por áreas e categorias (RF-020-19..23) implementada; padrões de telas de produtividade (RF-020-13..18) a implementar.
 
 ## Problema
 A interface cresceu por acréscimo: propriedades acima do editor, versões e
@@ -233,8 +233,9 @@ seu jeito.
   **parâmetros pré-preenchidos** e um nome próprio ("Faturar pedidos da
   filial SP"), abrindo a rotina com eles.
 - **RF-020-22 Favoritos por categoria no Início.** Os favoritos do Início se
-  organizam nas mesmas categorias (pessoais e da empresa): fixar com ☆
-  pergunta a categoria (ou usa "Favoritas"); a tela de Início mostra as
+  organizam nas mesmas categorias (pessoais e da empresa): ☆ fixa em
+  "Favoritas" com um clique e, ao lado, "Copiar para categoria…" leva a
+  rotina a qualquer outra categoria; a tela de Início mostra as
   categorias como seções recolhíveis, com arrastar para reordenar e mover
   atalhos entre elas, e o mesmo "Copiar para categoria…" com seleção de
   várias.
@@ -253,7 +254,7 @@ seu jeito.
 - **CA-020-15** O administrador cria a categoria da empresa "Expedição" para
   o grupo da logística: quem é do grupo a vê; quem não é, não; uma rotina
   sem permissão para o usuário não aparece nela.
-- **CA-020-16** No Início, fixar uma rotina pergunta a categoria; arrastar
+- **CA-020-16** No Início, uma rotina copiada para uma categoria aparece nela; arrastar
   muda a ordem e move entre categorias; a ordem volta ao recarregar.
 - **CA-020-17** Um atalho com parâmetros pré-preenchidos e nome próprio abre
   a rotina com esses parâmetros e é encontrado pela busca do topo.

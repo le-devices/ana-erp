@@ -1,5 +1,6 @@
 # ana:description Devolve ao fornecedor mercadoria recebida: sai do estoque pelo preço da compra e vira crédito com o fornecedor (compensado nos títulos)
 # ana:exposed yes
+# ana:category Compras/Recebimento e notas
 """Spec 038 (RF-038-10). The database posts D supplier credits / C inventory at the purchase price; the credit
 (receivable bill, account supplier credits) is offset against the supplier's open bills when the policy says so."""
 

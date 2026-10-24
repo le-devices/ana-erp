@@ -168,6 +168,15 @@ por linha em `ana.table` (abrir rotina com parâmetros, ou pedir campos e
 executar na própria tela). O endereço `#/ops/<módulo>/<rotina>?param=valor`
 abre e executa a rotina.
 
+A **Operação** agrupa as rotinas por **área do negócio** (Vendas, Compras,
+Estoque, Produção, Financeiro, Contabilidade, Processos…) e **categoria**
+(declarada no programa: `# ana:category Financeiro/Conciliação bancária`).
+Marque uma ou mais rotinas e use **Copiar para categoria…** para montar as
+suas categorias (pessoais) — o administrador cria as **da empresa**, para
+todos ou para grupos. A categoria guarda atalhos: a rotina continua uma só;
+o atalho pode ter nome e parâmetros próprios. As categorias aparecem também
+no **Início**, com arrastar para ordenar e mover.
+
 O próximo passo do processo pode ser declarado no programa (spec 020):
 
 ```python

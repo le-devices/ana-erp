@@ -1,5 +1,6 @@
 # ana:description Gera relatório de status do projeto (andamento, marcos, riscos, horas, próximos passos)
 # ana:exposed yes
+# ana:category Projetos/Acompanhamento
 """RF-021-09, CA-021-07. Schedulable (spec 018), e.g. weekly, run as a robot
 that manages the project. Content is client-safe: hours and progress, never
 cost, rates or margin (RNF-021-02). Without `project`, one report per active

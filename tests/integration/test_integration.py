@@ -5449,6 +5449,77 @@ class TestStatementSources(Base):
                                                                  "auth": "none", "active": False}, self.token)
 
 
+class TestRoutineCategories(Base):
+    """Routines by business area and category; personal and company categories with shortcuts (spec 020, RF-020-19..23)."""
+
+    def api(self, method, path, body=None, token=None):
+        s, c, _ = http(method, path, body, token or self.token)
+        return s, c
+
+    def test_ca_020_13_every_menu_routine_has_area_and_category(self):
+        s, rows = self.api("GET", "/api/routines")
+        self.assertEqual(s, 200, rows)
+        product = [r for r in rows if not r["name"].startswith("test.")]
+        missing = [r["name"] for r in product if not r.get("category") or "/" not in r["category"]]
+        self.assertEqual(missing, [])                                            # no raw namespace as a label
+        self.assertIn("Financeiro/Conciliação bancária", {r["category"] for r in product})
+
+    def test_ca_020_14_15_17_personal_and_company_categories_with_shortcuts(self):
+        g = f"cat{SUFFIX}"
+        http("PUT", f"/api/admin/groups/{g}", {"description": "categorias (teste)", "program_patterns": []}, self.token)
+        u1, t1 = new_user("user", [g])
+        u2, t2 = new_user("user")
+        try:
+            # A person makes a category and copies three routines into it (shortcuts: the routines stay one).
+            s, c = self.api("POST", "/api/categories", {"name": f"Fechamento do mês {SUFFIX}"}, t1)
+            self.assertEqual(s, 200, c)
+            mine = c["id"]
+            s, c = self.api("POST", f"/api/categories/{mine}/shortcuts",
+                            {"items": [{"program": "sales.create_order"}, {"program": "finance.reconciliations"},
+                                       {"program": "inventory.balance"}]}, t1)
+            self.assertEqual((s, c["added"]), (200, 3), c)
+            s, again = self.api("POST", f"/api/categories/{mine}/shortcuts", {"items": [{"program": "sales.create_order"}]}, t1)
+            self.assertEqual(again["added"], 1)                                   # repeated copy: no duplicate shortcut
+            s, cats = self.api("GET", "/api/categories", token=t1)
+            cat = next(x for x in cats if x["id"] == mine)
+            self.assertEqual([x["program"] for x in cat["shortcuts"]], ["sales.create_order", "finance.reconciliations", "inventory.balance"])
+            s, cats2 = self.api("GET", "/api/categories", token=t2)
+            self.assertNotIn(mine, [x["id"] for x in cats2])                     # personal: only its owner sees it
+            s, c = self.api("DELETE", f"/api/categories/{mine}", token=t2)
+            self.assertEqual(s, 400, c)                                          # and only its owner changes it
+            # Own name and pre-filled parameters; moved to another category; order changed.
+            s, c = self.api("POST", "/api/categories", {"name": f"Expedição {SUFFIX}"}, t1)
+            other = c["id"]
+            sid = cat["shortcuts"][0]["id"]
+            s, c = self.api("PUT", f"/api/shortcuts/{sid}", {"label": "Pedido da filial SP", "params": {"warehouse": "SP"},
+                                                             "category_id": other, "position": 0}, t1)
+            self.assertEqual(s, 200, c)
+            s, cats = self.api("GET", "/api/categories", token=t1)
+            moved = next(x for x in cats if x["id"] == other)["shortcuts"][0]
+            self.assertEqual((moved["label"], moved["params"]), ("Pedido da filial SP", {"warehouse": "SP"}))
+            s, c = self.api("PUT", "/api/categories/order", {"ids": [other, mine]}, t1)
+            s, cats = self.api("GET", "/api/categories", token=t1)
+            self.assertEqual([x["id"] for x in cats if x["id"] in (mine, other)], [other, mine])
+            # Removing the category removes its shortcuts, never the routines.
+            self.assertEqual(self.api("DELETE", f"/api/categories/{mine}", token=t1)[0], 200)
+            for program in ("inventory.balance", "finance.reconciliations"):
+                self.assertEqual(self.api("GET", f"/api/programs/{program}")[0], 200, program)
+            # Company categories: only an administrator makes them; seen by the chosen groups only.
+            s, c = self.api("POST", "/api/categories", {"name": f"Da empresa {SUFFIX}", "company": True}, t1)
+            self.assertEqual(s, 400, c)
+            s, c = self.api("POST", "/api/categories", {"name": f"Logística {SUFFIX}", "company": True, "groups": [g]})
+            self.assertEqual(s, 200, c)
+            company = c["id"]
+            self.api("POST", f"/api/categories/{company}/shortcuts", {"items": [{"program": "logistics.ship"}]})
+            seen1 = next((x for x in self.api("GET", "/api/categories", token=t1)[1] if x["id"] == company), None)
+            self.assertTrue(seen1 and not seen1["editable"] and not seen1["personal"], seen1)
+            self.assertNotIn(company, [x["id"] for x in self.api("GET", "/api/categories", token=t2)[1]])
+            self.assertEqual(self.api("PUT", f"/api/categories/{company}", {"name": "Tomada"}, t1)[0], 400)
+            self.api("DELETE", f"/api/categories/{company}")
+        finally:
+            http("DELETE", f"/api/admin/groups/{g}", token=self.token)
+
+
 class TestRunErrors(Base):
     """Running what cannot run says why (a library, an inactive program, a missing one)."""
 

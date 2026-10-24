@@ -7,13 +7,20 @@
   // Module labels by program namespace (RF-020-03). Unknown namespaces
   // (customer programs) are shown as they are.
   const MODULES = {
-    base: "Cadastros", inventory: "Estoque", sales: "Vendas", finance: "Financeiro",
-    projects: "Projetos", analytics: "Analítico", supply: "Suprimentos", production: "Produção",
-    logistics: "Logística", field: "Serviços em campo", demo: "Demonstração", files: "Arquivos",
-    integration: "Integrações", flows: "Esteiras", docs: "Documentos",
+    base: "Cadastros", master: "Cadastros", inventory: "Estoque", sales: "Vendas", finance: "Financeiro",
+    projects: "Projetos", analytics: "Analítico", supply: "Compras", production: "Produção",
+    logistics: "Logística e campo", field: "Logística e campo", demo: "Demonstração", files: "Documentos e arquivos",
+    integration: "Integrações", flows: "Processos", bpm: "Processos", docs: "Documentos e arquivos",
   };
   const moduleOf = (name) => name.split(".")[0];
-  const moduleLabel = (m) => MODULES[m] || m;
+  const moduleLabel = (m) => MODULES[m] || m.charAt(0).toUpperCase() + m.slice(1);
+  // Spec 020 (RF-020-19): business area and category of a routine ("Área/Categoria" in the program header);
+  // without it, the area of the namespace. Programs of the company without a namespace of the product: "Da empresa".
+  const AREA_ORDER = ["Vendas", "Compras", "Estoque", "Produção", "Logística e campo", "Projetos", "Financeiro", "Contabilidade",
+                      "Cadastros", "Processos", "Analítico", "Integrações", "Documentos e arquivos", "Demonstração"];
+  const areaOf = (r) => (r.category ? r.category.split("/")[0].trim() : MODULES[moduleOf(r.name)] || "Da empresa");
+  const categoryOf = (r) => (r.category && r.category.includes("/") ? r.category.split("/").slice(1).join("/").trim() : "Outras");
+  const areaRank = (a) => { const i = AREA_ORDER.indexOf(a); return i < 0 ? 99 : i; };
 
   /** Calendar / clock button beside date and time fields: opens the browser's picker (no typing). */
   function pickerButton(input, type) {
@@ -496,5 +503,5 @@
     return ` · CPU ${u.cpu_ms} ms · memória ${Math.round((u.max_rss_kb || 0) / 1024)} MiB · ${u.sql_count} SQL`;
   }
 
-  window.AnaRunner = { paramsForm, drawOutput, usageText, moduleOf, moduleLabel };
+  window.AnaRunner = { paramsForm, drawOutput, usageText, moduleOf, moduleLabel, areaOf, categoryOf, areaRank };
 })();

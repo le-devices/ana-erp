@@ -1,5 +1,6 @@
 # ana:description Mudança de escopo: pedido, estimativa, aprovação interna e do cliente, recusa
 # ana:exposed yes
+# ana:category Projetos/Planejamento
 """RF-021-07, CA-021-05. Customer approval raises the budget (hours, amount,
 due date in working days), creates an additional milestone when there is an
 amount, and freezes a new baseline; the previous one stays available.

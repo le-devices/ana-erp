@@ -1,5 +1,6 @@
 # ana:description Aponta deslocamento ou trabalho na OS (idempotente pela chave do app)
 # ana:exposed yes
+# ana:category Logística e campo/Serviços em campo
 """RF-015-08, RNF-015-02. The same client_key sent twice (intermittent connection) records once."""
 
 from ana_lib.field import common

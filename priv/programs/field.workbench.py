@@ -1,5 +1,6 @@
 # ana:description Bancada de serviços em campo: chamados a agendar, agenda do dia e OS a faturar
 # ana:command campo
+# ana:category Logística e campo/Serviços em campo
 """H4–H8: open calls by deadline, today's visits and finished orders waiting for invoicing."""
 
 from ana_lib.docs.common import link as doc_link

@@ -1,6 +1,7 @@
 # ana:description Minhas faturas: títulos e PDFs do cliente da conta do portal
 # ana:portal yes
 # ana:command faturas
+# ana:category Documentos e arquivos/Portal
 """Spec 016 (H3, CA-016-05). For an external portal account: its receivable bills and the
 invoice PDFs shared in its folder. Internal users choose the customer."""
 

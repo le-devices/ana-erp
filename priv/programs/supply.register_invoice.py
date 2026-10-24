@@ -1,6 +1,7 @@
 # ana:description Registra a nota do fornecedor e a confronta com o recebido (pedido × recebimento × nota): dentro da tolerância vira título; fora, fica pendente
 # ana:exposed yes
 # ana:command nota_fornecedor
+# ana:category Compras/Recebimento e notas
 """Spec 038 (RF-038-10, CA-038-12). For supplier_invoice = 'match'. Expected = what was received and not yet
 invoiced on the order. Within the tolerance: D goods received (expected) ± purchase price variance / C
 suppliers (the invoice) and the payable bill; above it: pending with the reason (supply.invoices decides)."""

@@ -1,5 +1,6 @@
 # ana:description Técnico de campo: colaborador e depósito do veículo/maleta (peças)
 # ana:exposed yes
+# ana:category Logística e campo/Serviços em campo
 """RF-015-06/08. The technician is an employee (spec 008): profile and rate, absences."""
 
 from ana_lib.logistics import common

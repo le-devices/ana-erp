@@ -1,5 +1,6 @@
 # ana:description Encerra a ordem: apura o custo real, a variação contra o padrão e lança no estoque ou no projeto
 # ana:exposed yes
+# ana:category Produção/Ordens de produção
 """RF-014-06/09, CA-014-03/06. Actual cost = components issued (at the value they left the stock)
 + hours reported × cost per hour (immutable after closing). Order of a project: D project_costs +
 project expense / C work_in_process. Otherwise the finished goods already entered the stock at the

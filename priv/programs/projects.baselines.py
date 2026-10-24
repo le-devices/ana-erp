@@ -1,4 +1,5 @@
 # ana:description Linhas de base do projeto e comparação entre elas
+# ana:category Projetos/Planejamento
 """RF-021-06. Without `a`/`b`, compares the two most recent baselines."""
 
 from ana_lib.projects import access

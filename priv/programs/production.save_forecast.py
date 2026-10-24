@@ -1,5 +1,6 @@
 # ana:description Previsão de demanda por item e semana (consumida pelos pedidos reais)
 # ana:exposed yes
+# ana:category Produção/Planejamento
 """RF-014-04. weeks: [{"week": "2026-10-12", "quantity": 50}] (any day: the week's Monday is used)."""
 
 import datetime

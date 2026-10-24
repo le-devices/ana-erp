@@ -1,6 +1,7 @@
 # ana:description Regra de rateio de custos entre centros
 # ana:exposed yes
 # ana:role admin
+# ana:category Contabilidade/Custos e orçamento
 """RF-027-06. targets: [{"cost_center": "ENG", "pct": 60}, {"cost_center": "COM", "pct": 40}] (sum = 100)."""
 
 from decimal import Decimal

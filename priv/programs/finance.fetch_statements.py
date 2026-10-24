@@ -1,6 +1,7 @@
 # ana:description Busca os extratos de todas as contas com fonte automática (pasta de arquivos ou API do banco) e concilia
 # ana:exposed yes
 # ana:role admin
+# ana:category Financeiro/Conciliação bancária
 """T-017-05b. For every active source of finance.statement_source, each in its own savepoint (one bank failing
 never stops the others):
 - folder: every file of the folder not read yet (file and version) is imported — OFX or CNAB 240 told by the

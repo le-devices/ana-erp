@@ -1,6 +1,7 @@
 # ana:description Aprova ou recusa solicitação de compra dentro da alçada
 # ana:exposed yes
 # ana:command aprovar
+# ana:category Compras/Solicitações
 """RF-013-03. Whoever requested does not approve; above the user's limit (role or access
 group, supply.approval_limit) another approver is required. Draft requests are submitted first."""
 

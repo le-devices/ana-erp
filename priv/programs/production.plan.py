@@ -1,6 +1,7 @@
 # ana:description Planejamento de necessidades: explode estruturas e propõe ordens de produção e compras
 # ana:exposed yes
 # ana:command mrp
+# ana:category Produção/Planejamento
 """RF-014-05, RNF-014-01/02, CA-014-01.
 
 Low-level code of every item by a recursive query; then level by level, in batch:

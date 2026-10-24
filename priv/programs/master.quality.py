@@ -1,6 +1,7 @@
 # ana:description Cadastros: painel de qualidade (incompletos, sem custo, sem fornecedor…), com os registros a corrigir
 # ana:exposed yes
 # ana:command qualidade_cadastros
+# ana:category Cadastros/Dados mestres
 """Spec 040 (RF-040-10)."""
 
 from ana_lib.master import core

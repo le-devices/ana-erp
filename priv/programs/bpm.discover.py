@@ -1,5 +1,6 @@
 # ana:description Processos: descobre o processo real pelos dados — variantes mais frequentes e desvios do modelo (etapa pulada, retrabalho, ordem trocada)
 # ana:exposed yes
+# ana:category Processos/Simulação e descoberta
 """Spec 039 (RF-039-16, CA-039-08). to_model creates a draft (in a new process) from the most frequent variant."""
 
 import datetime

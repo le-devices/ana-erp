@@ -1,6 +1,7 @@
 # ana:description Aprovações do cliente: entregáveis concluídos e mudanças de escopo (portal)
 # ana:portal yes
 # ana:command aprovacoes
+# ana:category Projetos/Acompanhamento
 """Spec 021 (H8, T-021-11) on the portal of spec 016. The customer sees, for its own projects
 only, the finished deliverables waiting for acceptance and the scope changes approved
 internally and waiting for its decision; it accepts or rejects (with a reason). Approving a

@@ -1,6 +1,7 @@
 # ana:description Cria ou atualiza colaborador (perfil, custo-hora, login)
 # ana:exposed yes
 # ana:command employee
+# ana:category Projetos/Pessoas e políticas
 """Hourly cost is confidential: only administrators maintain employees."""
 
 from ana_lib.projects import access

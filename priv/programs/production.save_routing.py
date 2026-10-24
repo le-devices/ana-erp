@@ -1,5 +1,6 @@
 # ana:description Roteiro do item: operações em sequência com recurso, preparação e tempo por unidade
 # ana:exposed yes
+# ana:category Produção/Engenharia do produto
 """RF-014-02. Each save creates a new active version."""
 
 from ana_lib.production import common

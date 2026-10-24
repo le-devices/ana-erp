@@ -1,5 +1,6 @@
 # ana:description Rota do dia do técnico: paradas em ordem, horários estimados e distância
 # ana:exposed yes
+# ana:category Logística e campo/Serviços em campo
 """RF-015-07. Without order, the stops follow the scheduled time; `order` (assignment ids in the
 desired sequence) reorders them manually and the estimated times are recomputed."""
 

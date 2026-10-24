@@ -1,5 +1,6 @@
 # ana:description Processos: cenários de simulação guardados de um processo, para comparar lado a lado
 # ana:exposed yes
+# ana:category Processos/Simulação e descoberta
 """Spec 039 (RF-039-09)."""
 
 PARAMS = {"process": {"type": "str", "required": True, "label": "processo"},

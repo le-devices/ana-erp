@@ -1,5 +1,6 @@
 # ana:description Aprova o plano do projeto e congela uma nova linha de base
 # ana:exposed yes
+# ana:category Projetos/Planejamento
 """RF-021-06, CA-021-01, CA-021-10. Approving the first plan activates a proposal.
 Baselines are immutable (database trigger) and versioned; they keep the
 projected revenue, cost and profit. Below the minimum margin requires a

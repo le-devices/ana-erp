@@ -1,5 +1,6 @@
 # ana:description Cadastros: desativa ou reativa registros mestres (um ou vários); inativos saem das buscas de uso
 # ana:exposed yes
+# ana:category Cadastros/Dados mestres
 """Spec 040 (RF-040-05). Old documents keep pointing to inactive records; new ones refuse them."""
 
 from ana_lib.master import core

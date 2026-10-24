@@ -1,5 +1,6 @@
 # ana:description Bancada de expedição: pedidos a expedir, expedições em trânsito e transferências
 # ana:command expedicao
+# ana:category Logística e campo/Expedição
 """H1–H3: what waits for picking, what is on the road and the transfers in transit."""
 
 from ana_lib.docs.common import link as doc_link

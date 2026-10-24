@@ -1,5 +1,6 @@
 # ana:description Técnico sai para o atendimento (OS a caminho)
 # ana:exposed yes
+# ana:category Logística e campo/Serviços em campo
 """RF-015-08. Records the first response for the SLA indicators."""
 
 from ana_lib.field import common

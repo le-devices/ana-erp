@@ -1,6 +1,7 @@
 # ana:description Importa extrato bancário (OFX, CNAB 240 ou CSV) sem duplicar lançamentos
 # ana:exposed yes
 # ana:command extrato
+# ana:category Financeiro/Conciliação bancária
 """RF-017-06. Deduplication by the bank's transaction id (OFX FITID or a CSV id column) or,
 without it, by a hash of date + amount + description (+ the occurrence number inside the file,
 so two equal transactions on the same day are both kept). Lines go in batches of 5 000

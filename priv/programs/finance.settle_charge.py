@@ -1,5 +1,6 @@
 # ana:description Liquida o título de uma cobrança paga no gateway (idempotente)
 # ana:exposed yes
+# ana:category Financeiro/Contas a receber e a pagar
 """RF-017-08, RNF-017-02: the same payment event applied twice settles once. Spec 038 (RF-038-07): the money
 is not in the bank yet — it is with the gateway until the payout: D gateway receivable (net) + D bank fees
 (the gateway's fee) / C the bill's control account. The payout in the statement later clears the gateway

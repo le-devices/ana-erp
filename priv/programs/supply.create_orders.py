@@ -1,6 +1,7 @@
 # ana:description Gera ordens de compra das solicitações aprovadas, por fornecedor
 # ana:exposed yes
 # ana:command ordens
+# ana:category Compras/Ordens de compra
 """RF-013-04. Approved request lines are grouped by supplier (the line's or the item's
 preferred one) and delivery warehouse; price and promised date come from the catalog."""
 

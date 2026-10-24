@@ -1,5 +1,6 @@
 # ana:description Cadastros: histórico campo a campo de um registro mestre (quem, quando, antes e depois)
 # ana:exposed yes
+# ana:category Cadastros/Dados mestres
 """Spec 040 (RF-040-06)."""
 
 from ana_lib.master import core

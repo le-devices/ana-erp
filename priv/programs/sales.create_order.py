@@ -1,6 +1,7 @@
 # ana:description Cria pedido de venda: cliente, itens com saldo por depósito, condição de pagamento
 # ana:exposed yes
 # ana:command order
+# ana:category Vendas/Pedidos
 """Creates an OPEN order. Price empty = the item's list price.
 
 Availability: goods missing in the chosen warehouse are shown with where they exist; with

@@ -1,5 +1,6 @@
 # ana:description Painel de vendas a partir da camada analítica
 # ana:command dashboard
+# ana:category Analítico/Painéis
 """Reads the materialized views (spec 007): no contention with transactions."""
 
 from ana_lib.util.format import money

@@ -1,6 +1,7 @@
 # ana:description Abre um documento: cabeçalho, itens, valores, situação e documentos ligados
 # ana:command doc
 # ana:portal yes
+# ana:category Documentos e arquivos/Documentos
 """Spec 035 (RF-035-02..04). One viewer for every document; each related document opens from
 its row. Portal accounts see only documents of their own company (others: not found)."""
 

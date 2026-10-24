@@ -1,5 +1,6 @@
 # ana:description PDF da fatura (pedido ou OS): abre o PDF guardado na pasta do cliente, gerando se preciso
 # ana:portal yes
+# ana:category Financeiro/Contas a receber e a pagar
 """Spec 035 (follow-up). Returns {"_download": {"file"}}: the screen opens the PDF. Internal
 users generate it when missing (invoices made before the PDFs existed) or on request; a
 portal account opens the PDFs of its own company only."""

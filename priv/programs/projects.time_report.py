@@ -1,6 +1,7 @@
 # ana:description Extrato de horas do projeto para o cliente (sem custos)
 # ana:exposed yes
 # ana:command timereport
+# ana:category Projetos/Acompanhamento
 """RF-008-15: statement for the customer — never contains cost."""
 
 import datetime

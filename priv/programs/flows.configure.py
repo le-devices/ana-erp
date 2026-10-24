@@ -1,6 +1,7 @@
 # ana:description Configura as esteiras: ligar, robô responsável e, por etapa, automática ou manual com condições
 # ana:command esteira_config
 # ana:role admin
+# ana:category Processos/Esteiras
 """RF-030-01, RF-030-02 (P13: the catalog is the product's; the owner only chooses). Without an
 action, shows the flow. Conditions are rules over the document's facts, all of which must
 hold (e.g. total ≤ 5000): an automatic step whose condition fails waits for a person."""

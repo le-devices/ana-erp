@@ -1,6 +1,7 @@
 # ana:description Regras do extrato: linhas sem título (tarifas, IOF, rendimentos…) lançadas sozinhas na conta certa
 # ana:exposed yes
 # ana:role admin
+# ana:category Financeiro/Conciliação bancária
 """Spec 038 (RF-038-06, CA-038-08). The text is looked for in the line's description and document (case does
 not matter). Without parameters: lists the rules; with pattern and account: creates one; remove: deletes."""
 

@@ -1,6 +1,7 @@
 # ana:description Lançamento contábil manual com centro de custo por linha
 # ana:exposed yes
 # ana:role developer
+# ana:category Contabilidade/Lançamentos e fechamento
 """RF-027-04. lines: [{"account": "5.1.1", "debit": 100, "cost_center": "ADM"},
 {"account": "1.1.1", "credit": 100}]. Double entry checked here (friendly) and at COMMIT
 (database); cost center policies are enforced by the database for every program."""

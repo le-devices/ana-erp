@@ -1,5 +1,6 @@
 # ana:description Agenda técnico para a OS numa janela (sem sobreposição, respeitando ausências)
 # ana:exposed yes
+# ana:category Logística e campo/Serviços em campo
 """RF-015-06, CA-015-03. The database refuses two overlapping windows for the same technician
 (exclusion constraint) and windows on days of absence."""
 

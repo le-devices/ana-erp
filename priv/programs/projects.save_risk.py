@@ -1,5 +1,6 @@
 # ana:description Registra ou atualiza risco ou pendência do projeto
 # ana:exposed yes
+# ana:category Projetos/Planejamento
 """RF-021-08. Team members register; changing or closing: manager or the risk owner."""
 
 from ana_lib.projects import access

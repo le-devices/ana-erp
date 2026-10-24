@@ -1,5 +1,6 @@
 # ana:description Balancete por conta no período
 # ana:command trialbalance
+# ana:category Contabilidade/Lançamentos e fechamento
 from ana_lib.util.format import money
 
 PARAMS = {

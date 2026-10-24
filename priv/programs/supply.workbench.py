@@ -1,5 +1,6 @@
 # ana:description Bancada de compras: aprovar, comprar, receber e acompanhar prazos
 # ana:command compras
+# ana:category Compras/Ordens de compra
 """Purchasing workbench (H2–H4): each view lists what waits for a decision, with the
 action on the row itself."""
 

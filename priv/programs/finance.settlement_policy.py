@@ -1,6 +1,7 @@
 # ana:description Política de baixas: tolerância para juros/tarifas e compensação automática de créditos
 # ana:exposed yes
 # ana:role admin
+# ana:category Financeiro/Contas a receber e a pagar
 """Spec 038 (RF-038-05). Within the tolerance a difference goes to interest received or bank fees; beyond it,
 paying less leaves a residual bill and paying more becomes a credit of the party."""
 

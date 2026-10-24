@@ -1,5 +1,6 @@
 # ana:description Concilia manualmente uma linha do extrato com um ou mais títulos (ou ignora a linha)
 # ana:exposed yes
+# ana:category Financeiro/Conciliação bancária
 """RF-017-07. One line ↔ N bills of the same direction. A difference (interest received or
 fees) needs accept_difference. ignore marks lines that are not bills (transfers, investments)."""
 

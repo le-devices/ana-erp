@@ -1,6 +1,7 @@
 # ana:description Fatura horas aprovadas, despesas refaturáveis e marcos concluídos
 # ana:exposed yes
 # ana:command invoiceproject
+# ana:category Projetos/Faturamento e custos
 """Service invoice in a single execution transaction (RF-008-12).
 
 Locks the project (RNF-008-03): concurrent invoicing never bills twice.

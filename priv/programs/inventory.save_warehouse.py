@@ -1,5 +1,6 @@
 # ana:description Cria ou atualiza depósito (descrição, centro de custo e coordenadas)
 # ana:exposed yes
+# ana:category Estoque/Depósitos
 """Spec 032 (coordinates for distances) — the warehouse code is the key."""
 
 from ana_lib.util import validation as v

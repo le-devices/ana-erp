@@ -1,6 +1,7 @@
 # ana:description Apropria o custo das horas aprovadas do mês aos projetos (prévia ou execução)
 # ana:exposed yes
 # ana:role admin
+# ana:category Projetos/Faturamento e custos
 """Spec 038 (RF-038-11, L-10). Approved (or invoiced) hours of the month not yet appropriated become, per
 project, one entry D project costs (project cost center) / C labor absorbed, at the hourly cost frozen
 on approval. Each entry points to its hours (time_entry.labor_entry_id): running twice never doubles.

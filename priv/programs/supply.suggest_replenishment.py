@@ -1,6 +1,7 @@
 # ana:description Sugestão de reposição de estoque (ponto de pedido, segurança, máximo)
 # ana:exposed yes
 # ana:command reposicao
+# ana:category Compras/Reposição
 """RF-013-08, RNF-013-03: one set-based query for every rule.
 projected = balance + on order − reserved. Below the reorder point → order up to the maximum,
 respecting the preferred supplier's minimum lot and multiple. `create` turns the suggestions

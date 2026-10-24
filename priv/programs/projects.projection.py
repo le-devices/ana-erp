@@ -1,6 +1,7 @@
 # ana:description Viabilidade do projeto: faturamento, custo e lucro projetados (base, otimista, pessimista)
 # ana:exposed yes
 # ana:command viabilidade
+# ana:category Projetos/Planejamento
 """RF-021-12..15. Works from the proposal on: corrects rates, allocation,
 deadlines and expenses before the project starts with bad numbers.
 Optional `rate_pct`/`hours_pct`/`cost_pct`/`delay_weeks` simulate a case on

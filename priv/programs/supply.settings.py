@@ -1,6 +1,7 @@
 # ana:description Parâmetros de compras: tolerância de recebimento, prazo de pagamento e alçadas
 # ana:exposed yes
 # ana:role admin
+# ana:category Compras/Configuração
 """RNF-013-04 (P13). Without parameters, shows the current settings. Approval limit: role or
 access group → maximum amount (empty = unlimited; remove_limit deletes it)."""
 

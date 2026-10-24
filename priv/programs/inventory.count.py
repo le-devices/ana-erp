@@ -1,6 +1,7 @@
 # ana:description Inventário físico: digite o contado, veja saldo, diferença e valor, e confirme os ajustes (lançados automaticamente)
 # ana:exposed yes
 # ana:command contagem
+# ana:category Estoque/Inventário e saldos
 """Spec 038 (RF-038-02, CA-038-03). Without lines: the counting sheet of the warehouse (balances).
 With lines: preview of the differences at the average cost; confirm=True writes adjustment
 movements (document INV-n), which the database values and posts (D inventory / C inventory gains

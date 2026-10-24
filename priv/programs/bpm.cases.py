@@ -1,5 +1,6 @@
 # ana:description Processos: casos de um processo (em andamento, concluídos, com falha), com busca
 # ana:exposed yes
+# ana:category Processos/Acompanhamento
 """Spec 039 (RF-039-14, 15)."""
 
 PARAMS = {"process": {"type": "str", "label": "processo (vazio = todos)"},

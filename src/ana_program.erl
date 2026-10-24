@@ -141,6 +141,7 @@ write(C, Name, Fields, Source, Insp, Who) ->
                  maps:get(<<"portal">>, Fields, false) =:= true,
                  maps:get(<<"public">>, Fields, false) =:= true andalso maps:get(<<"exposed">>, Fields, false) =:= true]),
             ok = new_version(C, Name, 1, Source, Comment, Who),
+            ok = set_category(C, Name, Source),
             notify(C, Name),
             {ok, #{version => 1, created => true, warning => field(warning, Insp)}};
         #{<<"version">> := V, <<"source">> := CurrentSource} ->
@@ -174,12 +175,22 @@ write(C, Name, Fields, Source, Insp, Who) ->
                          maps:get(<<"in_menu">>, Fields, null), field(lint, Insp),
                          maps:get(<<"portal">>, Fields, null), maps:get(<<"public">>, Fields, null)]),
                     _ = Changed andalso (ok =:= new_version(C, Name, NV, Source, Comment, Who)),
+                    ok = set_category(C, Name, Source),
                     notify(C, Name),
                     {ok, #{version => NV, created => false, warning => field(warning, Insp)}};
                 _Other ->
                     {error, {conflict, V}}
             end
     end.
+
+%% Spec 020 (RF-020-19): "Área/Categoria" from the header line "# ana:category …" (also for the company's programs).
+set_category(_C, _Name, undefined) -> ok;
+set_category(C, Name, Source) ->
+    Category = case re:run(Source, "^#[ \t]*ana:category[ \t]+([^\r\n]+)", [multiline, unicode, {capture, all_but_first, binary}]) of
+        {match, [Cat]} -> string:trim(Cat);
+        nomatch -> null
+    end,
+    exec(C, "UPDATE ana_system.program SET category = $2 WHERE name = $1 AND category IS DISTINCT FROM $2", [Name, Category]).
 
 new_version(C, Name, V, Source, Comment, Who) ->
     exec(C, "INSERT INTO ana_system.program_version (name, version, source, comment, created_by) "

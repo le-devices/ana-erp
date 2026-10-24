@@ -1,5 +1,6 @@
 # ana:description Cadastros: onde um registro mestre é usado (pedidos, títulos, movimentos…), com a quantidade
 # ana:exposed yes
+# ana:category Cadastros/Dados mestres
 """Spec 040 (RF-040-03). From the foreign keys of the database: nothing to keep in sync by hand."""
 
 from ana_lib.master import core

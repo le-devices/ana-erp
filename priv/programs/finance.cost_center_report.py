@@ -1,5 +1,6 @@
 # ana:description Resultado gerencial por centro de custo: receitas, despesas, orçado × realizado
 # ana:command centros
+# ana:category Contabilidade/Custos e orçamento
 """RF-027-05/07. Children roll up into their parents. Revenue = credits − debits of revenue
 accounts; expense = debits − credits of expense accounts."""
 

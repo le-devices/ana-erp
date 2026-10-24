@@ -1,5 +1,6 @@
 # ana:description Cadastros: importa planilha CSV com prévia linha a linha (novo, altera, igual, erro) e confirmação
 # ana:exposed yes
+# ana:category Cadastros/Dados mestres
 """Spec 040 (RF-040-09, CA-040-06). The same validation as the screen and the API. Preview first; confirm
 writes the valid lines in one transaction (a line refused by the business rules is reported and the
 others go on). Re-importing the same file does not duplicate: a line matching an existing record by

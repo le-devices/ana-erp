@@ -1,6 +1,7 @@
 # ana:description Recebe mercadorias ou dá o aceite de serviços de uma ordem de compra
 # ana:exposed yes
 # ana:command receber
+# ana:category Compras/Recebimento e notas
 """RF-013-05/06, RNF-013-02: one unit of work — stock, project expense, journal entry and
 payable bill together or nothing. Without lines, receives everything still pending.
 

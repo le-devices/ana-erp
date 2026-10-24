@@ -1,5 +1,6 @@
 # ana:description Entrega o produto acabado da ordem (entrada no estoque) e registra o refugo
 # ana:exposed yes
+# ana:category Produção/Ordens de produção
 """RF-014-06. Good units enter the warehouse (an order of a project does not: the prototypes go
 to the project). The order is completed when good + scrap reach the quantity, or on request."""
 

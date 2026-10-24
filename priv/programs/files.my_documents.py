@@ -1,6 +1,7 @@
 # ana:description Meus documentos: pedidos, faturas, entregas, atendimentos, recibos e extratos da empresa
 # ana:portal yes
 # ana:command documentos
+# ana:category Documentos e arquivos/Portal
 """Spec 037 (RF-037-04). Lists only the folders made for the partner (published documents);
 the partner's internal folder never appears. Internal users choose the customer or supplier."""
 

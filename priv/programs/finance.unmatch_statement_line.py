@@ -1,5 +1,6 @@
 # ana:description Desfaz a conciliação de uma linha do extrato (estorna o lançamento e reabre os títulos)
 # ana:exposed yes
+# ana:category Financeiro/Conciliação bancária
 """RF-017-07. The settlement entry is reversed (never deleted); a line only linked to a
 gateway payment just loses the link."""
 

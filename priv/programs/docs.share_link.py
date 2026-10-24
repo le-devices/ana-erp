@@ -1,5 +1,6 @@
 # ana:description Link de download de um documento para o cliente ou fornecedor sem conta no portal (validade, limite, senha)
 # ana:command link_doc
+# ana:category Documentos e arquivos/Documentos
 """Spec 037 (RF-037-05). The document's PDF is published in the partner's folder and gets a
 link with expiry, download limit and optional password. The core refuses links to anything that
 is not in a folder for partners: internal documents never leave."""

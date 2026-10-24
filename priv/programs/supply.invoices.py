@@ -1,5 +1,6 @@
 # ana:description Notas de fornecedor pendentes (diferença acima da tolerância): aceitar com a diferença ou recusar
 # ana:exposed yes
+# ana:category Compras/Recebimento e notas
 """Spec 038 (RF-038-10, CA-038-12). Accepting posts the difference as purchase price variance; refusing frees
 the receipts for a corrected invoice. The person who registered the invoice does not decide it."""
 

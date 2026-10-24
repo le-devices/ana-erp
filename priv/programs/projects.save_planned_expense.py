@@ -1,5 +1,6 @@
 # ana:description Despesa prevista do projeto (única ou mensal), para a projeção de viabilidade
 # ana:exposed yes
+# ana:category Projetos/Planejamento
 """RF-021-13. Monthly expenses repeat in every month of the project, so a
 longer deadline costs more."""
 

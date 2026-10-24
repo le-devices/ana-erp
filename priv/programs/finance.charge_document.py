@@ -1,5 +1,6 @@
 # ana:description Emite as cobranças (PIX, boleto ou cartão) dos títulos em aberto de um documento
 # ana:command cobrar
+# ana:category Financeiro/Contas a receber e a pagar
 """RF-030 (Venda e Campo: etapa Cobrança). For every open receivable bill of the document
 ("ORD-12" or its installments "ORD-12/1"…) whose payment term has a gateway connector and
 no charge yet, asks finance.create_charge. Bills without a connector are left as they are

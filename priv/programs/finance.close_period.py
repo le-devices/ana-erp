@@ -2,6 +2,7 @@
 # ana:exposed yes
 # ana:role admin
 # ana:command fechamento
+# ana:category Contabilidade/Lançamentos e fechamento
 """Spec 038 (RF-038-09, CA-038-11). After closing, the database refuses any entry dated on or before
 the closed date, from any program. Reopening asks for a reason; every change stays in
 finance.period_close (who, when, why). Without parameters: shows the situation and the history."""

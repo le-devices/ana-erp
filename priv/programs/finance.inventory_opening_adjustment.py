@@ -1,6 +1,7 @@
 # ana:description Ajuste inicial do estoque: alinha a conta de estoque (e de produtos em elaboração) ao valor calculado, uma única vez
 # ana:exposed yes
 # ana:role admin
+# ana:category Contabilidade/Lançamentos e fechamento
 """Spec 038 (RNF-038-03). Movements made before the valuation got their cost without retroactive
 entries; this posts, once, the difference between the computed value and the ledger
 (D/C inventory and work in process × opening balances). Preview first; confirm=True posts."""

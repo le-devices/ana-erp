@@ -1,5 +1,6 @@
 # ana:description Exclui apontamento pendente ou rejeitado
 # ana:exposed yes
+# ana:category Projetos/Meu trabalho
 from ana_lib.projects import access
 
 PARAMS = {

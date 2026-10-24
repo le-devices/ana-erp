@@ -1,6 +1,7 @@
 # ana:description Estrutura do item (componentes, quantidades, perda, fantasma) em nova versão
 # ana:exposed yes
 # ana:command estrutura
+# ana:category Produção/Engenharia do produto
 """RF-014-01. Each save creates a new version and makes it the active one; the previous stays
 in the history. A cycle at any depth is refused by the database (CA-014-02)."""
 

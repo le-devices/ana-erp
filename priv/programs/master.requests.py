@@ -1,6 +1,7 @@
 # ana:description Cadastros: pedidos de alteração de campos sensíveis (preço, limite de crédito, dados bancários) para aprovar ou recusar
 # ana:exposed yes
 # ana:command aprovar_cadastros
+# ana:category Cadastros/Dados mestres
 """Spec 040 (RF-040-08, CA-040-05). Four eyes: whoever asked cannot decide (also checked by the database)."""
 
 from ana_lib.master import core

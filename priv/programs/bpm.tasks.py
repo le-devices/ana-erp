@@ -1,6 +1,7 @@
 # ana:description Minhas tarefas: o que é meu e do meu papel ou grupo, com prazo, prioridade e o próximo passo
 # ana:exposed yes
 # ana:command tarefas
+# ana:category Processos/Minhas tarefas
 """Spec 039 (RF-039-12, CA-039-02). Only what the user may do; overdue first, then by priority and deadline."""
 
 from ana_lib.bpm import common

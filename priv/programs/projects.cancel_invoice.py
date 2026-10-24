@@ -1,6 +1,7 @@
 # ana:description Cancela fatura de serviço (estorno contábil e devolução das origens)
 # ana:exposed yes
 # ana:command cancelinvoice
+# ana:category Projetos/Faturamento e custos
 """RF-008-13: only while the bill is still open. Posts a reversal entry
 (never deletes accounting history) and returns sources to their prior state."""
 

@@ -1,5 +1,6 @@
 # ana:description Registra a entrega (comprovante) ou a devolução da expedição pela transportadora
 # ana:exposed yes
+# ana:category Logística e campo/Expedição
 """RF-015-02. returned: the goods come back to the warehouse (when they had left at shipment)."""
 
 from decimal import Decimal

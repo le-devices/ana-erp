@@ -1,5 +1,6 @@
 # ana:description Bancada de produção: ordens em aberto, sugestões do planejamento e próximos passos
 # ana:command producao
+# ana:category Produção/Planejamento
 """Production workbench (H4–H6): each order shows the next step on its own row."""
 
 import datetime

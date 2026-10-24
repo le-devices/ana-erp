@@ -1,5 +1,6 @@
 # ana:description Checklist da OS (perguntas do serviço): consultar ou responder
 # ana:exposed yes
+# ana:category Logística e campo/Serviços em campo
 """RF-015-08. Without answers, lists the questions of the service and what was answered."""
 
 from ana_lib.field import common
