@@ -195,7 +195,9 @@
       .sort((a, b) => a[2] - b[2]);
     const inputs = {};
     const lookups = [];
+    const deferred = [];         // run once every field exists (dependencies declared later in the form)
     for (const [name, spec] of entries) {
+      if (spec.simulate && options.simulate) continue;     // set by the "Simular" button (RF-020-13)
       const type = spec.type || "str";
       let labelText = spec.label || name;
       // A list with "(vazio = X)" in its label shows X as the empty option instead (shorter label).
@@ -244,6 +246,38 @@
         form.append(el("div", { class: "rows-field" }, el("span", { class: "label-line" }, label, hint), grid, input,
                        spec.help ? el("span", { class: "help", text: spec.help }) : null));
         continue;
+      } else if (type === "condition") {
+        // Condition builder (RF-020-14): criteria, exceptions and value help; travels as JSON in a hidden input.
+        input = el("input", { type: "hidden", name });
+        const start = typeof init === "string" && init ? JSON.parse(init) : init !== undefined ? init : (spec.default ?? []);
+        input.value = JSON.stringify(start);
+        const holder = el("div", { class: "cond-holder" });
+        const fieldDef = (f) => ({ ...f, lookup: f.lookup && options.lookup
+          ? (q) => options.lookup(f.lookup.program, { ...(f.lookup.params || {}), q })
+              .then((opts) => (Array.isArray(opts) ? opts : []).map((o) => [o.value, o.label])) : undefined });
+        const draw = (fields) => {
+          const b = window.AnaConditions.builder({ fields: fields.map(fieldDef), value: JSON.parse(input.value || "[]"),
+                                                   onChange: (c) => { input.value = JSON.stringify(c); } });
+          holder.replaceChildren(b.node);
+        };
+        if (Array.isArray(spec.fields)) draw(spec.fields);
+        else if (spec.fields && spec.fields.program) {
+          // Fields that follow other parameters (e.g. the facts of the chosen flow).
+          const deps = spec.fields.depends || [];
+          const load = () => {
+            const params = { ...(spec.fields.params || {}) };
+            for (const d of deps) if (inputs[d] && inputs[d].value !== "") params[d] = inputs[d].value;
+            if (!options.lookup || deps.some((d) => !(d in params))) { draw([]); return; }
+            options.lookup(spec.fields.program, params).then((fs) => draw(Array.isArray(fs) ? fs : [])).catch(() => draw([]));
+          };
+          deferred.push(() => { load(); for (const d of deps) if (inputs[d]) inputs[d].addEventListener("change", load); });
+        } else draw([]);
+        input.dataset.type = type;
+        input.dataset.label = labelText;
+        inputs[name] = input;
+        form.append(el("div", { class: "rows-field cond-field" }, el("span", { class: "label-line" }, label, hint), holder, input,
+                       spec.help ? el("span", { class: "help", text: spec.help }) : null));
+        continue;
       } else if (type === "list" || type === "dict") {
         input = el("textarea", { name, rows: 3, spellcheck: "false" });
         input.value = init !== undefined ? (typeof init === "string" ? init : JSON.stringify(init))
@@ -281,6 +315,7 @@
       load(lk.start);
       for (const d of deps) if (inputs[d]) inputs[d].addEventListener("change", () => load(""));
     }
+    for (const f of deferred) f();
     if (options.submitLabel) form.append(el("button", { class: "primary run-button", type: "submit", text: options.submitLabel }));
 
     function read() {
@@ -296,7 +331,7 @@
         const type = input.dataset.type;
         if (input.type === "checkbox") { r[input.name] = input.checked; continue; }
         if (input.value === "") { if (input.dataset.required) missing.push(input.dataset.label); continue; }
-        if (type === "list" || type === "dict") r[input.name] = JSON.parse(input.value);
+        if (type === "list" || type === "dict" || type === "condition") r[input.name] = JSON.parse(input.value);
         else if (type === "int") r[input.name] = parseInt(input.value, 10);
         else if (type === "float") r[input.name] = parseFloat(input.value);
         else r[input.name] = input.value;
@@ -314,6 +349,7 @@
         let v = input.type === "checkbox" ? (input.checked ? "sim" : "") : input.tagName === "SELECT"
           ? (input.value !== "" ? input.options[input.selectedIndex].text : "") : input.value;
         if (spec.columns && v) { try { v = `${JSON.parse(v).length} linha(s)`; } catch (_) { /* keep */ } }
+        if (spec.type === "condition" && v) { try { v = window.AnaConditions.describe(JSON.parse(v)); } catch (_) { /* keep */ } }
         if (v && v !== "[]" && v !== "{}") parts.push(`${spec.label || name}: ${v}`);
       }
       return parts.join(" · ") || "sem parâmetros";

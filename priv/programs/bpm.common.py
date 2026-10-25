@@ -9,6 +9,7 @@ Conditions are restricted rules (never code), evaluated by the engine without ev
 import re
 
 import ana
+from ana_lib.util import conditions
 
 TYPES = {
     "start": {"label": "Início", "group": "Eventos"},
@@ -27,7 +28,6 @@ TYPES = {
     "annotation": {"label": "Anotação", "group": "Outros"},
 }
 TASKS = {"task_human", "task_approval", "task_auto", "task_send", "task_rule", "subprocess", "timer", "event_fact"}
-OPS = {"=", "!=", "<", "<=", ">", ">=", "in"}
 ID = re.compile(r"^[A-Za-z][A-Za-z0-9_-]{0,40}$")
 CODE = re.compile(r"^[a-z][a-z0-9_.-]{1,60}$")
 ROLE_RANK = {"user": 0, "developer": 1, "admin": 2}
@@ -126,9 +126,11 @@ def validate(model, process_code=None):
             add("error", "tipo de ligação desconhecido", edge=eid)
         if e.get("on") and by_id[f].get("type") not in TASKS:
             add("error", "caminho de erro ou de atraso só sai de tarefas", edge=eid)
-        for r in e.get("condition") or []:
-            if not isinstance(r, dict) or not r.get("field") or r.get("op") not in OPS:
-                add("error", "condição incompleta (campo, operador e valor)", edge=eid)
+        if e.get("condition"):
+            try:
+                conditions.validate(e["condition"])
+            except ana.Error as err:
+                add("error", f"condição incompleta: {err.message}", edge=eid)
     starts = [k for k, v in work.items() if v["type"] == "start"]
     ends = [k for k, v in work.items() if v["type"] == "end"]
     if not starts:

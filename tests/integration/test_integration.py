@@ -3860,9 +3860,7 @@ class TestFlows(Base):
             for st in cfg["steps"]:
                 if st["mode"] != "wait":
                     cls.call("flows.configure", flow=code, action="mode", step=st["seq"], mode=st["mode"])
-                    cls.call("flows.configure", flow=code, action="clear_condition", step=st["seq"])
-                    for rule in st["condition"]:
-                        cls.call("flows.configure", flow=code, action="condition", step=st["seq"], **rule)
+                    cls.call("flows.step_condition", flow=code, step=st["seq"], condition=st["condition"])
         http("POST", f"/api/programs/{cls.policy}/run", {"params": {"carrier": cls.old_carrier, "restore": True}}, cls.token)
 
     def ok(self, _program, **params):
@@ -3927,6 +3925,34 @@ class TestFlows(Base):
         self.assertIn("condição", st["invoice"]["reason"])
         st = self.steps("sales", small, lambda s: s["invoice"]["status"] == "done")
         self.assertEqual(st["invoice"]["how"], "auto")
+
+    def test_ca_020_09_criteria_exception_simulated_then_run_by_the_flow(self):
+        self.configure("sales", {1: "auto", 2: "auto", 3: "auto"})
+        excluded = self.client.call("base.save_party", name=f"Cliente Excluído Esteira {SUFFIX}", state="SP")["id"]
+        # (total até 50) ou (total a partir de 5000), exceto o cliente excluído: two criteria and one exception.
+        cond = {"any": [[{"field": "total", "op": "<=", "value": 50}], [{"field": "total", "op": ">=", "value": 5000}]],
+                "except": [{"field": "customer", "op": "contains", "value": f"Excluído Esteira {SUFFIX}"}]}
+        sim = self.ok("flows.step_condition", flow="sales", step=2, condition=cond, simulate=True)
+        self.assertTrue(sim["simulated"])
+        self.assertEqual(sim["text"], f"(Total até 50) ou (Total a partir de 5.000), exceto Cliente contém Excluído Esteira {SUFFIX}")
+        self.assertEqual(self.scalar("SELECT condition::text FROM flow.step WHERE flow_code = 'sales' AND seq = 2"), "[]")  # nothing saved
+        saved = self.ok("flows.step_condition", flow="sales", step=2, condition=cond)
+        self.assertEqual(saved["condition"], cond)
+        small, mid = self.order(qty=2)["number"], self.order(qty=20)["number"]       # R$ 20 and R$ 200
+        other = self.order(customer=excluded, qty=2)["number"]                       # R$ 20, but excluded
+        st = self.steps("sales", small, lambda s: s["invoice"]["status"] == "done")
+        self.assertEqual(st["invoice"]["how"], "auto")
+        for n in (mid, other):
+            st = self.steps("sales", n, lambda s: s["invoice"]["status"] == "waiting")
+            self.assertEqual(st["invoice"]["status"], "waiting", (n, st))
+            self.assertIn("condição", st["invoice"]["reason"])
+        # The one-line form (older screens and the API) still adds a line to every criterion.
+        self.ok("flows.configure", flow="sales", action="condition", step=2, field="warehouse", op="=", value="CENTRAL")
+        rule = json.loads(self.scalar("SELECT condition::text FROM flow.step WHERE flow_code = 'sales' AND seq = 2"))
+        self.assertEqual([c[-1]["field"] for c in rule["any"]], ["warehouse", "warehouse"])
+        # Invalid rules are refused with the reason.
+        s, c, _ = self.run_program("flows.step_condition", {"flow": "sales", "step": 2, "condition": [{"field": "total", "op": "between", "value": [1]}]})
+        self.assertEqual(c["error"]["code"], "INVALID_PARAMETER", c)
 
     def test_ca_030_03_failure_then_reprocess(self):
         self.configure("sales", {1: "manual", 2: "auto", 3: "auto"})
@@ -5557,6 +5583,50 @@ class TestUiVariants(Base):
         http("PUT", "/api/ui/settings", {"key": "pin.routine.finance.receivables", "value": None}, t1)
         self.assertNotIn("pin.routine.finance.receivables", http("GET", "/api/ui/settings", token=t1)[1])
         self.assertEqual(http("PUT", "/api/ui/settings", {"key": "x", "value": "y" * 5000}, t1)[0], 400)
+
+
+class TestSimulation(Base):
+    """Definition with the simulation beside it (spec 020, RF-020-13): simulating never saves."""
+
+    def test_ca_020_08_statement_rule_simulation_shows_lines_without_saving(self):
+        c = self.client
+        day = datetime.date.today().strftime("%d/%m/%Y")
+        tag = f"TARSIM{SUFFIX}"
+        csv = "data;histórico;valor\n" + f"{day};{tag} PACOTE;-12,50\n{day};{tag} DOC;-3,10\n{day};PIX {tag} ENTRADA;40,00\n"
+        c.call("finance.import_statement", bank_account="CAIXA", format="csv", content=csv, reconcile=False)
+        rules = int(self.scalar("SELECT count(*) FROM finance.statement_rule"))
+        s, r, _ = self.run_program("finance.statement_rules", {"pattern": tag, "direction": "out", "account": "4.1.01", "simulate": True})
+        self.assertEqual(s, 200, r)
+        self.assertEqual((r["result"]["lines"], r["result"]["total"]), (2, "-15.60"))       # only the outgoing ones
+        table = [e for e in r["events"] if e.get("kind") == "table"][0]["data"]
+        self.assertEqual(table["title"], "Linhas abertas que a regra pegaria")
+        self.assertEqual(len(table["rows"]), 2)
+        self.assertTrue(all(table["row_open"]))                                             # each line opens its reconciliation
+        self.assertEqual(int(self.scalar("SELECT count(*) FROM finance.statement_rule")), rules)  # nothing saved
+        self.assertEqual(int(self.scalar(f"SELECT count(*) FROM finance.bank_statement_line WHERE description LIKE '%{tag}%' "
+                                         "AND status = 'open'")), 3)
+
+    def test_rf_020_13_a_simulation_cannot_write(self):
+        name = f"test.sim_{SUFFIX}"
+        self.save(name, 'PARAMS = {"simulate": {"type": "bool", "simulate": True}}\n'
+                        "def main(simulate=False):\n"
+                        "    ana.sql_exec('UPDATE base.company SET display_name = display_name WHERE false')\n"
+                        "    return 1\n")
+        s, c, _ = self.run_program(name, {"simulate": True})
+        self.assertEqual(c["error"]["code"], "SIMULATION_READ_ONLY", c)
+        self.assertIn("simulação", c["error"]["message"])
+
+    def test_rf_020_13_data_scope_preview(self):
+        s, r, _ = http("POST", "/api/admin/groups/scope-preview", {"data_cost_centers": [], "data_portfolio": False}, self.token)
+        self.assertEqual(s, 200, r)
+        self.assertFalse(r["restricted"])
+        self.assertTrue(all(e["visible"] == e["total"] for e in r["entities"]), r)             # no restriction: everything
+        u, t = new_user("user")
+        s, r, _ = http("POST", "/api/admin/groups/scope-preview", {"data_portfolio": True, "member": u}, self.token)
+        self.assertTrue(r["restricted"])
+        party = next(e for e in r["entities"] if e["entity"] == "base.party")
+        self.assertLess(party["visible"], party["total"])                                      # suppliers only, no customer of theirs
+        self.assertEqual(http("POST", "/api/admin/groups/scope-preview", {}, t)[0], 403)       # administrators only
 
 
 class TestRunErrors(Base):

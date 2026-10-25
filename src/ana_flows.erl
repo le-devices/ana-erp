@@ -232,28 +232,67 @@ text(F) when is_float(F) -> float_to_binary(F, [short]);
 text(null) -> <<>>;
 text(X) -> iolist_to_binary(io_lib:format("~p", [X])).
 
-%% RF-030-02: every rule must hold. Rule: {"field", "op": = != < <= > >= in, "value"}.
--spec condition(list(), map()) -> boolean().
+%% Restricted rule (RF-030-02, RF-020-14), never code. Two shapes:
+%%   [rule]                                — every rule must hold (the first format, still valid);
+%%   #{"any" => [[rule]], "except" => [rule]} — some criterion (all its rules) holds and no exception does;
+%%                                           no criterion = always.
+%% Rule: {"field", "op", "value"}; ops: = != < <= > >= in not_in between contains not_contains starts empty not_empty.
+-spec condition(list() | map(), map()) -> boolean().
 condition(Rules, Facts) when is_list(Rules) ->
     lists:all(fun(R) -> rule(R, Facts) end, Rules);
+condition(#{} = C, Facts) ->
+    Any = [Cr || Cr <- maps:get(<<"any">>, C, []), is_list(Cr)],
+    Except = [R || R <- maps:get(<<"except">>, C, []), is_map(R)],
+    (Any =:= [] orelse lists:any(fun(Cr) -> condition(Cr, Facts) end, Any))
+        andalso not lists:any(fun(R) -> rule(R, Facts) end, Except);
 condition(_, _) -> false.
 
-rule(#{<<"field">> := F, <<"op">> := Op, <<"value">> := V}, Facts) ->
+rule(#{<<"field">> := F, <<"op">> := Op} = R, Facts) ->
     A = maps:get(F, Facts, null),
+    V = maps:get(<<"value">>, R, null),
     case Op of
+        <<"empty">> -> blank(A);
+        <<"not_empty">> -> not blank(A);
         <<"in">> when is_list(V) -> lists:any(fun(X) -> same(A, X) end, V);
+        <<"not_in">> when is_list(V) -> not lists:any(fun(X) -> same(A, X) end, V);
         <<"=">> -> same(A, V);
         <<"!=">> -> not same(A, V);
+        <<"contains">> -> has(A, V);
+        <<"not_contains">> -> not has(A, V);
+        <<"starts">> -> L = lower(V), binary:longest_common_prefix([lower(A), L]) =:= byte_size(L);
+        <<"between">> when is_list(V), length(V) =:= 2 ->
+            [Lo, Hi] = V,
+            case {num(A), num(Lo), num(Hi)} of
+                {X, Y, Z} when is_number(X), is_number(Y), is_number(Z) -> X >= min(Y, Z) andalso X =< max(Y, Z);
+                _ -> T = text(A), T >= text(Lo) andalso T =< text(Hi) andalso not blank(A)   % dates "2026-10-01"
+            end;
         _ ->
             case {num(A), num(V)} of
-                {X, Y} when is_number(X), is_number(Y) ->
-                    case Op of
-                        <<"<">> -> X < Y; <<"<=">> -> X =< Y; <<">">> -> X > Y; <<">=">> -> X >= Y; _ -> false
-                    end;
+                {X, Y} when is_number(X), is_number(Y) -> compare(Op, X, Y);
+                _ when is_binary(A), is_binary(V), A =/= <<>> -> compare(Op, A, V);       % ISO dates compare as text
                 _ -> false
             end
     end;
 rule(_, _) -> false.
+
+compare(<<"<">>, X, Y) -> X < Y;
+compare(<<"<=">>, X, Y) -> X =< Y;
+compare(<<">">>, X, Y) -> X > Y;
+compare(<<">=">>, X, Y) -> X >= Y;
+compare(_, _, _) -> false.
+
+blank(null) -> true;
+blank(<<>>) -> true;
+blank([]) -> true;
+blank(_) -> false.
+
+lower(X) -> string:lowercase(text(X)).
+
+has(A, V) ->
+    case lower(V) of
+        <<>> -> true;
+        L -> binary:match(lower(A), L) =/= nomatch
+    end.
 
 same(A, B) ->
     case {num(A), num(B)} of

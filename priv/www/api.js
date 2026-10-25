@@ -211,6 +211,7 @@
       revokeKey: (id) => API.request("DELETE", `/api/admin/keys/${id}`),
       groups: () => API.request("GET", "/api/admin/groups"),
       saveGroup: (n, body) => API.request("PUT", `/api/admin/groups/${enc(n)}`, body),
+      scopePreview: (body) => API.request("POST", "/api/admin/groups/scope-preview", body),
       deleteGroup: (n) => API.request("DELETE", `/api/admin/groups/${enc(n)}`),
       settings: () => API.request("GET", "/api/admin/settings"),
       saveSetting: (k, value) => API.request("PUT", `/api/admin/settings/${enc(k)}`, { value }),

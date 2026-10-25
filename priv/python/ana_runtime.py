@@ -882,6 +882,15 @@ def _to_dict(v):
     return v
 
 
+def _to_condition(v):
+    """Restricted rule (spec 020, RF-020-14): a list of rules or {"any": [[rule]], "except": [rule]}; JSON text too."""
+    if isinstance(v, str):
+        v = json.loads(v) if v.strip() else []
+    if not isinstance(v, (list, dict)):
+        raise ValueError
+    return v
+
+
 def _to_str(v):
     if isinstance(v, (dict, list)):
         raise ValueError
@@ -910,6 +919,7 @@ PARAM_TYPES = {
     "time": lambda v: v if isinstance(v, datetime.time) else datetime.time.fromisoformat(str(v)),
     "list": _to_list,
     "dict": _to_dict,
+    "condition": _to_condition,
 }
 
 

@@ -105,7 +105,7 @@
         s("path", { d: pathOf(pts), class: "bpm-edge-hit" }),
         s("path", { d: pathOf(pts), class: "bpm-edge-line", "marker-end": "url(#bpm-arrow)" }));
       if (e.default) { const [x, y] = pts[0]; g.append(s("path", { d: `M${x + 6},${y - 6} L${x + 14},${y + 6}`, class: "bpm-default-mark" })); }
-      const label = e.name || (e.on === "error" ? "erro" : e.on === "timeout" ? "atraso" : (e.condition || []).length ? condText(e.condition) : "");
+      const label = e.name || (e.on === "error" ? "erro" : e.on === "timeout" ? "atraso" : hasCondition(e.condition) ? condText(e.condition) : "");
       if (label) { const [x, y] = mid(pts); g.append(s("text", { x: x + 4, y: y - 6, class: "bpm-edge-label" }, label.length > 30 ? label.slice(0, 29) + "…" : label)); }
       root.append(g);
     }
@@ -158,8 +158,8 @@
   const TYPE_LABEL = { start: "Início", end: "Fim", timer: "Espera por tempo", event_fact: "Espera por fato do ERP", task_human: "Tarefa de pessoa",
                        task_approval: "Aprovação", task_auto: "Tarefa automática", task_send: "Envio", task_rule: "Regra de decisão",
                        subprocess: "Subprocesso", gw_xor: "Decisão", gw_and: "Paralelo", gw_or: "Inclusivo", annotation: "Anotação" };
-  const OPS = { "=": "=", "!=": "≠", "<": "<", "<=": "≤", ">": ">", ">=": "≥", in: "em" };
-  const condText = (rules) => rules.map((r) => `${r.field} ${OPS[r.op] || r.op} ${Array.isArray(r.value) ? r.value.join("/") : r.value}`).join(" e ");
+  const condText = (c) => window.AnaConditions.describe(c);
+  const hasCondition = (c) => (Array.isArray(c) ? c.length > 0 : !!c && ((c.any || []).some((x) => x.length) || (c.except || []).length > 0));
   const fmtH = (h) => (h === null || h === undefined ? "—" : h >= 24 ? `${(h / 24).toLocaleString("pt-BR", { maximumFractionDigits: 1 })} d`
                        : `${Number(h).toLocaleString("pt-BR", { maximumFractionDigits: 1 })} h`);
   function diffCls(diff, kind, id) {
@@ -525,24 +525,13 @@
       return i;
     };
     const listOf = (id, values) => el("datalist", { id }, ...values.map((x) => el("option", { value: x })));
+    // The condition builder shared by the whole ERP (RF-020-14): criteria, exceptions, operators by type.
     function rulesEditor(rules, onChange, hint) {
-      const box = el("div", { class: "bpm-rules" });
-      const fieldsList = (model.variables || []).map((x) => x.name);
-      const draw_ = () => {
-        box.replaceChildren(...rules.map((r, i) => el("div", { class: "bpm-rule" },
-          el("input", { type: "text", value: r.field || "", list: "bpm-vars", placeholder: "campo", disabled: !editable,
-                        onchange: (ev) => { push(); r.field = ev.target.value.trim(); onChange(rules); changed(false); } }),
-          el("select", { disabled: !editable, onchange: (ev) => { push(); r.op = ev.target.value; onChange(rules); changed(false); } },
-            ...Object.entries(OPS).map(([k, l]) => { const o = el("option", { value: k, text: l }); if (k === (r.op || "=")) o.selected = true; return o; })),
-          el("input", { type: "text", value: Array.isArray(r.value) ? r.value.join(", ") : (r.value ?? ""), placeholder: "valor", disabled: !editable,
-                        onchange: (ev) => { push(); r.value = parseValue(ev.target.value, r.op); onChange(rules); changed(false); } }),
-          editable ? el("button", { type: "button", class: "quiet small", text: "×", title: "Remover a condição",
-                                    onclick: () => { push(); rules.splice(i, 1); onChange(rules); changed(false); } }) : null)),
-          editable ? el("button", { type: "button", class: "quiet small", text: "+ condição", onclick: () => { push(); rules.push({ field: "", op: "=", value: "" }); onChange(rules); changed(false); } }) : null,
-          hint ? el("p", { class: "muted small", text: hint }) : null, listOf("bpm-vars", fieldsList));
-      };
-      draw_();
-      return box;
+      const TYPES = { int: "number", float: "number", decimal: "number", bool: "bool", date: "date", datetime: "date" };
+      const fields = (model.variables || []).filter((x) => x.name).map((x) => ({ name: x.name, label: x.label || x.name, type: TYPES[x.type] || "text" }));
+      const b = window.AnaConditions.builder({ fields, value: rules, editable, free: true,
+        onChange: (c) => { push(); onChange(c); changed(false); } });
+      return el("div", { class: "bpm-rules" }, b.node, hint ? el("p", { class: "muted small", text: hint }) : null);
     }
     function parseValue(v, op) {
       if (op === "in") return v.split(",").map((x) => x.trim()).filter(Boolean);
@@ -597,7 +586,7 @@
           parts.push(el("label", { class: "check" }, def, " Caminho padrão (quando nenhuma condição valer)"),
             el("h4", { text: "Condição" }),
             rulesEditor(e.condition || (e.condition = []), (r) => { e.condition = r; },
-              "Todas as condições devem valer. Use campos do documento (ex.: total) ou dados do caso. Decisões de aprovação: <id da tarefa>_decision = approved."));
+              "Linhas de um critério valem juntas (E); entre critérios basta um (OU). Use campos do documento (ex.: total) ou dados do caso. Decisões de aprovação: <id da tarefa>_decision = approved."));
         }
         if (editable) parts.push(el("button", { type: "button", class: "danger small", text: "Remover a ligação", onclick: removeSel }));
       } else {

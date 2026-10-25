@@ -1,6 +1,6 @@
 # 020 — Arquitetura da informação e experiência de uso
 
-Situação: implementada (RF-020-01..12); organização por áreas e categorias (RF-020-19..23) implementada; padrões de telas de produtividade: barra de tabela e painéis com estado (RF-020-17/18) implementados; RF-020-13..16 a implementar.
+Situação: implementada (RF-020-01..12); organização por áreas e categorias (RF-020-19..23) implementada; padrões de telas de produtividade: barra de tabela e painéis com estado (RF-020-17/18), simulação ao lado e construtor de condições (RF-020-13/14) implementados; RF-020-15/16 a implementar.
 
 ## Problema
 A interface cresceu por acréscimo: propriedades acima do editor, versões e
@@ -182,6 +182,17 @@ com nome desse estado (até 30 por tela, uma padrão). Filtro por coluna aceita
 `texto` (contém), `=texto`, `!texto`, `>10`, `<=5`, `10..20`; números no formato
 brasileiro. A tabela desenha 2000 linhas por vez ("Mostrar todas"); busca,
 filtro e exportação valem para todas.
+
+Decisões de implementação (RF-020-13/14): a regra restrita ganhou a forma
+`{"any": [[linha…]…], "except": [linha…]}` (a lista antiga continua valendo e é
+o que se grava quando há um só critério sem exceção), com os operadores é, não
+é, menor/maior, até, a partir de, entre, contém, não contém, começa com, é um
+de, não é nenhum de, vazio e preenchido; avaliada igual no núcleo
+(`ana_flows:condition/2`) e nos programas (`util.conditions`). Um programa de
+definição declara o parâmetro `{"type": "bool", "simulate": true}`: a tela
+mostra "Simular (F9)" e "Salvar (F8)", e o núcleo executa a simulação numa
+transação **somente leitura** — mesmo que o programa tente, nada é gravado.
+Abrir uma definição já preenchida simula; nunca salva sozinho.
 
 ### Onde o ANA usa esses padrões primeiro
 - Grade de planejamento + gráfico: orçamento por centro de custo × conta

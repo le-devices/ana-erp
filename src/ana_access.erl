@@ -5,7 +5,7 @@
 %% `admin` always passes. Group membership is cached per user (RNF-011-04) and
 %% invalidated through NOTIFY "ana_access".
 -module(ana_access).
--export([init_cache/0, allowed/2, matches/2, groups/1, scope/1, scope_sql/1, on_notify/2, invalidate/0]).
+-export([init_cache/0, allowed/2, matches/2, groups/1, scope/1, scope_sql/1, scope_of/1, scope_sql_of/1, on_notify/2, invalidate/0]).
 
 -define(TAB, ana_access_cache).
 
@@ -40,8 +40,18 @@ scope(_) -> #{cost_centers => all, portfolio => false, own_projects => false}.
 
 %% SET LOCAL statements for the execution transaction ("" when nothing is restricted).
 -spec scope_sql(map()) -> iodata().
-scope_sql(User) ->
-    #{cost_centers := Cc, portfolio := Pf, own_projects := Pr} = scope(User),
+scope_sql(User) -> scope_sql_of(scope(User)).
+
+%% The scope a group definition would give (RF-020-13: simulated before saving the group).
+-spec scope_of(map()) -> map().
+scope_of(F) ->
+    Centers = [C || C <- maps:get(<<"data_cost_centers">>, F, []), is_binary(C), C =/= <<>>],
+    #{cost_centers => cost_centers([Centers || Centers =/= []]),
+      portfolio => maps:get(<<"data_portfolio">>, F, false) =:= true,
+      own_projects => maps:get(<<"data_own_projects">>, F, false) =:= true}.
+
+-spec scope_sql_of(map()) -> iodata().
+scope_sql_of(#{cost_centers := Cc, portfolio := Pf, own_projects := Pr}) ->
     Restricted = Cc =/= all orelse Pf orelse Pr,
     [case Restricted of true -> "SET LOCAL ROLE ana_scoped; "; false -> [] end,      % only this role meets the policies
      case Cc of

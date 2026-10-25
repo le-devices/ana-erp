@@ -191,6 +191,7 @@
   }
 
   let runCurrent = null;       // F8 runs the routine on screen
+  let runSimulation = null;    // F9 simulates a definition (RF-020-13)
 
   async function openRoutine(r, query = {}) {
     state.current = r;
@@ -212,7 +213,10 @@
     const status = el("span", { class: "run-state" });
     const historyBox = el("div");
     const detail = el("pre", { class: "preview json" });
-    const form = R.paramsForm(r.params, { submitLabel: "Executar (F8)", onSubmit: () => execute(), initial, lookup });
+    // RF-020-13: a definition (rule, condition…) is edited on the left and simulated on the right, nothing saved.
+    const simName = (Object.entries(r.params || {}).find(([, sp]) => sp && sp.simulate) || [])[0];
+    const form = R.paramsForm(r.params, { submitLabel: simName ? "Salvar (F8)" : "Executar (F8)", onSubmit: () => execute(), initial, lookup,
+                                          simulate: !!simName });
     const summaryText = el("span", { class: "summary-text" });
     const layout = el("div", { class: "routine-layout" });
     let lastRun = null;
@@ -283,6 +287,30 @@
     }
     runCurrent = execute;
 
+    const simOut = el("div", { class: "output sim-output" },
+      el("p", { class: "muted", text: "“Simular” mostra aqui o que a definição pega, sem gravar nada." }));
+    const simWhen = el("span", { class: "muted small sim-when" });
+    async function simulate() {
+      let params;
+      try { params = form.read(); } catch (e) { toast("Parâmetros: " + e.message, true); return; }
+      simOut.replaceChildren(el("p", { class: "muted", text: "Simulando…" }));
+      try {
+        const res = await API.run(r.name, { params: { ...params, [simName]: true } });
+        simOut.replaceChildren();
+        const events = res.events || (res.error && res.error.events) || [];
+        for (const ev of events) if (ev.type === "output") R.drawOutput(simOut, ev, { ...ctx, screen: "sim:" + r.name });
+        if (res.error) simOut.append(el("div", { class: "end error" }, el("strong", { text: res.error.message || res.error.code })));
+        else if (!simOut.childNodes.length) simOut.append(el("p", { class: "muted", text: "A simulação não mostrou nada." }));
+        simWhen.textContent = `simulado às ${new Date().toLocaleTimeString("pt-BR")} · nada foi gravado`;
+      } catch (e) { simOut.replaceChildren(el("div", { class: "end error", text: errorText(e) })); }
+    }
+    if (simName) {
+      runSimulation = simulate;
+      const btn = form.node.querySelector(".run-button");
+      const simBtn = el("button", { type: "button", class: "sim-button", text: "Simular (F9)", onclick: simulate });
+      if (btn) btn.before(simBtn); else form.node.append(simBtn);
+    } else runSimulation = null;
+
     async function loadHistory() {
       const rows = await API.executions(r.name, true).catch(() => []);
       historyBox.replaceChildren(table([
@@ -294,6 +322,15 @@
     }
 
     const I = window.AnaUI.icon;
+    function simSplit() {
+      const split = el("div", { class: "sim-split" });
+      const def = el("section", { class: "params-card def-card" },
+        el("div", { class: "filter-head" }, I("edit", 16), el("strong", { text: "Definição" })), form.node);
+      const sim = el("section", { class: "sim-card", "aria-label": "Simulação" },
+        el("div", { class: "filter-head" }, I("play", 16), el("strong", { text: "Simulação" }), simWhen), simOut);
+      split.append(def, window.AnaUI.splitter(split, "--def-w", { min: 260, max: 1100, key: "sim." + r.name }), sim);
+      return split;
+    }
     const band = el("section", { class: "page-band" });
     layout.append(band);
     band.append(
@@ -305,7 +342,7 @@
         el("div", { class: "page-meta" }, status,
           el("span", { class: "muted small", text: `${r.command ? "comando " + r.command + " · " : ""}${r.exposed ? "integração · " : ""}F8 executa · F3 volta` }),
           window.AnaUI.pinnable(band, "routine." + r.name))),
-      el("section", { class: "params-card filter-bar" },
+      simName ? simSplit() : el("section", { class: "params-card filter-bar" },
         el("div", { class: "filter-head" }, I("filter", 16), el("strong", { text: "Filtros" })), form.node),
       el("div", { class: "params-summary" },
         el("button", { type: "button", class: "quiet small icon-text", onclick: expand, title: "Alterar os filtros" }, I("edit", 16), el("span", { text: "Filtros" })),
@@ -323,12 +360,14 @@
     output.append(el("div", { class: "empty-state" }, window.AnaUI.icon("chart", 40),
       el("span", { text: "Defina os filtros e execute (F8) para ver o resultado." })));
     loadHistory();
-    if (Object.keys(given).length && !formOnly) run(given);
+    // A definition opened with its values is simulated, never saved, until the person chooses Salvar.
+    if (Object.keys(given).length && !formOnly) { if (simName) simulate(); else run(given); }
     else form.focus();
   }
 
   document.addEventListener("keydown", (e) => {
     if (e.key === "F8" && runCurrent && !$("#area-ops").hidden) { e.preventDefault(); runCurrent(); }
+    else if (e.key === "F9" && runSimulation && !$("#area-ops").hidden) { e.preventDefault(); runSimulation(); }
     else if (e.key === "Enter" && (e.ctrlKey || e.metaKey) && runCurrent && e.target.closest && e.target.closest("#ops-main .params-form")) {
       e.preventDefault(); runCurrent();
     }
