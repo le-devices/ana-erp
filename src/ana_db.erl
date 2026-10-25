@@ -530,9 +530,16 @@ as_maps(#{columns := Cols, rows := Rows}) ->
     [maps:from_list(lists:zip(Names, R)) || R <- Rows].
 
 sql_error(#error{code = <<"25006">>}) ->
-    %% Spec 009 (RF-009-05): only the license's restricted mode opens read-only execution transactions.
-    #{code => <<"LICENSE_RESTRICTED">>, sqlstate => <<"25006">>,
-      message => <<"licença vencida ou inválida: o ERP está somente para consulta (peça ao administrador para instalar a licença)"/utf8>>};
+    case ana_license:restricted() of
+        true ->
+            %% Spec 009 (RF-009-05): the license's restricted mode opens read-only execution transactions.
+            #{code => <<"LICENSE_RESTRICTED">>, sqlstate => <<"25006">>,
+              message => <<"licença vencida ou inválida: o ERP está somente para consulta (peça ao administrador para instalar a licença)"/utf8>>};
+        false ->
+            %% Spec 020 (RF-020-13): so does a simulation.
+            #{code => <<"SIMULATION_READ_ONLY">>, sqlstate => <<"25006">>,
+              message => <<"simulação não grava nada: o programa tentou gravar durante a simulação"/utf8>>}
+    end;
 sql_error(#error{code = <<"42501">>, message = <<"new row violates row-level security", _/binary>>}) ->
     %% Spec 009 (D10): writing a document outside the user's data scope.
     #{code => <<"DATA_SCOPE">>, sqlstate => <<"42501">>,

@@ -41,7 +41,9 @@ def wait_health(base, timeout=90):
         if http(base, "GET", "/health")[0] == 200:
             return
         time.sleep(1)
-    raise AssertionError(f"{base} did not become healthy")
+    name = "ana-erp-ana2-1" if base == NODE2 else "ana-erp-ana-1"
+    logs = subprocess.run(["docker", "logs", "--tail", "40", name], capture_output=True, text=True).stdout
+    raise AssertionError(f"{base} did not become healthy; last lines of {name}:\n{logs}")
 
 
 def login(base):

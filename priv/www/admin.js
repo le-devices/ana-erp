@@ -227,6 +227,22 @@
     return out.length ? out : ["todos"];
   }
 
+  // RF-020-13: what a member would see with this scope, simulated before saving (counts by the database's policies).
+  function scopePreview(read) {
+    const member = el("input", { placeholder: "simular como (usuário; carteira e projetos dele)", "aria-label": "Simular como" });
+    const out = el("div", { class: "scope-preview", "aria-live": "polite" });
+    const run = () => guard(async () => {
+      const r = await API.admin.scopePreview({ ...read(), member: member.value.trim() });
+      const when = new Date().toLocaleTimeString("pt-BR");
+      out.replaceChildren(el("p", { class: "muted small", text: `${r.restricted ? "Com este escopo" : "Sem restrição"}, simulado às ${when} — nada foi gravado.` }),
+        table([{ label: "O que", value: (x) => x.label },
+               { label: "Veria", value: (x) => x.visible.toLocaleString("pt-BR"), class: "num" },
+               { label: "De", value: (x) => x.total.toLocaleString("pt-BR") + (x.total >= r.cap ? "+" : ""), class: "num" }], r.entities));
+    });
+    return el("div", { class: "scope-sim" }, el("div", { class: "row-buttons" }, member,
+      el("button", { type: "button", text: "Simular", onclick: run })), out);
+  }
+
   function groupForm(g) {
     const isNew = !g;
     const name = el("input", { value: g ? g.name : "", disabled: !isNew, placeholder: "ex.: engenharia" });
@@ -258,6 +274,8 @@
       check("Só os clientes da própria carteira (e seus pedidos e títulos)", portfolio),
       check("Só os projetos que gerencia ou em que trabalha", ownProjects),
       el("p", { class: "muted", text: "Administradores veem tudo. Quem está em vários grupos com restrição vê a soma deles." }),
+      scopePreview(() => ({ data_cost_centers: centers.value.split(",").map((s) => s.trim().toUpperCase()).filter(Boolean),
+                            data_portfolio: portfolio.checked, data_own_projects: ownProjects.checked })),
       el("div", { class: "row-buttons" },
         el("button", { class: "primary", type: "submit", text: "Salvar" }),
         isNew ? null : el("button", { type: "button", class: "danger", text: "Excluir", onclick: () => guard(async () => {

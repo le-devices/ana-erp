@@ -77,6 +77,8 @@ route(<<"DELETE">>, [<<"keys">>, Id], U, Req) ->
 %% --- Groups (RF-011-04) ---------------------------------------------------
 route(<<"GET">>, [<<"groups">>], _U, Req) ->
     reply(ana_admin:list_groups(), Req);
+route(<<"POST">>, [<<"groups">>, <<"scope-preview">>], _U, Req) ->
+    with_body(Req, fun(B, R) -> reply(ana_admin:scope_preview(B), R) end);
 route(<<"PUT">>, [<<"groups">>, Name], U, Req) ->
     with_body(Req, fun(B, R) -> reply(ana_admin:save_group(Name, B, U), R) end);
 route(<<"DELETE">>, [<<"groups">>, Name], U, Req) ->

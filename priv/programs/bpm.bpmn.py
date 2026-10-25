@@ -11,6 +11,7 @@ import re
 import xml.etree.ElementTree as ET
 
 from ana_lib.bpm import common
+from ana_lib.util import conditions
 
 PARAMS = {
     "action": {"type": "str", "required": True, "label": "ação", "choices": [["export", "Exportar"], ["import", "Importar"]]},
@@ -80,8 +81,7 @@ def export(code, which):
             attrs[q("condition", "ana")] = json.dumps(extra, ensure_ascii=False)
         f = ET.SubElement(proc, q("sequenceFlow"), attrs)
         if ed.get("condition"):
-            ET.SubElement(f, q("conditionExpression")).text = " e ".join(
-                f"{r.get('field')} {r.get('op')} {r.get('value')}" for r in ed["condition"])
+            ET.SubElement(f, q("conditionExpression")).text = conditions.text(ed["condition"])
     for ed in m["edges"]:
         if ed.get("default"):
             src = proc.find(f"*[@id='{ed['from']}']")

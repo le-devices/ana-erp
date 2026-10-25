@@ -416,7 +416,11 @@ prepare_run(P, L, St) ->
             %% master data history, spec 040); never used for authorization.
             Q = fun(V) -> binary:replace(iolist_to_binary(V), <<"'">>, <<"''">>, [global]) end,
             %% Spec 009 (RF-009-05): restricted license → the database itself refuses every write.
-            ReadOnly = case ana_license:restricted() of true -> "SET TRANSACTION READ ONLY; "; false -> "" end,
+            %% Spec 020 (RF-020-13): so does a simulation ("Simular" never saves, whatever the program does).
+            ReadOnly = case ana_license:restricted() orelse simulating(P, St1#st.params) of
+                true -> "SET TRANSACTION READ ONLY; ";
+                false -> ""
+            end,
             %% Spec 009 (D10): the user's data scope, applied by the database's row policies.
             Scope = iolist_to_binary(ana_access:scope_sql(St1#st.user)),
             Begin = io_lib:format(
@@ -469,6 +473,14 @@ load(Name, User) ->
         _ ->
             {error, err(<<"PROGRAM_NOT_FOUND">>, <<"programa inexistente"/utf8>>)}
     end.
+
+%% A parameter declared {"type": "bool", "simulate": true} and received true: the run only shows what the
+%% definition would take (RF-020-13).
+simulating(#{<<"params">> := Decl}, Params) when is_map(Decl), is_map(Params) ->
+    lists:any(fun({K, #{<<"simulate">> := true}}) -> lists:member(maps:get(K, Params, false), [true, <<"true">>]);
+                 (_) -> false
+              end, maps:to_list(Decl));
+simulating(_, _) -> false.
 
 first_missing(Modules) ->
     case [M || M <- Modules, not ana_license:allowed(M)] of

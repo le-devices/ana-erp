@@ -211,6 +211,35 @@ ok([...d.querySelectorAll("#ops-main .table-box button")].some((b) => b.textCont
   ok(d.querySelector("#ops-main .page-band").classList.contains("pinned") && w.AnaPrefs.get("pin.routine.projects.workspace") === true, "cabeçalho fixado e lembrado");
   pin.click();
 }
+// Definition with the simulation beside it and the condition builder (RF-020-13/14, CA-020-08/09).
+await go(w, "#/ops/flows/flows.step_condition?flow=sales&step=2&_form=1");
+await until(() => d.querySelector("#ops-main .sim-split .cond-builder") && d.querySelector("#ops-main .cond-line select option[value=total]"), "condition builder", jsErrors);
+{
+  const m = d.querySelector("#ops-main");
+  ok(m.querySelector(".sim-card") && [...m.querySelectorAll("button")].some((b) => b.textContent === "Simular (F9)")
+     && [...m.querySelectorAll("button")].some((b) => b.textContent === "Salvar (F8)"), "definição à esquerda, simulação à direita, salvar separado");
+  ok(!m.querySelector("input[name=simulate]"), "a opção de simular não aparece como campo");
+  const line = m.querySelector(".cond-criterion .cond-line");
+  const [field, op] = line.querySelectorAll("select");
+  field.value = "total"; field.dispatchEvent(new w.Event("change"));
+  await sleep(50);
+  const line2 = m.querySelector(".cond-criterion .cond-line");
+  line2.querySelectorAll("select")[1].value = ">";
+  line2.querySelectorAll("select")[1].dispatchEvent(new w.Event("change"));
+  await sleep(50);
+  const v = m.querySelector(".cond-criterion .cond-line input");
+  v.value = "1.000"; v.dispatchEvent(new w.Event("change"));
+  m.querySelector(".cond-add").click();
+  const exAdd = [...m.querySelectorAll(".cond-except button")].find((b) => b.textContent === "+ exceção");
+  exAdd.click();
+  ok(text("#ops-main .cond-text").includes("Total maior que 1.000") && m.querySelectorAll(".cond-tabs button").length === 2,
+     "construtor: linha com operador do tipo, outro critério (OU) e exceção, regra em português");
+  void op;
+  [...m.querySelectorAll("button")].find((b) => b.textContent === "Simular (F9)").click();
+  await until(() => text("#ops-main .sim-output").includes("Documentos que tornariam a etapa automática"), "simulation", jsErrors);
+  ok(text("#ops-main .sim-when").includes("nada foi gravado"), "simulação ao lado com hora, sem gravar (CA-020-08)");
+}
+
 await go(w, "#/ops/projects/projects.workspace?project=PRJ-001&view=board");
 await until(() => d.querySelectorAll("#ops-main .board-card").length > 0, "board again", jsErrors);
 ok([...d.querySelectorAll("#ops-main .output-tabs button")].map((b) => b.textContent).includes("Viabilidade"), "abas do projeto, incluindo Viabilidade");
@@ -324,6 +353,12 @@ for (const [section, marker] of [["groups", "Grupos de acesso"], ["limits", "Per
                                  ["advice", "Dicas de otimização"], ["updates", "Atualizações do produto"], ["license", "Usuários nomeados"], ["extensions", "Ligar um programa seu"], ["telemetry", "Exatamente o que é enviado"], ["company", "Logotipo"], ["groups", "Dados que os membros veem"], ["integrations", "Chamadas 24 h"], ["audit", "Auditoria"]]) {
   await go(w, `#/admin/${section}`);
   await until(() => text("#admin-main").includes(marker), section, jsErrors);
+  if (section === "groups" && marker === "Dados que os membros veem") {
+    // RF-020-13: the data scope is simulated before saving.
+    [...d.querySelectorAll("#admin-main .scope-sim button")].find((b) => b.textContent === "Simular").click();
+    await until(() => text("#admin-main .scope-preview").includes("Pedidos de venda"), "scope preview", jsErrors);
+    ok(text("#admin-main .scope-preview").includes("nada foi gravado"), "escopo de dados simulado antes de salvar o grupo");
+  }
   if (section === "license") {
     ok(text("#admin-main").includes("Núcleo") && text("#admin-main").includes("Instalar licença"),
        "licença mostra situação, módulos e instalação (spec 009)");

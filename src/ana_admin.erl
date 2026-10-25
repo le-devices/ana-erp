@@ -4,7 +4,8 @@
 %% (RF-011-07), audit (RF-011-09). Every change is recorded in admin_log
 %% (RNF-011-01) without secrets (RNF-011-02).
 -module(ana_admin).
--export([log/5,
+-export([scope_preview/1,
+         log/5,
          list_users/1, get_user/1, create_user/2, update_user/3, reset_password/2,
          revoke_sessions/2, unlock_user/2, unlock_ip/2, list_keys/1, create_key/3, revoke_key/2,
          list_groups/0, save_group/3, delete_group/2,
@@ -573,4 +574,42 @@ limit(F) ->
     try binary_to_integer(maps:get(<<"limit">>, F, <<"100">>)) of
         N -> max(1, min(N, 1000))
     catch _:_ -> 100
+    end.
+
+%% Spec 020 (RF-020-13): what a member of a group would see with this data scope, before saving it —
+%% visible and total records per scoped entity, counted by the database's own row policies (same role
+%% and settings as an execution), in a read-only transaction. "member" = whose portfolio and projects.
+-define(SCOPED, [{<<"base.party">>, <<"Clientes e fornecedores"/utf8>>}, {<<"sales.sales_order">>, <<"Pedidos de venda">>},
+                 {<<"finance.bill">>, <<"Títulos a receber e a pagar"/utf8>>}, {<<"projects.project">>, <<"Projetos">>},
+                 {<<"production.work_order">>, <<"Ordens de produção"/utf8>>},
+                 {<<"supply.purchase_request">>, <<"Solicitações de compra"/utf8>>}]).
+-define(PREVIEW_CAP, 100000).
+
+-spec scope_preview(map()) -> {ok, map()} | {error, binary()}.
+scope_preview(F) ->
+    Scope = ana_access:scope_of(F),
+    Member = case maps:get(<<"member">>, F, <<>>) of M when is_binary(M) -> M; _ -> <<>> end,
+    Count = iolist_to_binary(["SELECT ", lists:join(", ",
+        [io_lib:format("(SELECT count(*) FROM (SELECT 1 FROM ~s LIMIT ~b) x) AS \"~s\"", [T, ?PREVIEW_CAP, T]) || {T, _} <- ?SCOPED])]),
+    Q = fun(V) -> binary:replace(V, <<"'">>, <<"''">>, [global]) end,
+    case ana_db:checkout(ana_db_exec, 5000) of
+        {ok, C} ->
+            try
+                {ok, [], []} = epgsql:squery(C, "BEGIN READ ONLY"),
+                _ = epgsql:squery(C, "SET LOCAL statement_timeout = 5000"),
+                {ok, #{rows := [Total]}} = ana_db:query(C, Count, []),
+                Set = epgsql:squery(C, iolist_to_binary([ana_access:scope_sql_of(Scope),
+                                                         "SET LOCAL ana.username = '", Q(Member), "'"])),
+                [] = [E || {error, E} <- lists:flatten([Set])],      % never count with the scope half applied
+                {ok, #{rows := [Seen]}} = ana_db:query(C, Count, []),
+                Rows = [#{entity => T, label => L, visible => V, total => N}
+                        || {{T, L}, V, N} <- lists:zip3(?SCOPED, Seen, Total)],
+                {ok, #{entities => Rows, cost_centers => case maps:get(cost_centers, Scope) of all -> all; Cs -> Cs end,
+                       restricted => iolist_size(ana_access:scope_sql_of(Scope)) > 0, cap => ?PREVIEW_CAP}}
+            catch _:_ -> {error, <<"não foi possível simular o escopo agora"/utf8>>}
+            after
+                _ = epgsql:squery(C, "ROLLBACK"),
+                ana_db:checkin(ana_db_exec, C)
+            end;
+        {error, _} -> {error, <<"banco indisponível"/utf8>>}
     end.

@@ -1042,3 +1042,24 @@ dl.facts dd { margin: 0; }
 .split-collapsed > :first-child { visibility: hidden; overflow: hidden; min-width: 0; }
 .split-collapsed > .splitter { cursor: default; }
 .split-collapsed > .splitter .split-toggle { left: 2px; }
+
+/* Definition with the simulation beside it (RF-020-13) */
+.sim-split { display: grid; grid-template-columns: var(--def-w, minmax(320px, 1fr)) auto minmax(0, 1.3fr); gap: 0 10px; align-items: start; margin-top: 8px; }
+.sim-card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--r); padding: 10px 14px; min-height: 160px; }
+.sim-card .filter-head { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; }
+.sim-card .sim-when { margin-left: auto; }
+.sim-output { max-height: 70vh; overflow: auto; }
+.sim-button { margin-right: 6px; }
+.routine-layout.collapsed .sim-split { display: none; }
+@media (max-width: 900px) { .sim-split { grid-template-columns: 1fr; } .sim-split > .splitter { display: none; } }
+
+/* Condition builder (RF-020-14) */
+.cond-builder { display: grid; gap: 8px; }
+.cond-tabs-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.cond-line { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+.cond-line select, .cond-line input { min-width: 0; }
+.cond-line > select:first-child { min-width: 160px; }
+.cond-between { display: inline-flex; gap: 4px; align-items: center; }
+.cond-criterion, .cond-except { display: grid; gap: 6px; padding: 8px; border: 1px solid var(--border); border-radius: var(--r); }
+.cond-except { border-style: dashed; }
+.cond-text { margin: 0; padding: 6px 10px; background: var(--surface-2); border-radius: var(--r); font-size: 13px; }
