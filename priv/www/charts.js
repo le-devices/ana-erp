@@ -117,8 +117,11 @@
     const items = spec.type === "donut" ? []
       : series.length >= 2 ? series.map((s, i) => [s.name, i, spec.type === "line" ? "line" : "box"]) : [];
     if (!items.length) return null;
+    const alertKey = spec.alert && series[spec.alert.series] ? el("span", { class: "chart-key" },
+      svg("svg", { width: 14, height: 10, class: "key", "aria-hidden": "true" }, svg("rect", { x: 1, y: 1, width: 12, height: 8, rx: 2, class: "fill alert" })),
+      el("span", { text: `${series[spec.alert.series].name} ${spec.alert.label || "negativo"}` })) : null;
     return el("div", { class: "chart-legend" }, items.map(([name, i, kind]) =>
-      el("span", { class: "chart-key" }, svgKey(i, kind), el("span", { text: name }))));
+      el("span", { class: "chart-key" }, svgKey(i, kind), el("span", { text: name }))), alertKey);
   }
   function svgKey(i, kind) {
     return svg("svg", { width: 14, height: 10, class: "key", "aria-hidden": "true" },
@@ -190,7 +193,10 @@
           } else {
             path = barPath(x0 + k * (bw + 2), Y(0), bw, Y(v));
           }
-          g.append(svg("path", { d: path, class: `bar fill s${k + 1}` }));
+          // RF-020-16: a series whose negatives are an alert (e.g. available < 0) — status color plus a label.
+          const alert = !stacked && spec.alert && spec.alert.series === k && v < 0;
+          g.append(svg("path", { d: path, class: `bar fill s${k + 1}${alert ? " alert" : ""}` }));
+          if (alert) g.append(text(x0 + k * (bw + 2) + bw / 2, Math.min(Y(v) + 14, top + ph - 2), "⚠ " + compact(v, spec.format), "neg-label", "middle"));
         });
         const hit = svg("rect", { x: X(i) - band / 2, y: top, width: band, height: ph, class: "hit", tabindex: "-1" });
         const show = (ev) => {

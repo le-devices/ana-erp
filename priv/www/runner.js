@@ -377,6 +377,7 @@
     else if (ev.kind === "tabs") node = drawTabs(ev.data, ctx);
     else if (ev.kind === "actions") node = drawActions(ev.data, ctx);
     else if (ev.kind === "steps") node = drawSteps(ev.data);
+    else if (ev.kind === "grid") node = window.AnaGrid.render(ev.data, ctx);
     if (!node) return;
     const atEnd = container.scrollTop + container.clientHeight >= container.scrollHeight - 8;
     container.append(node);

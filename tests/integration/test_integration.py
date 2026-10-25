@@ -5629,6 +5629,86 @@ class TestSimulation(Base):
         self.assertEqual(http("POST", "/api/admin/groups/scope-preview", {}, t)[0], 403)       # administrators only
 
 
+class TestPlanningGrid(Base):
+    """Planning grid by period (spec 020, RF-020-15/16): budget, forecast and hour allocation."""
+
+    def grid(self, program, params):
+        s, c, _ = self.run_program(program, params)
+        self.assertEqual(s, 200, c)
+        self.assertNotIn("error", c, c.get("error"))
+        return [e for e in c["events"] if e.get("kind") == "grid"][0]["data"], c["result"]
+
+    def ok(self, program, **params):
+        s, c, _ = self.run_program(program, params)
+        self.assertEqual(s, 200, c)
+        self.assertNotIn("error", c, c.get("error"))
+        return c["result"]
+
+    def test_ca_020_10_budget_months_from_interval_save_only_changes_conflict(self):
+        cc = f"PG{SUFFIX}"[-20:].upper()
+        cc = self.client.call("finance.save_cost_center", code=cc, name=f"Centro grade {SUFFIX}")["code"]
+        g, _ = self.grid("finance.budget_plan", {"start": "2027-03", "end": "2027-06", "cost_center": cc})
+        self.assertEqual([p["label"] for p in g["periods"]], ["mar/27", "abr/27", "mai/27", "jun/27"])
+        self.assertEqual((g["rows"], g["value_label"], g["consumed_label"], g["negative"]), ([], "Orçado", "Realizado", False))   # negatives refused while typing
+        save = g["save"]
+        # New line, two months typed, one pasted block (the grid sends only those cells).
+        changes = [{"key": {"cost_center": cc, "account": "5.1.1"}, "values": {"2027-03": "1000.00", "2027-04": "1250.50"},
+                    "status": "review", "comment": "primeira versão"}]
+        r = self.ok(save["program"], **save["params"], changes=changes, version=g["version"])
+        self.assertEqual((r["saved"], r["lines"]), (2, 1))
+        g2, _ = self.grid("finance.budget_plan", {"start": "2027-03", "end": "2027-06", "cost_center": cc})
+        row = g2["rows"][0]
+        self.assertEqual((row["values"], row["status"], row["comment"]), ({"2027-03": "1000.00", "2027-04": "1250.50"}, "review", "primeira versão"))
+        self.assertEqual(g2["version"], r["version"])
+        # Only the changed cell: May typed, March emptied; April untouched stays.
+        r = self.ok(save["program"], **save["params"], version=g2["version"],
+                    changes=[{"key": {"cost_center": cc, "account": "5.1.1"}, "values": {"2027-05": "300", "2027-03": None}}])
+        self.assertEqual((r["saved"], r["removed"]), (1, 1))
+        g3, _ = self.grid("finance.budget_plan", {"start": "2027-03", "end": "2027-06", "cost_center": cc})
+        self.assertEqual(g3["rows"][0]["values"], {"2027-04": "1250.50", "2027-05": "300.00"})
+        # Someone saved in between: the stale version is refused and nothing changes.
+        s, c, _ = self.run_program(save["program"], {**save["params"], "version": g2["version"],
+                                                     "changes": [{"key": {"cost_center": cc, "account": "5.1.1"}, "values": {"2027-06": "9"}}]})
+        self.assertEqual(c["error"]["code"], "CONFLICT", c)
+        self.assertNotIn("2027-06", self.grid("finance.budget_plan", {"start": "2027-03", "end": "2027-06", "cost_center": cc})[0]["rows"][0]["values"])
+        # Negative budget, month outside the grid and another cost center are refused.
+        for values, key in (({"2027-04": "-1"}, cc), ({"2027-09": "1"}, cc), ({"2027-04": "1"}, "ADM")):
+            s, c, _ = self.run_program(save["program"], {**save["params"], "version": g3["version"],
+                                                         "changes": [{"key": {"cost_center": key, "account": "5.1.1"}, "values": values}]})
+            self.assertEqual(c["error"]["code"], "INVALID_PARAMETER", (values, key, c))
+
+    def test_ca_020_11_consumed_series_beside_planned(self):
+        g, _ = self.grid("finance.budget_plan", {"start": "2026-01", "end": "2026-12"})
+        self.assertTrue(any(r.get("consumed") for r in g["rows"]), "realizado por mês na linha")
+        self.assertEqual(g["available_label"], "Saldo")
+
+    def test_forecast_and_allocation_grids_save_through_their_rules(self):
+        item = f"PGI{SUFFIX}"
+        self.client.call("base.save_product", code=item, description=f"Item grade {SUFFIX}", price="3")
+        g, _ = self.grid("production.forecast_plan", {"start": "2027-01-04", "weeks": 4, "product": item})
+        self.assertEqual(len(g["periods"]), 4)
+        r = self.ok(g["save"]["program"], **g["save"]["params"], version=g["version"],
+                    changes=[{"key": {"product": item}, "values": {"2027-01-11": "40", "2027-01-18": "15.5"}}])
+        self.assertEqual(r["saved"], 2)
+        g2, _ = self.grid("production.forecast_plan", {"start": "2027-01-04", "weeks": 4, "product": item})
+        self.assertEqual(g2["rows"][0]["values"], {"2027-01-11": "40.000", "2027-01-18": "15.500"})
+        s, c, _ = self.run_program(g["save"]["program"], {**g["save"]["params"], "version": g2["version"],
+                                                          "changes": [{"key": {"product": item}, "values": {"2027-01-12": "1"}}]})
+        self.assertEqual(c["error"]["code"], "INVALID_PARAMETER", c)                     # not a week of the grid
+        # Hours: the same rules as projects.allocate (here an administrator on the demo project).
+        g, _ = self.grid("projects.allocation_plan", {"project": "PRJ-001", "start": "2027-02-01", "weeks": 2})
+        acts = self.ok("projects.lookup", kind="activities", project="PRJ-001")
+        emp = self.ok("projects.lookup", kind="employees")[0]["value"]
+        r = self.ok(g["save"]["program"], **g["save"]["params"], version=g["version"],
+                    changes=[{"key": {"who": f"e:{emp}", "activity": acts[0]["value"]}, "values": {"2027-02-08": "6"}}])
+        self.assertEqual(r["saved"], 1)
+        g2, _ = self.grid("projects.allocation_plan", {"project": "PRJ-001", "start": "2027-02-01", "weeks": 2})
+        row = next(x for x in g2["rows"] if x["key"] == {"who": f"e:{emp}", "activity": acts[0]["value"]})
+        self.assertEqual(row["values"].get("2027-02-08"), "6.00")
+        self.ok(g["save"]["program"], **g["save"]["params"], version=g2["version"],
+                changes=[{"key": {"who": f"e:{emp}", "activity": acts[0]["value"]}, "values": {"2027-02-08": None}}])
+
+
 class TestRunErrors(Base):
     """Running what cannot run says why (a library, an inactive program, a missing one)."""
 

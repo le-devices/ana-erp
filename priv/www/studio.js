@@ -209,6 +209,11 @@
 
   async function route() {
     if ($("#app-screen").hidden) return;
+    // RF-020-15: a screen with unsaved changes (planning grid) asks before leaving it.
+    if (state.here && location.hash !== state.here && window.AnaLeave && window.AnaLeave.dirty() && !confirm(window.AnaLeave.message())) {
+      window.history.replaceState(null, "", state.here);
+      return;
+    }
     saveScroll(state.here);
     state.here = location.hash || "#/home";
     const back = noteNav(state.here);

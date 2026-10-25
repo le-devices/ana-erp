@@ -1,6 +1,6 @@
 # 020 — Arquitetura da informação e experiência de uso
 
-Situação: implementada (RF-020-01..12); organização por áreas e categorias (RF-020-19..23) implementada; padrões de telas de produtividade: barra de tabela e painéis com estado (RF-020-17/18), simulação ao lado e construtor de condições (RF-020-13/14) implementados; RF-020-15/16 a implementar.
+Situação: implementada (RF-020-01..12); organização por áreas e categorias (RF-020-19..23) implementada; padrões de telas de produtividade: barra de tabela e painéis com estado (RF-020-17/18), simulação ao lado e construtor de condições (RF-020-13/14), grade de planejamento e gráfico ligado (RF-020-15/16) implementados.
 
 ## Problema
 A interface cresceu por acréscimo: propriedades acima do editor, versões e
@@ -193,6 +193,16 @@ definição declara o parâmetro `{"type": "bool", "simulate": true}`: a tela
 mostra "Simular (F9)" e "Salvar (F8)", e o núcleo executa a simulação numa
 transação **somente leitura** — mesmo que o programa tente, nada é gravado.
 Abrir uma definição já preenchida simula; nunca salva sozinho.
+
+Decisões de implementação (RF-020-15/16): o programa descreve a grade com
+`ana.grid` (dimensões, períodos, linhas com planejado e consumido, situação e
+comentário opcionais, programa de gravação e a **versão** do que leu); a tela
+edita uma célula por vez (teclado como planilha), cola blocos, exporta e importa
+CSV no mesmo layout e grava só as células mudadas — se outra pessoa gravou o
+mesmo escopo depois da leitura, a gravação é recusada (CONFLICT) e nada muda.
+Sair da tela com alterações pede confirmação. O gráfico usa o mesmo componente
+de gráficos (spec 026): colunas planejado × consumido × disponível num eixo, o
+disponível negativo em cor de alerta com rótulo "⚠" e legenda própria.
 
 ### Onde o ANA usa esses padrões primeiro
 - Grade de planejamento + gráfico: orçamento por centro de custo × conta

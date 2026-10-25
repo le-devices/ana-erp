@@ -17,8 +17,8 @@
 - [x] T-020-13 Painéis com divisor e recolher, cabeçalho fixável, estado lembrado (RF-020-18, CA-020-12) — `AnaPrefs` no servidor por usuário (`/api/ui/settings`), divisor com recolher, "Fixar cabeçalho" na rotina
 - [x] T-020-14 Construtor de condições (critérios E/OU, exclusões, ajuda de valores, texto em português) sobre a regra restrita (RF-020-14, CA-020-09) — `conditions.js` (AnaConditions), regra v2 `{any, except}` em `ana_flows:condition/2` e `util.conditions`, tipo de parâmetro `condition`, BPM e esteiras (`flows.step_condition`); migração 049
 - [x] T-020-15 Definição com simulação ao lado: regras do extrato, condições de esteira e escopo de dados (RF-020-13, CA-020-08) — parâmetro `{"type": "bool", "simulate": true}`: botão Simular (F9), painel ao lado com divisor; o núcleo roda a simulação em transação somente leitura (`SIMULATION_READ_ONLY`); prévia do escopo em `/api/admin/groups/scope-preview`
-- [ ] T-020-16 Grade de planejamento por período (dimensões fixas, períodos pelo intervalo, edição, colar planilha, totais, lote, salvar só o mudado) (RF-020-15, CA-020-10)
-- [ ] T-020-17 Gráfico ligado à grade (planejado × consumido × disponível, negativo em destaque, um eixo) e primeiros usos: orçamento, previsão, alocação de horas (RF-020-16, CA-020-11)
+- [x] T-020-16 Grade de planejamento por período (dimensões fixas, períodos pelo intervalo, edição, colar planilha, totais, lote, salvar só o mudado) (RF-020-15, CA-020-10) — `ana.grid` + `grid.js` (AnaGrid); versão lida contra edição concorrente (CONFLICT); aviso ao sair com alterações; migração 050
+- [x] T-020-17 Gráfico ligado à grade (planejado × consumido × disponível, negativo em destaque, um eixo) e primeiros usos: orçamento, previsão, alocação de horas (RF-020-16, CA-020-11) — `finance.budget_plan`, `production.forecast_plan`, `projects.allocation_plan` (gravação pelas regras de cada módulo)
 
 ## Organização por áreas e categorias (RF-020-19..23)
 - [x] T-020-18 Áreas do negócio e categorias do produto (`ana:category` nos programas, área pelo namespace; nomes de área para bpm, master e demais) (RF-020-19, CA-020-13)
