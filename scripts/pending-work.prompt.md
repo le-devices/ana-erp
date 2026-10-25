@@ -40,6 +40,8 @@ Você trabalha no projeto ANA ERP em /home/andre/ana-erp: um ERP com núcleo Erl
 Tarefas adiadas — ordem acordada com o dono do produto (out/2026), uma por vez: T-017-05b ✓ (extrato por pasta OFX/CNAB 240 ou API do banco), T-039-17b (início de processo por agendamento e por mensagem), T-035-05b, T-040-11b, T-019-08b, T-010-06b, T-037-06b, T-033-09b, T-040-10b, T-039-16b; por último as que dependem de infraestrutura ou decisão (S3, antivírus, registro de imagem, OpenTelemetry, mTLS, SFTP/e-mail, pacotes de conectores, transporte T-034-07b..09b, API T-010-10b..14b, T-032-06b).
 
 Escolha o **primeiro item da lista cuja `tasks.md` ainda tenha tarefas `[ ]`** (exceções: a T-023-09 é o item 5; as T-019-08b, T-019-09b, T-017-02b, T-017-02c, T-017-08b, T-016-02b, T-016-04b, T-033-09b, T-034-07b, T-034-08b, T-034-09b, T-032-06b, T-035-05b, T-036-07b, T-036-08b, T-037-06b, T-010-06b, T-010-10b, T-010-11b, T-010-12b, T-010-14b, T-040-10b, T-040-11b, T-039-16b e T-039-17b ficam para depois de todos os outros itens). Se tudo estiver `[x]`, apenas rode as suítes e relate.
+19. 041 — atendimento do pedido de venda conforme a política da empresa (`specs/041-sales-fulfillment-policy`) — implementada (T-041-01..08).
+20. Vistoria das trilhas de processos de negócio (pedido pelo dono em 25/10/2026, depois da 041): percorrer de ponta a ponta venda, compra, produção, serviço em campo, projetos e financeiro procurando falhas (passos sem ligação, documentos que não se encadeiam, estados sem saída, reconciliação manual) e listar o que corrigir antes de corrigir.
 
 ## Passos
 1. `cd /home/andre/ana-erp && git status` — se houver alterações não commitadas que não são suas, não as descarte; trabalhe por cima e relate.

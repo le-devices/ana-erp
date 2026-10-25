@@ -281,6 +281,22 @@ await until(() => d.querySelector("#ops-main .plan-grid tbody td.cell"), "planni
      "disponível negativo em destaque, com rótulo e legenda (CA-020-11)");
 }
 
+// Spec 041: the order is simulated by the policy before confirming; orders with shortages have their own screen.
+await go(w, "#/ops/sales/sales.create_order?_form=1");
+await until(() => [...d.querySelectorAll("#ops-main button")].some((b) => b.textContent === "Simular (F9)"), "order simulate", jsErrors);
+ok(d.querySelector("#ops-main select[name=mode]") && !d.querySelector("#ops-main input[name=simulate]"),
+   "pedido: modo de atendimento conforme a política e simulação antes de confirmar");
+await go(w, "#/ops/sales/sales.shortages");
+await until(() => d.querySelector("#ops-main form select[name=situation]"), "shortages form", jsErrors);
+submit(w, d.querySelector("#ops-main form"));
+await until(() => text("#ops-main").includes("Com data prometida vencida"), "shortages", jsErrors);
+ok(text("#ops-main").includes("Atendimento dos pedidos"), "tela de pedidos com falta");
+await go(w, "#/ops/sales/sales.fulfillment_policy");
+await until(() => d.querySelector("#ops-main form select[name=action]"), "policy form", jsErrors);
+submit(w, d.querySelector("#ops-main form"));
+await until(() => text("#ops-main").includes("Exceções (a mais específica vale)"), "fulfillment policy", jsErrors);
+ok(text("#ops-main").includes("Política de atendimento da empresa"), "política de atendimento com as exceções");
+
 await go(w, "#/ops/projects/projects.workspace?project=PRJ-001&view=board");
 await until(() => d.querySelectorAll("#ops-main .board-card").length > 0, "board again", jsErrors);
 ok([...d.querySelectorAll("#ops-main .output-tabs button")].map((b) => b.textContent).includes("Viabilidade"), "abas do projeto, incluindo Viabilidade");

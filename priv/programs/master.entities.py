@@ -87,6 +87,8 @@ ENTITIES = {
              "choices": [["goods", "Mercadoria (controla estoque)"], ["service", "Serviço"]]},
             {"name": "unit", "label": "Unidade", "type": "text", "default": "UN", "list": True, "max": 6, "upper": True},
             {"name": "price", "label": "Preço de venda", "type": "money", "required": True, "list": True, "sensitive": True},
+            {"name": "item_group", "label": "Grupo de itens", "type": "text", "max": 30, "upper": True,
+             "help": "Para exceções da política de atendimento por grupo (ex.: PLACAS)"},
         ],
         "tabs": [
             {"label": "Produção e custo", "kind": "one", "table": "production.item_plan", "fk": "product_id",

@@ -24,6 +24,8 @@ STATUS = {"OPEN": "em aberto", "INVOICED": "faturado", "CANCELLED": "cancelado",
           "planned": "planejada", "released": "liberada", "in_progress": "em andamento", "completed": "concluída",
           "scheduled": "agendada", "en_route": "a caminho", "done": "concluída", "invoiced": "faturada"}
 PORTAL_KINDS = ("order", "bill", "service_order", "shipment")
+FULFILLMENT = {"ok": "pode expedir", "held": "retido: aguardando estoque", "supply": "aguardando compra ou produção",
+               "short": "aceito com falta"}
 
 
 def st(s):
@@ -89,19 +91,37 @@ def flow_actions(flow, key):
 def view_order(key):
     n = number("order", key)
     o = ana.sql_one("SELECT o.id, o.number, o.customer_id, p.name AS customer, o.order_date, o.status, o.total, o.notes, o.payment_term, "
-                    "  w.code AS warehouse, o.created_by, o.invoiced_at FROM sales.sales_order o JOIN base.party p ON p.id = o.customer_id "
+                    "  w.code AS warehouse, o.created_by, o.invoiced_at, o.fulfillment FROM sales.sales_order o JOIN base.party p ON p.id = o.customer_id "
                     "JOIN inventory.warehouse w ON w.id = o.warehouse_id WHERE o.number = $1", n)
     if not o:
         not_found("order", key)
     guard("order", key, o["customer_id"])
     ana.metrics([{"label": "Situação", "value": st(o["status"]), "status": "ok" if o["status"] == "INVOICED" else None},
                  {"label": "Total", "value": money(o["total"])}, {"label": "Data", "value": f"{o['order_date']:%d/%m/%Y}"},
-                 {"label": "Condição", "value": o["payment_term"] or "padrão"}],
+                 {"label": "Condição", "value": o["payment_term"] or "padrão"},
+                 *([{"label": "Atendimento", "value": FULFILLMENT[o["fulfillment"]], "status": "warn"}]
+                   if o["status"] == "OPEN" and o["fulfillment"] != "ok" else [])],
                 title=f"Pedido de venda {o['number']} — {o['customer']} (depósito {o['warehouse']})")
-    items = ana.sql("SELECT i.line, p.code, p.description, i.quantity, i.price, i.amount FROM sales.sales_order_item i "
-                    "JOIN base.product p ON p.id = i.product_id WHERE i.order_id = $1 ORDER BY i.line", o["id"])
+    items = ana.sql("SELECT i.line, p.code, p.description, i.quantity, i.price, i.amount, i.supply_qty, i.supply_kind, i.promised_date "
+                    "FROM sales.sales_order_item i JOIN base.product p ON p.id = i.product_id WHERE i.order_id = $1 ORDER BY i.line", o["id"])
+    supplied = any(i["supply_qty"] for i in items)
     ana.table([{"linha": i["line"], "item": f"{i['code']} — {i['description']}", "quantidade": compact(i["quantity"]),
-                "preço": money(i["price"]), "valor": money(i["amount"])} for i in items], title="Itens")
+                "preço": money(i["price"]), "valor": money(i["amount"]),
+                **({"vem de": (f"{compact(i['supply_qty'])} de {'compra' if i['supply_kind'] == 'purchase' else 'produção'}"
+                               if i["supply_qty"] else "estoque"),
+                    "prometido": i["promised_date"].strftime("%d/%m/%Y") if i["promised_date"] else "—"} if supplied else {})}
+               for i in items], title="Itens")
+    # Spec 041 (RF-041-07): the supply made for this order, each one opens.
+    linked = ana.sql("SELECT 'purchase_request' AS kind, r.number, r.status, string_agg(DISTINCT p.code, ', ') AS items, "
+                     "  bool_or(l.work_order_id IS NOT NULL) AS component FROM supply.purchase_request_line l "
+                     "JOIN supply.purchase_request r ON r.id = l.request_id JOIN base.product p ON p.id = l.product_id "
+                     "WHERE l.sales_order_id = $1 GROUP BY r.number, r.status "
+                     "UNION ALL SELECT 'work_order', w.number, w.status, p.code, false FROM production.work_order w "
+                     "JOIN base.product p ON p.id = w.product_id WHERE w.sales_order_id = $1 ORDER BY 1, 2", o["id"])
+    if linked and not ana.context.party:          # internal documents: not for portal accounts
+        ana.table([{"documento": ("Solicitação de compra" + (" (insumos da produção)" if x["component"] else "") if x["kind"] == "purchase_request"
+                                  else "Ordem de produção") + f" {x['number']}", "itens": x["items"], "situação": st(x["status"]),
+                    "_open": common.link(x["kind"], x["number"])} for x in linked], title="Suprimento vinculado")
     ships = ana.sql("SELECT number, status, tracking, shipped_at, delivered_at FROM logistics.shipment WHERE sales_order_id = $1 ORDER BY number",
                     o["id"])
     if ships:
@@ -208,6 +228,13 @@ def view_purchase_request(key):
                     "JOIN base.product p ON p.id = l.product_id WHERE l.request_id = $1 ORDER BY l.line", r["id"])
     ana.table([{"linha": l["line"], "item": f"{l['code']} — {l['description']}", "quantidade": compact(l["quantity"]),
                 "preço estimado": money(l["est_price"]) if l["est_price"] is not None else "—"} for l in lines], title="Itens")
+    back = ana.sql("SELECT DISTINCT so.number AS sales, w.number AS wo FROM supply.purchase_request_line l "
+                   "LEFT JOIN sales.sales_order so ON so.id = l.sales_order_id LEFT JOIN production.work_order w ON w.id = l.work_order_id "
+                   "WHERE l.request_id = $1 AND l.sales_order_id IS NOT NULL", r["id"])
+    if back:
+        ana.table([{"para": (f"Ordem de produção {b['wo']}, do pedido de venda {b['sales']}" if b["wo"] else f"Pedido de venda {b['sales']}"),
+                    "_open": common.link("work_order", b["wo"]) if b["wo"] else common.link("order", b["sales"])} for b in back],
+                  title="Comprado para")
     orders = ana.sql("SELECT DISTINCT po.number, po.status FROM supply.purchase_order_line l JOIN supply.purchase_order po ON po.id = l.order_id "
                      "WHERE l.request_id = $1 ORDER BY po.number", r["id"])
     if orders:
@@ -253,7 +280,8 @@ def view_purchase_order(key):
 
 def view_work_order(key):
     o = ana.sql_one("SELECT o.id, o.number, p.code, p.description, o.quantity, o.status, o.due_date, o.good_qty, o.scrap_qty, "
-                    "  o.std_cost, o.actual_cost, o.variance FROM production.work_order o JOIN base.product p ON p.id = o.product_id "
+                    "  o.std_cost, o.actual_cost, o.variance, so.number AS sales FROM production.work_order o JOIN base.product p ON p.id = o.product_id "
+                    "LEFT JOIN sales.sales_order so ON so.id = o.sales_order_id "
                     "WHERE o.number = $1", number("work_order", key))
     if not o:
         not_found("work_order", key)
@@ -270,6 +298,13 @@ def view_work_order(key):
     if ops:
         ana.table([{"operação": f"{x['seq']} — {x['description']}", "recurso": x["resource_code"], "horas padrão": x["std_hours"],
                     "horas reais": x["actual_hours"], "boas": x["good_qty"]} for x in ops], title="Operações")
+    buys = ana.sql("SELECT DISTINCT r.number, r.status FROM supply.purchase_request_line l JOIN supply.purchase_request r ON r.id = l.request_id "
+                   "WHERE l.work_order_id = $1 ORDER BY r.number", o["id"])
+    if o["sales"] or buys:
+        ana.table(([{"documento": f"Pedido de venda {o['sales']}", "papel": "a ordem atende este pedido", "situação": "",
+                     "_open": common.link("order", o["sales"])}] if o["sales"] else [])
+                  + [{"documento": f"Solicitação de compra {b['number']}", "papel": "insumos que faltavam", "situação": st(b["status"]),
+                      "_open": common.link("purchase_request", b["number"])} for b in buys], title="Vínculos (spec 041)")
     acts = flow_actions("production", o["number"])
     if acts:
         ana.actions(acts, title="Relacionados")
