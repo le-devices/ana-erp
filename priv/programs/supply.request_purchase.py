@@ -29,7 +29,8 @@ PARAMS = {
         "supplier": {"type": "int", "label": "fornecedor (vazio = o preferido)", "lookup": {"program": "supply.lookup", "params": {"kind": "suppliers"}}},
         "rebillable": {"type": "bool", "label": "refaturável"}}},
     "origin": {"type": "str", "default": "manual", "label": "origem", "order": 10,
-               "choices": [["manual", "Manual"], ["replenishment", "Reposição"], ["planning", "Planejamento"], ["project", "Projeto"]]},
+               "choices": [["manual", "Manual"], ["replenishment", "Reposição"], ["planning", "Planejamento"], ["project", "Projeto"],
+                           ["sales", "Pedido de venda (política de atendimento)"]]},
     "cost_center": {"type": "str", "label": "centro de custo (vazio = do projeto ou do depósito)", "order": 11,
                     "lookup": {"program": "finance.lookup", "params": {"kind": "cost_centers"}}},
 }

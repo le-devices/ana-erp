@@ -5709,6 +5709,228 @@ class TestPlanningGrid(Base):
                 changes=[{"key": {"who": f"e:{emp}", "activity": acts[0]["value"]}, "values": {"2027-02-08": None}}])
 
 
+class TestFulfillment(Base):
+    """Sales order fulfilled by the company's policy (spec 041). Each test uses its own items with an item exception,
+    so the installation's policy (accept, as before) stays as it is for the other tests."""
+
+    @classmethod
+    def setUpClass(cls):
+        super().setUpClass()
+        c = cls.client
+        cls.sfx = SUFFIX[-6:]
+        cls.customer = c.call("base.save_party", name=f"Cliente Atendimento {SUFFIX}", state="SP")["id"]
+        cls.other_customer = c.call("base.save_party", name=f"Cliente Especial {SUFFIX}", state="SP")["id"]
+        cls.supplier = c.call("base.save_party", name=f"Fornecedor Atendimento {SUFFIX}", kind="supplier", state="SP")["id"]
+        cls.carrier = c.call("logistics.save_carrier", name=f"Transportes Atendimento {SUFFIX}")["id"]
+
+    def ok(self, program, **params):
+        s, c, _ = self.run_program(program, params)
+        self.assertEqual(s, 200, c)
+        self.assertNotIn("error", c, c.get("error"))
+        return c["result"]
+
+    def err(self, program, **params):
+        s, c, _ = self.run_program(program, params)
+        self.assertIn("error", c, c)
+        return c["error"]
+
+    def item(self, tag, stock=0, mode=None, supplier=True, **save):
+        code = f"F{self.sfx}{tag}"
+        self.client.call("base.save_product", code=code, description=f"Item {tag} {SUFFIX}", price="10", **save)
+        if stock:
+            self.ok("inventory.stock_in", product=code, quantity=stock, warehouse="CENTRAL")
+        if supplier:
+            self.ok("supply.save_supplier_item", product=code, supplier=self.supplier, price="4", lead_time_days=7, min_qty=10,
+                    multiple=5, preferred=True)
+        if mode:
+            self.ok("sales.fulfillment_policy", action="rule", product=code, mode=mode)
+        return code
+
+    def order(self, code, qty, customer=None, **extra):
+        return self.ok("sales.create_order", customer=customer or self.customer, items=[{"product": code, "quantity": qty}], **extra)
+
+    def line(self, number):
+        s, c, _ = http("POST", "/api/sql", {"sql": "SELECT i.fulfill_mode, i.from_stock, i.supply_qty, i.supply_kind, i.reserve_qty, "
+                                                  "i.promised_date::text, i.rule_source, o.fulfillment FROM sales.sales_order_item i "
+                                                  f"JOIN sales.sales_order o ON o.id = i.order_id WHERE o.number = {number} AND i.line = 1"}, self.token)
+        return dict(zip(["mode", "from_stock", "supply", "kind", "reserve", "promised", "source", "fulfillment"], c["rows"][0]))
+
+    def test_ca_041_01_refuse_and_hold(self):
+        a = self.item("RF", stock=3, mode="refuse")
+        e = self.err("sales.create_order", customer=self.customer, items=[{"product": a, "quantity": 5}])
+        self.assertEqual(e["code"], "INSUFFICIENT_STOCK")
+        self.assertIn(f"{a}: faltam 2", e["message"])
+        self.assertIn("exceção do item", e["message"])                                    # says which rule refused it
+        self.assertEqual(self.line(self.order(a, 3)["number"])["fulfillment"], "ok")       # within stock: accepted
+        b = self.item("HD", stock=2, mode="hold")
+        n = self.order(b, 5)["number"]
+        ln = self.line(n)
+        self.assertEqual((ln["fulfillment"], ln["mode"], str(ln["reserve"])), ("held", "hold", "5.000"))
+        r = self.ok("logistics.ship", order=n, carrier=self.carrier)                       # does not ship while held
+        self.assertIsNone(r["shipment"])
+        self.assertIn("retido", r["waiting"])
+        self.assertEqual(self.err("sales.invoice_order", number=n)["code"], "ORDER_HELD")
+        self.ok("inventory.stock_in", product=b, quantity=3, warehouse="CENTRAL")           # the stock arrives
+        self.assertIn(n, self.ok("sales.release_held")["released"])
+        self.assertEqual(self.line(n)["fulfillment"], "ok")
+        self.assertIsNotNone(self.ok("logistics.ship", order=n, carrier=self.carrier)["shipment"])
+
+    def test_ca_041_02_purchase_linked_reserved_and_released_on_receipt(self):
+        a = self.item("PC", stock=1, mode="purchase")
+        r = self.order(a, 6)                                                              # 5 missing → lot min 10
+        n = r["number"]
+        ln = self.line(n)
+        self.assertEqual((ln["fulfillment"], ln["kind"], str(ln["supply"]), str(ln["reserve"])), ("supply", "purchase", "5.000", "6.000"))
+        self.assertEqual(ln["promised"], (datetime.date.today() + datetime.timedelta(days=7)).isoformat())
+        req = r["supply"]["requests"][0]
+        self.assertEqual(self.scalar(f"SELECT l.quantity::text FROM supply.purchase_request_line l JOIN supply.purchase_request r "
+                                     f"ON r.id = l.request_id WHERE r.number = {req} AND l.sales_order_id = "
+                                     f"(SELECT id FROM sales.sales_order WHERE number = {n})"), "10.000")
+        # Within the company's limit the purchase becomes an order by itself; the receipt frees the sales order.
+        pol = self.ok("sales.fulfillment_policy")["policy"]
+        self.ok("sales.fulfillment_policy", action="policy", auto_order_max="10000")
+        try:
+            r2 = self.order(a, 4)
+            self.assertTrue(r2["supply"]["orders"], r2)
+            po = r2["supply"]["orders"][0]
+            n2 = r2["number"]
+        finally:
+            self.ok("sales.fulfillment_policy", action="policy", auto_order_max=str(pol["auto_order_max"]))
+        self.assertEqual(self.line(n2)["fulfillment"], "supply")
+        rec = self.ok("supply.receive", order=po)
+        self.assertIn("released", rec)
+        self.assertEqual(self.line(n2)["fulfillment"], "ok")                               # its stock arrived: it moves on
+        view = self.ok("docs.view", kind="order", key=str(n))
+        self.assertEqual(view["number"], n)
+
+    def test_ca_041_03_production_with_component_purchase(self):
+        comp = self.item("CP", stock=0)
+        made = self.item("MD", stock=0, mode="produce", supplier=False)
+        self.ok("production.save_item_plan", product=made, make_or_buy="make", lead_time_days=3)
+        self.ok("production.save_structure", product=made, lines=[{"component": comp, "quantity": 2}])
+        r = self.order(made, 4)
+        n = r["number"]
+        self.assertEqual(self.line(n)["fulfillment"], "supply")
+        wo = r["supply"]["work_orders"][0]
+        self.assertEqual(int(self.scalar(f"SELECT so.number FROM production.work_order w JOIN sales.sales_order so ON so.id = w.sales_order_id "
+                                         f"WHERE w.number = {wo}")), n)
+        buy = self.scalar(f"SELECT l.quantity::text FROM supply.purchase_request_line l JOIN production.work_order w ON w.id = l.work_order_id "
+                          f"WHERE w.number = {wo}")
+        self.assertEqual(buy, "10.000")                                                    # 8 components, lot min 10
+        # "by_item": the item's planning decides (made → production).
+        self.ok("sales.fulfillment_policy", action="rule", product=made, mode="by_item")
+        self.assertEqual(self.order(made, 1)["supply"]["work_orders"].__len__(), 1)
+        # Production done: the product is there for the order.
+        self.ok("inventory.stock_in", product=comp, quantity=20, warehouse="CENTRAL")
+        self.ok("production.release_order", order=wo) if self.scalar(f"SELECT status FROM production.work_order WHERE number = {wo}") == "planned" else None
+        self.ok("production.deliver", order=wo, good_qty=4, complete=True)
+        self.assertEqual(self.line(n)["fulfillment"], "ok")
+
+    def test_ca_041_04_accept_without_stock_listed_and_supplied_later(self):
+        a = self.item("AC", stock=2, mode="accept")
+        n = self.order(a, 5)["number"]
+        ln = self.line(n)
+        self.assertEqual((ln["fulfillment"], str(ln["reserve"])), ("short", "2.000"))     # reserves only what there is
+        lst = self.ok("sales.shortages", situation="short")
+        self.assertGreaterEqual(lst["orders"], 1)
+        self.assertEqual(self.err("sales.invoice_order", number=n)["code"], "INSUFFICIENT_STOCK")  # no invoice without stock
+        r = self.ok("sales.supply_order", number=n, kind="purchase")
+        self.assertTrue(r["supply"])
+        ln = self.line(n)
+        self.assertEqual((ln["fulfillment"], str(ln["reserve"]), str(ln["supply"])), ("supply", "5.000", "3.000"))
+
+    def test_ca_041_05_most_specific_rule_wins_and_says_so(self):
+        a = self.item("SP", stock=0, mode="hold", item_group=f"G{self.sfx}")
+        self.ok("sales.fulfillment_policy", action="rule", item_group=f"G{self.sfx}", mode="refuse")
+        t = self.ok("sales.fulfillment_policy", action="test", customer=self.customer, product=a)
+        self.assertEqual((t["mode"], t["source"]), ("hold", f"exceção do item {a}"))       # item beats group
+        self.ok("sales.fulfillment_policy", action="rule", customer=self.other_customer, product=a, mode="accept")
+        t = self.ok("sales.fulfillment_policy", action="test", customer=self.other_customer, product=a)
+        self.assertEqual((t["mode"], t["source"]), ("accept", f"exceção do cliente para o item {a}"))
+        b = self.item("GR", stock=0, item_group=f"G{self.sfx}")
+        t = self.ok("sales.fulfillment_policy", action="test", customer=self.customer, product=b)
+        self.assertEqual((t["mode"], t["source"]), ("refuse", f"exceção do grupo G{self.sfx}"))
+        # Whoever types the order cannot pick a mode the policy does not allow (stricter ones are always fine).
+        e = self.err("sales.create_order", customer=self.customer, items=[{"product": a, "quantity": 1}], mode="accept")
+        self.assertEqual(e["code"], "POLICY_MODE_NOT_ALLOWED")
+        self.assertEqual(self.err("sales.create_order", customer=self.customer, items=[{"product": a, "quantity": 1}], mode="refuse")["code"],
+                         "INSUFFICIENT_STOCK")
+        # "Simular" shows what each line would do and creates nothing.
+        before = self.count("sales.sales_order")
+        sim = self.ok("sales.create_order", customer=self.other_customer, items=[{"product": a, "quantity": 2}], simulate=True)
+        self.assertEqual((sim["simulated"], sim["fulfillment"], sim["lines"][0]["mode"]), (True, "short", "accept"))
+        self.assertEqual(self.count("sales.sales_order"), before)
+
+    def test_ca_041_06_public_api_follows_the_same_policy(self):
+        a = self.item("AP", stock=1, mode="refuse")
+        robot = f"apf{SUFFIX}"
+        CREATED_USERS.append(robot)
+        http("POST", "/api/admin/users", {"username": robot, "kind": "robot", "role": "user"}, self.token)
+        s, cl, _ = http("POST", "/api/admin/api-clients", {"name": "Loja (teste 041)", "run_as": robot, "scopes": ["sales.create_order"]}, self.token)
+        self.assertEqual(s, 200, cl)
+        basic = base64.b64encode(f"{cl['client_id']}:{cl['client_secret']}".encode()).decode()
+        req = urllib.request.Request(URL + "/oauth/token", data=b"grant_type=client_credentials", method="POST",
+                                     headers={"Content-Type": "application/x-www-form-urlencoded", "Authorization": "Basic " + basic})
+        with urllib.request.urlopen(req, timeout=30) as r:
+            tok = json.loads(r.read().decode())["access_token"]
+        body = json.dumps({"jsonrpc": "2.0", "method": "sales.create_order", "id": 1,
+                           "params": {"customer": self.customer, "items": [{"product": a, "quantity": 3}]}}).encode()
+        req = urllib.request.Request(URL + "/rpc", data=body, method="POST", headers={"Content-Type": "application/json", "Authorization": "Bearer " + tok})
+        try:
+            with urllib.request.urlopen(req, timeout=30) as r:
+                out = json.loads(r.read().decode())
+        except urllib.error.HTTPError as e:
+            out = json.loads(e.read().decode())
+        self.assertIn("error", out, out)
+        self.assertIn("faltam 2", json.dumps(out["error"], ensure_ascii=False))
+        if psql_available():
+            psql(f"DELETE FROM ana_system.api_usage WHERE client_id = '{cl['client_id']}'; DELETE FROM ana_system.api_client WHERE client_id = '{cl['client_id']}'")
+
+    def test_rnf_041_01_200_lines_and_5_levels_under_2_seconds(self):
+        codes = [f"F{self.sfx}L{i:03d}" for i in range(199)]
+        values = ", ".join(f"('{c}', 'Linha {c}', 5)" for c in codes)
+        sql = (f"INSERT INTO base.product (code, description, price) VALUES {values} ON CONFLICT (code) DO NOTHING; "
+               "INSERT INTO inventory.stock_movement (product_id, warehouse_id, quantity, kind, reason, unit_cost, created_by) "
+               "SELECT p.id, w.id, 3, 'in', 'adjustment_in', 1, 'teste' FROM base.product p, inventory.warehouse w "
+               f"WHERE w.code = 'CENTRAL' AND p.code LIKE 'F{self.sfx}L%'")
+        if not psql_available():
+            self.skipTest("psql indisponível para a massa de 200 itens")
+        psql(sql)
+        # A made item five levels deep, each level missing, made to order.
+        levels = [self.item(f"N{k}", stock=0, supplier=(k == 5)) for k in range(6)]
+        for k in range(5):
+            self.ok("production.save_item_plan", product=levels[k], make_or_buy="make", lead_time_days=1)
+            self.ok("production.save_structure", product=levels[k], lines=[{"component": levels[k + 1], "quantity": 2, "phantom": k > 0}])
+        self.ok("sales.fulfillment_policy", action="rule", product=levels[0], mode="produce")
+        items = [{"product": c, "quantity": 2} for c in codes] + [{"product": levels[0], "quantity": 1}]
+        s, r, _ = self.run_program("sales.create_order", {"customer": self.customer, "items": items})
+        self.assertEqual(s, 200, r)
+        self.assertNotIn("error", r, r.get("error"))
+        self.assertEqual(r["result"]["items"], 200)
+        self.assertEqual(len(r["result"]["supply"]["work_orders"]), 1)
+        self.assertLess(r["duration_ms"], 2000, f"decisão de atendimento levou {r['duration_ms']} ms")
+
+    def test_ca_041_07_cancel_shows_effect_cancels_request_keeps_ordered(self):
+        a = self.item("CN", stock=0, mode="purchase")
+        r = self.order(a, 3)
+        n, req = r["number"], r["supply"]["requests"][0]
+        sim = self.ok("sales.cancel_order", number=n, simulate=True)
+        self.assertEqual([(x["number"], x["cancel"]) for x in sim["effect"]], [(req, True)])
+        self.assertEqual(self.scalar(f"SELECT status FROM sales.sales_order WHERE number = {n}"), "OPEN")   # nothing changed
+        done = self.ok("sales.cancel_order", number=n)
+        self.assertEqual(done["supply_cancelled"], [req])
+        self.assertEqual(self.scalar(f"SELECT status FROM supply.purchase_request WHERE number = {req}"), "cancelled")
+        # Already ordered from the supplier: kept, it becomes free stock when it arrives.
+        pol = self.ok("sales.fulfillment_policy")["policy"]
+        self.ok("sales.fulfillment_policy", action="policy", auto_order_max="10000")
+        try:
+            r = self.order(a, 3)
+        finally:
+            self.ok("sales.fulfillment_policy", action="policy", auto_order_max=str(pol["auto_order_max"]))
+        done = self.ok("sales.cancel_order", number=r["number"])
+        self.assertEqual((done["supply_cancelled"], done["supply_kept"]), ([], r["supply"]["requests"]))
+
+
 class TestRunErrors(Base):
     """Running what cannot run says why (a library, an inactive program, a missing one)."""
 

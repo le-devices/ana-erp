@@ -5,6 +5,7 @@
 to the project). The order is completed when good + scrap reach the quantity, or on request."""
 
 from ana_lib.production import common
+from ana_lib.sales import fulfillment
 
 PARAMS = {
     "order": {"type": "int", "required": True, "label": "ordem", "lookup": {"program": "production.lookup", "params": {"kind": "orders"}}},
@@ -31,6 +32,9 @@ def main(order, good_qty, scrap_qty=0, complete=False):
     done = complete or good + scrap >= o["quantity"]
     ana.sql_exec("UPDATE production.work_order SET good_qty = $2, scrap_qty = $3, status = $4 WHERE id = $1",
                  o["id"], good, scrap, "completed" if done else "in_progress")
+    # Spec 041: a work order made for a sales order reserves the product for it — the order may move on now.
+    if ana.sql_value("SELECT sales_order_id IS NOT NULL FROM production.work_order WHERE id = $1", o["id"]):
+        fulfillment.after_arrival()
     if done:
         ana.actions([{"label": "Encerrar e apurar o custo", "program": "production.close_order",
                       "params": {"order": o["number"]}, "style": "primary"}], title="Próximo passo")

@@ -1,6 +1,18 @@
 # 041 — Atendimento do pedido de venda conforme a política da empresa
 
-Situação: especificada (out/2026), a implementar.
+Situação: implementada (out/2026).
+
+Decisões de implementação: a política e as exceções ficam em `sales.fulfillment_policy` e
+`sales.fulfillment_rule` (rotina "Política de atendimento", em Vendas → Atendimento, com "Qual regra
+vale?"); o padrão de fábrica é "aceitar sem estoque definido", o comportamento anterior. Todo pedido
+nasce em `sales.create_order` (tela, API pública, portal, esteiras e BPM), que decide por linha com a
+biblioteca `sales.fulfillment` e oferece "Simular" (o que cada linha faria e a data prometida, sem
+gravar). A reserva é `reserve_qty` por linha (o que tirou do estoque mais o que o suprimento vinculado
+traz; "aceitar" reserva só o que havia), e `inventory.reserved` a desconta em todas as telas. Pedido
+retido ou aguardando suprimento não expede (a esteira espera com o motivo) nem fatura; volta sozinho
+pela rotina `pedidos.liberar` (a cada 10 min) e logo após recebimentos de compra e entregas da
+produção vinculados, do mais antigo para o mais novo (`sales.order_ready`, `flow.resume_document`).
+Itens ganharam "grupo de itens" no cadastro. O cancelamento usa a simulação para mostrar o efeito.
 
 ## Problema
 Cada empresa que instala o ANA atende pedidos de um jeito: há quem só venda o

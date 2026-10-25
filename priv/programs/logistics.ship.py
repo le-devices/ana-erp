@@ -11,6 +11,7 @@ import datetime
 from decimal import Decimal
 
 from ana_lib.logistics import common
+from ana_lib.sales import fulfillment
 from ana_lib.docs import pdfs
 
 PARAMS = {
@@ -34,12 +35,18 @@ PARAMS = {
 
 def main(order, lines=None, carrier=None, tracking=None, packages=1, weight_kg=None, freight_cost=None, freight_charged=None,
          expected_date=None, stage="shipped"):
-    o = ana.sql_one("SELECT o.id, o.number, o.status, o.warehouse_id, p.state FROM sales.sales_order o "
+    o = ana.sql_one("SELECT o.id, o.number, o.status, o.warehouse_id, o.fulfillment, p.state FROM sales.sales_order o "
                     "JOIN base.party p ON p.id = o.customer_id WHERE o.number = $1 FOR UPDATE OF o", order)
     if not o:
         raise ana.Error("ORDER_NOT_FOUND", f"pedido {order} não encontrado")
     if o["status"] == "CANCELLED":
         raise ana.Error("ORDER_CANCELLED", f"pedido {order} está cancelado")
+    # Spec 041 (RF-041-06): a held order, or one waiting for its purchase or production, does not ship until its
+    # stock is there; the sales flow waits with the reason and moves on by itself when it arrives.
+    if o["fulfillment"] in ("held", "supply") and not fulfillment.release([o["number"]]):
+        reason = f"pedido {o['number']} {fulfillment.STATUS[o['fulfillment']]}"
+        ana.log(reason, "warning")
+        return {"shipment": None, "order": o["number"], "waiting": reason}
     pending = {r["line"]: r for r in ana.sql(
         "SELECT i.line, i.product_id, pr.kind, i.quantity - COALESCE(sh.q, 0) AS pending FROM sales.sales_order_item i "
         "JOIN base.product pr ON pr.id = i.product_id "

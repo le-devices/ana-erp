@@ -14,6 +14,8 @@ The database refuses quantities above the ordered quantity plus tolerance (RNF-0
 import datetime
 from decimal import Decimal, ROUND_HALF_UP
 
+from ana_lib.sales import fulfillment
+
 PARAMS = {
     "order": {"type": "int", "required": True, "label": "ordem de compra", "order": 1,
               "lookup": {"program": "supply.lookup", "params": {"kind": "orders"}}},
@@ -148,5 +150,11 @@ def main(order, line=None, quantity=None, price=None, document=None, note=None, 
     ana.sql_exec("UPDATE supply.purchase_order SET status = $2 WHERE id = $1", o["id"], status)
     ana.table(rows, title=f"Recebimento {doc} — {o['supplier']}")
     result = {"receipt": receipt, "document": doc, "order_status": status, "total": total, "entry": entry, "bill": bill}
+    # Spec 041: what was bought for a sales order (or for the work order that serves it) frees it to move on.
+    links = ana.sql("SELECT DISTINCT rl.sales_order_id, rl.work_order_id FROM supply.purchase_order_line pl "
+                    "JOIN supply.purchase_request_line rl ON rl.request_id = pl.request_id AND rl.line = pl.request_line "
+                    "WHERE pl.order_id = $1 AND rl.sales_order_id IS NOT NULL", o["id"])
+    if links:
+        result["released"] = fulfillment.after_arrival([l["work_order_id"] for l in links if l["work_order_id"]])
     ana.extend("after_receive_purchase", result)
     return result
