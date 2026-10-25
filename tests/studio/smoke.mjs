@@ -240,6 +240,47 @@ await until(() => d.querySelector("#ops-main .sim-split .cond-builder") && d.que
   ok(text("#ops-main .sim-when").includes("nada foi gravado"), "simulação ao lado com hora, sem gravar (CA-020-08)");
 }
 
+// Planning grid by period and its chart (RF-020-15/16, CA-020-10/11).
+await go(w, "#/ops/finance/finance.budget_plan?start=2026-01&end=2026-12");
+await until(() => d.querySelector("#ops-main .plan-grid tbody td.cell"), "planning grid", jsErrors);
+{
+  const m = d.querySelector("#ops-main");
+  ok(m.querySelectorAll(".plan-grid thead th.period").length === 12 && m.querySelectorAll(".plan-grid thead th.sticky-col.dim").length === 2
+     && m.querySelector(".plan-grid tfoot tr.totals"), "grade: colunas dos meses pelo intervalo, dimensões fixas e totais");
+  const totalBefore = m.querySelector(".plan-grid tfoot td.total").textContent;
+  const cell = m.querySelector(".plan-grid tbody td.cell");
+  cell.dispatchEvent(new w.MouseEvent("click", { bubbles: true }));
+  cell.dispatchEvent(new w.KeyboardEvent("keydown", { key: "7", bubbles: true }));
+  const ed = m.querySelector(".plan-grid .cell-editor");
+  ok(ed && ed.value === "7", "digitar numa célula abre a edição");
+  ed.value = "1.234,50";
+  ed.dispatchEvent(new w.KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
+  await until(() => m.querySelector(".plan-grid td.cell.changed"), "cell changed", jsErrors);
+  ok(m.querySelector(".plan-grid td.cell.changed").textContent === "1.234,50" && m.querySelector(".plan-grid tfoot td.total").textContent !== totalBefore
+     && /Salvar alterações \(1\)/.test([...m.querySelectorAll(".plan-foot button")].map((b) => b.textContent).join()),
+     "edição com número brasileiro, total acompanha, salvar mostra o que mudou");
+  const second = m.querySelectorAll(".plan-grid tbody tr")[1].querySelector("td.cell");
+  const paste = new w.Event("paste", { bubbles: true, cancelable: true });
+  paste.clipboardData = { getData: () => "10\t20\n30\t40\n" };
+  second.dispatchEvent(paste);
+  await until(() => m.querySelectorAll(".plan-grid td.cell.changed").length >= 5, "pasted block", jsErrors);
+  ok(true, "colar bloco da planilha preenche células à direita e abaixo");
+  const neg = new w.KeyboardEvent("keydown", { key: "-", bubbles: true });
+  const third = m.querySelectorAll(".plan-grid tbody tr")[3].querySelector("td.cell");
+  third.dispatchEvent(new w.MouseEvent("click", { bubbles: true })); third.dispatchEvent(neg);
+  const ed2 = m.querySelector(".plan-grid .cell-editor");
+  if (ed2) { ed2.value = "-5"; ed2.dispatchEvent(new w.KeyboardEvent("keydown", { key: "Enter", bubbles: true })); }
+  ok(w.AnaLeave.dirty(), "alterações não salvas são lembradas ao sair");
+  m.querySelectorAll(".plan-grid tbody tr")[0].querySelector("td.dim").dispatchEvent(new w.MouseEvent("click", { bubbles: true }));
+  await until(() => text("#ops-main .plan-chart .chart-legend").includes("Realizado"), "linked chart", jsErrors);
+  ok(text("#ops-main .plan-chart .chart-legend").includes("Orçado") && text("#ops-main .plan-chart .chart-legend").includes("Saldo")
+     && m.querySelectorAll(".plan-chart svg.chart-svg").length === 1, "gráfico da linha: orçado × realizado × saldo num só eixo");
+  const c = w.AnaCharts.render({ type: "column", x: ["a", "b"], alert: { series: 2 },
+    series: [{ name: "P", values: [1, 1] }, { name: "C", values: [2, 0] }, { name: "D", values: [-1, 1] }] });
+  ok(c.querySelectorAll(".bar.alert").length === 1 && c.querySelector(".neg-label").textContent.includes("⚠") && c.textContent.includes("D negativo"),
+     "disponível negativo em destaque, com rótulo e legenda (CA-020-11)");
+}
+
 await go(w, "#/ops/projects/projects.workspace?project=PRJ-001&view=board");
 await until(() => d.querySelectorAll("#ops-main .board-card").length > 0, "board again", jsErrors);
 ok([...d.querySelectorAll("#ops-main .output-tabs button")].map((b) => b.textContent).includes("Viabilidade"), "abas do projeto, incluindo Viabilidade");

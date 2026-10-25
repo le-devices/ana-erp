@@ -633,6 +633,34 @@ def make_ana_module(channel, output, context):
         output.flush()
         output.emit("metrics", {"title": title, "items": list(items)})
 
+    def grid(rows, dimensions, periods, title=None, value_label="Planejado", consumed_label=None, available_label=None,
+             save=None, version=None, negative=False, decimals=2, statuses=None, comments=False, add=None, unit=None):
+        """Planning grid by period (spec 020, RF-020-15/16). dimensions: [{"key", "label"}] fixed on the left;
+        periods: [{"key", "label"}]; rows: [{"key": {dim: value}, "labels"?: {dim: text}, "values": {period: n},
+        "consumed"?: {period: n}, "status"?, "comment"?}]. save: {"program", "params"?} receives
+        {"changes": [{"key", "values"?: {period: n|None}, "status"?, "comment"?}], "version"} and saves only
+        what changed; version: token of what was read (concurrent editing). add: {dim: lookup} to include rows."""
+        output.flush()
+        dims = [{"key": str(d["key"]), "label": str(d.get("label") or d["key"])} for d in dimensions]
+        pers = [{"key": str(p["key"]), "label": str(p.get("label") or p["key"])} for p in periods]
+        if not dims or not pers:
+            raise ParamError("grid exige dimensões e períodos")
+        if save is not None and (not isinstance(save, dict) or not save.get("program")):
+            raise ParamError("save da grade exige program")
+        num = lambda v: None if v is None else str(v) if isinstance(v, decimal.Decimal) else v
+        out = []
+        for r in rows:
+            key = {d["key"]: r["key"].get(d["key"]) for d in dims}
+            out.append({"key": key, "labels": {k: str(v) for k, v in (r.get("labels") or {}).items()},
+                        "values": {str(k): num(v) for k, v in (r.get("values") or {}).items()},
+                        **({"consumed": {str(k): num(v) for k, v in r["consumed"].items()}} if r.get("consumed") is not None else {}),
+                        **({"status": r.get("status")} if statuses else {}),
+                        **({"comment": r.get("comment") or ""} if comments else {})})
+        output.emit("grid", {"title": title, "dimensions": dims, "periods": pers, "rows": out, "value_label": value_label,
+                             "consumed_label": consumed_label, "available_label": available_label, "save": save,
+                             "version": version, "negative": bool(negative), "decimals": int(decimals), "unit": unit,
+                             "statuses": statuses, "comments": bool(comments), "add": add})
+
     def steps(items, title=None):
         """Stages of a process (RF-020-11): [{"label", "status": done|current|todo, "hint"?}]."""
         output.flush()
@@ -771,6 +799,7 @@ def make_ana_module(channel, output, context):
     m.sql_batch = sql_batch
     m.call = call
     m.steps = steps
+    m.grid = grid
     m.extend = extend
     m.remote = remote
     m.http = http
