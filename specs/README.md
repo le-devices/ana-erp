@@ -72,6 +72,7 @@ inglês, como no código (constituição, P2a).
 | 039 | [BPM: modelar, simular, executar e acompanhar processos](039-bpm/spec.md) | Mapa de processos, editor visual com notação BPMN, validação, versões, modelos prontos, simulação com cenários e calibração pela realidade, motor com tarefas humanas e prazos, painel com mapa de calor, descoberta do processo real | implementada (faltam arrastar da paleta e início por agendamento/mensagem) |
 | 040 | [Dados mestres padronizados](040-master-data/spec.md) | Registro declarativo das entidades mestres: lista, ficha, busca, validações (CPF/CNPJ, CEP…), desativar, histórico campo a campo, duplicados e mesclagem, importação CSV com prévia, aprovação de campos sensíveis, painel de qualidade | implementada (falta importação em lote rápida) |
 | 041 | [Atendimento do pedido conforme a política da empresa](041-sales-fulfillment-policy/spec.md) | Por instalação, com exceções por item e cliente: vender só com estoque (recusar ou reter), suprir a falta pela compra ou pela produção (com compra dos insumos), ou aceitar sem estoque definido; reserva e vínculo pedido ↔ compra ↔ produção; data prometida | implementada |
+| 042 | [Vistoria das trilhas de processos de negócio](042-process-trail-audit/spec.md) | Venda, compra, produção, campo, projetos, atendimento sob encomenda, estoque e esteiras percorridos de ponta a ponta; achados e correções propostas | vistoria feita; correções a autorizar |
 
 ## Glossário
 
