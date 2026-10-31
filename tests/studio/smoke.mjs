@@ -304,7 +304,7 @@ ok([...d.querySelectorAll("#ops-main .output-tabs button")].map((b) => b.textCon
 await until(() => d.querySelector("#ops-main .inline-form"), "inline form", jsErrors);
 ok(d.querySelector("#ops-main .inline-form input"), "ação abre formulário na própria tela (CA-021-06)");
 [...d.querySelectorAll("#ops-main .output-tabs button")].find((b) => b.textContent === "Linha do tempo").click();
-await until(() => d.querySelectorAll("#ops-main .gantt-bar").length > 0, "gantt", jsErrors);
+await until(() => d.querySelectorAll("#ops-main .gantt-bar").length > 0, "gantt", jsErrors, 30000);   // busy right after the integration suites
 ok(d.querySelectorAll("#ops-main .gantt-bar.critical").length > 0, "linha do tempo com caminho crítico");
 [...d.querySelectorAll("#ops-main .output-tabs button")].find((b) => b.textContent === "Viabilidade").click();
 await until(() => text("#ops-main").includes("pessimista"), "viability", jsErrors);

@@ -1,6 +1,6 @@
 # 042 — Vistoria das trilhas de processos de negócio
 
-Situação: vistoria feita (31/10/2026); fases 1 (A-01..A-04, M-01, M-02) e 2 (B-01..B-05) corrigidas; a suíte permanente a fazer.
+Situação: vistoria feita (31/10/2026); fases 1 (A-01..A-04, M-01, M-02), 2 (B-01..B-05, E-01..E-03) e 3 (suíte permanente `make teste-trilhas`) concluídas.
 
 ## Como foi feita
 Cada trilha foi percorrida de ponta a ponta com dados novos, pelos programas reais (a mesma API das
@@ -103,6 +103,15 @@ Achados pela bateria durante a fase 2 (corrigidos):
 - **E-02 Avisos repetidos.** Um achado que vai e volta criava o mesmo aviso a cada volta; os 100 mais recentes
   escondiam um aviso crítico antigo (senha de fábrica). Agora não se cria aviso igual a um não lido, a lista
   mostra cada mensagem uma vez e marcar como lido vale para as cópias.
+
+## Suíte permanente (fase 3, 31/10/2026)
+`tests/trails/test_trails.py` (`make teste-trilhas`, na bateria `make testes`): venda, devolução, compra,
+produção, serviço em campo, projeto, atendimento sob encomenda, estoque e as esteiras de compra, campo e
+produção. Cada trilha exige as conciliações de controle iguais antes e depois, nenhum lançamento
+desbalanceado e os efeitos esperados (título baixado pelo extrato, esteira concluída, documento que leva à
+origem). Na primeira execução a suíte pegou uma regressão da fase 2: duas colunas declaradas obrigatórias que
+os programas preenchiam sozinhos (valor do crédito na devolução de cliente, quantidade recebida na
+transferência) passaram a ser exigidas — as declarações foram corrigidas (opcionais, com o padrão no rótulo).
 
 ## Proposta
 Corrigir A-01..A-04 e M-01..M-02 numa fase; B-01..B-05 noutra (pequenas). Transformar o roteiro da vistoria

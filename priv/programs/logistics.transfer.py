@@ -23,7 +23,7 @@ PARAMS = {
         "quantity": {"type": "decimal", "required": True, "default": 1, "label": "quantidade"}}},
     "received": {"type": "list", "label": "recebido (vazio = tudo)", "columns": {
         "line": {"type": "int", "required": True, "label": "linha"},
-        "quantity": {"type": "decimal", "required": True, "label": "quantidade recebida"},
+        "quantity": {"type": "decimal", "label": "quantidade recebida (vazio = a enviada)"},
         "note": {"type": "str", "label": "observação (ex.: 1 avariada)"}}},
     "notes": {"type": "str", "label": "observação"},
 }
