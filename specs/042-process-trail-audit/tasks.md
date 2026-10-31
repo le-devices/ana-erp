@@ -7,4 +7,4 @@
 - [x] T-042-05 M-01 títulos baixados sem baixa registrada no detalhe da conciliação
 - [x] T-042-06 M-02 documentos levam à origem; "Como foi baixado"; fatura de projeto e linha do extrato
 - [x] T-042-07 B-01..B-05 usabilidade e robustez
-- [ ] T-042-08 Suíte permanente das trilhas (`make teste-trilhas`) na bateria
+- [x] T-042-08 Suíte permanente das trilhas (`make teste-trilhas`) na bateria

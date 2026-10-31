@@ -295,6 +295,7 @@ make eunit             # núcleo Erlang
 make dialyzer          # análise estática
 make teste-runtime     # runtime Python, depurador e limites (sem banco)
 make teste-integracao  # testes contra o ambiente, rastreados a CA-xxx-nn
+make teste-trilhas     # trilhas de processo de ponta a ponta: conciliações de controle iguais antes e depois
 make teste-estudio     # interface num DOM real (jsdom): áreas, rotina, depurador, administração
 make teste-cluster     # dois nós: agendamento exatamente uma vez, troca de líder, erpc
 make teste-pg-ha       # PostgreSQL primário + réplica: promoção com carga, console na réplica, primário antigo recusado

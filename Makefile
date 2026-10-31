@@ -1,5 +1,5 @@
 # ANA ERP — atalhos de desenvolvimento
-.PHONY: subir parar logs compilar eunit dialyzer teste-runtime teste-integracao teste-estudio teste-cluster teste-caos teste-pg-ha testes limpar
+.PHONY: subir parar logs compilar eunit dialyzer teste-runtime teste-integracao teste-trilhas teste-estudio teste-cluster teste-caos teste-pg-ha testes limpar
 
 subir:            ## sobe banco + núcleo
 	docker compose up -d --build
@@ -25,6 +25,9 @@ teste-runtime:    ## runtime Python isolado (sem banco)
 teste-integracao: ## requer `make subir`
 	python3 -m unittest discover -s tests/integration -v
 
+teste-trilhas:    ## trilhas de processo de ponta a ponta com as conciliações antes e depois (spec 042); requer `make subir`
+	python3 -m unittest discover -s tests/trails -v
+
 teste-estudio:    ## contraste dos temas (WCAG) e DOM real (jsdom) contra o Estúdio; requer `make subir`
 	python3 tests/a11y/contrast.py
 	docker run --rm --network host -v $(PWD)/tests/studio:/t -w /t node:22-alpine \
@@ -46,7 +49,7 @@ pacote:           ## pacote de instalação para o cliente (ana-erp-<versão>.ta
 teste-instalacao: ## instala, atualiza e remove uma pilha de produção isolada (spec 036)
 	tests/install/run.sh
 
-testes: eunit teste-runtime teste-integracao teste-estudio teste-cluster teste-caos teste-pg-ha teste-instalacao
+testes: eunit teste-runtime teste-integracao teste-trilhas teste-estudio teste-cluster teste-caos teste-pg-ha teste-instalacao
 
 limpar:           ## apaga containers E dados
 	docker compose down -v
