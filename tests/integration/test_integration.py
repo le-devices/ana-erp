@@ -6450,6 +6450,79 @@ class TestBpm(Base):
                 return c
             time.sleep(0.5)
 
+    def cases_of(self, code):
+        s, c, _ = http("POST", "/api/sql", {"sql": f"SELECT id, data::text FROM bpm.case WHERE process_code = '{code}' ORDER BY id"},
+                       self.token)
+        return c["rows"]
+
+    def test_t_039_17b_scheduled_start(self):
+        nodes = [bpm_node("s", "start", "Toda segunda", trigger="schedule", cron="0 8 * * 1"),
+                 bpm_node("t", "task_human", "Conferir"), bpm_node("e", "end", "Fim")]
+        model = self.model(nodes, [bpm_edge("s", "t"), bpm_edge("t", "e")])
+        bad = {**model, "nodes": [{**nodes[0], "props": {"trigger": "schedule", "cron": "toda segunda"}}] + nodes[1:]}
+        code = self.process("Agendado", model, publish=False)
+        self.ok("bpm.save_model", process=code, model=bad)                                     # a draft may have errors
+        with self.assertRaises(AnaRemoteError) as ctx:
+            self.ok("bpm.publish", process=code)
+        self.assertEqual(ctx.exception.code, "INVALID_MODEL")
+        self.ok("bpm.save_model", process=code, model=model)
+        r = self.ok("bpm.publish", process=code)
+        job = r["schedule_job"]
+        self.assertTrue(job)
+        s, j, _ = http("GET", f"/api/scheduler/jobs/{job}", token=self.token)
+        self.assertEqual((j["name"], j["program"], j["params"], j["active"]), (f"bpm.{code}", "bpm.start", {"process": code}, True), j)
+        self.assertEqual([t["cron"] for t in j["triggers"]], ["0 8 * * 1"])
+        s, c, _ = http("POST", f"/api/scheduler/jobs/{job}/run", {}, self.token)                 # the occurrence comes now
+        self.assertIn(s, (200, 202), c)
+        end = time.time() + 30
+        while not self.cases_of(code) and time.time() < end:
+            time.sleep(0.5)
+        self.assertEqual(len(self.cases_of(code)), 1)
+        self.ok("bpm.save_process", code=code, name="Agendado", active=False)                      # switched off: the job stops
+        s, j, _ = http("GET", f"/api/scheduler/jobs/{job}", token=self.token)
+        self.assertFalse(j["active"])
+        # A program keeps jobs of its own module only.
+        name = f"test.sched_{SUFFIX}"
+        CREATED_PROGRAMS.add(name)
+        http("PUT", f"/api/programs/{name}", {"source": "def main():\n    return ana.schedule_job('bpm.alheio', 'bpm.start', {}, '0 1 * * *')\n"},
+             self.token)
+        s, c, _ = http("POST", f"/api/programs/{name}/run", {"params": {}}, self.token)
+        self.assertEqual(c["error"]["code"], "FORBIDDEN", c)
+        http("DELETE", f"/api/scheduler/jobs/{job}", token=self.token)
+
+    def test_t_039_17b_message_start(self):
+        import hashlib
+        import hmac as _hmac
+        conn, key = f"t{SUFFIX}_bpmhook", f"bpm-key-{SUFFIX}"
+        s, c, _ = http("PUT", f"/api/admin/connectors/{conn}", {"kind": "webhook_in", "inbound_program": "bpm.message_start"}, self.token)
+        self.assertEqual(s, 200, c)
+        http("PUT", f"/api/admin/connectors/{conn}/secrets/hmac_key", {"value": key}, self.token)
+        try:
+            nodes = [bpm_node("s", "start", "Lead recebido", trigger="message", connector=conn, event_type="lead"),
+                     bpm_node("t", "task_human", "Qualificar"), bpm_node("e", "end", "Fim")]
+            code = self.process("Por mensagem", self.model(nodes, [bpm_edge("s", "t"), bpm_edge("t", "e")]))
+
+            def send(body):
+                ts = str(int(time.time()))
+                raw = json.dumps(body).encode()
+                sig = _hmac.new(key.encode(), ts.encode() + b"." + raw, hashlib.sha256).hexdigest()
+                req = urllib.request.Request(URL + f"/hooks/{conn}", data=raw, method="POST",
+                                             headers={"X-Timestamp": ts, "X-Signature": "sha256=" + sig, "Content-Type": "application/json"})
+                with urllib.request.urlopen(req, timeout=30) as r:
+                    return r.status
+            self.assertEqual(send({"id": f"m1-{SUFFIX}", "type": "lead", "name": "ACME", "phone": "11 9999-0000"}), 202)
+            self.assertEqual(send({"id": f"m2-{SUFFIX}", "type": "outro", "name": "Ignorada"}), 202)   # other type: no case
+            end = time.time() + 40
+            while not self.cases_of(code) and time.time() < end:
+                time.sleep(0.5)
+            cases = self.cases_of(code)
+            self.assertEqual(len(cases), 1, cases)
+            self.assertIn('"name": "ACME"', cases[0][1])                                             # the message is the case's data
+            time.sleep(2)
+            self.assertEqual(len(self.cases_of(code)), 1)
+        finally:
+            http("PUT", f"/api/admin/connectors/{conn}", {"kind": "webhook_in", "active": False}, self.token)
+
     def task_of(self, case, name, client=None, scope="mine", timeout=30):
         end = time.time() + timeout
         while time.time() < end:

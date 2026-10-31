@@ -251,7 +251,10 @@ tarefas humanas, prazos, papéis, simulação e medição.
   dois motores.
 
 ## Situação (implementação, outubro/2026)
-Implementadas as quatro fases. Ficam pendentes T-039-16b e T-039-17b.
+Implementadas as quatro fases e o início por agendamento e por mensagem (T-039-17b: o evento de início
+"Por agendamento" vira, ao publicar, a rotina `bpm.<código>` do agendador — desligar o processo a pausa; "Por
+mensagem de integração" escuta um conector cujo programa de entrada é `bpm.message_start`, opcionalmente só um
+tipo de mensagem, e a mensagem vira os dados do caso). Fica pendente T-039-16b.
 
 Decisões do dono (confirmadas): editor próprio em SVG, sem biblioteca externa;
 simulador em Python dentro do ERP; esteiras executadas pelo mesmo motor.

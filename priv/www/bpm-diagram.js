@@ -546,8 +546,24 @@
           field("Documento que o caso segue", sel_(model.document || "none", o.documents.map((d) => [d.entity, d.label]), (x) => { model.document = x || "none"; })),
           field("Robô que executa as tarefas automáticas", inp(model.run_as || "system", (x) => { model.run_as = x || "system"; })));
         const start = model.nodes.find((n) => n.type === "start");
-        if (start) parts.push(field("Como o caso começa", sel_(start.props.trigger || "manual", [["manual", "Manualmente (ou pela API)"], ["document", "Quando o documento é criado"]],
-          (x) => { start.props.trigger = x || "manual"; if (x === "document") start.props.entity = model.document; })));
+        if (start) {
+          const sp = start.props;
+          parts.push(field("Como o caso começa", sel_(sp.trigger || "manual", [["manual", "Manualmente (ou pela API)"], ["document", "Quando o documento é criado"],
+            ["schedule", "Por agendamento"], ["message", "Por mensagem de integração"]],
+            (x) => { sp.trigger = x || "manual"; if (x === "document") sp.entity = model.document; })));
+          // T-039-17b: when (cron) or through which connector the case starts.
+          if (sp.trigger === "schedule") {
+            parts.push(field("Quando (formato do agendador)", inp(sp.cron || "", (x) => { sp.cron = x.trim(); })),
+              el("p", { class: "muted small", text: "Minuto hora dia mês dia-da-semana. Ex.: 0 8 * * 1 = segundas às 8h; 0 7 1 * * = dia 1 às 7h. Ao publicar, vira uma rotina do agendador." }));
+          } else if (sp.trigger === "message") {
+            parts.push(field("Conector por onde a mensagem chega", sel_(sp.connector || "", (o.connectors || []).map((c) => [c.name, c.name + (c.inbound_program ? "" : " (sem programa de entrada)")]),
+                (x) => { sp.connector = x || undefined; })),
+              field("Tipo da mensagem (vazio = qualquer)", inp(sp.event_type || "", (x) => { sp.event_type = x.trim() || undefined; })),
+              model.document && model.document !== "none"
+                ? field("Campo da mensagem com a chave do documento", inp(sp.document_field || "", (x) => { sp.document_field = x.trim() || undefined; })) : null,
+              el("p", { class: "muted small", text: "A mensagem vira os dados do caso. O conector entrega as mensagens a bpm.message_start (defina-o como programa de entrada em Administração → Integrações)." }));
+          }
+        }
         parts.push(el("h4", { text: "Dados do caso" }));
         const vars = model.variables || (model.variables = []);
         parts.push(el("div", { class: "bpm-vars" }, ...vars.map((x, i) => el("div", { class: "bpm-rule" },

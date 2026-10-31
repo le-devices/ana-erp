@@ -61,4 +61,8 @@ def main(code, name, parent=None, level="process", owner=None, objective=None, t
         ana.sql_exec("INSERT INTO bpm.version (process_code, version, model, created_by, comment) VALUES ($1, 1, $2, $3, $4)",
                      code, model, ana.context.user, f"modelo pronto: {template}" if template else "")
         created = True
+    if active is not None and exists:
+        # T-039-17b: switched off, its scheduled start stops; switched on, the published version's schedule is back.
+        v = common.version(code, "published")
+        common.sync_schedule(code, name.strip(), (v["compiled"] or {}).get("schedule") if v and active else None)
     return {"code": code, "created": created}
