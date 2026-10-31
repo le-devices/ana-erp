@@ -7,6 +7,7 @@ fees) needs accept_difference. ignore marks lines that are not bills (transfers,
 from decimal import Decimal
 
 from ana_lib.finance import banking
+from ana_lib.util.format import status_text
 
 PARAMS = {
     "line": {"type": "int", "required": True, "label": "linha do extrato"},
@@ -26,7 +27,7 @@ def main(line, bills=None, accept_difference=False, ignore=False, reason=None, p
     if not l:
         raise ana.Error("LINE_NOT_FOUND", f"linha {line} não encontrada")
     if l["status"] != "open":
-        raise ana.Error("LINE_NOT_OPEN", f"linha {line} já está {l['status']}")
+        raise ana.Error("LINE_NOT_OPEN", f"linha {line} já está {status_text(l['status'])}")
     if post_to:
         # Spec 038 (L-14): a line without a bill (fee, IOF, yield, investment) gets its entry — never just ignored.
         acc = ana.sql_one("SELECT code FROM finance.account WHERE code = $1 AND postable", post_to)

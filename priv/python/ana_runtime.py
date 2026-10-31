@@ -952,6 +952,33 @@ PARAM_TYPES = {
 }
 
 
+def _check_rows(name, spec, rows):
+    """Rows of a list with declared columns (spec 042, B-02): each one an object with its required columns, each
+    value of the column's type — the program never meets a malformed row (the values themselves are not changed)."""
+    label = spec.get("label") or name
+    single = next(iter(spec["columns"])) if len(spec["columns"]) == 1 else None
+    for i, row in enumerate(rows, start=1):
+        if not isinstance(row, dict):
+            if single is None or isinstance(row, list):
+                raise ParamError(f"{label}, linha {i}: deve ser um objeto com as colunas")
+            row = {single: row}              # one column: a plain value stands for it (["AVISTA"] = [{"term": "AVISTA"}])
+        for col, cs in spec["columns"].items():
+            cs = cs or {}
+            v = row.get(col)
+            if v is None or v == "":
+                if cs.get("required") and cs.get("default") is None:
+                    known = ", ".join(spec["columns"])
+                    raise ParamError(f"{label}, linha {i}: falta {cs.get('label') or col} (colunas: {known})")
+                continue
+            conv = PARAM_TYPES.get(cs.get("type", "str"))
+            if conv is None:
+                continue
+            try:
+                conv(v)
+            except (ValueError, TypeError, decimal.InvalidOperation):
+                raise ParamError(f"{label}, linha {i}: {cs.get('label') or col} não é do tipo {cs.get('type', 'str')}") from None
+
+
 def validate_params(declaration, received):
     if declaration is None:
         return dict(received)
@@ -977,6 +1004,8 @@ def validate_params(declaration, received):
             out[name] = conv(received[name])
         except (ValueError, TypeError, decimal.InvalidOperation):
             raise ParamError(f"parâmetro {name} não é do tipo {kind}") from None
+        if kind == "list" and isinstance(spec.get("columns"), dict):
+            _check_rows(name, spec, out[name])
         choices = spec.get("choices")
         if choices:
             allowed = [c[0] if isinstance(c, (list, tuple)) else c for c in choices]

@@ -3,6 +3,7 @@
 """Shared by the field service programs (spec 015)."""
 
 import ana
+from ana_lib.util.format import status_text
 
 
 def order(number, lock=False):
@@ -29,9 +30,21 @@ def current_technician():
     return t["id"] if t else None
 
 
+def technician_for(o, given=None):
+    """Who did it (spec 042, B-01): the one given, else the user when a technician, else the technician scheduled on
+    the order when there is only one. None when it cannot be told."""
+    if given:
+        return given
+    me = current_technician()
+    if me:
+        return me
+    rows = ana.sql("SELECT DISTINCT employee_id FROM field.assignment WHERE order_id = $1 AND status <> 'cancelled'", o["id"])
+    return rows[0]["employee_id"] if len(rows) == 1 else None
+
+
 def require_open(o):
     if o["status"] in ("done", "invoiced", "cancelled"):
-        raise ana.Error("ORDER_CLOSED", f"OS {o['number']} está {o['status']}")
+        raise ana.Error("ORDER_CLOSED", f"OS {o['number']} está {status_text(o['status'])}")
 
 
 def advance(o, status):

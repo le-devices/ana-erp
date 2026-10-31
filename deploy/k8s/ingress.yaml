@@ -6,7 +6,9 @@ metadata:
   annotations:
     cert-manager.io/cluster-issuer: letsencrypt
     nginx.ingress.kubernetes.io/proxy-body-size: 64m
-    nginx.ingress.kubernetes.io/proxy-read-timeout: "600"
+    # A synchronous run may last up to the execution ceiling (10 min) plus the core's margin (spec 042).
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "630"
+    nginx.ingress.kubernetes.io/proxy-send-timeout: "630"
 spec:
   ingressClassName: nginx
   tls:

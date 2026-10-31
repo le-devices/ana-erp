@@ -23,9 +23,9 @@ def main(order, hours, kind="work", km=0, technician=None, note=None, client_key
             return {"id": prev, "repeated": True}
     o = common.order(order, lock=True)
     common.require_open(o)
-    tech = technician or common.current_technician()
+    tech = common.technician_for(o, technician)
     if not tech:
-        raise ana.Error("TECHNICIAN_NOT_FOUND", "informe o técnico")
+        raise ana.Error("TECHNICIAN_NOT_FOUND", "informe o técnico (a OS não tem um único técnico agendado)")
     common.technician(tech)
     wid = ana.sql_value("INSERT INTO field.work_log (order_id, employee_id, kind, hours, km, note, client_key, created_by) "
                         "VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING id", o["id"], tech, kind, hours, km or 0, note or "",

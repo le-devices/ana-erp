@@ -31,12 +31,18 @@ start() ->
           %% RF-024-01: every API request is recorded (ana_access_log).
           stream_handlers => [cowboy_metrics_h, cowboy_stream_h],
           metrics_callback => fun ana_access_log:metrics_callback/1,
-          idle_timeout => 60000,
+          %% A synchronous run may last up to the execution ceiling (spec 042): the connection waits for it.
+          idle_timeout => idle_timeout(),
           request_timeout => 30000,
           max_header_value_length => 8192,
           max_headers => 64}),
     logger:notice("ANA ERP listening on port ~b", [Port]),
     ok.
+
+idle_timeout() ->
+    try ana_settings:get(ceiling_timeout_ms) + 30000
+    catch _:_ -> 630000
+    end.
 
 json(Status, Body, Req) ->
     cowboy_req:reply(Status, #{<<"content-type">> => <<"application/json; charset=utf-8">>},

@@ -12,6 +12,7 @@ from decimal import Decimal
 
 from ana_lib.finance import banking
 from ana_lib.docs import pdfs
+from ana_lib.util.format import status_text
 
 PARAMS = {
     "external_id": {"type": "str", "required": True, "label": "identificador no gateway"},
@@ -35,7 +36,7 @@ def main(external_id, amount=None, fee=0, bank_account="CAIXA", event_id=None, p
     if c["status"] == "paid":
         return {"charge": c["id"], "already_paid": True}
     if c["status"] in ("cancelled", "failed"):
-        raise ana.Error("CHARGE_NOT_PAYABLE", f"cobrança {external_id} está {c['status']}")
+        raise ana.Error("CHARGE_NOT_PAYABLE", f"cobrança {external_id} está {status_text(c['status'])}")
     paid = Decimal(str(amount)) if amount is not None else c["amount"]
     fee = Decimal(str(fee or 0))
     entry = None
