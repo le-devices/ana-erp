@@ -46,6 +46,10 @@ def build(document):
         items = [[r["description"], compact(r["quantity"]), money(r["unit_price"]), money(r["amount"])]
                  for r in ana.sql("SELECT l.description, l.quantity, l.unit_price, l.amount FROM field.invoice_line l "
                                   "JOIN field.service_order o ON o.id = l.order_id WHERE o.number = $1 ORDER BY l.line", int(origin[1]))]
+    elif origin and origin[0] == "project_invoice":
+        items = [[r["description"], compact(r["quantity"]), money(r["unit_price"]), money(r["amount"])]
+                 for r in ana.sql("SELECT l.description, l.quantity, l.unit_price, l.amount FROM projects.invoice_line l "
+                                  "JOIN projects.invoice i ON i.id = l.invoice_id WHERE i.number = $1 ORDER BY l.line", int(origin[1]))]
     pdf = Pdf(title=f"Fatura {doc_base}")
     pdf.letterhead(company, [f"{company.get('address') or ''} {company['city']}/{company.get('state') or ''}".strip()
                              if company.get("city") else None])                                    # spec 009 (D11)

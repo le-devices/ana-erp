@@ -11,6 +11,9 @@ import json
 from ana_lib.flows import common
 from ana_lib.util import conditions
 
+NOT_AUTO = {"Recebimento": "a mercadoria precisa chegar: quem recebe confere e dá entrada",
+            "Agendamento": "alguém escolhe o técnico e o horário"}
+
 PARAMS = {
     "flow": {"type": "str", "required": True, "default": "sales", "label": "esteira", "order": 1,
              "lookup": {"program": "flows.lookup", "params": {"kind": "flows"}}},
@@ -45,7 +48,7 @@ def main(flow="sales", action=None, step=None, mode=None, field=None, op=None, v
             raise ana.Error("USER_NOT_FOUND", "usuário inexistente ou inativo")
         ana.sql_exec("UPDATE flow.definition SET run_as = $2, updated_by = $3, updated_at = now() WHERE code = $1", flow, u["username"], who)
     elif action in ("mode", "condition", "clear_condition"):
-        s = ana.sql_one("SELECT seq, mode, condition FROM flow.step WHERE flow_code = $1 AND seq = $2", flow, step)
+        s = ana.sql_one("SELECT seq, name, mode, condition, auto_allowed FROM flow.step WHERE flow_code = $1 AND seq = $2", flow, step)
         if not s:
             raise ana.Error("STEP_NOT_FOUND", f"etapa {step} não existe nesta esteira")
         if s["mode"] == "wait":
@@ -53,6 +56,10 @@ def main(flow="sales", action=None, step=None, mode=None, field=None, op=None, v
         if action == "mode":
             if mode not in ("auto", "manual"):
                 raise ana.Error("INVALID_PARAMETER", "modo deve ser automática ou manual")
+            if mode == "auto" and not s["auto_allowed"]:
+                # Spec 042 (A-01, A-03): a physical fact or a choice the flow cannot make.
+                raise ana.Error("STEP_NOT_AUTOMATIC", f"a etapa {s['name']} só pode ser feita por uma pessoa "
+                                                       f"({NOT_AUTO.get(s['name'], 'depende de um fato ou de uma escolha que a esteira não faz')})")
             ana.sql_exec("UPDATE flow.step SET mode = $3 WHERE flow_code = $1 AND seq = $2", flow, step, mode)
         elif action == "clear_condition":
             ana.sql_exec("UPDATE flow.step SET condition = '[]' WHERE flow_code = $1 AND seq = $2", flow, step)
@@ -70,7 +77,7 @@ def main(flow="sales", action=None, step=None, mode=None, field=None, op=None, v
         raise ana.Error("INVALID_PARAMETER", f"ação desconhecida: {action}")
 
     d = common.definition(flow)
-    steps = ana.sql("SELECT seq, code, name, program, mode, condition FROM flow.step WHERE flow_code = $1 ORDER BY seq", flow)
+    steps = ana.sql("SELECT seq, code, name, program, mode, condition, auto_allowed FROM flow.step WHERE flow_code = $1 ORDER BY seq", flow)
     ana.metrics([{"label": "Situação", "value": "ligada" if d["active"] else "desligada", "status": "ok" if d["active"] else "warn"},
                  {"label": "Robô responsável", "value": d["run_as"]},
                  {"label": "Etapas automáticas", "value": sum(1 for s in steps if s["mode"] == "auto")}],
@@ -88,15 +95,18 @@ def main(flow="sales", action=None, step=None, mode=None, field=None, op=None, v
         acts = []
         if s["mode"] != "wait":
             other = "manual" if s["mode"] == "auto" else "auto"
-            acts.append({"label": f"Tornar {common.MODE[other]}", "program": "flows.configure",
-                         "params": {"flow": flow, "action": "mode", "step": s["seq"], "mode": other}})
+            if other == "manual" or s["auto_allowed"]:
+                acts.append({"label": f"Tornar {common.MODE[other]}", "program": "flows.configure",
+                             "params": {"flow": flow, "action": "mode", "step": s["seq"], "mode": other}})
             # RF-020-13/14: criteria, exceptions and the simulation of the documents it takes, on its own screen.
             acts.append({"label": "Condição…", "program": "flows.step_condition", "params": {"flow": flow, "step": s["seq"], "condition": s["condition"]},
                          "open": True})
             if s["condition"]:
                 acts.append({"label": "Limpar condição", "program": "flows.configure",
                              "params": {"flow": flow, "action": "clear_condition", "step": s["seq"]}})
-        rows.append({"etapa": f"{s['seq']}. {s['name']}", "rotina": s["program"] or "—", "modo": common.MODE[s["mode"]],
+        only_person = not s["auto_allowed"] and s["mode"] != "wait"
+        rows.append({"etapa": f"{s['seq']}. {s['name']}", "rotina": s["program"] or "—",
+                     "modo": common.MODE[s["mode"]] + (" (só por uma pessoa)" if only_person else ""),
                      "condição para ser automática": common.condition_text(s["condition"], flow) if s["mode"] == "auto" else "—",
                      "_actions": acts})
     ana.table(rows, title="Etapas")

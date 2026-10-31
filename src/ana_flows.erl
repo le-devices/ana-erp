@@ -17,6 +17,8 @@
 -export([render/2, condition/2]).
 
 -define(LEASE, "interval '15 minutes'").
+%% Refusals that mean "a person must decide", not "something is wrong" (spec 042, A-04).
+-define(NEEDS_PERSON, [<<"ABOVE_APPROVAL_LIMIT">>, <<"NO_APPROVAL_LIMIT">>, <<"SELF_APPROVAL">>]).
 
 claim(N) ->
     case ana_db:rows(
@@ -85,9 +87,12 @@ do_step(#{<<"instance_id">> := I, <<"seq">> := Seq, <<"attempts">> := Attempts, 
                         {error, E} ->
                             Code = code(E),
                             Exec = maps:get(<<"execution_id">>, E, null),
-                            case lists:member(Code, ana_checks:technical_codes()) andalso Attempts < maps:get(<<"max_attempts">>, Ctx) of
-                                true -> retry(I, Seq, Attempts, E, Exec);
-                                false -> fail(I, Seq, E, Exec)
+                            case {lists:member(Code, ana_checks:technical_codes()) andalso Attempts < maps:get(<<"max_attempts">>, Ctx),
+                                  lists:member(Code, ?NEEDS_PERSON)} of
+                                {true, _} -> retry(I, Seq, Attempts, E, Exec);
+                                %% Spec 042 (A-04): the robot may not decide this (approval limit…): a person does it, nothing failed.
+                                {false, true} -> wait(I, Seq, <<"aguarda uma pessoa: "/utf8, (message(E))/binary>>);
+                                {false, false} -> fail(I, Seq, E, Exec)
                             end
                     end
             end
@@ -120,6 +125,10 @@ user(Name) ->
 code(#{<<"code">> := C}) when is_binary(C) -> C;
 code(#{code := C}) when is_binary(C) -> C;
 code(_) -> <<"ERROR">>.
+
+message(#{<<"message">> := M}) when is_binary(M) -> M;
+message(#{message := M}) when is_binary(M) -> M;
+message(E) -> code(E).
 
 small(R) ->
     case byte_size(iolist_to_binary(json:encode(R))) of
