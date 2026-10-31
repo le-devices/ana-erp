@@ -13,7 +13,7 @@ import datetime
 from ana_lib.finance import invoice_pdf, terms
 from ana_lib.util import validation as v
 from ana_lib.sales import fulfillment
-from ana_lib.util.format import money
+from ana_lib.util.format import money, status_text
 
 # RF-020-10: after invoicing, collect and follow the order.
 NEXT = [{"label": "Emitir cobrança", "program": "finance.charge_document", "params": {"document": "ORD-{{result.number}}"},
@@ -33,7 +33,7 @@ def main(number, payment_days=30):
         "SELECT id, number, customer_id, warehouse_id, status, total, payment_term, fulfillment "
         "FROM sales.sales_order WHERE number = $1 FOR UPDATE", number)
     v.require(order, "ORDER_NOT_FOUND", f"pedido {number} não encontrado")
-    v.require(order["status"] == "OPEN", "ORDER_NOT_OPEN", f"pedido {number} está {order['status']}")
+    v.require(order["status"] == "OPEN", "ORDER_NOT_OPEN", f"pedido {number} está {status_text(order['status'])}")
     # Spec 041: held or waiting for its supply — no invoice before the goods are there.
     if order["fulfillment"] in ("held", "supply") and not fulfillment.release([number]):
         raise ana.Error("ORDER_HELD", f"pedido {number} {fulfillment.STATUS[order['fulfillment']]}: fature quando o estoque chegar")

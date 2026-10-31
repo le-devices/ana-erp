@@ -26,14 +26,15 @@ def post_line(line, account, cost_center, memo, rule, user):
     return entry
 
 
-def apply_rules(bank_account, user, exclude=()):
+def apply_rules(bank_account, user, exclude=(), only=None):
     """Open lines that match an active rule (text found in description or document, direction) get their entry."""
     rules = ana.sql("SELECT id, pattern, direction, account, cost_center, memo FROM finance.statement_rule "
                     "WHERE active AND (bank_account IS NULL OR bank_account = $1) ORDER BY priority, id", bank_account)
     if not rules:
         return 0
     lines = ana.sql("SELECT id, bank_account, posted_on, amount, description, document FROM finance.bank_statement_line "
-                    "WHERE bank_account = $1 AND status = 'open' ORDER BY posted_on, id FOR UPDATE SKIP LOCKED", bank_account)
+                    "WHERE bank_account = $1 AND status = 'open' AND ($2::bigint[] IS NULL OR id IN (SELECT unnest($2::bigint[]))) "
+                    "ORDER BY posted_on, id FOR UPDATE SKIP LOCKED", bank_account, list(only) if only is not None else None)
     n = 0
     for l in lines:
         if l["id"] in exclude:            # a line with a bill candidate waits for a person: rules never steal it
@@ -47,7 +48,7 @@ def apply_rules(bank_account, user, exclude=()):
     return n
 
 
-def own_transfers(user):
+def own_transfers(user, only=None):
     """A line out of one own account and the same amount into another (±2 days): one entry, both matched."""
     pairs = ana.sql(
         "SELECT o.id AS out_id, i.id AS in_id, o.amount AS out_amount, i.amount AS in_amount, o.posted_on AS out_day, "
@@ -56,7 +57,8 @@ def own_transfers(user):
         "  (SELECT account FROM finance.bank_account WHERE code = i.bank_account) AS in_ledger "
         "FROM finance.bank_statement_line o JOIN finance.bank_statement_line i ON i.amount = -o.amount "
         "  AND i.bank_account <> o.bank_account AND i.posted_on BETWEEN o.posted_on - 2 AND o.posted_on + 2 "
-        "WHERE o.status = 'open' AND i.status = 'open' AND o.amount < 0 ORDER BY o.posted_on, o.id")
+        "WHERE o.status = 'open' AND i.status = 'open' AND o.amount < 0 "
+        "  AND ($1::bigint[] IS NULL OR o.id IN (SELECT unnest($1::bigint[])) OR i.id IN (SELECT unnest($1::bigint[]))) ORDER BY o.posted_on, o.id", list(only) if only is not None else None)
     used, n = set(), 0
     for p in pairs:
         if p["out_id"] in used or p["in_id"] in used:
@@ -78,20 +80,38 @@ def own_transfers(user):
     return n
 
 
-def gateway_payouts(bank_account, user):
+def gateway_payouts(bank_account, user, only=None):
     """A payout (money in) equal to the net of the oldest paid charges of one gateway not yet paid out, up to its date:
     D bank / C gateway receivable; the charges point to the line. Two gateways that fit the same line: a person decides."""
     lines = ana.sql("SELECT id, bank_account, posted_on, amount, description FROM finance.bank_statement_line "
-                    "WHERE bank_account = $1 AND status = 'open' AND amount > 0 ORDER BY posted_on, id FOR UPDATE SKIP LOCKED", bank_account)
+                    "WHERE bank_account = $1 AND status = 'open' AND amount > 0 AND ($2::bigint[] IS NULL OR id IN (SELECT unnest($2::bigint[]))) "
+                    "ORDER BY posted_on, id FOR UPDATE SKIP LOCKED", bank_account, list(only) if only is not None else None)
     if not lines:
         return 0
     pending = ana.sql("SELECT id, connector, net, paid_at::date AS day FROM finance.charge WHERE status = 'paid' AND payout_line_id IS NULL "
                       "AND net IS NOT NULL ORDER BY connector, paid_at, id")
+    if not pending:
+        return 0
+    # A payout is the sum of consecutive pending charges of one gateway: lines whose amount is no such sum are not
+    # payouts (spec 042 — cost no longer lines × charges; the exact test below is unchanged for the rest).
+    top = max(Decimal(l["amount"]) for l in lines)
+    sums = set()
+    for conn in {c["connector"] for c in pending}:
+        nets = [Decimal(c["net"]) for c in pending if c["connector"] == conn]
+        for i in range(len(nets)):
+            total = Decimal(0)
+            for v in nets[i:]:
+                total += v
+                if total > top + CENT:
+                    break
+                sums.add(total.quantize(CENT))
+    lines = [l for l in lines if Decimal(l["amount"]).quantize(CENT) in sums]
+    connectors = sorted({c["connector"] for c in pending})
     taken, n = set(), 0
     for l in lines:
         amount = Decimal(l["amount"])
         fits = []
-        for conn in sorted({c["connector"] for c in pending}):
+        for conn in connectors:
             total, take = Decimal(0), []
             for c in pending:
                 if c["connector"] != conn or c["id"] in taken or c["day"] > l["posted_on"]:

@@ -24,7 +24,7 @@ def main(order, product, quantity=1, technician=None, client_key=None):
             return {"id": prev, "repeated": True}
     o = common.order(order, lock=True)
     common.require_open(o)
-    t = common.technician(technician or common.current_technician() or 0)
+    t = common.technician(common.technician_for(o, technician) or 0)
     if not t["warehouse_id"]:
         raise ana.Error("NO_TECH_WAREHOUSE", f"{t['name']} não tem depósito de veículo/maleta")
     p = stock.products([product])[str(product).strip().upper()]

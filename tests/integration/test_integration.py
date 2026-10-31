@@ -2636,15 +2636,20 @@ class TestIntegrationHub(Base):
                         "    r = ana.call('finance.import_statement', bank_account='CAIXA', content='<OFX>' + trn + '</OFX>')\n"
                         "    return {'lines': r['lines'], 'seconds': time.monotonic() - t0}\n",
                   limits={"timeout_ms": 180000, "sql_timeout_ms": 120000})
-        s, c, _ = self.run_program(name, {"n": 100000, "tag": f"B{SUFFIX}"})
-        self.assertEqual(s, 200, c)
-        self.assertEqual(c["result"]["lines"], 100000)
-        self.assertLess(c["result"]["seconds"], 60, c["result"])
-        # Leave the account clean for the other suites (these are test lines only).
+        # The account is left clean for the other suites whatever happens (these are test lines only): also the
+        # lines of earlier runs of this test that stopped before cleaning (tags "B<suffix>").
         purge = f"test.int_bulk_purge_{SUFFIX}"
         self.save(purge, "def main(tag):\n    return ana.sql_exec(\"DELETE FROM finance.bank_statement_line "
-                         "WHERE dedup_key LIKE 'id:' || $1 || '-%'\", tag)\n")
-        self.run_program(purge, {"tag": f"B{SUFFIX}"})
+                         "WHERE bank_account = 'CAIXA' AND status = 'open' AND description LIKE 'lote %' "
+                         "AND dedup_key ~ ('^id:' || $1 || '-[0-9]+$')\", tag)\n", limits={"timeout_ms": 180000, "sql_timeout_ms": 120000})
+        self.run_program(purge, {"tag": "B[0-9]+"})
+        try:
+            s, c, _ = self.run_program(name, {"n": 100000, "tag": f"B{SUFFIX}"})
+            self.assertEqual(s, 200, c)
+            self.assertEqual(c["result"]["lines"], 100000)
+            self.assertLess(c["result"]["seconds"], 60, c["result"])
+        finally:
+            self.run_program(purge, {"tag": f"B{SUFFIX}"})
 
 
 # ---------------------------------------------------------------- spec 016
@@ -6039,6 +6044,64 @@ class TestTrailFixes(Base):
             s, c, _ = self.run_program("docs.view", {"kind": "entry", "key": str(comp)})
             labels = [i["label"] for e in c["events"] if e.get("kind") == "actions" for i in e["data"]["items"]]
             self.assertTrue(any(l.startswith("Abrir o crédito") for l in labels) and any(l.startswith("Abrir o título compensado") for l in labels), labels)
+
+
+class TestTrailSmallFixes(Base):
+    """Small findings of the trail audit (spec 042, B-01..B-05)."""
+
+    def ok(self, program, **params):
+        s, c, _ = self.run_program(program, params)
+        self.assertEqual(s, 200, c)
+        self.assertNotIn("error", c, c.get("error"))
+        return c["result"]
+
+    def err(self, program, **params):
+        s, c, _ = self.run_program(program, params)
+        self.assertIn("error", c, c)
+        return c["error"]
+
+    def test_b_01_work_goes_to_the_scheduled_technician(self):
+        c = self.client
+        customer = c.call("base.save_party", name=f"Cliente B01 {SUFFIX}", state="SP")["id"]
+        svc = f"B01{SUFFIX}"
+        c.call("base.save_product", code=svc, description="Serviço B01", price="80", kind="service")
+        prof = self.scalar("SELECT code FROM projects.rate_profile LIMIT 1")
+        emp = self.ok("projects.save_employee", name=f"Técnico B01 {SUFFIX}", profile=prof, hourly_cost="40")["id"]
+        self.ok("field.save_technician", employee=emp, warehouse="LAB")
+        so = self.ok("field.open_order", customer=customer, description="B01", service=svc)
+        num = so.get("number") or so.get("order")
+        e = self.err("field.log_work", order=num, hours=1)                                  # nobody scheduled yet
+        self.assertIn("único técnico agendado", e["message"])
+        self.ok("field.schedule", order=num, technician=emp,
+                start=(datetime.datetime.now() + datetime.timedelta(hours=2)).strftime("%Y-%m-%dT%H:%M"))
+        self.ok("field.log_work", order=num, hours=1)                                        # the administrator logs it for him
+        self.assertEqual(int(self.scalar(f"SELECT w.employee_id FROM field.work_log w JOIN field.service_order o ON o.id = w.order_id "
+                                         f"WHERE o.number = {num}")), emp)
+
+    def test_b_02_malformed_rows_say_what_is_missing(self):
+        e = self.err("inventory.count", warehouse="CENTRAL", lines=[{"product": "QUALQUER", "quantity": 3}])
+        self.assertEqual(e["code"], "INVALID_PARAMETER")
+        self.assertIn("linha 1: falta quantidade contada", e["message"])
+
+    def test_b_03_supplier_note_under_bill_at_receipt(self):
+        if self.scalar("SELECT supplier_invoice FROM supply.policy") != "receipt":
+            self.skipTest("política de nota do fornecedor não é 'no recebimento'")
+        po = self.scalar("SELECT number FROM supply.purchase_order WHERE status = 'received' ORDER BY id DESC LIMIT 1")
+        e = self.err("supply.register_invoice", order=po, number=f"NF{SUFFIX}", amount="10")
+        self.assertEqual(e["code"], "BILL_AT_RECEIPT")
+        self.assertIn("nasce no recebimento", e["message"])
+
+    def test_b_04_b_05_margin_without_revenue_and_status_in_portuguese(self):
+        customer = self.client.call("base.save_party", name=f"Cliente B04 {SUFFIX}", state="SP")["id"]
+        code = f"B4{SUFFIX}"[-12:]
+        self.ok("projects.save_project", code=code, name="Projeto B04", customer=customer, billing="hourly", manager="admin")
+        self.ok("projects.save_activity", project=code, code="1", name="Atividade", planned_hours=10)
+        e = self.err("projects.approve_plan", project=code)
+        self.assertEqual(e["code"], "LOW_MARGIN")
+        self.assertNotIn("—%", e["message"])
+        self.assertIn("ainda não tem receita prevista", e["message"])
+        e = self.err("projects.log_time", project=code, task="1", hours=1, description="trabalho de teste")
+        self.assertIn("está em proposta", e["message"])                                     # never "está proposal"
 
 
 class TestRunErrors(Base):

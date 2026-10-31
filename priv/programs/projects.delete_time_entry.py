@@ -2,6 +2,7 @@
 # ana:exposed yes
 # ana:category Projetos/Meu trabalho
 from ana_lib.projects import access
+from ana_lib.util.format import status_text
 
 PARAMS = {
     "id": {"type": "int", "required": True, "label": "apontamento (id)"},
@@ -17,6 +18,6 @@ def main(id):
     if not ((me and me["id"] == e["employee_id"]) or access.can_manage(access.project(e["code"]))):
         raise ana.Error("FORBIDDEN", "só o autor ou o gestor podem excluir")
     if e["status"] not in ("pending", "rejected"):
-        raise ana.Error("ENTRY_LOCKED", f"apontamento está {e['status']}")
+        raise ana.Error("ENTRY_LOCKED", f"apontamento está {status_text(e['status'])}")
     ana.sql_exec("DELETE FROM projects.time_entry WHERE id = $1", id)
     return {"id": id, "deleted": True}

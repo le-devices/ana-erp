@@ -62,17 +62,19 @@ def main(bank_account, content=None, format="auto", file_name=None, csv_layout=N
     keyed = with_keys(rows)
     statement = ana.sql_value("INSERT INTO finance.bank_statement (bank_account, source, file_name, imported_by) "
                               "VALUES ($1, $2, $3, $4) RETURNING id", acc["code"], format, file_name, ana.context.user)
-    inserted = 0
+    inserted, new_ids = 0, []
     for start in range(0, len(keyed), CHUNK):
         part = keyed[start:start + CHUNK]
         # ana:lint-ok sql_in_loop — one INSERT per batch of 5 000 lines (the batching itself)
-        inserted += len(ana.sql(
+        got = ana.sql(
             "INSERT INTO finance.bank_statement_line (statement_id, bank_account, posted_on, amount, description, document, "
             "  dedup_key) SELECT $1, $2, d, a::numeric, t, doc, k "
             "FROM unnest($3::date[], $4::text[], $5::text[], $6::text[], $7::text[]) AS x(d, a, t, doc, k) "
             "ON CONFLICT (bank_account, dedup_key) DO NOTHING RETURNING id",
             statement, acc["code"], [r["date"] for r in part], [str(r["amount"]) for r in part],
-            [r["description"] for r in part], [r["document"] for r in part], [r["key"] for r in part]))
+            [r["description"] for r in part], [r["document"] for r in part], [r["key"] for r in part])
+        inserted += len(got)
+        new_ids += [g["id"] for g in got]
     duplicates = len(keyed) - inserted
     if format == "ofx" and closing_balance is None:
         closing_balance, closing_date = ofx_balance(content)
@@ -86,7 +88,8 @@ def main(bank_account, content=None, format="auto", file_name=None, csv_layout=N
     result = None
     if inserted and reconcile:
         # Spec 038 (RF-038-06): what is certain is reconciled at once; the rest waits in the workbench.
-        result = ana.call("finance.reconcile", bank_account=acc["code"])
+        # Only the lines just imported (spec 042): the backlog of older open lines never slows an import down.
+        result = ana.call("finance.reconcile", bank_account=acc["code"], lines=new_ids)
     if inserted:
         ana.actions([{"label": "Abrir a conciliação", "program": "finance.reconciliation",
                       "params": {"bank_account": acc["code"]}, "style": "primary", "open": True}], title="Próximo passo")

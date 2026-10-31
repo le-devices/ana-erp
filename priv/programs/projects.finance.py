@@ -333,10 +333,12 @@ def check_and_record(p, number, justification=None):
     pol = base["policy"]
     low = base["margin_pct"] is None or base["margin_pct"] < pol["min_margin_pct"]
     if low and not (justification and len(justification.strip()) >= 10):
+        # Spec 042 (B-04): without a projected revenue there is no margin to show — say what is missing.
+        why = (f"margem projetada {base['margin_pct']}% abaixo da mínima de {pol['min_margin_pct']}%" if base["margin_pct"] is not None
+               else f"o projeto ainda não tem receita prevista (valor-hora dos perfis, preço fixo ou marcos), então a margem "
+                    f"não se calcula e a mínima é {pol['min_margin_pct']}%")
         raise ana.Error("LOW_MARGIN",
-                        f"margem projetada {base['margin_pct'] if base['margin_pct'] is not None else '—'}% abaixo da "
-                        f"mínima de {pol['min_margin_pct']}%: corrija valores, horas ou prazos, ou justifique "
-                        f"(mínimo 10 caracteres)",
+                        f"{why}: corrija valores, horas ou prazos, ou justifique (mínimo 10 caracteres)",
                         {"margin_pct": base["margin_pct"], "min_margin_pct": pol["min_margin_pct"],
                          "profit": base["profit"]})
     if pes["profit"] < 0:

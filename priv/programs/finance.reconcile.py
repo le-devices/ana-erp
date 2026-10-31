@@ -19,14 +19,31 @@ PARAMS = {
     "threshold": {"type": "decimal", "default": "0.9", "label": "confiança mínima para baixar sozinho (0 a 1)"},
     "tolerance_days": {"type": "int", "default": 3, "label": "tolerância de data (dias)"},
     "auto": {"type": "bool", "default": True, "label": "baixar automaticamente os casos certos"},
+    "lines": {"type": "list", "label": "só estas linhas do extrato (vazio = todas as em aberto)"},
 }
 
 
-def main(bank_account, threshold="0.9", tolerance_days=3, auto=True):
+SUGGESTIONS_MAX = 500
+
+
+def main(bank_account, threshold="0.9", tolerance_days=3, auto=True, lines=None):
     account = bank_account.strip().upper()
     banking.bank_ledger(account)
     threshold = Decimal(str(threshold))
-    best = reconcile_rules.candidates(account, tolerance_days)
+    only = [int(x) for x in lines] if lines else None
+    best = reconcile_rules.candidates(account, tolerance_days, only)
+    contested = set()
+    if only:
+        # Looking only at the new lines (an import), an older open line may want the same bill: then, as a full run
+        # would decide, that bill is not settled by itself. Asked only for the bills at stake (cheap with any backlog).
+        # Only bills that would be settled now (one candidate at or above the threshold) can be contested.
+        wanted = {cands[0]["bill_id"] for cands in best.values()
+                  if len(cands) == 1 and Decimal(str(cands[0]["confidence"])) >= threshold}
+        if wanted:
+            mine = set(only)
+            rival = {cands[0]["bill_id"] for lid, cands in reconcile_rules.candidates(account, tolerance_days, None, sorted(wanted)).items()
+                     if lid not in mine and len(cands) == 1}
+            contested = {lid for lid, cands in best.items() if len(cands) == 1 and cands[0]["bill_id"] in rival}
     # A bill wanted by two lines is never settled automatically.
     claims = {}
     for line_id, cands in best.items():
@@ -34,7 +51,7 @@ def main(bank_account, threshold="0.9", tolerance_days=3, auto=True):
             claims.setdefault(cands[0]["bill_id"], []).append(line_id)
     sure = {line_id: cands[0] for line_id, cands in best.items()
             if len(cands) == 1 and Decimal(str(cands[0]["confidence"])) >= threshold
-            and len(claims.get(cands[0]["bill_id"], [])) == 1}
+            and len(claims.get(cands[0]["bill_id"], [])) == 1 and line_id not in contested}
     settled = linked = 0
     if auto and sure:
         lines = {r["id"]: r for r in ana.sql(
@@ -67,9 +84,9 @@ def main(bank_account, threshold="0.9", tolerance_days=3, auto=True):
     # Spec 038 (RF-038-06, 07): lines without a bill — posting rules, own transfers and gateway payouts.
     by_rule = transfers = payouts = 0
     if auto:
-        by_rule = statement.apply_rules(account, ana.context.user, set(best))
-        transfers = statement.own_transfers(ana.context.user)
-        payouts = statement.gateway_payouts(account, ana.context.user)
+        by_rule = statement.apply_rules(account, ana.context.user, set(best), only)
+        transfers = statement.own_transfers(ana.context.user, only)
+        payouts = statement.gateway_payouts(account, ana.context.user, only)
     pending = [lid for lid in best if lid not in sure or not auto]
     open_count = ana.sql_value("SELECT count(*) FROM finance.bank_statement_line WHERE bank_account = $1 AND status = 'open'",
                                account)
@@ -81,6 +98,8 @@ def main(bank_account, threshold="0.9", tolerance_days=3, auto=True):
                  {"label": "Abertas no extrato", "value": open_count}])
     ana.actions([{"label": "Abrir a conciliação manual", "program": "finance.reconciliation",
                   "params": {"bank_account": account}, "open": True, "style": "primary"}], title="Próximo passo")
+    # The answer stays small with any backlog: up to 10 suggestions of the newest lines (the workbench shows all).
+    shown = sorted(pending, reverse=True)[:SUGGESTIONS_MAX]
     return {"settled": settled, "linked": linked, "payouts": payouts, "rules": by_rule, "transfers": transfers,
-            "suggestions": {str(lid): [{"bill": c["bill_id"], "rule": c["rule"], "confidence": c["confidence"]}
-                                       for c in best[lid]] for lid in pending}}
+            "pending": len(pending), "suggestions": {str(lid): [{"bill": c["bill_id"], "rule": c["rule"], "confidence": c["confidence"]}
+                                                               for c in best[lid][:10]] for lid in shown}}

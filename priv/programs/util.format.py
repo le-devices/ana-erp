@@ -34,3 +34,16 @@ def compact(value):
 
 def date_br(d):
     return d.strftime("%d/%m/%Y") if d else ""
+
+
+# Situations as people say them (spec 042, B-05): messages never show the internal code ("está INVOICED").
+STATUS = {"OPEN": "em aberto", "INVOICED": "faturado", "CANCELLED": "cancelado", "open": "em aberto", "settled": "baixado",
+          "cancelled": "cancelado", "matched": "conciliada", "proposal": "em proposta", "active": "ativo", "suspended": "suspenso",
+          "closed": "encerrado", "done": "concluída", "invoiced": "faturada", "scheduled": "agendada", "en_route": "a caminho",
+          "in_progress": "em andamento", "pending": "pendente", "approved": "aprovado", "rejected": "recusado", "paid": "paga",
+          "issued": "emitida", "failed": "com falha", "requested": "pedida", "draft": "em rascunho", "submitted": "enviada",
+          "implemented": "implementada", "completed": "concluído", "planned": "planejado", "released": "liberado"}
+
+
+def status_text(code):
+    return STATUS.get(code, str(code))

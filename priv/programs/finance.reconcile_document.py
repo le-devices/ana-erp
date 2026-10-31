@@ -44,7 +44,12 @@ def main(flow, key, tolerance_days=5):
         return {"settled": 0, "open": 0, "waiting": None}
     sure, maybe = [], []
     for account in [r["code"] for r in ana.sql("SELECT code FROM finance.bank_account WHERE active ORDER BY code")]:
-        best = reconcile_rules.candidates(account, tolerance_days)
+        # Only the lines that want this document's bills, then their whole candidate lists (spec 042, E-01): the same
+        # decision as looking at every open line, without scanning the backlog.
+        wanting = reconcile_rules.candidates(account, tolerance_days, None, sorted(bills))
+        if not wanting:
+            continue
+        best = reconcile_rules.candidates(account, tolerance_days, sorted(wanting))
         claims = {}
         for line_id, cands in best.items():
             if len(cands) == 1:

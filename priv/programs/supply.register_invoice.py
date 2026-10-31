@@ -24,7 +24,13 @@ def main(order, number, amount, due_date=None):
     v.require(amount > 0, "INVALID_VALUE", "valor da nota deve ser positivo")
     receipts = ana.sql("SELECT id, total FROM supply.receipt WHERE order_id = $1 AND bill_id IS NULL AND invoice_id IS NULL AND total > 0 "
                        "ORDER BY id FOR UPDATE", o["id"])
-    v.require(receipts, "NOTHING_RECEIVED", "não há recebimento desta ordem esperando nota (receba antes ou confira a ordem)")
+    if not receipts:
+        # Spec 042 (B-03): with "bill at receipt" there is never a note to match — say so instead of "nothing received".
+        at_receipt = ana.sql_value("SELECT supplier_invoice = 'receipt' FROM supply.policy WHERE id = 1")
+        v.require(not at_receipt, "BILL_AT_RECEIPT",
+                  "nesta empresa o título a pagar nasce no recebimento (Compras → Configuração: \"título do fornecedor nasce no "
+                  "recebimento\"), então não há nota a confrontar; para confrontar pedido × recebimento × nota, escolha \"na nota do fornecedor\"")
+        v.require(False, "NOTHING_RECEIVED", "não há recebimento desta ordem esperando nota (receba antes ou confira a ordem)")
     expected = sum((Decimal(r["total"]) for r in receipts), Decimal(0))
     pol = ana.sql_one("SELECT invoice_tolerance_pct, invoice_tolerance_abs FROM supply.policy WHERE id = 1")
     tol = max(Decimal(pol["invoice_tolerance_abs"]), (expected * Decimal(pol["invoice_tolerance_pct"]) / 100).quantize(Decimal("0.01")))

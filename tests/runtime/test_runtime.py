@@ -349,6 +349,25 @@ class TestParams(unittest.TestCase):
         end, _ = run(self.SOURCE, {"a": "abc"})
         self.assertEqual(end["error"]["code"], "INVALID_PARAMETER")
 
+    def test_042_b02_rows_of_a_list_with_columns(self):
+        source = ('PARAMS = {"lines": {"type": "list", "label": "itens contados", "columns": {\n'
+                  '    "product": {"type": "str", "required": True, "label": "item"},\n'
+                  '    "counted": {"type": "decimal", "required": True, "label": "quantidade contada"}}}}\n'
+                  'def main(lines):\n    return [l["counted"] for l in lines]\n')
+        end, _ = run(source, {"lines": [{"product": "A", "counted": "2,5"}]})
+        self.assertEqual(end["result"], ["2,5"])                            # values are not changed
+        end, _ = run(source, {"lines": [{"product": "A", "counted": 1}, {"product": "B", "quantity": 3}]})
+        self.assertEqual(end["error"]["code"], "INVALID_PARAMETER")
+        self.assertIn("itens contados, linha 2: falta quantidade contada", end["error"]["message"])
+        end, _ = run(source, {"lines": [{"product": "A", "counted": "muito"}]})
+        self.assertIn("linha 1: quantidade contada não é do tipo decimal", end["error"]["message"])
+        end, _ = run(source, {"lines": ["A"]})
+        self.assertIn("linha 1: deve ser um objeto", end["error"]["message"])
+        one = ('PARAMS = {"terms": {"type": "list", "columns": {"term": {"type": "str", "required": True}}}}\n'
+               'def main(terms):\n    return terms\n')
+        end, _ = run(one, {"terms": ["AVISTA", {"term": "PIX"}]})
+        self.assertEqual(end["result"], ["AVISTA", {"term": "PIX"}])           # a single column accepts plain values
+
     def test_decimal_accepts_brazilian_notation(self):
         # Spec 031 usability: operators type "4,79" or "1.234,56" in money/quantity fields.
         source = ('PARAMS = {"v": {"type": "decimal"}}\n'

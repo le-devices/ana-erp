@@ -6,6 +6,7 @@ RNF-008-02: cost and margin only for whoever manages the project.
 """
 
 import ana
+from ana_lib.util.format import status_text
 
 
 def is_admin():
@@ -43,4 +44,4 @@ def current_employee():
 
 def require_active(p):
     if p["status"] != "active":
-        raise ana.Error("PROJECT_INACTIVE", f"projeto {p['code']} está {p['status']}")
+        raise ana.Error("PROJECT_INACTIVE", f"projeto {p['code']} está {status_text(p['status'])}")

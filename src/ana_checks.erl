@@ -112,7 +112,9 @@ check(Category) ->
         "AND rule = ANY($2::text[]) AND NOT (rule || '|' || target = ANY($3::text[]))",
         [Category, maps:get(Category, ?RULES), Keys]),
     New = [Ti || {R, T, <<"critical">>, Ti, _, _, _} <- Found, not lists:member(<<R/binary, "|", T/binary>>, Known)],
-    _ = [ana_db:exec("INSERT INTO ana_system.notice (kind, severity, message, link) VALUES ('check', 'critical', $1, '#/admin/checks')",
+    %% A finding that comes and goes (resolved, then found again) never piles up the same unread notice (spec 042).
+    _ = [ana_db:exec("INSERT INTO ana_system.notice (kind, severity, message, link) SELECT 'check', 'critical', $1, '#/admin/checks' "
+                     "WHERE NOT EXISTS (SELECT 1 FROM ana_system.notice WHERE NOT read AND kind = 'check' AND message = $1)",
                      [Ti]) || Ti <- New],
     {ok, #{category => Category, found => length(Found), resolved => Resolved, new_critical => length(New)}}.
 
@@ -474,12 +476,16 @@ summary() ->
         "FROM ana_system.task_run WHERE task LIKE 'checks.%' ORDER BY task, started_at DESC", []),
     {ok, #{categories => ?CATEGORIES, counts => Counts, runs => Runs}}.
 
+%% Each message once (its latest), newest first: repeated notices never push an older critical one out of sight.
 notices(OnlyUnread) ->
-    ana_db:rows("SELECT id, kind, severity, message, link, read, created_at FROM ana_system.notice "
-                "WHERE NOT $1 OR NOT read ORDER BY created_at DESC LIMIT 100", [OnlyUnread]).
+    ana_db:rows("SELECT id, kind, severity, message, link, read, created_at FROM ("
+                "  SELECT DISTINCT ON (message) id, kind, severity, message, link, read, created_at FROM ana_system.notice "
+                "  WHERE NOT $1 OR NOT read ORDER BY message, created_at DESC) n ORDER BY created_at DESC LIMIT 100", [OnlyUnread]).
 
+%% Read once, read for every copy of the same message.
 mark_notice(Id) ->
-    ana_db:exec("UPDATE ana_system.notice SET read = true WHERE id = $1", [Id]).
+    ana_db:exec("UPDATE ana_system.notice SET read = true WHERE NOT read AND (id = $1 OR message = "
+                "(SELECT message FROM ana_system.notice WHERE id = $1))", [Id]).
 
 %% ---------------------------------------------------------------- helpers
 

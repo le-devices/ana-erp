@@ -8,6 +8,7 @@ stock when it arrives. "Simular" shows that effect before confirming (nothing ch
 
 from ana_lib.sales import fulfillment as F
 from ana_lib.util import validation as v
+from ana_lib.util.format import status_text
 
 PARAMS = {
     "number": {"type": "int", "required": True, "label": "pedido", "lookup": {"program": "sales.lookup", "params": {"kind": "orders"}}},
@@ -19,7 +20,7 @@ def main(number, simulate=False):
     # A simulation runs read-only (spec 020): it reads, it does not lock.
     o = ana.sql_one("SELECT id, status FROM sales.sales_order WHERE number = $1" + ("" if simulate else " FOR UPDATE"), number)
     v.require(o, "ORDER_NOT_FOUND", f"pedido {number} não encontrado")
-    v.require(o["status"] == "OPEN", "ORDER_NOT_OPEN", f"pedido {number} está {o['status']}")
+    v.require(o["status"] == "OPEN", "ORDER_NOT_OPEN", f"pedido {number} está {status_text(o['status'])}")
     effect = F.cancel_effect(o["id"])
     if effect:
         ana.table([{"documento": f"{kind} {n}", "situação": status, "ao cancelar o pedido": what} for kind, n, status, what, _ in effect],

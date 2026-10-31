@@ -1,6 +1,6 @@
 # 042 — Vistoria das trilhas de processos de negócio
 
-Situação: vistoria feita (31/10/2026); fase 1 (A-01..A-04, M-01, M-02) corrigida; B-01..B-05 e a suíte permanente a fazer.
+Situação: vistoria feita (31/10/2026); fases 1 (A-01..A-04, M-01, M-02) e 2 (B-01..B-05) corrigidas; a suíte permanente a fazer.
 
 ## Como foi feita
 Cada trilha foi percorrida de ponta a ponta com dados novos, pelos programas reais (a mesma API das
@@ -72,6 +72,37 @@ compra, campo e produção com etapas automáticas; documentos de cada tipo e su
 - M-02: títulos, créditos, resíduos, notas, devoluções e baixas levam à origem (`docs.common`); o título mostra
   "Como foi baixado" (extrato, compensação, cobrança, resíduo); novas visões "Fatura de projeto" e "Linha do
   extrato"; lançamento de compensação abre os dois títulos; a fatura de projeto em PDF traz os itens.
+
+## Correções da fase 2 (31/10/2026)
+- B-01: trabalho e peça na OS vão para o técnico informado, o usuário técnico ou o único técnico agendado.
+- B-02: o runtime confere as linhas de toda lista com colunas declaradas (objeto, colunas obrigatórias, tipos) e
+  diz linha e coluna — nenhum programa recebe linha mal formada (vale para todos, não só o inventário).
+- B-03: com "título no recebimento", a nota do fornecedor responde `BILL_AT_RECEIPT` explicando a política.
+- B-04: sem receita prevista, a recusa por margem diz o que falta em vez de "—%".
+- B-05: situações em português nas mensagens (`util.format.status_text`), em todos os programas que diziam
+  "está OPEN/INVOICED/done/proposal…".
+
+Achados pela bateria durante a fase 2 (corrigidos):
+- **E-01 Importação lenta com acúmulo.** Cada importação de extrato conciliava a conta inteira; com 200 mil
+  linhas em aberto (massa de testes), estourava o tempo do banco. Agora concilia só as linhas que trouxe, e um
+  título só é baixado sozinho se nenhuma outra linha em aberto também for candidata única a ele (mesma decisão
+  da conciliação completa, consultada só para os títulos em jogo). A conciliação manual completa continua igual.
+  Também (E-01b): a busca do identificador da cobrança no texto das linhas comparava cada cobrança com cada
+  linha (55 s com 200 mil linhas); agora usa índice de trigramas só sobre as linhas em aberto e só cobranças que
+  ainda podem casar (8 ms). A etapa "Recebimento" da esteira concilia só as linhas que querem os títulos do
+  documento; a conciliação completa devolve no máximo as sugestões das 500 linhas mais recentes (10 por linha).
+  O teste de importação de 100 mil linhas limpa suas linhas sempre (antes, só quando passava — era a origem do
+  acúmulo de 200 mil linhas na conta CAIXA da instância de desenvolvimento).
+- **E-01c Repasses do gateway e listas grandes.** O casamento de repasses comparava cada linha de entrada com as
+  somas das cobranças pagas pendentes (83 s com 100 mil linhas e 59 cobranças): agora só olha as linhas cujo valor
+  é alguma soma possível. Filtros por uma lista grande de linhas (`id = ANY(lista)` dentro de um "ou") viraram
+  semijunções (`id IN (SELECT unnest(lista))`). Importar e conciliar 100 mil linhas: 2,5 s de conciliação.
+- **E-03 Execução longa perdia a resposta.** O servidor HTTP fechava a conexão após 60 s sem tráfego, embora um
+  programa possa rodar até o teto de execução (10 min). O tempo ocioso agora acompanha o teto (+30 s), e o ingress
+  do Kubernetes no pacote de produção espera 630 s.
+- **E-02 Avisos repetidos.** Um achado que vai e volta criava o mesmo aviso a cada volta; os 100 mais recentes
+  escondiam um aviso crítico antigo (senha de fábrica). Agora não se cria aviso igual a um não lido, a lista
+  mostra cada mensagem uma vez e marcar como lido vale para as cópias.
 
 ## Proposta
 Corrigir A-01..A-04 e M-01..M-02 numa fase; B-01..B-05 noutra (pequenas). Transformar o roteiro da vistoria

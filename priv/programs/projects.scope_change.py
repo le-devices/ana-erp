@@ -11,6 +11,7 @@ customers approve themselves on the portal (projects.client_approvals)."""
 from ana_lib.projects import access
 from ana_lib.projects import changes
 from ana_lib.projects import views as V
+from ana_lib.util.format import status_text
 
 PARAMS = {
     "project": {"type": "str", "required": True, "label": "projeto", "lookup": {"program": "projects.lookup", "params": {"kind": "projects"}}},
@@ -51,7 +52,7 @@ def main(project, action, number=None, title=None, description=None, est_hours=N
         raise ana.Error("CHANGE_NOT_FOUND", f"mudança {number} não encontrada")
     if action == "reject":
         if c["status"] in ("approved", "rejected"):
-            raise ana.Error("INVALID_STATE", f"mudança {number} já está {c['status']}")
+            raise ana.Error("INVALID_STATE", f"mudança {number} já está {status_text(c['status'])}")
         ana.sql_exec("UPDATE projects.scope_change SET status = 'rejected', rejection_reason = $2 WHERE id = $1",
                      c["id"], reason or "")
         return {"number": number, "status": "rejected"}
@@ -59,7 +60,7 @@ def main(project, action, number=None, title=None, description=None, est_hours=N
         raise ana.Error("INVALID_PARAMETER", f"ação desconhecida: {action}")
     before, after = NEXT[action]
     if c["status"] != before:
-        raise ana.Error("INVALID_STATE", f"mudança {number} está {c['status']}; esperado {before}")
+        raise ana.Error("INVALID_STATE", f"mudança {number} está {status_text(c['status'])}; esperado {status_text(before)}")
     if action == "estimate":
         if est_hours is None:
             raise ana.Error("INVALID_PARAMETER", "estimativa exige horas")
