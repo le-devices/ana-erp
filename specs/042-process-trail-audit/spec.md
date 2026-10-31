@@ -1,6 +1,6 @@
 # 042 — Vistoria das trilhas de processos de negócio
 
-Situação: vistoria feita (31/10/2026); correções a autorizar.
+Situação: vistoria feita (31/10/2026); fase 1 (A-01..A-04, M-01, M-02) corrigida; B-01..B-05 e a suíte permanente a fazer.
 
 ## Como foi feita
 Cada trilha foi percorrida de ponta a ponta com dados novos, pelos programas reais (a mesma API das
@@ -59,6 +59,19 @@ compra, campo e produção com etapas automáticas; documentos de cada tipo e su
   recebimento esperando nota" — deveria dizer que a política é "título no recebimento".
 - **B-04** Recusa por margem mostra "margem projetada —%" quando ainda não há receita prevista.
 - **B-05** "projeto … está proposal": a situação aparece com o código interno, não em português.
+
+## Correções da fase 1 (31/10/2026)
+- A-01/A-03: etapa de esteira declara se pode ser automática (`flow.step.auto_allowed`, migração 052);
+  "Recebimento" (compra) e "Agendamento" (OS) só por uma pessoa — a configuração recusa com o motivo
+  (`STEP_NOT_AUTOMATIC`) e o banco impede (restrição).
+- A-02: alçada zero não aprova nada, nem solicitação sem valor (`NO_APPROVAL_LIMIT`).
+- A-04: recusa que pede uma pessoa (alçada, auto-aprovação) deixa a etapa aguardando com o motivo, não em falha.
+- M-01: o detalhe das conciliações de clientes/fornecedores lista os títulos baixados sem baixa registrada.
+  Os −R$ 20,00 da base de dev vêm do título `OC-423/445`, baixado em 17/10 por uma versão antiga de teste
+  que editava o título (o teste atual paga pelo extrato): resíduo histórico, agora visível.
+- M-02: títulos, créditos, resíduos, notas, devoluções e baixas levam à origem (`docs.common`); o título mostra
+  "Como foi baixado" (extrato, compensação, cobrança, resíduo); novas visões "Fatura de projeto" e "Linha do
+  extrato"; lançamento de compensação abre os dois títulos; a fatura de projeto em PDF traz os itens.
 
 ## Proposta
 Corrigir A-01..A-04 e M-01..M-02 numa fase; B-01..B-05 noutra (pequenas). Transformar o roteiro da vistoria

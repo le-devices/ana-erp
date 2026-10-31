@@ -2191,9 +2191,9 @@ class TestSupplyChain(Base):
             self.assertEqual(e.code, "ABOVE_APPROVAL_LIMIT")
             small = self.req_client.call("supply.request_purchase", reason="pequena", product=self.mcu, quantity=2)
             self.assertEqual(approver.call("supply.approve_request", request=small["number"])["status"], "approved")
-            # Without a limit (plain user, no group) nobody approves anything.
+            # Without a limit (plain user, no group) nobody approves anything (spec 042, A-02: not even R$ 0).
             self.assertEqual(self.err("supply.approve_request", client=self.req_client, request=own["number"]).code,
-                             "ABOVE_APPROVAL_LIMIT")
+                             "NO_APPROVAL_LIMIT")
             self.client.call("supply.approve_request", request=big["number"])          # admin: unlimited
         finally:
             self.client.call("supply.settings", limit_kind="group", limit_target=group, remove_limit=True)
@@ -5929,6 +5929,116 @@ class TestFulfillment(Base):
             self.ok("sales.fulfillment_policy", action="policy", auto_order_max=str(pol["auto_order_max"]))
         done = self.ok("sales.cancel_order", number=r["number"])
         self.assertEqual((done["supply_cancelled"], done["supply_kept"]), ([], r["supply"]["requests"]))
+
+
+class TestTrailFixes(Base):
+    """Findings of the business-process trail audit (spec 042): A-01..A-04, M-01, M-02."""
+
+    @classmethod
+    def setUpClass(cls):
+        super().setUpClass()
+        c = cls.client
+        cls.supplier = c.call("base.save_party", name=f"Fornecedor Trilha {SUFFIX}", kind="supplier", state="SP")["id"]
+        cls.item = f"TRL{SUFFIX}"
+        c.call("base.save_product", code=cls.item, description=f"Item trilha {SUFFIX}", price="30")
+
+    def ok(self, program, token=None, **params):
+        s, c, _ = self.run_program(program, params, token=token)
+        self.assertEqual(s, 200, c)
+        self.assertNotIn("error", c, c.get("error"))
+        return c["result"]
+
+    def err(self, program, token=None, **params):
+        s, c, _ = self.run_program(program, params, token=token)
+        self.assertIn("error", c, c)
+        return c["error"]
+
+    def test_a_01_a_03_steps_only_a_person_does(self):
+        for flow, seq in (("purchase", 3), ("field", 1)):
+            e = self.err("flows.configure", flow=flow, action="mode", step=seq, mode="auto")
+            self.assertEqual(e["code"], "STEP_NOT_AUTOMATIC", (flow, e))
+            self.assertIn("só pode ser feita por uma pessoa", e["message"])
+        s, c, _ = self.run_program("flows.configure", {"flow": "purchase"})
+        rows = [e for e in c["events"] if e.get("kind") == "table" and e["data"]["title"] == "Etapas"][0]["data"]
+        receive = next(r for r in rows["rows"] if str(r[0]).startswith("3."))
+        self.assertIn("só por uma pessoa", receive[2])
+        # The database itself keeps it so.
+        s, c, _ = http("POST", "/api/sql", {"sql": "SELECT count(*) FROM flow.step WHERE NOT auto_allowed AND mode = 'auto'"}, self.token)
+        self.assertEqual(c["rows"][0][0], 0)
+
+    def test_a_02_no_limit_approves_nothing_not_even_zero(self):
+        dev, tok = new_user("developer")                                   # developers have no purchase limit
+        req = self.ok("supply.request_purchase", reason="sem preço de catálogo", product=self.item, quantity=2)
+        self.assertEqual(Decimal(req["total"]), 0)
+        e = self.err("supply.approve_request", token=tok, request=req["number"])
+        self.assertEqual(e["code"], "NO_APPROVAL_LIMIT", e)
+
+    def test_a_04_limit_refusal_waits_for_a_person(self):
+        self.ok("supply.save_supplier_item", product=self.item, supplier=self.supplier, price="12", preferred=True)
+        saved = self.ok("flows.configure", flow="purchase")
+        try:
+            self.ok("flows.configure", flow="purchase", action="activate")
+            self.ok("flows.configure", flow="purchase", action="mode", step=1, mode="auto")
+            req = self.ok("supply.request_purchase", reason="esteira com alçada", product=self.item, quantity=2)["number"]
+            st = None
+            for _ in range(60):
+                s, c, _ = http("POST", "/api/sql", {"sql": "SELECT x.status, x.reason FROM flow.instance i JOIN flow.instance_step x ON x.instance_id = i.id "
+                                                          f"WHERE i.flow_code = 'purchase' AND i.doc_key = '{req}' AND x.seq = 1"}, self.token)
+                st = c["rows"][0] if c["rows"] else None
+                if st and st[0] in ("waiting", "failed", "done"):
+                    break
+                time.sleep(1)
+            self.assertEqual(st[0], "waiting", st)                          # not a failure: a person approves
+            self.assertIn("aguarda uma pessoa", st[1])
+            self.assertIn("alçada", st[1])
+        finally:
+            self.ok("flows.configure", flow="purchase", action="activate" if saved["active"] else "deactivate")
+            self.ok("flows.configure", flow="purchase", action="mode", step=1, mode=[x for x in saved["steps"] if x["seq"] == 1][0]["mode"])
+
+    def test_m_01_settled_without_record_is_explained(self):
+        if not psql_available():
+            self.skipTest("psql indisponível")
+        approver, tok = new_user("admin")
+        self.ok("supply.save_supplier_item", product=self.item, supplier=self.supplier, price="12", preferred=True)
+        req = self.ok("supply.request_purchase", reason="m-01", product=self.item, quantity=1)["number"]
+        self.ok("supply.approve_request", token=tok, request=req)
+        po = self.ok("supply.create_orders", requests=[req])["orders"][0]
+        bill = self.ok("supply.receive", order=po)["bill"]
+        psql(f"UPDATE finance.bill SET status = 'settled' WHERE id = {bill}")          # what an old program did: no settlement on record
+        try:
+            r = self.ok("finance.reconciliations", key="suppliers")
+            self.assertGreaterEqual(r["settled_without_record"], 1)
+            v = self.ok("docs.view", kind="bill", key=str(bill))
+            self.assertEqual(v["id"], bill)
+        finally:
+            psql(f"UPDATE finance.bill SET status = 'open' WHERE id = {bill}")
+
+    def test_m_02_documents_lead_back_to_their_origin(self):
+        approver, tok = new_user("admin")
+        self.ok("supply.save_supplier_item", product=self.item, supplier=self.supplier, price="12", preferred=True)
+        req = self.ok("supply.request_purchase", reason="m-02", product=self.item, quantity=3)["number"]
+        self.ok("supply.approve_request", token=tok, request=req)
+        po = self.ok("supply.create_orders", requests=[req])["orders"][0]
+        bill = self.ok("supply.receive", order=po)["bill"]
+        s, c, _ = self.run_program("docs.view", {"kind": "bill", "key": str(bill)})
+        acts = [i for e in c["events"] if e.get("kind") == "actions" for i in e["data"]["items"]]
+        self.assertIn({"kind": "purchase_order", "key": str(po)}, [a.get("params") for a in acts])      # OC-n/n → the purchase order
+        # Paid in the statement: the bill says how, the line opens and lists the bill back.
+        doc = self.scalar(f"SELECT document FROM finance.bill WHERE id = {bill}")
+        day = datetime.date.today().strftime("%d/%m/%Y")
+        self.ok("finance.import_statement", bank_account="CAIXA", format="csv", content=f"data;histórico;valor\n{day};PAG {doc} FORN;-36,00\n")
+        s, c, _ = self.run_program("docs.view", {"kind": "bill", "key": str(bill)})
+        how = [e["data"] for e in c["events"] if e.get("kind") == "table" and e["data"]["title"] == "Como foi baixado"][0]
+        line = how["row_open"][0]["params"]
+        self.assertEqual(line["kind"], "statement_line")
+        r = self.ok("docs.view", kind="statement_line", key=line["key"])
+        self.assertEqual(r["status"], "matched")
+        # A compensation entry opens both bills.
+        comp = self.scalar("SELECT max(id) FROM finance.journal_entry WHERE document LIKE 'COMP-%'")
+        if comp:
+            s, c, _ = self.run_program("docs.view", {"kind": "entry", "key": str(comp)})
+            labels = [i["label"] for e in c["events"] if e.get("kind") == "actions" for i in e["data"]["items"]]
+            self.assertTrue(any(l.startswith("Abrir o crédito") for l in labels) and any(l.startswith("Abrir o título compensado") for l in labels), labels)
 
 
 class TestRunErrors(Base):

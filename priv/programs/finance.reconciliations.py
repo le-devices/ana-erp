@@ -92,8 +92,23 @@ def detail(r):
         ana.table([{"título": x["document"], "parceiro": x["name"], "vencimento": x["due_date"], "valor": x["amount"],
                     "problema": "sem lançamento" if x["entry_id"] is None else "lançamento não usa a conta de controle"} for x in rows],
                   title="Títulos em aberto sem lançamento na conta de controle")
+        # Spec 042 (M-01): settled without any settlement on record (statement, offset, charge, residual) — the control
+        # account still holds them, the subledger no longer does.
+        loose = ana.sql(
+            "WITH ev AS (SELECT bill_id, amount FROM finance.bank_match UNION ALL SELECT credit_bill, amount FROM finance.offset "
+            "  UNION ALL SELECT debit_bill, amount FROM finance.offset "
+            "  UNION ALL SELECT bill_id, amount FROM finance.charge WHERE status = 'paid' AND entry_id IS NOT NULL "
+            "  UNION ALL SELECT parent_bill_id, amount FROM finance.bill WHERE parent_bill_id IS NOT NULL) "
+            "SELECT b.id, b.document, p.name, b.amount, b.amount - COALESCE((SELECT sum(amount) FROM ev WHERE ev.bill_id = b.id), 0) AS missing "
+            "FROM finance.bill b JOIN base.party p ON p.id = b.party_id WHERE b.status = 'settled' AND b.account = $1 "
+            "AND round(b.amount - COALESCE((SELECT sum(amount) FROM ev WHERE ev.bill_id = b.id), 0), 2) <> 0 ORDER BY b.id LIMIT 300",
+            r["account"])
+        if loose:
+            ana.table([{"título": x["document"], "parceiro": x["name"], "valor": x["amount"], "sem baixa registrada": x["missing"],
+                        "_open": link("bill", x["id"])} for x in loose],
+                      title="Títulos baixados sem baixa registrada (extrato, compensação ou cobrança) — a conta de controle ainda os tem")
         n = manual_entries(r["account"])
-        return {"key": k, "bills": len(rows), "manual_entries": n}
+        return {"key": k, "bills": len(rows), "manual_entries": n, "settled_without_record": len(loose)}
     if k == "inventory":
         rows = ana.sql(
             "SELECT p.code, p.description, c.quantity, c.avg_cost, c.value FROM inventory.item_cost c JOIN base.product p ON p.id = c.product_id "
