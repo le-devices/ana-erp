@@ -581,6 +581,16 @@ request(<<"extensions">>, Id, #{<<"point">> := Point}, St) when is_binary(Point)
     %% Spec 009 (D9): the customer programs registered for a point of a product program.
     respond(Id, {ok, ana_extensions:programs(Point)}, St),
     St;
+request(<<"schedule">>, Id, #{<<"name">> := Name} = A, St = #st{program = Prog, user = User}) when is_binary(Name) ->
+    %% Spec 039 (T-039-17b): a program keeps scheduler jobs of its own module ("bpm.publish" → "bpm.*"), through the
+    %% scheduler's own validation and as the user who runs it (never more than that user may do by hand).
+    [Ns | _] = binary:split(Prog, <<".">>),
+    Reply = case binary:longest_common_prefix([Name, <<Ns/binary, ".">>]) =:= byte_size(Ns) + 1 of
+        false -> {error, err(<<"FORBIDDEN">>, <<"um programa só agenda rotinas do próprio módulo ("/utf8, Ns/binary, ".*)">>)};
+        true -> schedule_job(Name, A, User)
+    end,
+    respond(Id, Reply, St),
+    St;
 request(<<"savepoint">>, Id, A, St) ->
     savepoint(Id, A, St);
 request(<<"call">>, Id, #{<<"program">> := Name} = A, St) ->
@@ -596,6 +606,30 @@ request(<<"cancel">>, Id, #{<<"handles">> := Hs}, St) when is_list(Hs) ->
 request(Op, Id, _, St) ->
     respond(Id, {error, err(<<"INVALID_OPERATION">>, Op)}, St),
     St.
+
+schedule_job(Name, A, User = #{username := Who}) ->
+    Existing = case ana_db:one("SELECT id FROM scheduler.job WHERE name = $1", [Name]) of
+        {ok, #{<<"id">> := Found}} -> Found;
+        _ -> new
+    end,
+    Cron = maps:get(<<"cron">>, A, null),
+    Active = maps:get(<<"active">>, A, true) =:= true andalso is_binary(Cron),
+    case {Existing, Active} of
+        {new, false} -> {ok, #{<<"job">> => null}};                         % nothing scheduled, nothing to stop
+        {JobId, false} -> reply_job(ana_schedule:set_active(JobId, false, User));
+        _ ->
+            Fields = #{<<"name">> => Name, <<"description">> => maps:get(<<"description">>, A, <<>>),
+                       <<"program">> => maps:get(<<"program">>, A, null), <<"params">> => maps:get(<<"params">>, A, #{}),
+                       <<"run_as">> => Who, <<"active">> => true,
+                       <<"triggers">> => [#{<<"kind">> => <<"cron">>, <<"cron">> => Cron}]},
+            reply_job(ana_schedule:save_job(Existing, Fields, User))
+    end.
+
+reply_job({ok, #{<<"id">> := JobId}}) -> {ok, #{<<"job">> => JobId}};
+reply_job({ok, #{id := JobId}}) -> {ok, #{<<"job">> => JobId}};
+reply_job({ok, _}) -> {ok, #{<<"job">> => true}};
+reply_job({error, M}) when is_binary(M) -> {error, err(<<"SCHEDULE_REFUSED">>, M)};
+reply_job({error, E}) -> {error, err(<<"SCHEDULE_REFUSED">>, unicode:characters_to_binary(io_lib:format("~0p", [E])))}.
 
 files_reply({ok, V}) -> {ok, V};
 files_reply({error, not_found}) -> {error, err(<<"FILE_NOT_FOUND">>, <<"arquivo ou pasta não encontrado"/utf8>>)};

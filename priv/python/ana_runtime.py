@@ -481,6 +481,13 @@ def make_ana_module(channel, output, context):
         """Run another program in the same execution transaction (RF-002-08)."""
         return channel.request("call", {"program": program, "params": params})
 
+    def schedule_job(name, program, params=None, cron=None, active=True, description=""):
+        """Keeps a scheduler job of the program's own module (spec 039, T-039-17b): name "bpm.x" from a bpm.* program.
+        cron None or active False stops it. Validated by the scheduler as for the user running the program; done
+        outside the program's transaction (call it last). Returns {"job": id | None}."""
+        return channel.request("schedule", {"name": name, "program": program, "params": params or {}, "cron": cron,
+                                             "active": bool(active), "description": description})
+
     def extend(point, data):
         """Extension point of a product program (spec 009, D9). Runs the customer programs registered for
         `point` (main(point, data)), in order, in the same transaction. A before_* program may refuse by
@@ -801,6 +808,7 @@ def make_ana_module(channel, output, context):
     m.steps = steps
     m.grid = grid
     m.extend = extend
+    m.schedule_job = schedule_job
     m.remote = remote
     m.http = http
     m.send = send

@@ -23,4 +23,4 @@
 - [x] T-039-14 Painel do processo e mapa de calor (RF-039-15)
 - [x] T-039-15 Descoberta, variantes e conformidade (RF-039-16, CA-039-08)
 - [ ] T-039-16b Arrastar elementos da paleta direto para a tela (hoje: clicar adiciona ligado ao elemento selecionado) e alinhar/distribuir uma seleção de vários elementos
-- [ ] T-039-17b Início de caso por agendamento (cron) e por mensagem de integração (spec 017)
+- [x] T-039-17b Início de caso por agendamento (cron) e por mensagem de integração (spec 017) — publicar cria a rotina `bpm.<código>` no agendador (`ana.schedule_job`, só do próprio módulo); `bpm.message_start` como programa de entrada do conector

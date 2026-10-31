@@ -35,4 +35,6 @@ def options():
         "groups": [r["n"] for r in ana.sql("SELECT n FROM bpm.group_names() AS n")],
         "roles": [["user", "Usuário"], ["developer", "Desenvolvedor"], ["admin", "Administrador"]],
         "templates": [{"code": t["code"], "name": t["name"], "description": t["description"]} for t in templates.TEMPLATES],
+        # T-039-17b: connectors a start "por mensagem" can listen to.
+        "connectors": ana.sql("SELECT name, inbound_program FROM integration.connector WHERE active ORDER BY name"),
     }

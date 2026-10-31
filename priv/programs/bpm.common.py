@@ -224,7 +224,35 @@ def validate(model, process_code=None):
         p = n.get("props") or {}
         if n["type"] == "start" and p.get("trigger") == "document" and p.get("entity") and p.get("entity") != doc:
             add("error", "o início segue um documento diferente do documento do processo", k)
+        if n["type"] == "start" and p.get("trigger") == "schedule":
+            # T-039-17b: five fields (minute hour day month weekday); the scheduler checks it again on publication.
+            if len(str(p.get("cron") or "").split()) != 5:
+                add("error", "agendamento: informe quando, no formato do agendador (ex.: 0 8 * * 1 = segundas às 8h)", k)
+            if doc != "none":
+                add("error", "um processo que segue documento começa com o documento, não por agendamento", k)
+        if n["type"] == "start" and p.get("trigger") == "message":
+            conn = ana.sql_one("SELECT name, inbound_program FROM integration.connector WHERE name = $1", p.get("connector") or "")
+            if not conn:
+                add("error", "mensagem: escolha o conector de integração por onde ela chega", k)
+            elif conn["inbound_program"] not in (None, MESSAGE_START):
+                add("warning", f"o conector {conn['name']} entrega as mensagens a {conn['inbound_program']}: para iniciar casos, "
+                               f"esse programa deve chamar {MESSAGE_START} (ou use {MESSAGE_START} como programa de entrada)", k)
+            elif conn["inbound_program"] is None:
+                add("warning", f"o conector {conn['name']} ainda não tem programa de entrada: defina {MESSAGE_START} "
+                               "em Administração → Integrações", k)
+            if doc != "none" and not (p.get("document_field") or "").strip():
+                add("error", "mensagem: informe o campo da mensagem com a chave do documento que o caso segue", k)
     return issues
+
+
+MESSAGE_START = "bpm.message_start"
+
+
+def sync_schedule(code, name, cron):
+    """The scheduler job that starts cases of a process (T-039-17b): created or updated with the cron, stopped without."""
+    r = ana.schedule_job(f"bpm.{code}"[:63], "bpm.start", {"process": code}, cron=cron, active=bool(cron),
+                         description=f"Inicia casos do processo {name}")
+    return r.get("job")
 
 
 def _num(v):
@@ -253,9 +281,14 @@ def compile_model(model):
         out.setdefault(e["from"], []).append(e)
     start = next(k for k, n in nodes.items() if n["type"] == "start")
     p = nodes[start].get("props") or {}
+    trig = p.get("trigger") or "manual"
     return {"start": start,
-            "starts_on": (model.get("document") if p.get("trigger") == "document" and model.get("document") not in (None, "none")
+            "starts_on": (model.get("document") if trig == "document" and model.get("document") not in (None, "none")
                           else None),
+            # T-039-17b: started by the scheduler (cron) or by a message that arrives through an integration connector.
+            "schedule": (p.get("cron") or "").strip() or None if trig == "schedule" else None,
+            "message": ({"connector": p.get("connector"), "event_type": (p.get("event_type") or "").strip() or None,
+                         "document_field": (p.get("document_field") or "").strip() or None} if trig == "message" else None),
             "reach": {k: sorted(_reach_from(k, out)) for k in nodes},
             "run_as": model.get("run_as") or "system"}
 

@@ -28,4 +28,7 @@ def main(process, comment=None):
                  process, d["version"], common.compile_model(d["model"]), comment, ana.context.user)
     running = ana.sql_value("SELECT count(*) FROM bpm.case WHERE process_code = $1 AND status IN ('running', 'waiting', 'failed') "
                             "AND version <> $2", process, d["version"])
-    return {"process": process, "version": d["version"], "running_old": running}
+    # T-039-17b: a scheduled start keeps one scheduler job per process (last: it is done outside this transaction).
+    compiled = common.compile_model(d["model"])
+    job = common.sync_schedule(process, p["name"], compiled.get("schedule"))
+    return {"process": process, "version": d["version"], "running_old": running, "schedule_job": job}
