@@ -49,7 +49,7 @@ inglês, como no código (constituição, P2a).
 | 016 | [Repositório de arquivos](016-file-repository/spec.md) | Pastas, versões, permissões granulares, portal do cliente, links | implementada (faltam S3 e antivírus) |
 | 017 | [Hub de integrações](017-integration-hub/spec.md) | Conectores, cofre, webhooks, extratos, conciliação, gateways | implementada (faltam SFTP/pasta/e-mail, mTLS, CNAB e pacotes de modelos) |
 | 018 | [Agendamento](018-scheduler/spec.md) | Rotinas com cron/calendário, cluster, tentativas, dependências | implementada |
-| 019 | [Observabilidade](019-observability/spec.md) | Saúde, métricas, rastros, stack traces, perfilamento, dicas | implementada (faltam alertas configuráveis e OpenTelemetry) |
+| 019 | [Observabilidade](019-observability/spec.md) | Saúde, métricas, rastros, stack traces, perfilamento, dicas | implementada (falta OpenTelemetry) |
 | 020 | [Arquitetura da informação](020-information-architecture/spec.md) | Áreas por tarefa; fluxo coerente (próxima ação, fluxos guiados); acessibilidade; padrões de produtividade (simulação ao lado, construtor de condições, grade de planejamento com gráfico); rotinas por área e categoria, categorias pessoais e da empresa | implementada (RF-020-13..18 a implementar) |
 | 021 | [Consultoria](021-consulting-projects/spec.md) | Fases, alocação de pessoal, quadro/Gantt e caminho crítico, valor agregado, mudanças, riscos, viabilidade e lucro (base/otimista/pessimista), portfólio | implementada |
 | 022 | [Execução paralela](022-parallel-execution/spec.md) | `ana.parallel`/`ana.map`: dividir e juntar, atômico ou independente | implementada |

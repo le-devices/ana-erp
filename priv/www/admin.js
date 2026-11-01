@@ -807,13 +807,16 @@
       deltas.length >= 2 ? window.AnaCharts.render({ type: "line", title: "Memória do núcleo", format: "number", unit: "MB",
         x: deltas.map((d) => d.t.replace("T", " ")), series: [{ name: "Memória", values: deltas.map((d) => d.mem) }] }) : null,
       el("h3", { text: "Incidentes" }),
+      el("p", { class: "muted", text: "Abertos pelas regras de alerta (veja Alertas). Silenciados ficam registrados, mas só avisam quando o silêncio termina." }),
       table([
-        { label: "Componente", value: (i) => COMPONENT[i.component] || i.component },
+        { label: "Regra", value: (i) => i.rule || "—" },
+        { label: "Gravidade", value: (i) => sevChip(i.severity) },
+        { label: "Alvo", value: (i) => COMPONENT[i.component] || METRIC[i.component] || i.component },
         { label: "Nó", value: (i) => i.node },
         { label: "Início", value: (i) => fmtDate(i.opened_at) },
         { label: "Fim", value: (i) => i.closed_at ? fmtDate(i.closed_at) : pill("■ aberto", "off") },
         { label: "Duração", value: (i) => `${Math.round(i.seconds / 60)} min`, class: "num" },
-        { label: "Mensagem", value: (i) => i.message },
+        { label: "Mensagem", value: (i) => i.silenced && !i.notified_at ? el("span", {}, pill("silenciado"), " ", i.message) : i.message },
       ], h.incidents, { empty: "Nenhum incidente." }),
       el("h3", { text: "Mudanças de estado (72 h)" }),
       table([
@@ -823,6 +826,123 @@
         { label: "Mensagem", value: (e) => e.message },
         { label: "Nó", value: (e) => e.node },
       ], h.events, { empty: "Nenhuma mudança." }));
+  }
+
+  const METRIC = { running: "Execuções em andamento", failures_per_min: "Falhas por minuto", memory_mb: "Memória do núcleo (MB)",
+    processes: "Processos Erlang", db_waiting: "Esperando conexão com o banco", python_ready: "Processos Python prontos" };
+  const LEVEL = { yellow: "amarelo ou pior", red: "vermelho" };
+
+  // RF-019-08 (T-019-08b): alert rules (threshold, window, destinations) and silences.
+  async function alerts() {
+    const a = await API.admin.alerts();
+    const targetName = (r) => r.source === "health" ? (r.target === "*" ? "qualquer componente" : COMPONENT[r.target] || r.target)
+      : METRIC[r.target] || r.target;
+    const condition = (r) => r.source === "health" ? `${targetName(r)} em ${LEVEL[r.level] || r.level}` : `${targetName(r)} ${r.op} ${n2(r.threshold)}`;
+    const destinations = (r) => [r.notify_studio ? "Estúdio" : null, r.connector ? `conector ${r.connector}` : null,
+      (r.recipients || []).length ? `${r.recipients.length} e-mail(s)` : null].filter(Boolean).join(", ") || "nenhum";
+    const opt = (v, t) => el("option", { value: v, text: t });
+
+    const id = el("input", { type: "hidden" });
+    const name = el("input", { placeholder: "Ex.: Memória alta" });
+    const source = el("select", {}, opt("health", "Saúde de componente"), opt("metric", "Métrica do nó"));
+    const target = el("select");
+    const level = el("select", {}, opt("red", "vermelho"), opt("yellow", "amarelo ou pior"));
+    const op = el("select", {}, [">", ">=", "<", "<="].map((o) => opt(o, o)));
+    const threshold = el("input", { type: "number", step: "any", placeholder: "limiar" });
+    const windowS = el("input", { type: "number", min: 0, max: 86400, value: 0 });
+    const severity = el("select", {}, Object.entries(SEVERITY).map(([k, v]) => opt(k, v[1])));
+    const studio = el("input", { type: "checkbox", checked: true });
+    const connector = el("select", {}, opt("", "— nenhum —"), a.connectors.map((c) => opt(c.name, c.description ? `${c.name} — ${c.description}` : c.name)));
+    const recipients = el("textarea", { rows: 2, placeholder: "e-mails separados por vírgula (entregues pelo conector)" });
+    const active = el("input", { type: "checkbox", checked: true });
+    const healthOnly = [field("Nível", level)];
+    const metricOnly = [field("Comparação", op), field("Limiar", threshold)];
+    const sync = () => {
+      const h = source.value === "health";
+      const keep = target.value;
+      target.replaceChildren(...(h ? [opt("*", "qualquer componente"), ...a.components.map((c) => opt(c, COMPONENT[c] || c))]
+        : a.metrics.map((m) => opt(m, METRIC[m] || m))));
+      if ([...target.options].some((o) => o.value === keep)) target.value = keep;
+      for (const f of healthOnly) f.hidden = !h;
+      for (const f of metricOnly) f.hidden = h;
+    };
+    source.onchange = sync;
+    const fill = (r) => {
+      id.value = r ? r.id : ""; name.value = r ? r.name : ""; source.value = r ? r.source : "health"; sync();
+      target.value = r ? r.target : "*"; level.value = (r && r.level) || "red"; op.value = (r && r.op) || ">";
+      threshold.value = r && r.threshold != null ? r.threshold : ""; windowS.value = r ? r.window_s : 0;
+      severity.value = r ? r.severity : "warning"; studio.checked = r ? r.notify_studio : true;
+      connector.value = (r && r.connector) || ""; recipients.value = r ? (r.recipients || []).join(", ") : "";
+      active.checked = r ? r.active : true;
+    };
+    fill(null);
+
+    const silRule = el("select", {}, opt("", "todas as regras"), a.rules.map((r) => opt(r.id, r.name)));
+    const silTarget = el("input", { placeholder: "alvo (vazio = todos)", list: "alert-targets" });
+    const silTargets = el("datalist", { id: "alert-targets" }, [...a.components, ...a.metrics].map((t) => opt(t, COMPONENT[t] || METRIC[t] || t)));
+    const silNode = el("input", { placeholder: "nó (vazio = todos)" });
+    const silMinutes = el("input", { type: "number", min: 1, max: 43200, value: 60 });
+    const silReason = el("input", { placeholder: "motivo (ex.: manutenção do banco)" });
+
+    main().replaceChildren(
+      ...header("Alertas", "Regras sobre a saúde dos componentes e as métricas de cada nó. A condição precisa durar a janela inteira para abrir um incidente; ele se encerra sozinho quando a condição passa. Silêncios mantêm o registro, mas não avisam ninguém."),
+      el("div", { class: "admin-columns" },
+        el("div", {}, table([
+          { label: "Regra", value: (r) => r.name },
+          { label: "Condição", value: condition },
+          { label: "Janela", value: (r) => r.window_s ? `${r.window_s} s` : "imediata", class: "num" },
+          { label: "Gravidade", value: (r) => sevChip(r.severity) },
+          { label: "Destinos", value: destinations },
+          { label: "Situação", value: (r) => !r.active ? pill("inativa") : Number(r.open) ? pill(`■ ${r.open} aberto(s)`, "off") : pill("● ativa", "ok") },
+          { label: "", value: (r) => el("div", { class: "cell-actions" }, el("button", { class: "danger small", text: "Remover", onclick: (e) => guard(async () => {
+              e.stopPropagation();
+              if (!confirm(`Remover a regra ${r.name}? Os incidentes continuam no histórico.`)) return;
+              await API.admin.deleteAlertRule(r.id);
+              await alerts();
+            }) })) },
+        ], a.rules, { onRow: fill, empty: "Nenhuma regra: nenhum incidente será aberto." })),
+        el("form", { class: "form-card", onsubmit: async (e) => {
+          e.preventDefault();
+          const h = source.value === "health";
+          const body = { id: id.value ? Number(id.value) : null, name: name.value.trim(), source: source.value, target: target.value,
+            level: h ? level.value : null, op: h ? null : op.value, threshold: h || threshold.value === "" ? null : Number(threshold.value),
+            window_s: parseInt(windowS.value || "0", 10), severity: severity.value, notify_studio: studio.checked,
+            connector: connector.value || null, active: active.checked,
+            recipients: recipients.value.split(/[,;\s]+/).map((x) => x.trim()).filter(Boolean) };
+          await guard(async () => {
+            await API.admin.saveAlertRule(body);
+            toast("Regra de alerta salva.");
+            await alerts();
+          });
+        } }, el("h3", { text: "Regra de alerta" }), id, field("Nome", name), field("Origem", source), field("Observa", target),
+          ...healthOnly, ...metricOnly, field("Janela (segundos)", windowS), field("Gravidade", severity),
+          check("Avisar no Estúdio", studio), field("Conector (webhook ou e-mail)", connector), field("Destinatários", recipients),
+          check("Ativa", active),
+          el("div", { class: "row-buttons" }, el("button", { class: "primary", type: "submit", text: "Salvar" }),
+            el("button", { type: "button", text: "Nova", onclick: () => fill(null) })))),
+      el("h3", { text: "Silêncios" }),
+      el("form", { class: "admin-toolbar", onsubmit: async (e) => {
+        e.preventDefault();
+        await guard(async () => {
+          await API.admin.createSilence({ rule_id: silRule.value ? Number(silRule.value) : null, target: silTarget.value.trim() || null,
+            node: silNode.value.trim() || null, minutes: parseInt(silMinutes.value || "0", 10), reason: silReason.value.trim() });
+          toast("Silêncio criado.");
+          await alerts();
+        });
+      } }, silRule, silTarget, silTargets, silNode, field("Minutos", silMinutes), silReason, el("button", { type: "submit", text: "Silenciar" })),
+      table([
+        { label: "Regra", value: (x) => x.rule || "todas" },
+        { label: "Alvo", value: (x) => x.target ? COMPONENT[x.target] || METRIC[x.target] || x.target : "todos" },
+        { label: "Nó", value: (x) => x.node || "todos" },
+        { label: "De", value: (x) => fmtDate(x.starts_at) },
+        { label: "Até", value: (x) => fmtDate(x.ends_at) },
+        { label: "Motivo", value: (x) => x.reason },
+        { label: "Por", value: (x) => x.created_by },
+        { label: "", value: (x) => x.in_force ? el("div", { class: "cell-actions" }, el("button", { class: "small", text: "Encerrar", onclick: () => guard(async () => {
+            await API.admin.endSilence(x.id);
+            await alerts();
+          }) })) : pill("encerrado") },
+      ], a.silences, { empty: "Nenhum silêncio nos últimos 7 dias." }));
   }
 
   async function sqlperf(filters = { order: "total" }) {
@@ -1768,7 +1888,7 @@
                        window.AnaScheduler.holidays(hol)]);
   }
 
-  const SECTIONS = { users, groups, settings, company, commands, remote, accounts, limits, consumption, scheduler, monitor, audit, retention, health, sqlperf, advice, updates, integrations, checks, transports, datacopy, publicapi, license, extensions, telemetry };
+  const SECTIONS = { users, groups, settings, company, commands, remote, accounts, limits, consumption, scheduler, monitor, audit, retention, health, alerts, sqlperf, advice, updates, integrations, checks, transports, datacopy, publicapi, license, extensions, telemetry };
 
   function show(section) {
     refreshUpdatesCount();

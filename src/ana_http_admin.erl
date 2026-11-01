@@ -225,6 +225,16 @@ route(<<"GET">>, [<<"observability">>, <<"health">>], _U, Req) ->
 route(<<"POST">>, [<<"observability">>, <<"health">>, <<"check">>], _U, Req) ->
     _ = ana_health:check_now(),
     reply(ana_observability:health(), Req);
+route(<<"GET">>, [<<"observability">>, <<"alerts">>], _U, Req) ->
+    reply(ana_alerts:overview(), Req);
+route(<<"POST">>, [<<"observability">>, <<"alerts">>, <<"rules">>], U, Req) ->
+    with_body(Req, fun(B, R) -> reply(ana_alerts:save_rule(B, U), R) end);
+route(<<"DELETE">>, [<<"observability">>, <<"alerts">>, <<"rules">>, Id], U, Req) ->
+    with_int(Id, Req, fun(N) -> reply(ana_alerts:delete_rule(N, U), Req) end);
+route(<<"POST">>, [<<"observability">>, <<"alerts">>, <<"silences">>], U, Req) ->
+    with_body(Req, fun(B, R) -> reply(ana_alerts:create_silence(B, U), R) end);
+route(<<"POST">>, [<<"observability">>, <<"alerts">>, <<"silences">>, Id, <<"end">>], U, Req) ->
+    with_int(Id, Req, fun(N) -> reply(ana_alerts:end_silence(N, U), Req) end);
 route(<<"GET">>, [<<"observability">>, <<"sql">>], _U, Req) ->
     reply(ana_observability:sql_top(ana_http:qs_map(Req)), Req);
 route(<<"GET">>, [<<"observability">>, <<"sql">>, Hash], _U, Req) ->

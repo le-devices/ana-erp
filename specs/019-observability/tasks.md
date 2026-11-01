@@ -8,7 +8,7 @@
 - [x] T-019-06 Consultas lentas com EXPLAIN (RF-019-06)
 - [x] T-019-07 Motor de dicas (RF-019-07, CA-019-03, 04)
 - [x] T-019-08 Incidentes a partir da saúde, com webhook (RF-019-08)
-- [ ] T-019-08b Regras de alerta configuráveis (limiar, janela, destinos) e silenciamento (RF-019-08)
+- [x] T-019-08b Regras de alerta configuráveis (limiar, janela, destinos) e silenciamento (RF-019-08, CA-019-10)
 - [x] T-019-09 Logs estruturados JSON com correlação (RF-019-09, RNF-019-04)
 - [ ] T-019-09b Exportação OpenTelemetry (RF-019-10, opcional)
 - [x] T-019-10 Telas no Estúdio: saúde, execução detalhada, perfil, dicas, alertas

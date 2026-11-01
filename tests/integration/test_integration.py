@@ -6840,3 +6840,135 @@ class TestBpm(Base):
             self.assertGreaterEqual(panel["cases"]["started"], 1)
         finally:
             self.ok("bpm.save_process", code=code, name="Compra com alçada", active=False)
+
+
+class TestAlertRules(Base):
+    """Spec 019 (RF-019-08, T-019-08b): configurable alert rules (threshold, window, destinations) and silences."""
+
+    @classmethod
+    def setUpClass(cls):
+        super().setUpClass()
+        cls.rules = []
+
+    @classmethod
+    def tearDownClass(cls):
+        for r in cls.rules:
+            http("DELETE", f"/api/admin/observability/alerts/rules/{r}", token=cls.token)
+        # The connector points to a test program (the FK blocks purging it): detach first.
+        http("PUT", f"/api/admin/connectors/t{SUFFIX}_alerts", {"kind": "webhook_in", "active": False}, cls.token)
+
+    def rule(self, **body):
+        s, c, _ = http("POST", "/api/admin/observability/alerts/rules", body, self.token)
+        if s == 200 and not body.get("id"):
+            self.rules.append(c["id"])
+        return s, c
+
+    def until(self, sql, check, seconds=50):
+        end = time.time() + seconds
+        while True:
+            v = psql(sql)
+            if check(v) or time.time() > end:
+                return v
+            time.sleep(1)
+
+    def notices(self):
+        s, c, _ = http("GET", "/api/admin/checks/notices", token=self.token)
+        self.assertEqual(s, 200, c)
+        return [n["message"] for n in c]
+
+    def test_t_019_08b_rule_validation(self):
+        base = {"name": f"Regra {SUFFIX} validação", "source": "health", "target": "database", "level": "yellow"}
+        for bad in ({"source": "logs"}, {"target": "inexistente"}, {"level": "green"},
+                    {"source": "metric", "target": "memory_mb", "op": "=", "threshold": 1, "level": None},
+                    {"source": "metric", "target": "cpu", "op": ">", "threshold": 1, "level": None},
+                    {"source": "metric", "target": "memory_mb", "op": ">", "level": None},
+                    {"window_s": 90000}, {"severity": "urgent"}, {"name": "ab"},
+                    {"recipients": ["ops@example.test"]},                     # e-mail needs a connector to deliver it
+                    {"recipients": ["não é e-mail"], "connector": "x"}, {"connector": "inexistente"}):
+            s, c = self.rule(**{**base, **bad})
+            self.assertEqual(s, 400, (bad, c))
+        s, c = self.rule(**base)
+        self.assertEqual(s, 200, c)
+        s, dup = self.rule(**base)
+        self.assertEqual(s, 400, dup)                                         # names are unique
+        s, c2 = self.rule(**base, id=c["id"], severity="serious", window_s=30)
+        self.assertEqual((s, c2["id"]), (200, c["id"]))
+        s, ov, _ = http("GET", "/api/admin/observability/alerts", token=self.token)
+        mine = [r for r in ov["rules"] if r["id"] == c["id"]]
+        self.assertEqual((mine[0]["severity"], mine[0]["window_s"]), ("serious", 30))
+        self.assertIn("database", ov["components"])
+        self.assertIn("memory_mb", ov["metrics"])
+        self.assertTrue(any(r["name"] == "Componente em falha" for r in ov["rules"]))   # the built-in behaviour, now a rule
+        s, _, _ = http("DELETE", f"/api/admin/observability/alerts/rules/{c['id']}", token=self.token)
+        self.assertEqual(s, 200)
+        s, _, _ = http("DELETE", f"/api/admin/observability/alerts/rules/{c['id']}", token=self.token)
+        self.assertEqual(s, 404)
+        self.assertEqual(psql(f"SELECT count(*) FROM ana_system.admin_log WHERE action LIKE 'alert.rule.%' "
+                              f"AND target = '{c['id']}'"), "3")              # audited
+
+    def test_t_019_08b_window_threshold_and_destinations(self):
+        out = f"test.alert_out_{SUFFIX}"
+        self.save(out, "def main(message, connector, attempt=1):\n    return {'delivered': message['kind']}\n")
+        conn = f"t{SUFFIX}_alerts"
+        s, c, _ = http("PUT", f"/api/admin/connectors/{conn}", {"kind": "http_api", "base_url": "http://localhost:8080",
+                                                                 "outbound_program": out}, self.token)
+        self.assertEqual(s, 200, c)
+        name = f"Regra {SUFFIX} processos"
+        s, r = self.rule(name=name, source="metric", target="processes", op=">", threshold=0, window_s=20,
+                         severity="serious", notify_studio=True, connector=conn, recipients=["ops@example.test"])
+        self.assertEqual(s, 200, r)
+        rid = r["id"]
+        open_sql = f"SELECT count(*) FROM ana_system.incident WHERE rule_id = {rid} AND closed_at IS NULL"
+        time.sleep(12)
+        self.assertEqual(psql(open_sql), "0")                                 # the condition must last the whole window
+        self.assertNotEqual(self.until(open_sql, lambda v: v != "0"), "0")
+        self.assertEqual(psql(f"SELECT DISTINCT severity FROM ana_system.incident WHERE rule_id = {rid}"), "serious")
+        self.assertTrue(any(name in m for m in self.notices()))               # destination: the studio
+        payload = self.until(f"SELECT payload::text FROM integration.outbox WHERE connector = '{conn}' AND kind = 'alert.opened' LIMIT 1",
+                             lambda v: v != "")
+        p = json.loads(payload)
+        self.assertEqual((p["rule"], p["severity"], p["target"], p["recipients"]), (name, "serious", "processes", ["ops@example.test"]))
+        self.until(f"SELECT count(*) FROM integration.outbox WHERE connector = '{conn}' AND status <> 'done'", lambda v: v == "0")
+        # The condition clears (rule turned off): the incident closes and the connector hears about it.
+        s, _ = self.rule(id=rid, name=name, source="metric", target="processes", op=">", threshold=0, window_s=20,
+                         severity="serious", connector=conn, recipients=["ops@example.test"], active=False)
+        self.assertEqual(s, 200)
+        self.assertEqual(self.until(open_sql, lambda v: v == "0", 30), "0")
+        self.assertNotEqual(self.until(f"SELECT count(*) FROM integration.outbox WHERE connector = '{conn}' AND kind = 'alert.closed'",
+                                       lambda v: v != "0", 30), "0")
+
+    def test_t_019_08b_silence_holds_notifications(self):
+        name = f"Regra {SUFFIX} silêncio"
+        spec = dict(name=name, source="metric", target="memory_mb", op=">", threshold=0, severity="warning")
+        s, r = self.rule(**spec, active=False)                              # silenced before it can fire
+        self.assertEqual(s, 200, r)
+        rid = r["id"]
+        for bad in ({"rule_id": rid, "minutes": 0, "reason": "manutenção"}, {"rule_id": rid, "minutes": 50000, "reason": "manutenção"},
+                    {"rule_id": rid, "minutes": 10, "reason": ""}, {"rule_id": 999999999, "minutes": 10, "reason": "manutenção"}):
+            s, c, _ = http("POST", "/api/admin/observability/alerts/silences", bad, self.token)
+            self.assertIn(s, (400, 404), (bad, c))
+        s, sil, _ = http("POST", "/api/admin/observability/alerts/silences",
+                         {"rule_id": rid, "target": "memory_mb", "minutes": 30, "reason": "manutenção programada"}, self.token)
+        self.assertEqual(s, 200, sil)
+        s, _ = self.rule(**spec, id=rid)
+        self.assertEqual(s, 200)
+        row = f"SELECT silenced::text || ',' || (notified_at IS NOT NULL)::text FROM ana_system.incident WHERE rule_id = {rid} " \
+              f"AND closed_at IS NULL LIMIT 1"
+        self.assertEqual(self.until(row, lambda v: v != ""), "true,false")    # recorded, nobody told
+        self.assertFalse(any(name in m for m in self.notices()))
+        s, ov, _ = http("GET", "/api/admin/observability/alerts", token=self.token)
+        self.assertTrue([x for x in ov["silences"] if x["id"] == sil["id"] and x["in_force"]])
+        s, _, _ = http("POST", f"/api/admin/observability/alerts/silences/{sil['id']}/end", {}, self.token)
+        self.assertEqual(s, 200)
+        s, _, _ = http("POST", f"/api/admin/observability/alerts/silences/{sil['id']}/end", {}, self.token)
+        self.assertEqual(s, 404)                                              # ended once, kept as history
+        self.assertEqual(self.until(row, lambda v: v == "true,true", 30), "true,true")   # the silence ended: now it notifies
+        self.assertTrue(any(name in m for m in self.notices()))
+        s, h, _ = http("GET", "/api/admin/observability/health", token=self.token)
+        self.assertTrue(any(i["rule"] == name and i["severity"] == "warning" for i in h["incidents"]))
+        # Removing the rule closes its incidents (history kept, rule detached).
+        s, _, _ = http("DELETE", f"/api/admin/observability/alerts/rules/{rid}", token=self.token)
+        self.assertEqual(s, 200)
+        self.rules.remove(rid)
+        self.assertEqual(psql(f"SELECT count(*) FROM ana_system.incident WHERE rule_id IS NULL AND component = 'memory_mb' "
+                              f"AND closed_at IS NULL"), "0")

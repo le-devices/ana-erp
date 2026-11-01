@@ -406,7 +406,7 @@ ok([...d.querySelectorAll("#admin-main .form-card option")].some((o) => o.value 
 for (const [section, marker] of [["groups", "Grupos de acesso"], ["limits", "Perfil de limite"], ["company", "Razão social"],
                                  ["settings", "ceiling_cpu_ms"], ["accounts", "service_revenue"], ["commands", "hello"],
                                  ["remote", "Sistemas remotos"], ["scheduler", "Feriados"], ["monitor", "Execuções ativas"], ["consumption", "CPU total"],
-                                 ["retention", "Expurgos recentes"], ["health", "Mudanças de estado"], ["sqlperf", "Desempenho do SQL"],
+                                 ["retention", "Expurgos recentes"], ["health", "Mudanças de estado"], ["alerts", "Componente em falha"], ["sqlperf", "Desempenho do SQL"],
                                  ["advice", "Dicas de otimização"], ["updates", "Atualizações do produto"], ["license", "Usuários nomeados"], ["extensions", "Ligar um programa seu"], ["telemetry", "Exatamente o que é enviado"], ["company", "Logotipo"], ["groups", "Dados que os membros veem"], ["integrations", "Chamadas 24 h"], ["audit", "Auditoria"]]) {
   await go(w, `#/admin/${section}`);
   await until(() => text("#admin-main").includes(marker), section, jsErrors);
@@ -415,6 +415,17 @@ for (const [section, marker] of [["groups", "Grupos de acesso"], ["limits", "Per
     [...d.querySelectorAll("#admin-main .scope-sim button")].find((b) => b.textContent === "Simular").click();
     await until(() => text("#admin-main .scope-preview").includes("Pedidos de venda"), "scope preview", jsErrors);
     ok(text("#admin-main .scope-preview").includes("nada foi gravado"), "escopo de dados simulado antes de salvar o grupo");
+  }
+  if (section === "alerts") {
+    // T-019-08b: a metric rule asks for comparison and threshold; a health rule asks for the level.
+    const form = d.querySelector("#admin-main .form-card");
+    const [source, target] = form.querySelectorAll("select");
+    const visible = (label) => [...form.querySelectorAll("label")].some((l) => !l.hidden && l.textContent.startsWith(label));
+    ok(visible("Nível") && !visible("Limiar"), "regra de saúde pede o nível");
+    source.value = "metric"; source.dispatchEvent(new w.Event("change"));
+    ok(!visible("Nível") && visible("Limiar") && [...target.options].some((o) => o.value === "memory_mb"),
+       "regra de métrica pede comparação e limiar (T-019-08b)");
+    ok(text("#admin-main").includes("Silêncios"), "silêncios ficam na mesma tela");
   }
   if (section === "license") {
     ok(text("#admin-main").includes("Núcleo") && text("#admin-main").includes("Instalar licença"),
