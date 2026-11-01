@@ -28,8 +28,12 @@ def main(situation=None):
     for r in ana.sql("SELECT sales_order_id, number, status FROM production.work_order WHERE sales_order_id = ANY($1)", ids):
         wos.setdefault(r["sales_order_id"], []).append(f"OP {r['number']} ({r['status']})")
     today = datetime.date.today()
-    late = sum(1 for o in orders if o["last_promised"] and o["last_promised"] < today)
-    ana.metrics([{"label": "Pedidos com falta", "value": len(orders), "status": "warn" if orders else "ok"},
+    # Spec 042 (E-04): the counts cover every waiting order; the table shows the first 1000.
+    t = ana.sql_one("SELECT count(*) AS n, count(*) FILTER (WHERE (SELECT max(i.promised_date) FROM sales.sales_order_item i "
+                    "  WHERE i.order_id = o.id) < current_date) AS late FROM sales.sales_order o "
+                    "WHERE o.status = 'OPEN' AND o.fulfillment <> 'ok' AND ($1::text IS NULL OR o.fulfillment = $1)", situation)
+    late = t["late"]
+    ana.metrics([{"label": "Pedidos com falta", "value": t["n"], "status": "warn" if t["n"] else "ok"},
                  {"label": "Com data prometida vencida", "value": late, "status": "bad" if late else "ok"}], title="Atendimento dos pedidos")
     rows = []
     for o in orders:
@@ -45,5 +49,5 @@ def main(situation=None):
                      "prometido": o["last_promised"].strftime("%d/%m/%Y") + (" ⚠ vencido" if o["last_promised"] < today else "") if o["last_promised"] else "—",
                      "suprimento": ", ".join(reqs.get(o["id"], []) + wos.get(o["id"], [])) or "—",
                      "_actions": acts, "_open": {"program": "docs.view", "params": {"kind": "order", "key": str(o["number"])}}})
-    ana.table(rows, title="Pedidos com falta")
-    return {"orders": len(orders), "late": late}
+    ana.table(rows, title="Pedidos com falta" + (f" (os 1000 primeiros de {t['n']})" if t["n"] > len(orders) else ""))
+    return {"orders": t["n"], "late": late}

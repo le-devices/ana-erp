@@ -93,6 +93,14 @@ def sheet(w):
     rows = ana.sql(
         "SELECT p.code AS item, p.description AS \"descrição\", p.unit AS unidade, sum(m.quantity) AS saldo "
         "FROM inventory.stock_movement m JOIN base.product p ON p.id = m.product_id WHERE m.warehouse_id = $1 "
-        "GROUP BY p.code, p.description, p.unit HAVING sum(m.quantity) <> 0 ORDER BY p.code LIMIT 2000", w["id"])
+        "GROUP BY p.code, p.description, p.unit HAVING sum(m.quantity) <> 0 ORDER BY p.code LIMIT $2", w["id"], SHEET_MAX + 1)
+    # Spec 042 (E-04): the sheet holds every item with a balance (it was cut at 2000 — items left out of the count).
+    # The screen draws 2000 at a time ("Mostrar todas"); search and spreadsheet export see all of them.
+    if len(rows) > SHEET_MAX:
+        rows = rows[:SHEET_MAX]
+        ana.log(f"depósito com mais de {SHEET_MAX} itens com saldo: conte por partes (filtre por grupo ou faixa de código)", "warning")
     ana.table(rows, title=f"Folha de contagem — {w['code']} (informe os itens contados para ver as diferenças)")
     return {"warehouse": w["code"], "items": len(rows)}
+
+
+SHEET_MAX = 30000

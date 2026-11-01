@@ -103,9 +103,13 @@ Achados pela bateria durante a fase 2 (corrigidos):
 - **E-04 Totais calculados sobre listas cortadas.** O relatório de crédito lia no máximo 500 clientes e tirava
   dessa amostra a contagem de bloqueados e o total em atraso (com mais de 500 clientes com pendência, os números
   ficavam errados e um bloqueado podia faltar na lista). Corrigido (31/10/2026): os números vêm do conjunto inteiro
-  e só a tabela mostra os 500 primeiros, dizendo quantos há. **A verificar** (mesmo padrão, achado por varredura):
-  relatório de SLA do serviço em campo, "Pedidos com falta", "Minhas faturas", simulação das regras do extrato,
-  clientes por distância, inventário e quarentena — conferir quais mostram totais e corrigir os que mostram.
+  e só a tabela mostra os 500 primeiros, dizendo quantos há. Verificadas as demais (mesmo padrão, achado
+  por varredura) e corrigidas as que mostravam totais: SLA do serviço em campo (% cumprido, atrasadas, tempo de
+  resposta, horas, retornos), "Pedidos com falta", clientes por distância, simulação das regras do extrato e
+  quarentena — números sobre o conjunto inteiro, tabela dizendo quantos há. A **folha de contagem do inventário**
+  listava só 2.000 itens (o depósito de desenvolvimento tem 8.056 com saldo: três quartos ficariam fora da
+  contagem); agora lista até 30.000 e avisa acima disso. "Minhas faturas" só lista (as 200 mais recentes): sem
+  correção.
 - **E-05 Nó que não subia no cluster.** Dois nós iniciando juntos alteravam os mesmos papéis do banco ao mesmo
   tempo ("tuple concurrently updated") e o perdedor encerrava a aplicação — a falha intermitente da suíte de cluster.
   Corrigido (31/10/2026): a configuração de papéis e a sincronização do papel restrito rodam sob uma trava
