@@ -85,11 +85,30 @@
       routines.length ? el("div", { class: "tiles" }, routines.map((r) => tile(r))) : el("p", { class: "muted", text: empty }));
   }
 
+  let routesCache = null;
+  async function sheetFor(program, query) {
+    if (!routesCache) {
+      try { routesCache = (await API.run("master.describe", { params: {} })).result.routes || []; } catch (_) { routesCache = []; }
+    }
+    const r = routesCache.find((x) => x.program === program);
+    if (!r) return null;
+    const key = query[r.key_param];
+    const enc = encodeURIComponent;
+    if (key) return `#/master/${r.entity}/${enc(key)}${r.tab ? "?aba=" + enc(r.tab) : ""}`;
+    return r.tab ? `#/master/${r.entity}` : `#/master/${r.entity}/novo`;
+  }
+
   // ------------------------------------------------------------------ operation
   async function ops(module, name, query = {}) {
     if (!state.routines.length) await loadRoutines();
     drawNav(module, name);
     runCurrent = null;
+    // T-040-11b: a routine that writes master data opens the standard sheet (same checks, history and approvals);
+    // "?_rotina=1" keeps its own form.
+    if (name && query._rotina !== "1") {
+      const to = await sheetFor(name, query);
+      if (to) { window.history.replaceState(null, "", to); window.AnaStudio.go(to); return; }
+    }
     if (name && routine(name)) return openRoutine(routine(name), query);
     await window.AnaCategories.load();
     // "#/ops/~Área" lists one business area; a namespace (old addresses) lists its area too.

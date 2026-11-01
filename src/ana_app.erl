@@ -3,6 +3,9 @@
 -behaviour(application).
 -export([start/2, prep_stop/1, stop/1, configure_roles/0]).
 
+%% Boot steps that change roles and grants run one node at a time (migrations have their own lock).
+-define(BOOT_LOCK, 7_741_002).
+
 start(_Type, _Args) ->
     _ = ana_log_json:enable(),                         % RF-019-09
     ok = case ana_db:wait_for_database() of            % RNF-001-07
@@ -48,7 +51,11 @@ configure_roles() ->
                 io_lib:format("ALTER ROLE ana_~s SET timezone = '~s';", [R, Tz])]
                || {R, Lim} <- [{exec, 200}, {read, 20}]]
               ++ [io_lib:format("ALTER ROLE CURRENT_USER SET timezone = '~s';", [Tz])],
+        %% Two nodes starting together would alter the same roles at once ("tuple concurrently updated", the node
+        %% stops): one at a time, under a session advisory lock (spec 042 — found by the cluster suite).
+        {ok, _, _} = epgsql:squery(C, io_lib:format("SELECT pg_advisory_lock(~b)", [?BOOT_LOCK])),
         Rs = lists:flatten([epgsql:squery(C, Sql)]),
+        _ = epgsql:squery(C, io_lib:format("SELECT pg_advisory_unlock(~b)", [?BOOT_LOCK])),
         case [E || {error, E} <- Rs] of
             [] -> ok;
             [E | _] -> exit({configure_roles, E})
@@ -63,7 +70,10 @@ sync_scoped_role([]) -> ok;
 sync_scoped_role(_Applied) ->
     {ok, C} = ana_db:connect(ana_config:db()),
     try
-        case epgsql:squery(C, "SELECT ana_system.sync_scoped_role()") of
+        {ok, _, _} = epgsql:squery(C, io_lib:format("SELECT pg_advisory_lock(~b)", [?BOOT_LOCK])),
+        R = epgsql:squery(C, "SELECT ana_system.sync_scoped_role()"),
+        _ = epgsql:squery(C, io_lib:format("SELECT pg_advisory_unlock(~b)", [?BOOT_LOCK])),
+        case R of
             {ok, _, [{N}]} -> logger:notice("scoped role privileges synced: ~s", [N]), ok;
             Other -> logger:warning("scoped role not synced: ~0p", [Other]), ok
         end

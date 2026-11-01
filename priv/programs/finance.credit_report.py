@@ -10,28 +10,30 @@ PARAMS = {"only_issues": {"type": "bool", "default": True, "label": "só quem te
 
 def main(only_issues=True):
     pol = ana.sql_one("SELECT auto_block, grace_days FROM finance.credit_policy WHERE id = 1")
-    rows = ana.sql(
+    # The whole set decides the numbers and the blocked list; only the table shows the first 500 (spec 042).
+    base = (
         "WITH b AS (SELECT party_id, sum(amount) AS open_amount, "
         "                  sum(amount) FILTER (WHERE due_date < current_date) AS overdue, "
         "                  max(current_date - due_date) FILTER (WHERE due_date < current_date) AS max_days "
         "           FROM finance.bill WHERE kind = 'receivable' AND status = 'open' GROUP BY party_id), "
         "o AS (SELECT customer_id, sum(total) AS open_orders FROM sales.sales_order WHERE status = 'OPEN' GROUP BY customer_id), "
         "m AS (SELECT DISTINCT ON (party_id) party_id, reason FROM finance.credit_block WHERE released_at IS NULL "
-        "      AND (until IS NULL OR until >= current_date) ORDER BY party_id, blocked_at DESC) "
-        "SELECT p.id, p.name, COALESCE(b.open_amount, 0) AS open_amount, COALESCE(b.overdue, 0) AS overdue, b.max_days, "
+        "      AND (until IS NULL OR until >= current_date) ORDER BY party_id, blocked_at DESC), "
+        "r AS (SELECT p.id, p.name, COALESCE(b.open_amount, 0) AS open_amount, COALESCE(b.overdue, 0) AS overdue, b.max_days, "
         "  COALESCE(o.open_orders, 0) AS open_orders, cp.credit_limit, m.reason AS manual, "
         "  COALESCE(cp.auto_block, $1) AND COALESCE(b.max_days, 0) > COALESCE(cp.grace_days, $2) AS overdue_block "
         "FROM base.party p LEFT JOIN b ON b.party_id = p.id LEFT JOIN o ON o.customer_id = p.id "
         "LEFT JOIN finance.credit_profile cp ON cp.party_id = p.id LEFT JOIN m ON m.party_id = p.id "
         "WHERE p.kind IN ('customer', 'both') AND (NOT $3 OR b.overdue > 0 OR m.reason IS NOT NULL "
-        "  OR (cp.credit_limit IS NOT NULL AND COALESCE(b.open_amount, 0) + COALESCE(o.open_orders, 0) > cp.credit_limit)) "
-        "ORDER BY COALESCE(b.overdue, 0) DESC, p.name LIMIT 500", pol["auto_block"], pol["grace_days"], only_issues)
-    blocked = [r for r in rows if r["manual"] or r["overdue_block"] or
-               (r["credit_limit"] is not None and r["open_amount"] + r["open_orders"] > r["credit_limit"])]
-    ana.metrics([{"label": "Clientes com atraso", "value": sum(1 for r in rows if r["overdue"] > 0),
-                  "status": "warn" if any(r["overdue"] > 0 for r in rows) else "ok"},
-                 {"label": "Bloqueados", "value": len(blocked), "status": "bad" if blocked else "ok"},
-                 {"label": "Total em atraso", "value": money(sum((r["overdue"] for r in rows), 0))},
+        "  OR (cp.credit_limit IS NOT NULL AND COALESCE(b.open_amount, 0) + COALESCE(o.open_orders, 0) > cp.credit_limit))) ")
+    args = (pol["auto_block"], pol["grace_days"], only_issues)
+    rows = ana.sql(base + "SELECT * FROM r ORDER BY overdue DESC, name LIMIT 500", *args)
+    all_ = ana.sql_one(base + "SELECT count(*) AS n, count(*) FILTER (WHERE overdue > 0) AS late, COALESCE(sum(overdue), 0) AS overdue, "
+                       "COALESCE(array_agg(id ORDER BY id) FILTER (WHERE manual IS NOT NULL OR overdue_block "
+                       "  OR (credit_limit IS NOT NULL AND open_amount + open_orders > credit_limit)), '{}') AS blocked FROM r", *args)
+    ana.metrics([{"label": "Clientes com atraso", "value": all_["late"], "status": "warn" if all_["late"] else "ok"},
+                 {"label": "Bloqueados", "value": len(all_["blocked"]), "status": "bad" if all_["blocked"] else "ok"},
+                 {"label": "Total em atraso", "value": money(all_["overdue"])},
                  {"label": "Bloqueio automático", "value": f"ligado ({pol['grace_days']} dias)" if pol["auto_block"] else "desligado"}])
 
     def situation(r):
@@ -53,5 +55,5 @@ def main(only_issues=True):
                             [{"label": "Liberar um pedido", "program": "finance.credit_block",
                               "params": {"customer": r["id"], "action": "release_order"},
                               "ask": {"reason": {"type": "str", "label": "justificativa", "required": True}}}]}
-               for r in rows], title="Crédito por cliente")
-    return {"customers": len(rows), "blocked": [r["id"] for r in blocked]}
+               for r in rows], title="Crédito por cliente" + (f" (os 500 primeiros de {all_['n']})" if all_["n"] > len(rows) else ""))
+    return {"customers": all_["n"], "blocked": list(all_["blocked"])}
