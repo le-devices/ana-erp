@@ -7,6 +7,7 @@ same views serve the screen and integrations."""
 import datetime
 from decimal import Decimal
 
+from ana_lib.docs.common import link as doc_link
 from ana_lib.projects import access
 from ana_lib.projects import consulting as C
 from ana_lib.projects import finance as F
@@ -440,11 +441,17 @@ def risks(p):
 
 
 def billing(p):
-    ms = ana.sql("SELECT description, amount, due_date, status FROM projects.milestone WHERE project_id = $1 "
+    ms = ana.sql("SELECT id, description, amount, due_date, status FROM projects.milestone WHERE project_id = $1 "
                  "ORDER BY due_date NULLS LAST, id", p["id"])
     labels = {"planned": "previsto", "completed": "concluído", "invoiced": "faturado"}
     ana.table([{"marco": m["description"], "valor": fmt(m["amount"]), "data": fmt(m["due_date"]),
-                "situação": labels[m["status"]]} for m in ms], title="Marcos")
+                "situação": labels[m["status"]], "_open": doc_link("milestone", m["id"])} for m in ms], title="Marcos")
+    invs = ana.sql("SELECT number, issue_date, through_date, total, status FROM projects.invoice WHERE project_id = $1 ORDER BY number DESC LIMIT 100",
+                   p["id"])
+    if invs:
+        ana.table([{"fatura": f"INV-{i['number']}", "emissão": fmt(i["issue_date"]), "até": fmt(i["through_date"]), "valor": fmt(i["total"]),
+                    "situação": {"issued": "emitida", "cancelled": "cancelada"}.get(i["status"], i["status"]),
+                    "_open": doc_link("project_invoice", i["number"])} for i in invs], title="Faturas do projeto")
     hours = ana.sql_one(
         "SELECT COALESCE(sum(hours) FILTER (WHERE status = 'pending'), 0) AS pending, "
         "  COALESCE(sum(hours) FILTER (WHERE status = 'approved' AND billable), 0) AS approved "

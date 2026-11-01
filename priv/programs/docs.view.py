@@ -14,7 +14,8 @@ PARAMS = {
                          ["purchase_request", "Solicitação de compra"], ["purchase_order", "Ordem de compra"],
                          ["work_order", "Ordem de produção"], ["shipment", "Expedição"], ["transfer", "Transferência"],
                          ["entry", "Lançamento contábil"], ["project_invoice", "Fatura de projeto"],
-                         ["statement_line", "Linha do extrato"]]},
+                         ["statement_line", "Linha do extrato"], ["milestone", "Marco (medição) do projeto"],
+                         ["receipt", "Recebimento de compra"], ["supplier_invoice", "Nota do fornecedor"]]},
     "key": {"type": "str", "required": True, "label": "número", "order": 2},
 }
 STATUS = {"OPEN": "em aberto", "INVOICED": "faturado", "CANCELLED": "cancelado", "open": "em aberto", "settled": "pago",
@@ -24,7 +25,7 @@ STATUS = {"OPEN": "em aberto", "INVOICED": "faturado", "CANCELLED": "cancelado",
           "rejected": "recusada", "ordered": "comprada", "sent": "enviada", "partial": "parcial", "closed": "encerrada",
           "planned": "planejada", "released": "liberada", "in_progress": "em andamento", "completed": "concluída",
           "scheduled": "agendada", "en_route": "a caminho", "done": "concluída", "invoiced": "faturada"}
-PORTAL_KINDS = ("order", "bill", "service_order", "shipment")
+PORTAL_KINDS = ("order", "bill", "service_order", "shipment", "project_invoice", "milestone")
 FULFILLMENT = {"ok": "pode expedir", "held": "retido: aguardando estoque", "supply": "aguardando compra ou produção",
                "short": "aceito com falta"}
 
@@ -162,6 +163,12 @@ def view_bill(key):
                     "linha digitável / link": c["digitable_line"] or c["url"] or "—"} for c in charges], title="Cobranças")
     origin = common.of_text(b["document"])
     acts = []
+    # T-035-05b: the receipt or the supplier's note that made a payable bill, besides its purchase order.
+    if b["kind"] == "payable" and not ana.context.party:
+        for x in ana.sql("SELECT 'receipt' AS kind, id FROM supply.receipt WHERE bill_id = $1 "
+                         "UNION ALL SELECT 'supplier_invoice', id FROM supply.supplier_invoice WHERE bill_id = $1", b["id"]):
+            acts.append({"label": "Abrir o recebimento" if x["kind"] == "receipt" else "Abrir a nota do fornecedor",
+                         **common.link(x["kind"], x["id"]), "open": True})
     if origin:
         acts.append({"label": f"Abrir {common.KINDS[origin[0]].lower()} de origem", "program": "docs.view",
                      "params": {"kind": origin[0], "key": origin[1]}, "open": True})
@@ -273,7 +280,7 @@ def view_purchase_order(key):
     if receipts:
         ana.table([{"recebimento": r["id"], "nota": r["document"] or "—", "em": r["received_at"], "valor": money(r["total"]),
                     "título a pagar": st(r["status"]) if r["bill"] else "—",
-                    "_open": common.link("bill", r["bill"]) if r["bill"] else None} for r in receipts], title="Recebimentos")
+                    "_open": common.link("receipt", r["id"])} for r in receipts], title="Recebimentos")
     acts = pdf_actions("purchase_order", o["number"])
     if o["status"] not in ("received", "cancelled", "closed"):
         acts.insert(0, {"label": "Receber", "program": "supply.receive", "params": {"order": o["number"], "_form": "1"}, "open": True})
@@ -441,9 +448,88 @@ def view_statement_line(key):
     return {"kind": "statement_line", "id": l["id"], "status": l["status"]}
 
 
+def view_milestone(key):
+    """Spec 035 (T-035-05b): a project's milestone — what is measured and invoiced."""
+    m = ana.sql_one("SELECT m.id, m.description, m.amount, m.due_date, m.completed_on, m.status, p.code, p.name, p.customer_id, "
+                    "  c.name AS customer, i.number AS invoice, t.code AS task, t.name AS task_name FROM projects.milestone m "
+                    "JOIN projects.project p ON p.id = m.project_id LEFT JOIN base.party c ON c.id = p.customer_id "
+                    "LEFT JOIN projects.invoice i ON i.id = m.invoice_id LEFT JOIN projects.task t ON t.id = m.task_id WHERE m.id = $1",
+                    number("milestone", key))
+    if not m:
+        not_found("milestone", key)
+    guard("milestone", key, m["customer_id"])
+    ana.metrics([{"label": "Situação", "value": st(m["status"])}, {"label": "Valor", "value": money(m["amount"])},
+                 {"label": "Previsto", "value": f"{m['due_date']:%d/%m/%Y}" if m["due_date"] else "—"},
+                 {"label": "Concluído", "value": f"{m['completed_on']:%d/%m/%Y}" if m["completed_on"] else "—"}],
+                title=f"Marco {m['id']}: {m['description']} — {m['code']} {m['name']}" + (f" ({m['customer']})" if m["customer"] else ""))
+    acts = [{"label": f"Fatura {m['invoice']}", **common.link("project_invoice", m["invoice"]), "open": True}] if m["invoice"] else []
+    if not ana.context.party:
+        acts.append({"label": "Abrir o projeto", "program": "projects.workspace", "params": {"project": m["code"]}, "open": True})
+        if m["status"] == "planned":
+            acts.insert(0, {"label": "Concluir o marco", "program": "projects.complete_milestone", "params": {"id": m["id"], "_form": "1"},
+                            "open": True})
+    if acts:
+        ana.actions(acts, title="Relacionados")
+    return {"kind": "milestone", "id": m["id"], "status": m["status"], "invoice": m["invoice"]}
+
+
+def view_receipt(key):
+    """Spec 035 (T-035-05b): a purchase receipt — what arrived, its stock movements, the bill or the note it waits for."""
+    r = ana.sql_one("SELECT r.id, r.document, r.received_by, r.received_at, r.total, r.entry_id, r.bill_id, r.invoice_id, "
+                    "  o.number AS po, p.name AS supplier, w.code AS warehouse FROM supply.receipt r JOIN supply.purchase_order o ON o.id = r.order_id "
+                    "JOIN base.party p ON p.id = o.supplier_id JOIN inventory.warehouse w ON w.id = o.warehouse_id WHERE r.id = $1",
+                    number("receipt", key))
+    if not r or ana.context.party:
+        not_found("receipt", key)
+    ana.metrics([{"label": "Valor", "value": money(r["total"])}, {"label": "Recebido em", "value": f"{r['received_at']:%d/%m/%Y %H:%M}"},
+                 {"label": "Por", "value": r["received_by"]}, {"label": "Depósito", "value": r["warehouse"]},
+                 {"label": "Título", "value": "gerado" if r["bill_id"] else "aguardando a nota" if not r["invoice_id"] else "na nota"}],
+                title=f"Recebimento {r['id']} da ordem {r['po']} — {r['supplier']}" + (f" (nota {r['document']})" if r["document"] else ""))
+    lines = ana.sql("SELECT l.order_line, p.code, p.description, l.quantity, l.price, l.note FROM supply.receipt_line l "
+                    "JOIN supply.purchase_order_line ol ON ol.order_id = (SELECT order_id FROM supply.receipt WHERE id = $1) AND ol.line = l.order_line "
+                    "JOIN base.product p ON p.id = ol.product_id WHERE l.receipt_id = $1 ORDER BY l.order_line", r["id"])
+    ana.table([{"linha da ordem": l["order_line"], "item": f"{l['code']} — {l['description']}", "quantidade": compact(l["quantity"]),
+                "preço": money(l["price"]), "observação": l["note"] or ""} for l in lines], title="Itens recebidos")
+    acts = [{"label": f"Ordem de compra {r['po']}", **common.link("purchase_order", r["po"]), "open": True}]
+    if r["bill_id"]:
+        acts.append({"label": "Título a pagar", **common.link("bill", r["bill_id"]), "open": True})
+    if r["invoice_id"]:
+        acts.append({"label": "Nota do fornecedor", **common.link("supplier_invoice", r["invoice_id"]), "open": True})
+    ana.actions(acts + entry_link(r["entry_id"]), title="Relacionados")
+    return {"kind": "receipt", "id": r["id"], "po": r["po"], "bill": r["bill_id"]}
+
+
+def view_supplier_invoice(key):
+    """Spec 035 (T-035-05b): the supplier's note matched against what was received (spec 038)."""
+    i = ana.sql_one("SELECT i.id, i.number, i.amount, i.expected, i.difference, i.due_date, i.status, i.reason, i.receipts, i.bill_id, "
+                    "  i.entry_id, i.decided_by, o.number AS po, p.name AS supplier FROM supply.supplier_invoice i "
+                    "JOIN supply.purchase_order o ON o.id = i.order_id JOIN base.party p ON p.id = i.supplier_id WHERE i.id = $1",
+                    number("supplier_invoice", key))
+    if not i or ana.context.party:
+        not_found("supplier_invoice", key)
+    ana.metrics([{"label": "Situação", "value": {"pending": "pendente de decisão", "accepted": "aceita", "rejected": "recusada"}.get(i["status"], i["status"]),
+                  "status": "warn" if i["status"] == "pending" else None},
+                 {"label": "Valor da nota", "value": money(i["amount"])}, {"label": "Recebido", "value": money(i["expected"])},
+                 {"label": "Diferença", "value": money(i["difference"])}],
+                title=f"Nota {i['number']} — {i['supplier']} (ordem {i['po']})")
+    if i["reason"]:
+        ana.log(i["reason"], "warning")
+    rec = ana.sql("SELECT id, received_at, total FROM supply.receipt WHERE id = ANY($1) ORDER BY id", list(i["receipts"] or []))
+    ana.table([{"recebimento": x["id"], "em": x["received_at"], "valor": money(x["total"]), "_open": common.link("receipt", x["id"])}
+               for x in rec], title="Recebimentos confrontados")
+    acts = [{"label": f"Ordem de compra {i['po']}", **common.link("purchase_order", i["po"]), "open": True}]
+    if i["bill_id"]:
+        acts.append({"label": "Título a pagar", **common.link("bill", i["bill_id"]), "open": True})
+    if i["status"] == "pending":
+        acts.insert(0, {"label": "Decidir a nota", "program": "supply.invoices", "open": True, "style": "primary"})
+    ana.actions(acts + entry_link(i["entry_id"]), title="Relacionados")
+    return {"kind": "supplier_invoice", "id": i["id"], "status": i["status"], "bill": i["bill_id"]}
+
+
 VIEWS = {"order": view_order, "bill": view_bill, "service_order": view_service_order, "purchase_request": view_purchase_request,
          "purchase_order": view_purchase_order, "work_order": view_work_order, "shipment": view_shipment, "transfer": view_transfer,
-         "entry": view_entry, "project_invoice": view_project_invoice, "statement_line": view_statement_line}
+         "entry": view_entry, "project_invoice": view_project_invoice, "statement_line": view_statement_line,
+         "milestone": view_milestone, "receipt": view_receipt, "supplier_invoice": view_supplier_invoice}
 
 
 def main(kind, key):

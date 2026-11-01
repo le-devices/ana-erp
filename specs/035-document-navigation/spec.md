@@ -21,7 +21,9 @@ usuário precisa saber qual rotina abrir e digitar o número.
   atrapalhar os botões da linha.
 - **RF-035-02** Visualizador único de documentos (`docs.view`, comando
   `doc`): pedido de venda, título/fatura, OS, solicitação e ordem de compra,
-  ordem de produção, expedição, transferência, lançamento contábil.
+  ordem de produção, expedição, transferência, lançamento contábil; e
+  (T-035-05b) marco do projeto, fatura de projeto, recebimento de compra, nota
+  do fornecedor e linha do extrato.
 - **RF-035-03** Cada documento mostra relacionados com "abrir" e ações do
   próximo passo; a fatura oferece o PDF.
 - **RF-035-04** Portal: só documentos da própria empresa (cliente).
