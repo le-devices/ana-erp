@@ -569,6 +569,20 @@ ok(d.querySelector("#master-main .md-actions button.primary").disabled, "ficha a
 [...d.querySelectorAll("#master-main .sub-tabs button")].find((b) => b.textContent === "Histórico").click();
 await until(() => text("#master-main").includes("Sem alterações registradas") || text("#master-main").includes("Antes"), "master history", jsErrors);
 ok(true, "ficha com abas e histórico");
+// T-040-11b: the menu's master-data routines open the standard sheet (on the tab that routine writes).
+{
+  const code = (await w.AnaApi.run("master.search", { params: { entity: "product", limit: 1 } })).result.rows[0].key;
+  await go(w, `#/ops/base/base.save_product?code=${encodeURIComponent(code)}`);
+  await until(() => w.location.hash.startsWith(`#/master/product/${encodeURIComponent(code)}`) && d.querySelector("#master-main .sub-tabs"), "routine → sheet", jsErrors);
+  ok(true, "rotina de cadastro do menu abre a ficha padrão do registro");
+  await go(w, `#/ops/supply/supply.save_supplier_item?product=${encodeURIComponent(code)}`);
+  await until(() => w.location.hash.includes("aba=Fornecimento") && [...d.querySelectorAll("#master-main .sub-tabs button.active")].some((b) => b.textContent === "Fornecimento"),
+              "routine → sheet tab", jsErrors);
+  ok(true, "rotina de uma aba abre a ficha já nessa aba");
+  await go(w, "#/ops/base/base.save_product?_rotina=1");
+  await until(() => d.querySelector("#ops-main form [name=code]"), "classic routine form", jsErrors);
+  ok(w.location.hash.startsWith("#/ops/"), "com _rotina=1 a rotina mantém o próprio formulário");
+}
 await go(w, "#/master/product/novo");
 await until(() => text("#master-main").includes("Novo: item"), "master new", jsErrors);
 d.querySelector("#master-main .md-actions button.primary").click();

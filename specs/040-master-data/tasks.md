@@ -10,4 +10,4 @@
 - [x] T-040-08 Painel de qualidade e verificação periódica (RF-040-10)
 - [x] T-040-09 Cadastros atuais pelo serviço padrão, compatíveis (RF-040-11, CA-040-08)
 - [ ] T-040-10b Importação em lote acima de ~20 mil linhas por minuto: hoje cada linha passa pelo programa de gravação da entidade (~18 ms/linha; 1.000 linhas em 18 s), longe da meta de 100 mil em 60 s (RNF-040-03)
-- [ ] T-040-11b Rotinas antigas de cadastro no menu Operação passam a abrir a ficha padrão
+- [x] T-040-11b Rotinas antigas de cadastro no menu Operação passam a abrir a ficha padrão — o mapa vem de `master.describe` (`routes`): rotina da entidade abre a ficha (ou "novo"), rotina de aba abre a ficha nessa aba (`?aba=`); `?_rotina=1` mantém o formulário; os programas seguem para a API

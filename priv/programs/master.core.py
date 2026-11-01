@@ -119,6 +119,23 @@ def describe(name=None):
     return out
 
 
+def routes():
+    """T-040-11b: the routines that write master data → the standard sheet that replaces their form on screen:
+    [{program, entity, tab, key_param}] — tab None for the entity's own writer; key_param = the routine's parameter
+    that names the record (the entity's key, or the parent of a tab)."""
+    out = []
+    for n in E.ENTITIES:
+        d = entity(n)
+        if not can(d, "view"):
+            continue
+        if d.get("writer"):
+            out.append({"program": d["writer"], "entity": n, "tab": None, "key_param": d.get("writer_key") or d["key"]})
+        for t in d["tabs"]:
+            if t.get("writer") and t.get("parent_param"):
+                out.append({"program": t["writer"], "entity": n, "tab": t["label"], "key_param": t["parent_param"]})
+    return out
+
+
 # ---------------------------------------------------------------- values
 def _decimal(v):
     if isinstance(v, (int, float, Decimal)) and not isinstance(v, bool):

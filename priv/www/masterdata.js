@@ -375,6 +375,11 @@
       strip.append(b);
       panes.append(t.node);
     });
+    // T-040-11b: "#/master/product/X?aba=Fornecimento" opens the sheet on that tab (routines of the menu land here).
+    if (query && query.aba) {
+      const i = tabs.findIndex((t) => t.label === query.aba);
+      if (i > 0) strip.children[i].click();
+    }
 
     const save = el("button", { type: "button", class: "primary", text: existing ? "Salvar (Ctrl+S)" : "Criar (Ctrl+S)", disabled: existing });
     const discard = el("button", { type: "button", class: "quiet", text: "Descartar", disabled: true,

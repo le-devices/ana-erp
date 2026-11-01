@@ -100,6 +100,16 @@ Achados pela bateria durante a fase 2 (corrigidos):
 - **E-03 Execução longa perdia a resposta.** O servidor HTTP fechava a conexão após 60 s sem tráfego, embora um
   programa possa rodar até o teto de execução (10 min). O tempo ocioso agora acompanha o teto (+30 s), e o ingress
   do Kubernetes no pacote de produção espera 630 s.
+- **E-04 Totais calculados sobre listas cortadas.** O relatório de crédito lia no máximo 500 clientes e tirava
+  dessa amostra a contagem de bloqueados e o total em atraso (com mais de 500 clientes com pendência, os números
+  ficavam errados e um bloqueado podia faltar na lista). Corrigido (31/10/2026): os números vêm do conjunto inteiro
+  e só a tabela mostra os 500 primeiros, dizendo quantos há. **A verificar** (mesmo padrão, achado por varredura):
+  relatório de SLA do serviço em campo, "Pedidos com falta", "Minhas faturas", simulação das regras do extrato,
+  clientes por distância, inventário e quarentena — conferir quais mostram totais e corrigir os que mostram.
+- **E-05 Nó que não subia no cluster.** Dois nós iniciando juntos alteravam os mesmos papéis do banco ao mesmo
+  tempo ("tuple concurrently updated") e o perdedor encerrava a aplicação — a falha intermitente da suíte de cluster.
+  Corrigido (31/10/2026): a configuração de papéis e a sincronização do papel restrito rodam sob uma trava
+  consultiva de inicialização, um nó por vez (as migrações já tinham a sua).
 - **E-02 Avisos repetidos.** Um achado que vai e volta criava o mesmo aviso a cada volta; os 100 mais recentes
   escondiam um aviso crítico antigo (senha de fábrica). Agora não se cria aviso igual a um não lido, a lista
   mostra cada mensagem uma vez e marcar como lido vale para as cópias.

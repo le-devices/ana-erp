@@ -10,4 +10,4 @@ PARAMS = {"entity": {"type": "str", "label": "cadastro (vazio = todos)"}}
 
 
 def main(entity=None):
-    return {"groups": entities.GROUPS, "entities": core.describe(entity or None)}
+    return {"groups": entities.GROUPS, "entities": core.describe(entity or None), "routes": core.routes()}

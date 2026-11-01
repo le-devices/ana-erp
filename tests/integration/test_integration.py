@@ -6169,6 +6169,20 @@ class TestMoreDocuments(Base):
             self.ok("supply.settings", supplier_invoice=policy)
 
 
+class TestMenuToSheets(Base):
+    """T-040-11b: the routines that write master data are mapped to the standard sheet (and tab)."""
+
+    def test_t_040_11b_routes(self):
+        s, c, _ = self.run_program("master.describe", {})
+        routes = {r["program"]: r for r in c["result"]["routes"]}
+        self.assertEqual((routes["base.save_product"]["entity"], routes["base.save_product"]["tab"], routes["base.save_product"]["key_param"]),
+                         ("product", None, "code"))
+        self.assertEqual((routes["base.save_party"]["entity"], routes["base.save_party"]["key_param"]), ("party", "id"))
+        self.assertEqual((routes["supply.save_supplier_item"]["entity"], routes["supply.save_supplier_item"]["tab"],
+                          routes["supply.save_supplier_item"]["key_param"]), ("product", "Fornecimento", "product"))
+        self.assertEqual(routes["finance.save_credit_profile"]["tab"], "Crédito")
+
+
 class TestRunErrors(Base):
     """Running what cannot run says why (a library, an inactive program, a missing one)."""
 
