@@ -6183,6 +6183,38 @@ class TestMenuToSheets(Base):
         self.assertEqual(routes["finance.save_credit_profile"]["tab"], "Crédito")
 
 
+class TestTotalsOverWholeSets(Base):
+    """Spec 042 (E-04): panel numbers come from the whole set, never from the first N rows a table shows."""
+
+    def result(self, program, **params):
+        s, c, _ = self.run_program(program, params)
+        self.assertEqual(s, 200, c)
+        self.assertNotIn("error", c, c.get("error"))
+        return c["result"]
+
+    def test_e_04_totals_match_independent_counts(self):
+        start, end = "2020-01-01", datetime.date.today().isoformat()
+        r = self.result("field.sla_report", start=start, end=end)
+        self.assertEqual(r["orders"], int(self.scalar("SELECT count(*) FROM field.service_order WHERE opened_at >= '2020-01-01' "
+                                                      "AND status <> 'cancelled'")))
+        r = self.result("sales.shortages")
+        self.assertEqual(r["orders"], int(self.scalar("SELECT count(*) FROM sales.sales_order WHERE status = 'OPEN' AND fulfillment <> 'ok'")))
+        wh = self.scalar("SELECT code FROM inventory.warehouse WHERE latitude IS NOT NULL AND active ORDER BY id LIMIT 1")
+        if not wh:                                                            # the distance needs an origin with coordinates
+            wh = f"GEO{SUFFIX}"[-12:]
+            self.result("inventory.save_warehouse", code=wh, description="Depósito com coordenadas", latitude="-23.55", longitude="-46.63")
+        r = self.result("base.customers_by_distance", origin=wh)
+        self.assertEqual(r["customers"], int(self.scalar("SELECT count(*) FROM base.party WHERE active AND kind IN ('customer', 'both') "
+                                                         "AND latitude IS NOT NULL")))
+        r = self.result("inventory.count", warehouse="CENTRAL")
+        expected = int(self.scalar("SELECT count(*) FROM (SELECT product_id FROM inventory.stock_movement m JOIN inventory.warehouse w "
+                                   "ON w.id = m.warehouse_id WHERE w.code = 'CENTRAL' GROUP BY product_id HAVING sum(quantity) <> 0) x"))
+        self.assertEqual(r["items"], min(expected, 30000))                    # the counting sheet leaves no item out
+        r = self.result("finance.statement_rules", pattern="lote", simulate=True)
+        self.assertEqual(r["lines"], int(self.scalar("SELECT count(*) FROM finance.bank_statement_line WHERE status = 'open' "
+                                                     "AND strpos(lower(COALESCE(description, '') || ' ' || COALESCE(document, '')), 'lote') > 0")))
+
+
 class TestRunErrors(Base):
     """Running what cannot run says why (a library, an inactive program, a missing one)."""
 

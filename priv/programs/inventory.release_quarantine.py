@@ -54,5 +54,7 @@ def pending(q_wh):
                  "note": {"type": "str", "label": "laudo"}}},
         {"label": "Descartar", "program": me, "params": {"product": r["code"], "quantity": str(r["q"]), "decision": "scrap"},
          "ask": {"note": {"type": "str", "label": "motivo", "required": True}}}]} for r in rows],
-        title="Em quarentena")
-    return {"items": len(rows)}
+        title="Em quarentena" + (f" (os 500 primeiros de {n})" if (n := ana.sql_value(
+            "SELECT count(*) FROM (SELECT 1 FROM inventory.stock_movement WHERE warehouse_id = $1 GROUP BY product_id "
+            "HAVING sum(quantity) > 0) x", q_wh["id"])) > len(rows) else ""))
+    return {"items": n}
