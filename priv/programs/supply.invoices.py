@@ -4,6 +4,7 @@
 """Spec 038 (RF-038-10, CA-038-12). Accepting posts the difference as purchase price variance; refusing frees
 the receipts for a corrected invoice. The person who registered the invoice does not decide it."""
 
+from ana_lib.docs.common import link as doc_link
 from ana_lib.supply import invoicing as reg
 
 PARAMS = {"id": {"type": "int", "label": "nota"},
@@ -31,7 +32,7 @@ def main(id=None, decision=None, reason=None):
                    "JOIN supply.purchase_order o ON o.id = i.order_id WHERE i.status = 'pending' ORDER BY i.id")
     me = "supply.invoices"
     ana.table([{"nota": r["number"], "fornecedor": r["supplier"], "ordem": r["order_number"], "valor": r["amount"], "recebido": r["expected"],
-                "diferença": r["difference"], "registrada por": r["created_by"],
+                "diferença": r["difference"], "registrada por": r["created_by"], "_open": doc_link("supplier_invoice", r["id"]),
                 "_actions": [{"label": "Aceitar", "program": me, "params": {"id": r["id"], "decision": "accept"}, "style": "primary",
                               "confirm": f"Aceitar a nota com diferença de R$ {r['difference']} (variação de preço de compras)?"},
                              {"label": "Recusar", "program": me, "params": {"id": r["id"], "decision": "reject"},

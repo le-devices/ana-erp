@@ -6104,6 +6104,71 @@ class TestTrailSmallFixes(Base):
         self.assertIn("está em proposta", e["message"])                                     # never "está proposal"
 
 
+class TestMoreDocuments(Base):
+    """Project milestones and invoices, purchase receipts and supplier notes in the document viewer (T-035-05b)."""
+
+    def ok(self, program, token=None, **params):
+        s, c, _ = self.run_program(program, params, token=token)
+        self.assertEqual(s, 200, c)
+        self.assertNotIn("error", c, c.get("error"))
+        return c
+
+    def actions(self, c):
+        return [i for e in c["events"] if e.get("kind") == "actions" for i in e["data"]["items"]]
+
+    def test_t_035_05b_project_milestone_and_invoice(self):
+        customer = self.client.call("base.save_party", name=f"Cliente Marco {SUFFIX}", state="SP")["id"]
+        code = f"MD{SUFFIX}"[-12:]
+        self.ok("projects.save_project", code=code, name="Projeto marcos", customer=customer, billing="fixed", manager="admin",
+                status="active")
+        mid = self.ok("projects.save_milestone", project=code, description="Entrega do protótipo", amount="1500")["result"]["id"]
+        c = self.ok("docs.view", kind="milestone", key=str(mid))
+        self.assertEqual((c["result"]["status"], c["result"]["invoice"]), ("planned", None))
+        self.assertIn("Concluir o marco", [a["label"] for a in self.actions(c)])
+        self.ok("projects.complete_milestone", id=mid)
+        inv = self.ok("projects.invoice_project", project=code)["result"]
+        c = self.ok("docs.view", kind="milestone", key=str(mid))
+        self.assertEqual((c["result"]["status"], c["result"]["invoice"]), ("invoiced", inv["number"]))
+        self.assertIn({"kind": "project_invoice", "key": str(inv["number"])}, [a.get("params") for a in self.actions(c)])
+        # The project's billing tab lists its invoices and milestones, each one opening.
+        s, w, _ = self.run_program("projects.workspace", {"project": code, "view": "billing"})
+        opens = [o["params"] for e in w["events"] if e.get("kind") == "table" and e["data"].get("row_open") for o in e["data"]["row_open"] if o]
+        self.assertIn({"kind": "milestone", "key": str(mid)}, opens)
+        self.assertIn({"kind": "project_invoice", "key": str(inv["number"])}, opens)
+
+    def test_t_035_05b_receipt_and_supplier_note(self):
+        c = self.client
+        sup = c.call("base.save_party", name=f"Fornecedor Doc {SUFFIX}", kind="supplier", state="SP")["id"]
+        item = f"DOC{SUFFIX}"
+        c.call("base.save_product", code=item, description="Item documentos", price="9")
+        self.ok("supply.save_supplier_item", product=item, supplier=sup, price="4", preferred=True)
+        approver, tok = new_user("admin")
+        policy = self.scalar("SELECT supplier_invoice FROM supply.policy")
+        self.ok("supply.settings", supplier_invoice="match")                    # the bill comes with the supplier's note
+        try:
+            req = self.ok("supply.request_purchase", reason="documentos", product=item, quantity=5)["result"]["number"]
+            self.ok("supply.approve_request", token=tok, request=req)
+            po = self.ok("supply.create_orders", requests=[req])["result"]["orders"][0]
+            rec = self.ok("supply.receive", order=po)["result"]["receipt"]
+            v = self.ok("docs.view", kind="receipt", key=str(rec))
+            self.assertEqual((v["result"]["po"], v["result"]["bill"]), (po, None))
+            items = [e["data"] for e in v["events"] if e.get("kind") == "table" and e["data"]["title"] == "Itens recebidos"][0]
+            self.assertEqual(len(items["rows"]), 1)
+            note = self.ok("supply.register_invoice", order=po, number=f"NF{SUFFIX}", amount="20.00")["result"]
+            n = self.ok("docs.view", kind="supplier_invoice", key=str(note["invoice"]))
+            self.assertEqual((n["result"]["status"], n["result"]["bill"]), ("accepted", note["bill"]))
+            confronted = [e["data"] for e in n["events"] if e.get("kind") == "table" and e["data"]["title"] == "Recebimentos confrontados"][0]
+            self.assertEqual([o["params"] for o in confronted["row_open"]], [{"kind": "receipt", "key": str(rec)}])
+            # The payable bill leads back to the note; the purchase order lists the receipt.
+            b = self.ok("docs.view", kind="bill", key=str(note["bill"]))
+            self.assertIn({"kind": "supplier_invoice", "key": str(note["invoice"])}, [a.get("params") for a in self.actions(b)])
+            o = self.ok("docs.view", kind="purchase_order", key=str(po))
+            recs = [e["data"] for e in o["events"] if e.get("kind") == "table" and e["data"]["title"] == "Recebimentos"][0]
+            self.assertEqual(recs["row_open"][0]["params"], {"kind": "receipt", "key": str(rec)})
+        finally:
+            self.ok("supply.settings", supplier_invoice=policy)
+
+
 class TestRunErrors(Base):
     """Running what cannot run says why (a library, an inactive program, a missing one)."""
 

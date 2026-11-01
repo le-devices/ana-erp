@@ -7,7 +7,8 @@ import re
 
 KINDS = {"order": "Pedido de venda", "bill": "Título", "service_order": "Ordem de serviço", "purchase_request": "Solicitação de compra",
          "purchase_order": "Ordem de compra", "work_order": "Ordem de produção", "shipment": "Expedição", "transfer": "Transferência",
-         "entry": "Lançamento contábil", "project_invoice": "Fatura de projeto", "statement_line": "Linha do extrato"}
+         "entry": "Lançamento contábil", "project_invoice": "Fatura de projeto", "statement_line": "Linha do extrato",
+         "milestone": "Marco do projeto", "receipt": "Recebimento de compra", "supplier_invoice": "Nota do fornecedor"}
 # Document texts as the processes write them (installments "/n", residuals "/R", cancellations "-CANC", reversals
 # "-REV", notes and returns that name the purchase order) → the document they come from (spec 042, M-02).
 _TEXT = [(re.compile(r"^ORD-(\d+)(?:/\d+)?(?:/R)*(?:-CANC)?$"), "order"), (re.compile(r"^OS-(\d+)(?:/\d+)?(?:/R)*(?:-CANC)?$"), "service_order"),
