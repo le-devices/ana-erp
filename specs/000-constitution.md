@@ -120,6 +120,10 @@ custa menos ao disco:
 - o PostgreSQL comprime o WAL e espaça checkpoints; logs têm rotação.
 Segurança dos dados vem antes: `fsync` e `full_page_writes` nunca são
 desligados.
+O que o ERP escreve é **medido e tem orçamento** (spec 063): bytes de WAL e
+de arquivo por operação de negócio e com o sistema ocioso, verificados na
+bateria de testes — passar do orçamento falha a bateria, como uma regressão
+de desempenho. Vale para tudo o que já existe e para tudo o que vier.
 
 ## P16. Atualizar sem parar
 O ERP é atualizado com os clientes trabalhando: vários nós atrás de um
@@ -180,3 +184,26 @@ que gera automaticamente (P17), **o que a pessoa deixa de fazer**:
   pessoa só vê o que falhou de vez, com o motivo e o botão de reprocessar;
 - toda automação tem dono (P14), fica na auditoria e pode ser ensaiada antes
   de ligar.
+
+## P20. Erlang ao máximo, sem pagar em desempenho nem em robustez
+O núcleo usa o que a plataforma Erlang/OTP faz melhor que as outras —
+processos leves e isolados, supervisão, troca de mensagens, distribuição,
+troca de código em funcionamento, temporizadores e introspecção em
+produção — sempre que isso deixa o ERP mais rápido, mais robusto ou mais
+vivo para quem usa, e **nunca** quando piora algum dos dois primeiros:
+- **isolamento como regra**: uma parte lenta ou defeituosa (um conector, um
+  cliente da API, uma regra, uma tela) nunca segura as outras — cada uma tem
+  seu processo, seu limite e seu supervisor;
+- **eventos em vez de consulta repetida**: o que acontece é avisado por
+  mensagem (no nó, entre nós e até o navegador), sem ficar perguntando ao
+  banco ou ao servidor de tempos em tempos;
+- **supervisão com intenção**: árvores por subsistema, estratégia e limites
+  de reinício escolhidos para que a falha de um não reinicie os vizinhos;
+- **o banco continua sendo a fonte da verdade** (P4): processos e memória
+  guardam estado de trabalho e cache, nunca o único registro de um fato de
+  negócio;
+- **medir antes e depois**: toda mudança deste tipo traz a medição de
+  referência e a comparação (latência p95, vazão, memória, CPU), e a
+  bateria inteira — inclusive caos e alta disponibilidade — continua verde.
+Vale também para o que já está implementado: a spec 062 revisa cada
+subsistema existente com esse critério.

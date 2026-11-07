@@ -6,8 +6,10 @@ Você trabalha no projeto ANA ERP em /home/andre/ana-erp: um ERP com núcleo Erl
 - Todo o código em inglês (identificadores, SQL, JSON, rotas, códigos de erro, comentários). Textos de tela e mensagens ao usuário em português. Em Erlang, todo literal binário com acento leva `/utf8` (`<<"ação"/utf8>>`) e textos formatados usam `unicode:characters_to_binary(io_lib:format(...))`.
 - Prioridades: segurança, robustez e performance (constituição P10–P12); operação 24/7 sem que falhas derrubem o sistema; produto licenciável para vários clientes (P13): nada específico de cliente fixo no código.
 - Toda execução tem dono (constituição P14): qualquer programa, tarefa interna, parte paralela ou chamada nova roda em nome de um usuário ativo (pessoa ou robô); o que o ERP dispara sozinho usa o robô `system` via `ana_task:run/4` ou `ana_task:system_user()`.
+- Vida útil do disco (P15, specs 025 e 063): toda funcionalidade nova ou alterada respeita o orçamento de escrita (bytes de WAL por operação e com o sistema ocioso, testados na bateria quando a T-063-01 existir); ocioso não escreve; nada é regravado se não mudou.
 - Rastreabilidade (spec 024) e disco (P15, spec 025): toda ação nova deve aparecer na auditoria/trilha e respeitar a retenção; não grave o que não mudou, prefira lotes e tabelas particionadas para dados de alto volume.
 - Migrações novas em `priv/migrations/NNN_*.sql` (próximo número livre); nunca edite migrações já existentes. Programas-semente em `priv/programs/<namespace>.<name>.py` com cabeçalho `# ana:description`, `# ana:exposed`, `# ana:command`, `# ana:kind`, `# ana:role`. Alterar uma semente existente não muda o programa instalado: a mudança vira "atualização do produto" (spec 028) — aceite-a pela API `POST /api/admin/product-updates/<nome>/accept` (ou `accept-unmodified`) no ambiente de teste antes de rodar as suítes.
+- Erlang ao máximo (constituição P20, spec 062): processos isolados, supervisão por subsistema, eventos em vez de consulta repetida e telas ao vivo onde isso deixar o ERP mais rápido, robusto ou vivo — nunca à custa de desempenho ou robustez; toda mudança assim traz medição antes e depois.
 - Experiência premium e automação por padrão (constituição P18 e P19, specs 050 e 051) valem para **toda** tarefa: cada tela nova ou alterada passa no verificador da spec 050 (quando existir), tem próximo passo, estado vazio com ação, erro com orientação, atalhos, ensaio para o que grava e valores padrão pelo contexto; cada spec declara o que a pessoa deixa de fazer (o que vira automático, política ou sugestão).
 - Interface (priv/www) segue a spec 020: fluxo de trabalho coerente e fluido (cada tela leva ao próximo passo do processo), coisas relacionadas juntas; operador em Operação, desenvolvedor em Desenvolvimento (tudo de um programa em abas do programa), administrador em Administração (grupos Pessoas e acesso / Sistema / Operação do sistema). Sem dependências externas; conteúdo dinâmico só via `textContent`.
 
@@ -44,30 +46,36 @@ Tarefas adiadas já concluídas (ordem acordada em out/2026): T-017-05b ✓, T-0
 1. ✓ 043 — cadastro fiscal de pessoas (falta T-043-02b, dígito da IE por UF, no fim da fila)
 2. ✓ 044 — e-mail de saída por SMTP
 3. ✓ T-037-06b — envio do link do documento por e-mail
-4. T-033-09b — base OSV por conector e aviso por e-mail (em andamento)
+4. ✓ T-033-09b — base OSV por conector e aviso por e-mail
 5. 050 fase 1 — padrão de experiência que se verifica sozinho (T-050-01..04): tudo o que vier depois já nasce premium (`specs/050-premium-experience`)
-6. 049 fase 1 — motor de impostos: motor, vigência, fórmulas, casos de teste, ISS e retenções (T-049-01..07) — antecipada: reforma tributária (`specs/049-tax-engine`)
-7. 049 fase 3 — CBS, IBS e Imposto Seletivo na transição (T-049-09) — 2027 já tem CBS cheia
-8. 056 — ensaio universal: toda rotina que grava pode ser ensaiada (`specs/056-universal-rehearsal`)
-9. 045 — variantes de execução (`specs/045-execution-variants`)
-10. 050 fase 2 — paleta de comandos, desfazer, valores padrão por contexto, câmera (T-050-05..08)
-11. 048 — painel inicial (`specs/048-home-panel`)
-12. 052 — assistente que executa com segurança (`specs/052-safe-assistant`)
-13. 051 — automação por padrão (`specs/051-automation-by-default`)
-14. 050 fase 3 — auditoria de experiência de todas as áreas (T-050-09..16), junto com a auditoria de automação (T-051-06)
-15. 049 fase 2 — ICMS (ST, DIFAL, FCP), IPI, PIS/COFINS, Simples (T-049-08)
-16. 061 — implantação guiada (`specs/061-guided-onboarding`)
-17. 053 — regressão automática dos processos do cliente (`specs/053-customer-regression`)
-18. 055 — fechamento contínuo (`specs/055-continuous-close`)
-19. 046 — diagnósticos de programas (`specs/046-diagnostics`)
-20. 047 — acesso emergencial e depuração em produção (`specs/047-emergency-access-debug`)
-21. 057 — central de suporte (T-057-01..03) (`specs/057-support-center`)
-22. 054 — chão de fábrica, bancada e rastreabilidade por número de série (`specs/054-shop-floor-traceability`)
-23. 060 — aplicativo no celular (`specs/060-mobile-app`)
-24. 059 — NFS-e e NF-e (depende de certificado digital e ambiente de homologação: perguntar ao dono antes) (`specs/059-electronic-invoices`)
-25. T-040-10b — importação em lote rápida de cadastros
-26. T-039-16b — editor BPM: arrastar da paleta, alinhar e distribuir
-27. Por último, as que dependem de infraestrutura ou decisão: filiais sem internet (058), painel do parceiro (T-057-04b), MQTT (T-054-07b), S3 (T-016-02b, T-036-07b), antivírus (T-016-04b), registro de imagem (T-036-08b), OpenTelemetry (T-019-09b), mTLS (T-017-02c), SFTP/pasta/e-mail de entrada (T-017-02b), pacotes de conectores (T-017-08b), transporte (T-034-07b..09b), API (T-010-10b..14b; a 14b exige decisão), geocodificador simulado (T-032-06b), dígito verificador da inscrição estadual por UF (T-043-02b).
+6. 062 fases 1 e 2 — Erlang ao máximo: supervisão por subsistema, eventos no lugar de ciclos, telas ao vivo, isolamento por conector, tela "Núcleo" — sempre medido, sem regressão (`specs/062-erlang-at-its-best`)
+7. 063 fase 1 — vida útil do disco: medir a escrita, orçamento testado na bateria, painel "Disco" com projeção de desgaste, alertas (`specs/063-disk-endurance`)
+8. 049 fase 1 — motor de impostos: motor, vigência, fórmulas, casos de teste, ISS e retenções (T-049-01..07) — antecipada: reforma tributária (`specs/049-tax-engine`)
+9. 049 fase 3 — CBS, IBS e Imposto Seletivo na transição (T-049-09) — 2027 já tem CBS cheia
+10. 064 fase 1 — portão de qualidade dos programas: inspeção no editor, regras e isenções, portão assinado no transporte para a produção (`specs/064-program-quality-gate`)
+11. 056 — ensaio universal: toda rotina que grava pode ser ensaiada (`specs/056-universal-rehearsal`)
+12. 045 — variantes de execução (`specs/045-execution-variants`)
+13. 050 fase 2 — paleta de comandos, desfazer, valores padrão por contexto, câmera (T-050-05..08)
+14. 048 — painel inicial (`specs/048-home-panel`)
+15. 052 — assistente que executa com segurança (`specs/052-safe-assistant`)
+16. 064 fase 2 — testes dos programas e cobertura, desempenho comparado com a versão anterior, falhas ligadas à versão, tela "Qualidade" com o assistente (T-064-06..09)
+17. 051 — automação por padrão (`specs/051-automation-by-default`)
+18. 050 fase 3 — auditoria de experiência de todas as áreas (T-050-09..16), junto com a auditoria de automação (T-051-06)
+19. 062 fase 3 — revisão de todos os subsistemas já implementados com o critério P20 (T-062-10..13)
+20. 063 fase 2 — revisão de escrita desnecessária em todas as funcionalidades já implementadas (T-063-06..08)
+21. 049 fase 2 — ICMS (ST, DIFAL, FCP), IPI, PIS/COFINS, Simples (T-049-08)
+22. 061 — implantação guiada (`specs/061-guided-onboarding`)
+23. 053 — regressão automática dos processos do cliente (`specs/053-customer-regression`)
+24. 055 — fechamento contínuo (`specs/055-continuous-close`)
+25. 046 — diagnósticos de programas (`specs/046-diagnostics`)
+26. 047 — acesso emergencial e depuração em produção (`specs/047-emergency-access-debug`)
+27. 057 — central de suporte (T-057-01..03) (`specs/057-support-center`)
+28. 054 — chão de fábrica, bancada e rastreabilidade por número de série (`specs/054-shop-floor-traceability`)
+29. 060 — aplicativo no celular (`specs/060-mobile-app`)
+30. 059 — NFS-e e NF-e (depende de certificado digital e ambiente de homologação: perguntar ao dono antes) (`specs/059-electronic-invoices`)
+31. T-040-10b — importação em lote rápida de cadastros
+32. T-039-16b — editor BPM: arrastar da paleta, alinhar e distribuir
+33. Por último, as que dependem de infraestrutura ou decisão: filiais sem internet (058), painel do parceiro (T-057-04b), MQTT (T-054-07b), S3 (T-016-02b, T-036-07b), antivírus (T-016-04b), registro de imagem (T-036-08b), OpenTelemetry (T-019-09b), mTLS (T-017-02c), SFTP/pasta/e-mail de entrada (T-017-02b), pacotes de conectores (T-017-08b), transporte (T-034-07b..09b), API (T-010-10b..14b; a 14b exige decisão), geocodificador simulado (T-032-06b), dígito verificador da inscrição estadual por UF (T-043-02b).
 
 Fora da fila atual acima, escolha o **primeiro item da lista cuja `tasks.md` ainda tenha tarefas `[ ]`** (exceções: a T-023-09 é o item 5; as T-019-08b, T-019-09b, T-017-02b, T-017-02c, T-017-08b, T-016-02b, T-016-04b, T-033-09b, T-034-07b, T-034-08b, T-034-09b, T-032-06b, T-035-05b, T-036-07b, T-036-08b, T-037-06b, T-010-06b, T-010-10b, T-010-11b, T-010-12b, T-010-14b, T-040-10b, T-040-11b, T-039-16b e T-039-17b ficam para depois de todos os outros itens). Se tudo estiver `[x]`, apenas rode as suítes e relate.
 19. 041 — atendimento do pedido de venda conforme a política da empresa (`specs/041-sales-fulfillment-policy`) — implementada (T-041-01..08).
