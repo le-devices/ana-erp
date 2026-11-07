@@ -7192,6 +7192,7 @@ class TestOutboundEmail(Base):
         os.chmod(os.path.join(cls.dir, "data"), 0o777)
         import shutil
         shutil.copy(os.path.join(REPO, "tests", "integration", "smtp_sink.py"), cls.dir)
+        shutil.copy(os.path.join(REPO, "tests", "integration", "osv_stub.py"), cls.dir)
         with open(os.path.join(cls.dir, "ca.pem")) as f:
             cls.ca = f.read()
         subprocess.run(["docker", "rm", "-f", cls.SINK], capture_output=True)
@@ -7408,3 +7409,64 @@ class TestOutboundEmail(Base):
         self.assertIn("result", link(kind="statement", key=str(nomail), send=True, to=f"{other}; {to}"))
         self.assertEqual(len(self.wait_mail(other)), 1)
         self.assertEqual(link(kind="statement", key=str(nomail), send=True)["error"]["code"], "NO_RECIPIENT")
+
+    # ------------------------------------------------------------ T-033-09b
+    def osv_files(self, feed_id, query_id):
+        adv = lambda i: {"id": i, "summary": "aviso de teste", "modified": "2026-11-01T00:00:00Z",
+                         "database_specific": {"severity": "CRITICAL"},
+                         "affected": [{"package": {"ecosystem": "Hex", "name": "cowboy"},
+                                       "ranges": [{"type": "SEMVER", "events": [{"introduced": "0"}, {"fixed": "99.0.0"}]}]}]}
+        for name, content in (("osv_feed.json", json.dumps([adv(feed_id)])), ("osv_vuln.json", json.dumps(adv(query_id))),
+                              ("osv_query_id.txt", query_id)):
+            with open(os.path.join(self.dir, name), "w") as f:
+                f.write(content)
+            os.chmod(os.path.join(self.dir, name), 0o644)
+
+    def test_t_033_09b_vulnerability_base_by_connector_and_notice_by_email(self):
+        import subprocess
+        feed_id, query_id = f"ANA-TEST-{SUFFIX}-F", f"ANA-TEST-{SUFFIX}-Q"
+        self.osv_files(feed_id, query_id)
+        subprocess.run(["docker", "exec", "-d", self.SINK, "python", "-u", "/w/osv_stub.py", "8000"], check=True)
+        time.sleep(1)
+        s, r, _ = http("POST", "/api/admin/checks/feed/refresh", {}, self.token)
+        self.assertEqual(s, 400, r)                                       # off until a connector is turned on (P13)
+        mail = f"t{SUFFIX}_smtpchk"
+        self.assertEqual(self.connector(mail)[0], 200)
+        to = f"seguranca.{SUFFIX}@exemplo.test"
+        s, c, _ = http("PUT", "/api/admin/checks/config", {"notify_connector": mail, "notify_recipients": []}, self.token)
+        self.assertEqual(s, 400, c)                                       # e-mail needs recipients
+        s, c, _ = http("PUT", "/api/admin/checks/config", {"notify_connector": mail, "notify_recipients": [to],
+                                                           "notify_min_severity": "critical"}, self.token)
+        self.assertEqual(s, 200, c)
+        feed = f"t{SUFFIX}_osv"
+        body = lambda mode: {"kind": "http_api", "base_url": "http://smtp-sink:8000",
+                             "options": {"purpose": "osv_feed", "mode": mode, "path": "/feed.json"}}
+        try:
+            self.assertEqual(http("PUT", f"/api/admin/connectors/{feed}", body("feed"), self.token)[0], 200)
+            s, r, _ = http("POST", "/api/admin/checks/feed/refresh", {}, self.token)
+            self.assertEqual(s, 200, r)
+            self.assertTrue(r["feed_ok"], r)
+            self.assertEqual(psql(f"SELECT count(*) FROM ana_system.vulnerability WHERE osv_id = '{feed_id}'"), "1")
+            s, c, _ = http("GET", "/api/admin/checks?category=dependencies&status=open", token=self.token)
+            self.assertTrue(any(feed_id in f["target"] for f in c["findings"]))
+            m = self.wait_mail(to)                                        # the new critical finding, by e-mail
+            self.assertEqual(len(m), 1)
+            self.assertIn("Verificações", self.parsed(m[0])["Subject"])
+            self.assertIn(feed_id, self.parsed(m[0]).get_body(preferencelist=("plain",)).get_content())
+            # The osv.dev way: the inventory asks, each advisory is fetched.
+            self.assertEqual(http("PUT", f"/api/admin/connectors/{feed}", body("query"), self.token)[0], 200)
+            s, r, _ = http("POST", "/api/admin/checks/feed/refresh", {}, self.token)
+            self.assertEqual(s, 200, r)
+            self.assertEqual(psql(f"SELECT count(*) FROM ana_system.vulnerability WHERE osv_id = '{query_id}'"), "1")
+            # A broken service is a finding, not silence.
+            self.assertEqual(http("PUT", f"/api/admin/connectors/{feed}", {**body("feed"), "base_url": "http://smtp-sink:8001"},
+                                  self.token)[0], 200)
+            s, r, _ = http("POST", "/api/admin/checks/feed/refresh", {}, self.token)
+            self.assertEqual(s, 400, r)
+            s, c, _ = http("GET", "/api/admin/checks?category=dependencies&status=open", token=self.token)
+            self.assertTrue(any(f["rule"] == "vulnerability_feed_failed" for f in c["findings"]))
+        finally:
+            http("PUT", f"/api/admin/connectors/{feed}", {**body("feed"), "active": False}, self.token)
+            http("PUT", "/api/admin/checks/config", {"notify_connector": None, "notify_recipients": []}, self.token)
+            psql(f"DELETE FROM ana_system.vulnerability WHERE osv_id IN ('{feed_id}', '{query_id}')")
+            http("POST", "/api/admin/checks/run", {"category": "dependencies"}, self.token)    # resolves the test findings

@@ -10,7 +10,7 @@
 -behaviour(gen_server).
 
 -export([start_link/0, run/2, summary/0, import_vulnerabilities/2, notices/1, mark_notice/1]).
--export([regression/3, demo/0, technical_codes/0]).
+-export([regression/3, demo/0, technical_codes/0, config/0, save_config/2, refresh_feed/1]).
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2]).
 
 -define(TICK_MS, 5 * 60 * 1000).        % probes; robustness every 3rd tick
@@ -19,7 +19,7 @@
     <<"security">> => [<<"trivial_password">>, <<"example_secret">>, <<"weak_policy">>, <<"too_many_admins">>,
                        <<"pending_password_change">>, <<"stale_api_key">>, <<"open_share_links">>,
                        <<"connector_without_hosts">>, <<"short_audit_retention">>, <<"smtp_plaintext">>],
-    <<"dependencies">> => [<<"vulnerable_component">>, <<"vulnerability_feed">>],
+    <<"dependencies">> => [<<"vulnerable_component">>, <<"vulnerability_feed">>, <<"vulnerability_feed_failed">>],
     <<"integrity">> => [<<"shipped_files">>, <<"ledger_reconciliation">>, <<"master_quality">>],
     <<"robustness">> => [<<"wal_archiving">>, <<"base_backup">>, <<"restore_test">>, <<"dead_letters">>,
                          <<"open_breaker">>, <<"error_rate">>, <<"files_disk">>],
@@ -111,12 +111,113 @@ check(Category) ->
         "UPDATE ana_system.advice SET status = 'resolved' WHERE status = 'open' AND category = $1 "
         "AND rule = ANY($2::text[]) AND NOT (rule || '|' || target = ANY($3::text[]))",
         [Category, maps:get(Category, ?RULES), Keys]),
-    New = [Ti || {R, T, <<"critical">>, Ti, _, _, _} <- Found, not lists:member(<<R/binary, "|", T/binary>>, Known)],
+    Fresh = [F || F = {R, T, _, _, _, _, _} <- Found, not lists:member(<<R/binary, "|", T/binary>>, Known)],
+    New = [Ti || {_, _, <<"critical">>, Ti, _, _, _} <- Fresh],
+    _ = catch notify(Category, Fresh),
     %% A finding that comes and goes (resolved, then found again) never piles up the same unread notice (spec 042).
     _ = [ana_db:exec("INSERT INTO ana_system.notice (kind, severity, message, link) SELECT 'check', 'critical', $1, '#/admin/checks' "
                      "WHERE NOT EXISTS (SELECT 1 FROM ana_system.notice WHERE NOT read AND kind = 'check' AND message = $1)",
                      [Ti]) || Ti <- New],
     {ok, #{category => Category, found => length(Found), resolved => Resolved, new_critical => length(New)}}.
+
+%% ---------------------------------------------------------------- feed and notifications (T-033-09b)
+
+%% The base of advisories comes first from the connector (when one is on); a failure is a finding.
+feed() ->
+    case ana_osv:refresh() of
+        {error, Msg} ->
+            [{<<"vulnerability_feed_failed">>, <<"connector">>, <<"warning">>,
+              <<"Atualização automática da base de vulnerabilidades falhou"/utf8>>, Msg,
+              <<"Confira o conector da base (Administração → Integrações) e o registro de chamadas."/utf8>>, #{}}];
+        _ -> []
+    end.
+
+-define(SEV_RANK, #{<<"info">> => 0, <<"warning">> => 1, <<"serious">> => 2, <<"critical">> => 3}).
+
+%% New findings at or above the configured severity go, in one message, through the connector:
+%% e-mail for SMTP (spec 044), a "checks.findings" message for an HTTP connector with a delivery program.
+notify(Category, Fresh) ->
+    {ok, Cfg} = ana_db:one("SELECT c.notify_connector, c.notify_recipients, c.notify_min_severity, k.kind "
+                           "FROM ana_system.check_config c LEFT JOIN integration.connector k "
+                           "ON k.name = c.notify_connector AND k.active", []),
+    Min = maps:get(maps:get(<<"notify_min_severity">>, Cfg), ?SEV_RANK),
+    Items = [F || F = {_, _, Sev, _, _, _, _} <- Fresh, maps:get(Sev, ?SEV_RANK, 0) >= Min],
+    case {Items, Cfg} of
+        {[], _} -> ok;
+        {_, #{<<"kind">> := null}} -> ok;
+        {_, #{<<"notify_connector">> := Conn, <<"kind">> := <<"smtp">>, <<"notify_recipients">> := To}} when To =/= [] ->
+            Text = iolist_to_binary([fmt("~b achado(s) novo(s) nas Verificações (~ts):\r\n\r\n", [length(Items), Category]),
+                                     [fmt("[~ts] ~ts\r\n~ts\r\nO que fazer: ~ts\r\n\r\n", [Sev, Ti, D, Su])
+                                      || {_, _, Sev, Ti, D, Su, _} <- Items],
+                                     <<"Veja Administração → Verificações no Estúdio."/utf8>>]),
+            outbox(Conn, <<"email">>, #{to => To, subject => fmt("[ANA] Verificações: ~b achado(s) novo(s)", [length(Items)]),
+                                        text => Text});
+        {_, #{<<"notify_connector">> := Conn, <<"kind">> := <<"http_api">>}} ->
+            outbox(Conn, <<"checks.findings">>,
+                   #{category => Category, findings => [#{rule => R, target => T, severity => Sev, title => Ti, detail => D,
+                                                          suggestion => Su} || {R, T, Sev, Ti, D, Su, _} <- Items]});
+        _ -> ok
+    end.
+
+outbox(Conn, Kind, Payload) ->
+    _ = ana_db:exec("INSERT INTO integration.outbox (connector, kind, payload, created_by) VALUES ($1, $2, $3::text::jsonb, 'system')",
+                    [Conn, Kind, iolist_to_binary(json:encode(Payload))]),
+    _ = catch ana_integration:poke(),
+    ok.
+
+-spec config() -> {ok, map()}.
+config() ->
+    {ok, C} = ana_db:one("SELECT notify_connector, notify_recipients, notify_min_severity, feed_connector, feed_at, feed_ok, "
+                         "  feed_message, feed_advisories, updated_by, updated_at FROM ana_system.check_config", []),
+    {ok, Conns} = ana_db:rows("SELECT name, kind, description FROM integration.connector WHERE active "
+                              "AND (kind = 'smtp' OR (kind = 'http_api' AND outbound_program IS NOT NULL)) ORDER BY name", []),
+    Feed = case ana_osv:feed_connector() of none -> null; #{<<"name">> := N} -> N end,
+    {ok, C#{<<"connectors">> => Conns, <<"feed_available">> => Feed}}.
+
+-spec save_config(map(), map()) -> {ok, map()} | {error, binary()}.
+save_config(B, #{username := Who}) ->
+    Conn = case maps:get(<<"notify_connector">>, B, null) of <<>> -> null; X -> X end,
+    To = maps:get(<<"notify_recipients">>, B, []),
+    Min = maps:get(<<"notify_min_severity">>, B, <<"critical">>),
+    Kind = case Conn of
+        null -> null;
+        _ -> case ana_db:one("SELECT kind FROM integration.connector WHERE name = $1 AND active "
+                             "AND (kind = 'smtp' OR (kind = 'http_api' AND outbound_program IS NOT NULL))", [Conn]) of
+                 {ok, #{<<"kind">> := K}} -> K;
+                 _ -> invalid
+             end
+    end,
+    if
+        Kind =:= invalid -> {error, <<"o conector precisa estar ativo e ser de e-mail (SMTP) ou HTTP com programa de saída"/utf8>>};
+        not is_list(To) -> {error, <<"destinatários inválidos"/utf8>>};
+        true ->
+            case {lists:all(fun ana_smtp:valid_address/1, To), Kind =/= <<"smtp">> orelse To =/= [],
+                  lists:member(Min, [<<"warning">>, <<"serious">>, <<"critical">>])} of
+                {false, _, _} -> {error, <<"destinatários devem ser e-mails válidos"/utf8>>};
+                {_, false, _} -> {error, <<"e-mail (SMTP): informe os destinatários"/utf8>>};
+                {_, _, false} -> {error, <<"gravidade mínima: atenção, sério ou crítico"/utf8>>};
+                _ ->
+                    {ok, _} = ana_db:exec("UPDATE ana_system.check_config SET notify_connector = $1, notify_recipients = $2, "
+                                          "notify_min_severity = $3, updated_by = $4, updated_at = now()", [Conn, To, Min, Who]),
+                    ana_admin:log(Who, <<"checks.notify">>, <<"config">>, null, #{connector => Conn, recipients => To, min => Min}),
+                    config()
+            end
+    end.
+
+%% "Atualizar agora": the base from the connector, then the dependency findings with it.
+-spec refresh_feed(map()) -> {ok, map()} | {error, binary()}.
+refresh_feed(User = #{username := Who}) ->
+    ana_admin:log(Who, <<"checks.feed_refresh">>, <<"osv">>, null, null),
+    case run(<<"dependencies">>, User) of
+        {ok, R} ->
+            {ok, C} = config(),
+            case C of
+                #{<<"feed_available">> := null} -> {error, <<"nenhum conector de base de vulnerabilidades ligado (Integrações)"/utf8>>};
+                #{<<"feed_ok">> := false, <<"feed_message">> := M} -> {error, M};
+                _ -> {ok, C#{<<"check">> => R}}
+            end;
+        E -> E
+    end.
 
 safe(F) ->
     try F()
@@ -127,7 +228,7 @@ rules(<<"security">>) ->
     [fun trivial_password/0, fun example_secret/0, fun weak_policy/0, fun too_many_admins/0,
      fun pending_password_change/0, fun stale_api_key/0, fun open_share_links/0, fun connector_without_hosts/0,
      fun short_audit_retention/0, fun smtp_plaintext/0];
-rules(<<"dependencies">>) -> [fun inventory/0, fun ana_osv:findings/0, fun vulnerability_feed/0];
+rules(<<"dependencies">>) -> [fun feed/0, fun inventory/0, fun ana_osv:findings/0, fun vulnerability_feed/0];
 rules(<<"integrity">>) -> [fun shipped_files/0, fun ledger_reconciliation/0, fun master_quality/0];
 rules(<<"robustness">>) ->
     [fun wal_archiving/0, fun base_backup/0, fun restore_test/0, fun dead_letters/0, fun open_breaker/0,

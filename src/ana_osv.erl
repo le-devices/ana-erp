@@ -7,7 +7,7 @@
 %% numeric and alphanumeric segments, pre-releases before the release).
 -module(ana_osv).
 
--export([import/2, findings/0, affected/2, compare/2, cvss3/1, severity/1, parse/1]).
+-export([import/2, findings/0, affected/2, compare/2, cvss3/1, severity/1, parse/1, refresh/0, feed_connector/0]).
 
 -define(MAX_ADVISORIES, 200000).
 -define(CHUNK, 2000).
@@ -270,5 +270,81 @@ findings() ->
       #{ecosystem => Eco, package => N, version => V, osv_id => Id, fixed => Fixed}}
      || #{<<"c_eco">> := Eco, <<"name">> := N, <<"version">> := V, <<"osv_id">> := Id, <<"severity">> := Sev,
           <<"summary">> := Summ, <<"aliases">> := Al, <<"fixed">> := Fixed} <- Hits].
+
+%% ---------------------------------------------------------------- feed by connector (T-033-09b)
+
+%% The connector the administrator turned on for this (options.purpose = "osv_feed"); none = off (P13).
+-spec feed_connector() -> map() | none.
+feed_connector() ->
+    case ana_db:one("SELECT name, options FROM integration.connector WHERE active AND kind = 'http_api' "
+                    "AND options ->> 'purpose' = 'osv_feed' ORDER BY name LIMIT 1", []) of
+        {ok, #{<<"name">> := _} = C} -> C;
+        _ -> none
+    end.
+
+%% Two ways, chosen by options.mode: "feed" (GET options.path answering OSV JSON — a mirror or a
+%% file server inside the company) or "query" (the osv.dev API: querybatch with the inventory, then
+%% each advisory). Every call goes through the connector: allowed hosts, TLS, limits, breaker, log.
+-spec refresh() -> {ok, map()} | {skipped, binary()} | {error, binary()}.
+refresh() ->
+    case feed_connector() of
+        none -> {skipped, <<"nenhum conector de base de vulnerabilidades ligado"/utf8>>};
+        #{<<"name">> := Name, <<"options">> := O} ->
+            R = case maps:get(<<"mode">>, O, <<"feed">>) of
+                <<"query">> -> by_query(Name);
+                _ -> by_feed(Name, maps:get(<<"path">>, O, <<"/">>))
+            end,
+            {Ok, Msg, N} = case R of
+                {ok, #{advisories := A}} -> {true, fmt("~b aviso(s) importado(s)", [A]), A};
+                {error, M} -> {false, M, null}
+            end,
+            _ = ana_db:exec("UPDATE ana_system.check_config SET feed_connector = $1, feed_at = now(), feed_ok = $2, "
+                            "feed_message = $3, feed_advisories = $4", [Name, Ok, Msg, N]),
+            R
+    end.
+
+by_feed(Name, Path) ->
+    case get_json(Name, <<"GET">>, Path, #{}) of
+        {ok, Json} -> import(Json, <<"system">>);
+        E -> E
+    end.
+
+by_query(Name) ->
+    {ok, Comps} = ana_db:rows("SELECT ecosystem, name, version FROM ana_system.component WHERE ecosystem <> 'PostgreSQL'", []),
+    Queries = [#{package => #{name => N, ecosystem => E}, version => V}
+               || #{<<"ecosystem">> := E, <<"name">> := N, <<"version">> := V} <- Comps],
+    case batch_ids(Name, chunks(Queries, 1000), []) of
+        {error, _} = E -> E;
+        {ok, []} -> {ok, #{advisories => 0, ranges => 0, withdrawn => 0}};
+        {ok, Ids} ->
+            Got = [get_json(Name, <<"GET">>, <<"/v1/vulns/", (uri_string:quote(Id))/binary>>, #{})
+                   || Id <- lists:sublist(lists:usort(Ids), 2000)],
+            case [M || {error, M} <- Got] of
+                [M | _] -> {error, M};
+                [] -> import([J || {ok, J} <- Got], <<"system">>)
+            end
+    end.
+
+batch_ids(_, [], Acc) -> {ok, Acc};
+batch_ids(Name, [Q | Rest], Acc) ->
+    case get_json(Name, <<"POST">>, <<"/v1/querybatch">>, #{<<"json">> => #{queries => Q}}) of
+        {ok, #{<<"results">> := Results}} when is_list(Results) ->
+            Ids = [Id || #{<<"vulns">> := Vs} <- Results, is_list(Vs), #{<<"id">> := Id} <- Vs, is_binary(Id)],
+            batch_ids(Name, Rest, Acc ++ Ids);
+        {ok, _} -> {error, <<"resposta do serviço OSV sem \"results\""/utf8>>};
+        E -> E
+    end.
+
+get_json(Name, Method, Path, Opts) ->
+    case ana_connector:http(Name, Method, Path, Opts, null) of
+        {ok, #{<<"status">> := S, <<"json">> := J}} when S >= 200, S < 300 -> {ok, J};
+        {ok, #{<<"status">> := S, <<"text">> := T}} when S >= 200, S < 300 ->
+            case catch json:decode(T) of
+                {'EXIT', _} -> {error, <<"o serviço não respondeu JSON"/utf8>>};
+                J -> {ok, J}
+            end;
+        {ok, #{<<"status">> := S}} -> {error, fmt("o serviço de vulnerabilidades respondeu ~b", [S])};
+        {error, #{<<"message">> := M}} -> {error, M}
+    end.
 
 fmt(F, A) -> unicode:characters_to_binary(io_lib:format(F, A)).

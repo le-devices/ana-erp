@@ -8,4 +8,4 @@
 - [x] T-033-06 Sondas de desempenho e linha de base (RF-033-06, CA-033-05)
 - [x] T-033-07 Agendamento pelo robô system, execução sob demanda, avisos no sino (RF-033-07, RF-033-09)
 - [x] T-033-08 Tela Verificações (achados, inventário, envio da base) e testes (CA-033-06)
-- [ ] T-033-09b Atualização da base OSV por conector do hub e aviso por conector (e-mail/chat)
+- [x] T-033-09b Atualização da base OSV por conector do hub (arquivo OSV ou API osv.dev) e aviso de achados novos por conector (e-mail/chat)
