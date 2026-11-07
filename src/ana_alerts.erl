@@ -15,8 +15,8 @@ overview() ->
                                  "  s.created_by, (s.starts_at <= now() AND s.ends_at > now()) AS in_force "
                                  "FROM ana_system.alert_silence s LEFT JOIN ana_system.alert_rule r ON r.id = s.rule_id "
                                  "WHERE s.ends_at > now() - interval '7 days' ORDER BY s.ends_at DESC LIMIT 200", []),
-    {ok, Connectors} = ana_db:rows("SELECT name, description FROM integration.connector WHERE kind = 'http_api' "
-                                   "AND outbound_program IS NOT NULL AND active ORDER BY name", []),
+    {ok, Connectors} = ana_db:rows("SELECT name, description, kind FROM integration.connector WHERE active "
+                                   "AND (kind = 'smtp' OR (kind = 'http_api' AND outbound_program IS NOT NULL)) ORDER BY name", []),
     {ok, #{rules => Rules, silences => Silences, connectors => Connectors,
            components => ana_health:components_names(), metrics => ana_health:metric_names()}}.
 
@@ -88,8 +88,10 @@ validate_rule(B) ->
              andalso lists:all(fun(E) -> is_binary(E) andalso re:run(E, ?EMAIL, [unicode]) =/= nomatch end, Recipients),
          <<"destinatários devem ser e-mails válidos (até 50)"/utf8>>},
         {Recipients =:= [] orelse Connector =/= null, <<"e-mails precisam de um conector que os entregue"/utf8>>},
-        {Connector =:= null orelse delivers(Connector),
-         <<"o conector precisa estar ativo, ser de API HTTP e ter programa de saída"/utf8>>}],
+        {Connector =:= null orelse delivers(Connector) =/= false,
+         <<"o conector precisa estar ativo e ser de e-mail (SMTP) ou de API HTTP com programa de saída"/utf8>>},
+        {Connector =:= null orelse delivers(Connector) =/= smtp orelse Recipients =/= [],
+         <<"conector de e-mail (SMTP): informe os destinatários"/utf8>>}],
     case [Msg || {false, Msg} <- Checks] of
         [Msg | _] -> {error, Msg};
         [] ->
@@ -105,10 +107,12 @@ validate_rule(B) ->
                    active => maps:get(<<"active">>, B, true) =/= false}}
     end.
 
+%% smtp (spec 044: the core sends the e-mail), http (a delivery program) or false.
 delivers(Name) when is_binary(Name) ->
-    case ana_db:one("SELECT 1 AS ok FROM integration.connector WHERE name = $1 AND kind = 'http_api' "
-                    "AND outbound_program IS NOT NULL AND active", [Name]) of
-        {ok, #{<<"ok">> := 1}} -> true;
+    case ana_db:one("SELECT kind FROM integration.connector WHERE name = $1 AND active "
+                    "AND (kind = 'smtp' OR (kind = 'http_api' AND outbound_program IS NOT NULL))", [Name]) of
+        {ok, #{<<"kind">> := <<"smtp">>}} -> smtp;
+        {ok, #{<<"kind">> := _}} -> http;
         _ -> false
     end;
 delivers(_) -> false.

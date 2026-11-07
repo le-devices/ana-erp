@@ -132,6 +132,8 @@ route(<<"GET">>, [<<"connectors">>], _U, Req) ->
     reply(ana_connectors:list(), Req);
 route(<<"PUT">>, [<<"connectors">>, Name], U, Req) ->
     with_body(Req, fun(B, R) -> reply(ana_connectors:save(Name, B, U), R) end);
+route(<<"POST">>, [<<"connectors">>, Name, <<"smtp-test">>], U, Req) ->
+    with_body(Req, fun(B, R) -> reply(ana_connectors:smtp_test(Name, B, U), R) end);
 route(<<"DELETE">>, [<<"connectors">>, Name], U, Req) ->
     reply(ana_connectors:remove(Name, U), Req);
 route(<<"PUT">>, [<<"connectors">>, Name, <<"secrets">>, Key], U, Req) ->

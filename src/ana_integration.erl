@@ -89,10 +89,12 @@ rows(_) -> [].
 run(Kind, M = #{<<"id">> := Id, <<"connector">> := Name, <<"attempts">> := Attempt}) ->
     Field = case Kind of outbox -> <<"outbound_program">>; inbox -> <<"inbound_program">> end,
     {ok, C} = ana_db:one(
-        "SELECT c.outbound_program, c.inbound_program, c.max_attempts, c.active, c.options, u.username, u.role, "
-        "  u.active AS user_active "
+        "SELECT c.name, c.kind, c.auth, c.timeout_ms, c.rate_per_min, c.outbound_program, c.inbound_program, c.max_attempts, "
+        "  c.active, c.options, u.username, u.role, u.active AS user_active "
         "FROM integration.connector c JOIN ana_system.app_user u ON u.username = c.run_as WHERE c.name = $1", [Name]),
     Result = case C of
+        %% Spec 044: e-mail is delivered by the core itself (credentials never reach a program).
+        #{<<"kind">> := <<"smtp">>, <<"active">> := true} when Kind =:= outbox -> email(C, M);
         #{<<"active">> := true, <<"user_active">> := true, Field := Program} when is_binary(Program) ->
             User = #{username => maps:get(<<"username">>, C), role => maps:get(<<"role">>, C)},
             Params = case Kind of
@@ -107,7 +109,59 @@ run(Kind, M = #{<<"id">> := Id, <<"connector">> := Name, <<"attempts">> := Attem
         _ -> {error, #{<<"message">> => <<"conector inativo, sem programa ou com usuário inativo"/utf8>>}}
     end,
     Max = case C of #{<<"max_attempts">> := X} -> X; _ -> 1 end,
-    finish(Kind, Id, Attempt, Max, Result).
+    case Result of
+        %% Over the connector's rate: back in the queue without spending an attempt.
+        {later, Seconds} ->
+            {ok, _} = ana_db:exec("UPDATE integration.outbox SET status = 'pending', lease_until = NULL, "
+                                  "attempts = GREATEST(attempts - 1, 0), next_at = now() + make_interval(secs => $2) "
+                                  "WHERE id = $1", [Id, Seconds]),
+            ok;
+        %% A permanent refusal (5xx, invalid address, attachment not allowed) is never retried.
+        {error, #{<<"permanent">> := true} = E} -> finish(Kind, Id, Max, Max, {error, E});
+        _ -> finish(Kind, Id, Attempt, Max, Result)
+    end.
+
+%% Spec 044: one e-mail of the outbox; attachments read with the permissions of who sent it (P14).
+email(C, #{<<"payload">> := Msg, <<"created_by">> := Sender}) ->
+    case ana_smtp:config(C) of
+        {error, M} -> {error, #{<<"code">> => <<"SMTP_CONFIG">>, <<"message">> => M}};
+        {ok, Cfg} ->
+            case ana_connector:rate_ok(C) of
+                false -> {later, 60 - erlang:system_time(second) rem 60};
+                true ->
+                    case attachments(Sender, maps:get(<<"attachments">>, Msg, [])) of
+                        {ok, Atts} ->
+                            case ana_smtp:deliver(Cfg, Msg, Atts) of
+                                {ok, R} -> {ok, #{result => R}};
+                                E -> E
+                            end;
+                        {error, Text} -> {error, #{<<"code">> => <<"ATTACHMENT">>, <<"message">> => Text, <<"permanent">> => true}}
+                    end
+            end
+    end.
+
+attachments(_, []) -> {ok, []};
+attachments(Sender, List) when is_list(List) ->
+    case ana_db:one("SELECT username, role FROM ana_system.app_user WHERE username = $1 AND active", [Sender]) of
+        {ok, #{<<"username">> := U, <<"role">> := R}} ->
+            User = #{username => U, role => R},
+            Got = [case A of
+                       #{<<"file">> := F} when is_integer(F) -> ana_files:get_binary(User, F, maps:get(<<"version">>, A, null));
+                       _ -> {error, <<"anexo inválido"/utf8>>}
+                   end || A <- List],
+            case [E || {error, E} <- Got] of
+                [E | _] when is_binary(E) -> {error, <<"anexo: "/utf8, E/binary>>};
+                [_ | _] -> {error, <<"anexo indisponível para quem enviou"/utf8>>};
+                [] ->
+                    Files = [#{name => N, mime => Mi, data => D} || {ok, #{name := N, mime := Mi, data := D}} <- Got],
+                    case lists:sum([byte_size(D) || #{data := D} <- Files]) =< ana_smtp:max_attachments() of
+                        true -> {ok, Files};
+                        false -> {error, <<"anexos acima de 10 MB"/utf8>>}
+                    end
+            end;
+        _ -> {error, <<"quem enviou não é mais um usuário ativo"/utf8>>}
+    end;
+attachments(_, _) -> {error, <<"anexos inválidos"/utf8>>}.
 
 finish(Kind, Id, _Attempt, _Max, {ok, #{result := R}}) ->
     {ok, _} = ana_db:exec(["UPDATE integration.", table(Kind), " SET status = 'done', done_at = now(), lease_until = NULL, "

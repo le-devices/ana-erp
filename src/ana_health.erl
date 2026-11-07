@@ -79,9 +79,10 @@ check(S = #{states := Old}) ->
 %% the last ones known keep working (the database being down is exactly when
 %% alerts matter). Open incidents of this node are taken back once after a restart.
 load(S = #{resumed := Resumed, firing := Firing}, Node) ->
-    S1 = case {catch ana_db:rows("SELECT id, name, source, target, level, op, threshold::float8 AS threshold, window_s, "
-                                "  severity, notify_studio, connector, recipients FROM ana_system.alert_rule "
-                                "WHERE active ORDER BY id", []),
+    S1 = case {catch ana_db:rows("SELECT r.id, r.name, r.source, r.target, r.level, r.op, r.threshold::float8 AS threshold, "
+                                "  r.window_s, r.severity, r.notify_studio, r.connector, r.recipients, c.kind AS connector_kind "
+                                "FROM ana_system.alert_rule r LEFT JOIN integration.connector c ON c.name = r.connector "
+                                "WHERE r.active ORDER BY r.id", []),
                catch ana_db:rows("SELECT rule_id, target, node, extract(epoch FROM starts_at)::float8 AS starts, "
                                  "  extract(epoch FROM ends_at)::float8 AS ends FROM ana_system.alert_silence "
                                  "WHERE ends_at > now()", [])} of
@@ -109,7 +110,7 @@ fallback_rule() ->
     #{<<"id">> => null, <<"name">> => <<"Componente em falha"/utf8>>, <<"source">> => <<"health">>,
       <<"target">> => <<"*">>, <<"level">> => <<"red">>, <<"op">> => null, <<"threshold">> => null,
       <<"window_s">> => 0, <<"severity">> => <<"critical">>, <<"notify_studio">> => true,
-      <<"connector">> => null, <<"recipients">> => []}.
+      <<"connector">> => null, <<"connector_kind">> => null, <<"recipients">> => []}.
 
 %% Node metrics the rules can watch (RF-019-08).
 metrics(S = #{failures := Prev}) ->
@@ -229,10 +230,15 @@ notify(Event, R, Target, Node, Msg, At, false) ->
                                                          _ -> <<"Encerrado"/utf8>> end,
                                            Name, Target, Node, Msg]),
     [{notice, Severity, Text} || maps:get(<<"notify_studio">>, R), Event =:= <<"opened">>]
+    ++ [{outbox, C, <<"email">>,
+         #{to => maps:get(<<"recipients">>, R), subject => <<"[ANA] ", Text/binary>>,
+           text => <<Text/binary, "\r\n\r\nGravidade: "/utf8, Severity/binary, "\r\nRegra: ", Name/binary,
+                     "\r\nVeja Administração → Saúde no Estúdio."/utf8>>}}
+        || C <- [maps:get(<<"connector">>, R)], C =/= null, maps:get(<<"connector_kind">>, R, null) =:= <<"smtp">>]
     ++ [{outbox, C, <<"alert.", Event/binary>>,
          #{event => Event, rule => Name, rule_id => maps:get(<<"id">>, R), severity => Severity, target => Target,
            node => Node, message => Msg, at => At, recipients => maps:get(<<"recipients">>, R)}}
-        || C <- [maps:get(<<"connector">>, R)], C =/= null].
+        || C <- [maps:get(<<"connector">>, R)], C =/= null, maps:get(<<"connector_kind">>, R, null) =/= <<"smtp">>].
 
 flush([]) -> [];
 flush([Op | Rest] = All) ->

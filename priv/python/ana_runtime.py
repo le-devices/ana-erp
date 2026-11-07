@@ -535,6 +535,56 @@ def make_ana_module(channel, output, context):
         return sql_value("SELECT integration.enqueue($1, $2, $3::text::jsonb, $4) AS id", str(connector), str(kind),
                          to_json(payload), key)
 
+    _EMAIL = re.compile(r"[^@\s<>\"(),;:\\\[\]]{1,64}@[A-Za-z0-9.-]{1,190}\.[A-Za-z]{2,}")
+
+    def send_email(to, subject, text=None, html_template=None, data=None, attachments=None, cc=None, bcc=None,
+                   connector=None, reply_to=None):
+        """E-mail in this same transaction (spec 044): queued in the outbox and delivered by the core
+        through an SMTP connector (the default one when none is named) only if the execution commits.
+        html_template is a string.Template ("Olá, $name"): every value of data is HTML-escaped.
+        attachments: file ids of the repository (or {"file": id, "version": n}), read at delivery with
+        the permissions of this execution's user. Returns the message id."""
+        import html as _html
+        import string as _string
+
+        def addresses(v, field):
+            items = [v] if isinstance(v, str) else list(v or [])
+            out = []
+            for a in items:
+                a = str(a).strip()
+                if not _EMAIL.fullmatch(a):
+                    raise Error("INVALID_EMAIL", f"{field}: endereço inválido: {a!r}")
+                out.append(a)
+            return out
+
+        rcpt_to, rcpt_cc, rcpt_bcc = addresses(to, "para"), addresses(cc, "cópia"), addresses(bcc, "cópia oculta")
+        if not rcpt_to:
+            raise Error("INVALID_EMAIL", "informe ao menos um destinatário")
+        if len(rcpt_to) + len(rcpt_cc) + len(rcpt_bcc) > 100:
+            raise Error("INVALID_EMAIL", "no máximo 100 destinatários por mensagem")
+        subject = str(subject or "")
+        if "\r" in subject or "\n" in subject or not subject.strip() or len(subject) > 250:
+            raise Error("INVALID_EMAIL", "assunto obrigatório, numa linha só, até 250 caracteres")
+        if reply_to is not None:
+            reply_to = addresses(reply_to, "responder para")[0]
+        body_html = None
+        if html_template is not None:
+            values = {str(k): _html.escape("" if v is None else str(v)) for k, v in dict(data or {}).items()}
+            try:
+                body_html = _string.Template(str(html_template)).substitute(values)
+            except (KeyError, ValueError) as e:
+                raise Error("INVALID_EMAIL", f"modelo HTML: valor ausente ou marcador inválido ({e})") from None
+        if text is None and body_html is None:
+            raise Error("INVALID_EMAIL", "informe o texto ou o modelo HTML")
+        files = []
+        for a in attachments or []:
+            ref = {"file": int(a)} if not isinstance(a, dict) else {"file": int(a["file"]),
+                                                                     **({"version": int(a["version"])} if a.get("version") else {})}
+            files.append(ref)
+        message = {"to": rcpt_to, "cc": rcpt_cc, "bcc": rcpt_bcc, "subject": subject, "text": None if text is None else str(text),
+                   "html": body_html, "reply_to": reply_to, "attachments": files}
+        return sql_value("SELECT integration.enqueue_email($1, $2::text::jsonb) AS id", connector, to_json(message))
+
     class Files:
         """Repository (spec 016), with the permissions of the execution's user.
         Writes are immediate (like ana.remote), not part of the execution transaction."""
@@ -812,6 +862,7 @@ def make_ana_module(channel, output, context):
     m.remote = remote
     m.http = http
     m.send = send
+    m.send_email = send_email
     m.files = Files()
     m.log = log
     m.table = table

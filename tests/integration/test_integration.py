@@ -7162,3 +7162,220 @@ class TestFiscalRegistry(Base):
         n = psql("SELECT count(*) FILTER (WHERE base.valid_tax_id(lpad(i::text, 12, '0') || '00')) FROM generate_series(1, 100000) i")
         self.assertTrue(n.isdigit())
         self.assertLess(time.time() - t0, 5.0)                          # < 50 µs a document (psql start included)
+
+
+# ---------------------------------------------------------------- spec 044
+class TestOutboundEmail(Base):
+    """Spec 044: SMTP connector, ana.send_email in the transaction, retries and permanent refusals, alerts."""
+
+    SINK = f"ana-smtp-sink-{SUFFIX}"
+
+    @classmethod
+    def setUpClass(cls):
+        super().setUpClass()
+        import subprocess
+        import tempfile
+        cls.dir = tempfile.mkdtemp(prefix="ana-smtp-")
+        os.makedirs(os.path.join(cls.dir, "data"))
+        run = lambda *a: subprocess.run(a, cwd=cls.dir, check=True, capture_output=True)
+        # A CA of the test and a server certificate for the host name "smtp-sink" (RNF-044-02: verified TLS).
+        run("openssl", "req", "-x509", "-newkey", "rsa:2048", "-nodes", "-keyout", "ca.key", "-out", "ca.pem", "-days", "2",
+            "-subj", "/CN=ANA test CA")
+        run("openssl", "req", "-newkey", "rsa:2048", "-nodes", "-keyout", "server.key", "-out", "server.csr", "-subj", "/CN=smtp-sink")
+        with open(os.path.join(cls.dir, "san.ext"), "w") as f:
+            f.write("subjectAltName=DNS:smtp-sink\n")
+        run("openssl", "x509", "-req", "-in", "server.csr", "-CA", "ca.pem", "-CAkey", "ca.key", "-CAcreateserial",
+            "-out", "server.pem", "-days", "2", "-extfile", "san.ext")
+        os.chmod(cls.dir, 0o755)
+        for n in ("server.key", "server.pem"):
+            os.chmod(os.path.join(cls.dir, n), 0o644)
+        os.chmod(os.path.join(cls.dir, "data"), 0o777)
+        import shutil
+        shutil.copy(os.path.join(REPO, "tests", "integration", "smtp_sink.py"), cls.dir)
+        with open(os.path.join(cls.dir, "ca.pem")) as f:
+            cls.ca = f.read()
+        subprocess.run(["docker", "rm", "-f", cls.SINK], capture_output=True)
+        run("docker", "run", "-d", "--name", cls.SINK, "--network", "ana-erp_default", "--network-alias", "smtp-sink",
+            "-v", f"{cls.dir}:/w:ro", "-v", f"{os.path.join(cls.dir, 'data')}:/data", "python:3.11-slim", "sh", "-c",
+            "python -u /w/smtp_sink.py 2525 /w/server.pem /w/server.key mailer s3nh4 & "
+            "python -u /w/smtp_sink.py 2526 - - mailer s3nh4 & wait")
+        time.sleep(2)
+        cls.connectors = []
+
+    @classmethod
+    def tearDownClass(cls):
+        import subprocess
+        for n in cls.connectors:
+            http("PUT", f"/api/admin/connectors/{n}", {"kind": "smtp", "options": {"host": "smtp-sink", "security": "starttls",
+                                                                                  "from": "erp@exemplo.test"}, "active": False}, cls.token)
+        subprocess.run(["docker", "exec", cls.SINK, "sh", "-c", "rm -rf /data/*"], capture_output=True)
+        subprocess.run(["docker", "rm", "-f", cls.SINK], capture_output=True)
+        import shutil
+        shutil.rmtree(cls.dir, ignore_errors=True)
+
+    def connector(self, name, port=2525, security="starttls", ca=True, default=False, **extra):
+        opts = {"host": "smtp-sink", "port": port, "security": security, "from": "erp@exemplo.test", "from_name": "ANA Teste",
+                **({"ca_cert": self.ca} if ca else {}), **extra}
+        s, c, _ = http("PUT", f"/api/admin/connectors/{name}", {"kind": "smtp", "auth": "basic" if security != "none" else "none",
+                                                                 "options": opts, "default_email": default, "max_attempts": 5},
+                       self.token)
+        if s == 200 and name not in self.connectors:
+            self.connectors.append(name)
+        if s == 200 and security != "none":
+            for k, v in (("username", "mailer"), ("password", "s3nh4")):
+                self.assertEqual(http("PUT", f"/api/admin/connectors/{name}/secrets/{k}", {"value": v}, self.token)[0], 200)
+        return s, c
+
+    def mails(self, contains=None):
+        try:
+            with open(os.path.join(self.dir, "data", "mail.log"), encoding="utf-8") as f:
+                out = [json.loads(line) for line in f if line.strip()]
+        except FileNotFoundError:
+            out = []
+        return [m for m in out if contains is None or contains in m["data"] or contains in json.dumps(m["to"])]
+
+    def wait_mail(self, contains, seconds=40):
+        end = time.time() + seconds
+        while time.time() < end:
+            got = self.mails(contains)
+            if got:
+                return got
+            time.sleep(0.5)
+        return []
+
+    @staticmethod
+    def parsed(m):
+        import email
+        from email import policy
+        return email.message_from_string(m["data"], policy=policy.default)
+
+    def test_ca_044_01_connector_test_and_test_email(self):
+        name = f"t{SUFFIX}_smtp"
+        s, c = self.connector(name, security="none")
+        self.assertEqual(s, 400, c)                                     # plain text only with allow_plain
+        s, c = self.connector(name)
+        self.assertEqual(s, 200, c)
+        s, r, _ = http("POST", f"/api/admin/connectors/{name}/smtp-test", {}, self.token)
+        self.assertEqual(s, 200, r)
+        to = f"teste.{SUFFIX}@exemplo.test"
+        s, r, _ = http("POST", f"/api/admin/connectors/{name}/smtp-test", {"to": to}, self.token)
+        self.assertEqual(s, 200, r)
+        m = self.wait_mail(to)
+        self.assertEqual(len(m), 1)
+        self.assertEqual((m[0]["tls"], m[0]["auth"], m[0]["from"]), (True, "mailer", "erp@exemplo.test"))
+        msg = self.parsed(m[0])
+        self.assertEqual(msg["Subject"], "Teste de e-mail do ANA")
+        self.assertIn("ANA Teste", msg["From"])
+        # RNF-044-02: without the connector's own CA the certificate is not trusted (never sent).
+        bad = f"t{SUFFIX}_smtpnoca"
+        self.assertEqual(self.connector(bad, ca=False)[0], 200)
+        s, r, _ = http("POST", f"/api/admin/connectors/{bad}/smtp-test", {}, self.token)
+        self.assertEqual(s, 400, r)
+        self.assertIn("TLS", json.dumps(r, ensure_ascii=False))
+
+    def test_ca_044_02_and_04_mail_only_if_the_execution_commits(self):
+        name = f"t{SUFFIX}_smtpdef"
+        self.assertEqual(self.connector(name, default=True)[0], 200)
+        s, conns, _ = http("GET", "/api/admin/connectors", token=self.token)
+        self.assertEqual([c["name"] for c in conns["connectors"] if c.get("default_email")], [name])
+        to = f"commit.{SUFFIX}@exemplo.test"
+        prog = f"test.mail_{SUFFIX}"
+        self.save(prog, "def main(to, fail=False, subject='Pedido aprovado'):\n"
+                        "    ana.send_email(to, subject, text='Seu pedido foi aprovado.',\n"
+                        "                   html_template='<p>Olá, $name</p>', data={'name': '<script>x</script>'})\n"
+                        "    if fail:\n"
+                        "        raise ana.Error('FALHOU', 'depois do envio')\n"
+                        "    return 'ok'\n")
+        s, c, _ = self.run_program(prog, {"to": f"nunca.{SUFFIX}@exemplo.test", "fail": True})
+        self.assertEqual(c["error"]["code"], "FALHOU")
+        s, c, _ = self.run_program(prog, {"to": to})
+        self.assertEqual(c.get("result"), "ok", c)
+        m = self.wait_mail(to)
+        self.assertEqual(len(m), 1)
+        html = [p.get_content() for p in self.parsed(m[0]).walk() if p.get_content_type() == "text/html"][0]
+        self.assertIn("&lt;script&gt;", html)                          # data escaped in the HTML template
+        self.assertNotIn("<script>", html)
+        self.assertEqual(self.mails(f"nunca.{SUFFIX}"), [])              # the failed execution sent nothing
+        self.assertEqual(psql(f"SELECT count(*) FROM integration.outbox WHERE payload::text LIKE '%nunca.{SUFFIX}%'"), "0")
+        s, c, _ = self.run_program(prog, {"to": to, "subject": "Linha 1\nBcc: intruso@exemplo.test"})
+        self.assertEqual(c["error"]["code"], "INVALID_EMAIL")           # no header injection
+        s, c, _ = self.run_program(prog, {"to": "não é e-mail"})
+        self.assertEqual(c["error"]["code"], "INVALID_EMAIL")
+        self.assertEqual(psql(f"SELECT created_by FROM integration.outbox WHERE connector = '{name}' ORDER BY id DESC LIMIT 1"),
+                         "admin")                                       # owned by the execution's user (P14)
+
+    def test_ca_044_02b_attachment_from_the_repository(self):
+        name = f"t{SUFFIX}_smtpatt"
+        self.assertEqual(self.connector(name)[0], 200)
+        s, folder, _ = http("POST", "/api/files/folders", {"parent": None, "name": f"Anexos {SUFFIX}"}, self.token)
+        self.assertEqual(s, 200, folder)
+        to = f"anexo.{SUFFIX}@exemplo.test"
+        prog = f"test.mailatt_{SUFFIX}"
+        self.save(prog, "def main(folder, to, connector):\n"
+                        "    f = ana.files.put('relatório.txt', 'conteúdo do anexo', folder=folder)\n"
+                        "    return ana.send_email(to, 'Relatório mensal', text='Segue anexo.', attachments=[f['file']],\n"
+                        "                          connector=connector)\n")
+        s, c, _ = self.run_program(prog, {"folder": folder["id"], "to": to, "connector": name})
+        self.assertIn("result", c, c)
+        m = self.wait_mail(to)
+        self.assertEqual(len(m), 1)
+        att = [p for p in self.parsed(m[0]).walk() if p.get_content_disposition() == "attachment"]
+        self.assertEqual(att[0].get_filename(), "relatório.txt")
+        self.assertEqual(att[0].get_content(), "conteúdo do anexo")
+        self.assertEqual(self.parsed(m[0])["Subject"], "Relatório mensal")
+
+    def test_ca_044_03_retries_and_permanent_refusal(self):
+        name = f"t{SUFFIX}_smtpret"
+        self.assertEqual(self.connector(name)[0], 200)
+        prog = f"test.mailret_{SUFFIX}"
+        self.save(prog, "def main(to, connector):\n    return ana.send_email(to, 'Aviso', text='x', connector=connector)\n")
+        refused = self.run_program(prog, {"to": f"recusado.{SUFFIX}@exemplo.test", "connector": name})[1]["result"]
+        later = self.run_program(prog, {"to": f"lento.{SUFFIX}@exemplo.test", "connector": name})[1]["result"]
+        status = lambda i: psql(f"SELECT status || ',' || attempts FROM integration.outbox WHERE id = {i}")
+        end = time.time() + 30
+        tried = lambda i: psql(f"SELECT status || ',' || (last_error IS NOT NULL) FROM integration.outbox WHERE id = {i}")
+        while time.time() < end and (status(refused) != "dead,1" or tried(later) != "pending,true"):
+            time.sleep(0.5)
+        self.assertEqual(status(refused), "dead,1")                      # 5xx: no retry
+        self.assertEqual(tried(later), "pending,true")                   # 4xx: back in the queue, retried later
+        self.assertIn("550", psql(f"SELECT last_error FROM integration.outbox WHERE id = {refused}"))
+        # Server down, then back: the message waits and is delivered (plain text allowed on purpose here).
+        down = f"t{SUFFIX}_smtpdown"
+        s, c = self.connector(down, port=2527, security="none", allow_plain=True)
+        self.assertEqual(s, 200, c)
+        to = f"volta.{SUFFIX}@exemplo.test"
+        mid = self.run_program(prog, {"to": to, "connector": down})[1]["result"]
+        end = time.time() + 20
+        while time.time() < end and not psql(f"SELECT COALESCE(last_error, '') FROM integration.outbox WHERE id = {mid}"):
+            time.sleep(0.5)
+        self.assertIn("SMTP_CONNECT", psql(f"SELECT last_error FROM integration.outbox WHERE id = {mid}"))
+        import subprocess
+        subprocess.run(["docker", "exec", "-d", self.SINK, "python", "-u", "/w/smtp_sink.py", "2527", "-", "-", "mailer", "s3nh4"],
+                       check=True)
+        self.assertEqual(len(self.wait_mail(to, 60)), 1)
+        # Plain text is allowed only on purpose, and it shows in the periodic checks (spec 033).
+        s, c, _ = http("POST", "/api/admin/checks/run", {"category": "security"}, self.token)
+        s, c, _ = http("GET", "/api/admin/checks?status=open", token=self.token)
+        self.assertTrue(any(f["rule"] == "smtp_plaintext" and f["target"] == down for f in c["findings"]))
+
+    def test_ca_044_05_alert_rule_by_smtp(self):
+        name = f"t{SUFFIX}_smtpalert"
+        self.assertEqual(self.connector(name)[0], 200)
+        to = f"plantao.{SUFFIX}@exemplo.test"
+        rule = {"name": f"Regra {SUFFIX} e-mail", "source": "metric", "target": "processes", "op": ">", "threshold": 0,
+                "severity": "warning", "notify_studio": False, "connector": name}
+        s, c, _ = http("POST", "/api/admin/observability/alerts/rules", rule, self.token)
+        self.assertEqual(s, 400, c)                                      # SMTP needs recipients
+        s, c, _ = http("POST", "/api/admin/observability/alerts/rules", {**rule, "recipients": [to]}, self.token)
+        self.assertEqual(s, 200, c)
+        try:
+            opened = self.wait_mail(to, 40)
+            self.assertEqual(len(opened), 1)
+            self.assertIn("Alerta", self.parsed(opened[0])["Subject"])
+            http("POST", "/api/admin/observability/alerts/rules", {**rule, "recipients": [to], "id": c["id"], "active": False}, self.token)
+            end = time.time() + 40
+            while time.time() < end and len(self.mails(to)) < 2:
+                time.sleep(0.5)
+            self.assertIn("Encerrado", self.parsed(self.mails(to)[-1])["Subject"])
+        finally:
+            http("DELETE", f"/api/admin/observability/alerts/rules/{c['id']}", token=self.token)
