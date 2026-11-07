@@ -345,7 +345,8 @@ delete_group(Name, #{username := Who}) ->
 
 get_company() ->
     ana_db:one("SELECT id, legal_name, tax_id, address, city, state, email, phone, latitude, longitude, public_url, "
-               "  display_name, logo IS NOT NULL AS has_logo "
+               "  display_name, logo IS NOT NULL AS has_logo, person_kind, state_registration, icms_taxpayer, "
+               "  municipal_registration, tax_regime "
                "FROM base.company ORDER BY id LIMIT 1", []).
 
 %% Spec 009 (D11): the customer's logo (JPEG in base64, converted and shrunk by the browser), or null to remove.
@@ -370,6 +371,12 @@ logo() ->
 save_company(Fields, #{username := Who}) ->
     Cols = [<<"legal_name">>, <<"tax_id">>, <<"address">>, <<"city">>, <<"state">>,
             <<"email">>, <<"phone">>],
+    %% Spec 043 (D4): the company's fiscal data; the database checks them (same rule as the partners).
+    Fiscal = [<<"state_registration">>, <<"icms_taxpayer">>, <<"municipal_registration">>, <<"tax_regime">>],
+    Text = fun(K) -> case maps:get(K, Fields, null) of
+                         B when is_binary(B) -> case string:trim(B) of <<>> -> null; T -> T end;
+                         _ -> null
+                     end end,
     %% Spec 032: coordinates typed with a decimal comma or point ("-23,5505").
     Coord = fun(K) ->
         case maps:get(K, Fields, null) of
@@ -388,17 +395,20 @@ save_company(Fields, #{username := Who}) ->
         D0 when is_binary(D0) -> case string:trim(D0) of <<>> -> null; D -> D end;
         _ -> null
     end,
-    Values = [maps:get(C, Fields, null) || C <- Cols] ++ [Coord(<<"latitude">>), Coord(<<"longitude">>), Url, Display],
+    Values = [maps:get(C, Fields, null) || C <- Cols] ++ [Coord(<<"latitude">>), Coord(<<"longitude">>), Url, Display]
+             ++ [Text(F) || F <- Fiscal],
     {ok, Before} = get_company(),
     R = case Before of
         undefined ->
             ana_db:exec("INSERT INTO base.company (legal_name, tax_id, address, city, state, email, phone, latitude, longitude, public_url, "
-                        "  display_name) VALUES ($1, $2, $3, $4, $5, $6, $7, $8::text::numeric, $9::text::numeric, $10, $11)",
+                        "  display_name, state_registration, icms_taxpayer, municipal_registration, tax_regime) "
+                        "VALUES ($1, $2, $3, $4, $5, $6, $7, $8::text::numeric, $9::text::numeric, $10, $11, $12, $13, $14, $15)",
                         [case V of N when is_number(N) -> list_to_binary(io_lib:format("~p", [N])); _ -> V end || V <- Values]);
         #{<<"id">> := Id} ->
             ana_db:exec("UPDATE base.company SET legal_name = $2, tax_id = $3, address = $4, city = $5, "
                         "state = $6, email = $7, phone = $8, latitude = $9::text::numeric, longitude = $10::text::numeric, "
-                        "public_url = $11, display_name = $12 WHERE id = $1",
+                        "public_url = $11, display_name = $12, state_registration = $13, icms_taxpayer = $14, "
+                        "municipal_registration = $15, tax_regime = $16 WHERE id = $1",
                         [Id | [case V of N when is_number(N) -> list_to_binary(io_lib:format("~p", [N])); _ -> V end || V <- Values]])
     end,
     case R of
@@ -407,6 +417,12 @@ save_company(Fields, #{username := Who}) ->
             ana_instance:forget_public_url(),
             log(Who, <<"company.save">>, <<"company">>, Before, After),
             {ok, After};
+        {error, #{sqlstate := <<"23514">>, message := Msg}} when is_binary(Msg) ->
+            %% Rules of the database say "CODE: message" (spec 043); other checks are the URL and the name.
+            case re:run(Msg, "^[A-Z][A-Z0-9_]{2,40}: (.+)$", [{capture, all_but_first, binary}, unicode, dotall]) of
+                {match, [Text0]} -> {error, Text0};
+                nomatch -> {error, <<"endereço público inválido (https://nome[:porta], sem caminho) ou nome de exibição fora de 2 a 60 letras"/utf8>>}
+            end;
         {error, #{sqlstate := <<"23514">>}} ->
             {error, <<"endereço público inválido (https://nome[:porta], sem caminho) ou nome de exibição fora de 2 a 60 letras"/utf8>>};
         {error, E} -> {error, E}

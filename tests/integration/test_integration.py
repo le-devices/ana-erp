@@ -7020,3 +7020,145 @@ class TestAlertRules(Base):
         self.rules.remove(rid)
         self.assertEqual(psql(f"SELECT count(*) FROM ana_system.incident WHERE rule_id IS NULL AND component = 'memory_mb' "
                               f"AND closed_at IS NULL"), "0")
+
+
+# ---------------------------------------------------------------- spec 043
+def cnpj_alnum(base12):
+    """A valid alphanumeric CNPJ (Receita Federal, from July 2026): each character is worth ASCII − 48."""
+    s = base12.upper()
+    w = [6, 5, 4, 3, 2, 9, 8, 7, 6, 5, 4, 3, 2]
+    for n in (12, 13):
+        r = sum((ord(s[i]) - 48) * w[i + 13 - n] for i in range(n)) % 11
+        s += str(0 if r < 2 else 11 - r)
+    return f"{s[:2]}.{s[2:5]}.{s[5:8]}/{s[8:12]}-{s[12:]}"
+
+
+def cpf(base9):
+    d = [int(c) for c in base9]
+    for n in (9, 10):
+        r = sum(d[i] * (n + 1 - i) for i in range(n)) * 10 % 11
+        d.append(0 if r == 10 else r)
+    s = "".join(map(str, d))
+    return f"{s[:3]}.{s[3:6]}.{s[6:9]}-{s[9:]}"
+
+
+def fresh_root():
+    """8 random positions (letters and digits) that no earlier run used."""
+    import random
+    import string
+    return "".join(random.choice(string.ascii_uppercase + string.digits) for _ in range(8))
+
+
+class TestFiscalRegistry(Base):
+    """Spec 043: alphanumeric CNPJ, CPF, fiscal data, duplicates and branches, CNPJ lookup."""
+
+    ok, err, party = TestMasterData.ok, TestMasterData.err, TestMasterData.party
+
+    def test_ca_043_01_alphanumeric_cnpj_by_the_database_rule(self):
+        self.assertEqual(psql("SELECT base.valid_cnpj('12.ABC.345/01DE-35')::text || ',' || base.format_tax_id('12abc34501de35') "
+                              "|| ',' || base.valid_cnpj('12.ABC.345/01DF-35')::text || ',' || base.valid_cnpj('11.222.333/0001-81')::text"),
+                         "true,12.ABC.345/01DE-35,false,true")       # the Receita example; one character changed; old numeric
+        doc = cnpj_alnum(fresh_root() + "0001")
+        p = self.ok("base.save_party", name=f"Alfa {SUFFIX}", tax_id=doc.replace(".", "").replace("/", "").replace("-", "").lower())
+        row = psql(f"SELECT tax_id || ',' || person_kind FROM base.party WHERE id = {p['id']}")
+        self.assertEqual(row, f"{doc},company")                       # upper case and formatted by the database
+        bad = doc[:-4] + ("Z" if doc[-4] != "Z" else "Y") + doc[-3:]
+        e = self.err("base.save_party", name=f"Alfa errado {SUFFIX}", tax_id=bad)
+        self.assertEqual(e.code, "INVALID_TAX_ID")
+
+    def test_ca_043_02_same_result_by_sheet_api_and_import(self):
+        docs = [cnpj_alnum(fresh_root() + "0001") for _ in range(3)]
+        by_sheet = self.party(f"Alfa ficha {SUFFIX}", tax_id=docs[0].lower())
+        self.assertEqual(self.ok("master.get", entity="party", key=str(by_sheet["key"]))["values"]["tax_id"], docs[0])
+        by_api = self.ok("base.save_party", name=f"Alfa API {SUFFIX}", tax_id=docs[1])
+        self.assertEqual(psql(f"SELECT tax_id FROM base.party WHERE id = {by_api['id']}"), docs[1])
+        content = f"Nome;CNPJ/CPF\nAlfa planilha {SUFFIX};{docs[2].lower()}\nAlfa ruim {SUFFIX};{docs[2][:-1]}0\n"
+        if docs[2].endswith("0"):
+            content = content.replace(f"{docs[2][:-1]}0", f"{docs[2][:-1]}1")
+        r = self.ok("master.import", entity="party", content=content, confirm=True)
+        self.assertEqual((r["new"], r["error"]), (1, 1), r)
+        self.assertEqual(psql(f"SELECT tax_id || ',' || person_kind FROM base.party WHERE name = 'Alfa planilha {SUFFIX}'"),
+                         f"{docs[2]},company")
+
+    def test_ca_043_03_fiscal_data_coherence(self):
+        doc = cnpj_alnum(fresh_root() + "0001")
+        e = self.err("base.save_party", name=f"Não contribuinte {SUFFIX}", tax_id=doc, state="SP",
+                     icms_taxpayer="non_taxpayer", state_registration="110042490114")
+        self.assertEqual(e.code, "TAX_PROFILE_MISMATCH")
+        e = self.err("base.save_party", name=f"IE curta {SUFFIX}", tax_id=doc, state="SP", state_registration="1100424")
+        self.assertEqual(e.code, "INVALID_STATE_REGISTRATION")
+        e = self.err("base.save_party", name=f"Contribuinte sem IE {SUFFIX}", tax_id=doc, state="SP", icms_taxpayer="taxpayer")
+        self.assertEqual(e.code, "TAX_PROFILE_MISMATCH")
+        p = self.ok("base.save_party", name=f"Contribuinte {SUFFIX}", tax_id=doc, state="SP", icms_taxpayer="taxpayer",
+                    state_registration="110.042.490.114", tax_regime="presumed", municipal_registration="12345")
+        self.assertEqual(psql(f"SELECT state_registration || ',' || tax_regime FROM base.party WHERE id = {p['id']}"),
+                         "110042490114,presumed")
+        # Saving again without the fiscal parameters keeps them (older callers never erase).
+        self.ok("base.save_party", id=p["id"], name=f"Contribuinte {SUFFIX}", tax_id=doc, state="SP")
+        self.assertEqual(psql(f"SELECT icms_taxpayer FROM base.party WHERE id = {p['id']}"), "taxpayer")
+        person = cpf(str(int(time.time() * 1000))[-9:])
+        e = self.err("base.save_party", name=f"Pessoa com regime {SUFFIX}", tax_id=person, tax_regime="simples")
+        self.assertEqual(e.code, "TAX_PROFILE_MISMATCH")
+        q = self.ok("base.save_party", name=f"Pessoa isenta {SUFFIX}", tax_id=person, state="MG", state_registration="isento")
+        self.assertEqual(psql(f"SELECT person_kind || ',' || icms_taxpayer FROM base.party WHERE id = {q['id']}"), "individual,exempt")
+        e = self.err("base.save_party", name=f"Estrangeiro com CNPJ {SUFFIX}", tax_id=cnpj_alnum(fresh_root() + "0001"), country="US")
+        self.assertEqual(e.code, "TAX_PROFILE_MISMATCH")
+        f = self.ok("base.save_party", name=f"Estrangeiro {SUFFIX}", country="us", foreign_id="EIN 12-3456789")
+        self.assertEqual(psql(f"SELECT person_kind || ',' || country FROM base.party WHERE id = {f['id']}"), "foreign,US")
+        # The company follows the same rules (Administração → Empresa).
+        s, company, _ = http("GET", "/api/admin/company", token=self.token)
+        body = {k: company.get(k) for k in ("legal_name", "tax_id", "address", "city", "state", "email", "phone", "latitude",
+                                            "longitude", "public_url", "display_name", "state_registration", "icms_taxpayer",
+                                            "municipal_registration", "tax_regime")}
+        s, c, _ = http("PUT", "/api/admin/company", {**body, "state": "SP", "state_registration": "123"}, self.token)
+        self.assertEqual(s, 400, c)
+        self.assertIn("inscrição estadual", json.dumps(c, ensure_ascii=False))
+        s, c, _ = http("PUT", "/api/admin/company", body, self.token)
+        self.assertEqual(s, 200, c)
+
+    def test_ca_043_04_duplicates_and_branches(self):
+        root = fresh_root()
+        head, branch = cnpj_alnum(root + "0001"), cnpj_alnum(root + "0002")
+        p = self.ok("base.save_party", name=f"Matriz {SUFFIX}", tax_id=head)
+        e = self.err("base.save_party", name=f"Outra {SUFFIX}", tax_id=head.lower())
+        self.assertEqual(e.code, "DUPLICATE_TAX_ID")
+        self.assertIn(f"Matriz {SUFFIX}", e.message)                   # says who already has it
+        self.ok("base.save_party", name=f"Filial {SUFFIX}", tax_id=branch)
+        tabs = self.ok("master.get", entity="party", key=str(p["id"]))["tabs"]
+        rows = tabs["Mesma raiz (filiais)"]["rows"]
+        self.assertEqual([r["CNPJ"] for r in rows], [branch])
+        # People of the company: CPF only, formatted, never repeated.
+        n = str(int(time.time() * 1000))[-9:]
+        emp = self.ok("projects.save_employee", name=f"Pessoa {SUFFIX}", profile="PM", tax_id=cpf(n).replace(".", "").replace("-", ""))
+        self.assertEqual(psql(f"SELECT tax_id FROM projects.employee WHERE id = {emp['id']}"), cpf(n))
+        self.assertEqual(self.err("projects.save_employee", name=f"Outra pessoa {SUFFIX}", profile="PM", tax_id=cpf(n)).code,
+                         "DUPLICATE_TAX_ID")
+        self.assertEqual(self.err("projects.save_employee", name=f"Empresa {SUFFIX}", profile="PM", tax_id=head).code,
+                         "INVALID_TAX_ID")
+
+    def test_ca_043_05_cnpj_lookup_only_with_a_connector(self):
+        party = lambda: [e for e in self.ok("master.describe")["entities"] if e["name"] == "party"][0]
+        self.assertIsNone(party()["fetch"])
+        e = self.err("base.lookup_tax_id", tax_id=cnpj_alnum(fresh_root() + "0001"))
+        self.assertEqual(e.code, "NO_LOOKUP_CONNECTOR")
+        name = f"t{SUFFIX}_cnpj"
+        # A stand-in service: the health route answers JSON; options.fields maps it to the sheet's fields.
+        s, c, _ = http("PUT", f"/api/admin/connectors/{name}", {"kind": "http_api", "base_url": "http://localhost:8080",
+                       "options": {"purpose": "tax_id_lookup", "path": "/health?cnpj={cnpj}", "fields": {"name": "status"}}},
+                       self.token)
+        self.assertEqual(s, 200, c)
+        try:
+            self.assertEqual(party()["fetch"]["label"], "Buscar dados do CNPJ")
+            r = self.ok("base.lookup_tax_id", tax_id=cnpj_alnum(fresh_root() + "0001"))
+            self.assertEqual(r["values"], {"name": "ok"})
+            self.assertEqual(self.err("base.lookup_tax_id", tax_id=cpf("123456789")).code, "INVALID_TAX_ID")
+        finally:
+            http("PUT", f"/api/admin/connectors/{name}", {"kind": "http_api", "base_url": "http://localhost:8080",
+                                                           "active": False}, self.token)
+        self.assertIsNone(party()["fetch"])
+
+    def test_rnf_043_02_validation_cost(self):
+        t0 = time.time()
+        n = psql("SELECT count(*) FILTER (WHERE base.valid_tax_id(lpad(i::text, 12, '0') || '00')) FROM generate_series(1, 100000) i")
+        self.assertTrue(n.isdigit())
+        self.assertLess(time.time() - t0, 5.0)                          # < 50 µs a document (psql start included)

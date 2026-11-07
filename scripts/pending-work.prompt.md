@@ -40,7 +40,7 @@ Você trabalha no projeto ANA ERP em /home/andre/ana-erp: um ERP com núcleo Erl
 Tarefas adiadas já concluídas (ordem acordada em out/2026): T-017-05b ✓, T-039-17b ✓, T-035-05b ✓, T-040-11b ✓, E-04 da spec 042 ✓, T-019-08b ✓ (regras de alerta e silêncios), T-010-06b ✓ (disjuntor por cliente da API pública).
 
 **Fila atual — acordada com o dono do produto em 07/11/2026; uma por vez, nesta ordem, e ela prevalece sobre a regra de escolha abaixo** (specs novas 043–049 escritas a pedido do dono, entremeadas com as adiadas que ainda faltavam):
-1. 043 — cadastro fiscal de pessoas: CNPJ alfanumérico (em vigor desde jul/2026; o validador atual o recusa), CPF, inscrições, contribuinte, regime (`specs/043-fiscal-registry`)
+1. ✓ 043 — cadastro fiscal de pessoas (falta T-043-02b, dígito da IE por UF, para o fim da fila): CNPJ alfanumérico (em vigor desde jul/2026; o validador atual o recusa), CPF, inscrições, contribuinte, regime (`specs/043-fiscal-registry`)
 2. 044 — e-mail de saída por SMTP como tipo de conector, `ana.send_email` transacional (`specs/044-outbound-email`)
 3. T-037-06b — envio do link do documento por e-mail (agora pelo SMTP da 044)
 4. T-033-09b — base OSV por conector e aviso por e-mail
@@ -51,7 +51,7 @@ Tarefas adiadas já concluídas (ordem acordada em out/2026): T-017-05b ✓, T-0
 9. 049 — motor de impostos, uma fase por vez: fase 1 (motor, vigência, fórmulas, casos de teste, ISS e retenções), fase 2 (ICMS/ST/DIFAL/FCP, IPI, PIS/COFINS, Simples), fase 3 (CBS, IBS e Imposto Seletivo na transição) (`specs/049-tax-engine`)
 10. T-040-10b — importação em lote rápida de cadastros
 11. T-039-16b — editor BPM: arrastar da paleta, alinhar e distribuir
-12. Por último, as que dependem de infraestrutura ou decisão: S3 (T-016-02b, T-036-07b), antivírus (T-016-04b), registro de imagem (T-036-08b), OpenTelemetry (T-019-09b), mTLS (T-017-02c), SFTP/pasta/e-mail de entrada (T-017-02b), pacotes de conectores (T-017-08b), transporte (T-034-07b..09b), API (T-010-10b..14b; a 14b exige decisão), geocodificador simulado (T-032-06b).
+12. Por último, as que dependem de infraestrutura ou decisão: S3 (T-016-02b, T-036-07b), antivírus (T-016-04b), registro de imagem (T-036-08b), OpenTelemetry (T-019-09b), mTLS (T-017-02c), SFTP/pasta/e-mail de entrada (T-017-02b), pacotes de conectores (T-017-08b), transporte (T-034-07b..09b), API (T-010-10b..14b; a 14b exige decisão), geocodificador simulado (T-032-06b), dígito verificador da inscrição estadual por UF (T-043-02b).
 
 Fora da fila atual acima, escolha o **primeiro item da lista cuja `tasks.md` ainda tenha tarefas `[ ]`** (exceções: a T-023-09 é o item 5; as T-019-08b, T-019-09b, T-017-02b, T-017-02c, T-017-08b, T-016-02b, T-016-04b, T-033-09b, T-034-07b, T-034-08b, T-034-09b, T-032-06b, T-035-05b, T-036-07b, T-036-08b, T-037-06b, T-010-06b, T-010-10b, T-010-11b, T-010-12b, T-010-14b, T-040-10b, T-040-11b, T-039-16b e T-039-17b ficam para depois de todos os outros itens). Se tudo estiver `[x]`, apenas rode as suítes e relate.
 19. 041 — atendimento do pedido de venda conforme a política da empresa (`specs/041-sales-fulfillment-policy`) — implementada (T-041-01..08).

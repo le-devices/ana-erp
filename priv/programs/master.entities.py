@@ -19,6 +19,8 @@ Entity keys
                                 entity instead of its id), readonly (after creation), list, sensitive,
                                 secret (only admins see it), expr (read expression), help
   tabs                          kind 'one' (1:1 row) or 'rows' (1:N) or 'view' (read only SQL)
+  fetch                         {"label", "program", "field", "param", "available" (SQL)}: fills the sheet from outside
+                                (e.g. a CNPJ lookup); offered only when "available" answers true
   duplicates                    [{"field", "kind": "exact" | "similar", "threshold"}]
   quality                       [{"label", "where" (over alias t), "hint"}]
   permissions                   minimum role per action: view, edit, approve
@@ -47,8 +49,31 @@ ENTITIES = {
             {"name": "longitude", "label": "Longitude", "type": "decimal", "help": "ex.: -46,6333"},
             {"name": "salesperson", "label": "Vendedor (login)", "type": "text", "max": 63,
              "help": "dono da carteira: quem só vê a própria carteira vê este cliente"},
+            # Spec 043 (D4): fiscal data; the database checks the document, the registration and their coherence.
+            {"name": "person_kind", "label": "Pessoa", "type": "choice", "computed": True, "list": True,
+             "choices": [["individual", "Física"], ["company", "Jurídica"], ["foreign", "Estrangeira"]]},
+            {"name": "country", "label": "País", "type": "text", "max": 2, "upper": True, "default": "BR",
+             "help": "código de 2 letras; fora do Brasil não há CNPJ/CPF"},
+            {"name": "foreign_id", "label": "Identificação estrangeira", "type": "text", "max": 40},
+            {"name": "state_registration", "label": "Inscrição estadual", "type": "text", "max": 20, "upper": True,
+             "help": "só números (o formato é conferido pela UF) ou ISENTO"},
+            {"name": "icms_taxpayer", "label": "Contribuinte do ICMS", "type": "choice",
+             "choices": [["taxpayer", "Contribuinte"], ["exempt", "Isento"], ["non_taxpayer", "Não contribuinte"]]},
+            {"name": "municipal_registration", "label": "Inscrição municipal", "type": "text", "max": 20},
+            {"name": "tax_regime", "label": "Regime tributário", "type": "choice",
+             "choices": [["simples", "Simples Nacional"], ["simples_excess", "Simples Nacional — excesso de sublimite"],
+                         ["presumed", "Lucro Presumido"], ["real", "Lucro Real"], ["mei", "MEI"],
+                         ["public", "Órgão público"], ["nonprofit", "Entidade sem fins lucrativos"]]},
+            {"name": "final_consumer", "label": "Consumidor final", "type": "bool",
+             "help": "vazio: o cálculo de impostos decide pelo tipo de pessoa"},
         ],
         "tabs": [
+            {"label": "Mesma raiz (filiais)", "kind": "view", "sql":
+                "SELECT o.name AS \"nome\", o.tax_id AS \"CNPJ\", o.city AS \"cidade\", o.state AS \"UF\", "
+                "CASE WHEN o.active THEN 'ativo' ELSE 'inativo' END AS \"situação\" "
+                "FROM base.party me JOIN base.party o ON o.person_kind = 'company' "
+                "AND base.tax_id_root(o.tax_id) = base.tax_id_root(me.tax_id) AND o.id <> me.id "
+                "WHERE me.id = $1 AND me.person_kind = 'company' ORDER BY o.tax_id"},
             {"label": "Crédito", "kind": "one", "table": "finance.credit_profile", "fk": "party_id",
              "writer": "finance.save_credit_profile", "parent_param": "customer", "parent_value": "id",
              "fields": [
@@ -63,6 +88,10 @@ ENTITIES = {
                 "sum(b.amount) AS \"em aberto\", min(b.due_date) AS \"próximo vencimento\" "
                 "FROM finance.bill b WHERE b.party_id = $1 AND b.status = 'open' GROUP BY b.kind"},
         ],
+        # Spec 043 (D6): only offered when a lookup connector is configured.
+        "fetch": {"label": "Buscar dados do CNPJ", "program": "base.lookup_tax_id", "field": "tax_id", "param": "tax_id",
+                  "available": "SELECT EXISTS (SELECT 1 FROM integration.connector WHERE active AND kind = 'http_api' "
+                               "AND options ->> 'purpose' = 'tax_id_lookup')"},
         "duplicates": [{"field": "tax_id", "kind": "exact"}, {"field": "name", "kind": "similar", "threshold": 0.55},
                        {"field": "email", "kind": "exact"}],
         "quality": [
@@ -256,6 +285,7 @@ ENTITIES = {
             {"name": "profile", "label": "Perfil profissional", "type": "ref", "ref": "profile", "required": True, "list": True},
             {"name": "hourly_cost", "label": "Custo por hora", "type": "money", "secret": True, "sensitive": True},
             {"name": "username", "label": "Usuário do sistema", "type": "text", "list": True},
+            {"name": "tax_id", "label": "CPF", "type": "tax_id", "sensitive": True},
         ],
         "permissions": {"view": "user", "edit": "user", "approve": "admin"},
     },
