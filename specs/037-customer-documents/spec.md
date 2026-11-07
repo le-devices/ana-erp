@@ -36,6 +36,11 @@ cliente nunca tem acesso a documento interno da empresa.**
 - **RF-037-05** Link de download sem conta (spec 016: validade, limite,
   senha), só para arquivos em subpasta compartilhada de cliente/fornecedor;
   o núcleo recusa link para arquivo interno.
+- **RF-037-06** (T-037-06b) "Link para o cliente" pode enviar o link por
+  e-mail (spec 044): ao e-mail do cadastro do parceiro ou aos endereços
+  informados, com mensagem opcional; a senha do link nunca vai no e-mail (o
+  texto avisa que será informada por outro meio); o envio só sai se a
+  execução confirmar e fica registrado com o dono.
 
 ## Critérios de aceite
 - **CA-037-01** Pedido criado, expedição despachada e OS aceita geram os PDFs

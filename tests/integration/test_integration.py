@@ -7379,3 +7379,32 @@ class TestOutboundEmail(Base):
             self.assertIn("Encerrado", self.parsed(self.mails(to)[-1])["Subject"])
         finally:
             http("DELETE", f"/api/admin/observability/alerts/rules/{c['id']}", token=self.token)
+
+    def test_t_037_06b_download_link_by_email(self):
+        name = f"t{SUFFIX}_smtpdoc"
+        self.assertEqual(self.connector(name, default=True)[0], 200)
+        to = f"financeiro.{SUFFIX}@exemplo.test"
+        c = self.client
+        party = c.call("base.save_party", name=f"Cliente e-mail {SUFFIX}", email=to, state="SP")["id"]
+        nomail = c.call("base.save_party", name=f"Cliente sem e-mail {SUFFIX}", state="SP")["id"]
+        link = lambda **p: self.run_program("docs.share_link", p)[1]
+        out = link(kind="statement", key=str(party), hours=2, max_downloads=3, password="s3gr3d0", send=True,
+                   note="Segue o extrato <do mês>.")
+        r = out.get("result") or self.fail(out)
+        self.assertEqual(r["email"]["to"], [to])
+        m = self.wait_mail(to)
+        self.assertEqual(len(m), 1)
+        msg = self.parsed(m[0])
+        text = [p.get_content() for p in msg.walk() if p.get_content_type() == "text/plain"][0]
+        html = [p.get_content() for p in msg.walk() if p.get_content_type() == "text/html"][0]
+        path = r["url"][r["url"].index("/share/"):]
+        self.assertIn(path, text)
+        self.assertIn(path, html)
+        self.assertNotIn("s3gr3d0", m[0]["data"] + text + html)            # the password never goes by e-mail
+        self.assertIn("outro meio", text)
+        self.assertIn("&lt;do mês&gt;", html)                             # the note is escaped
+        # Other addresses on request; a partner without e-mail needs one.
+        other = f"contador.{SUFFIX}@exemplo.test"
+        self.assertIn("result", link(kind="statement", key=str(nomail), send=True, to=f"{other}; {to}"))
+        self.assertEqual(len(self.wait_mail(other)), 1)
+        self.assertEqual(link(kind="statement", key=str(nomail), send=True)["error"]["code"], "NO_RECIPIENT")
