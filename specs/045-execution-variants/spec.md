@@ -59,3 +59,13 @@ estoque central").
   resolvidos no dia da execução.
 - **CA-045-04** Programa que perdeu um parâmetro: a variante executa com
   aviso; parâmetro que mudou de tipo: variante marcada inválida.
+
+## Experiência e automação (P18, P19)
+- Variantes aparecem na paleta de comandos (spec 050) e nos blocos do painel
+  (spec 048): "Fechamento mensal" abre a rotina já preenchida.
+- Usar os mesmos parâmetros três vezes faz o ERP sugerir "Salvar como
+  variante" (spec 051); aceitar é um clique.
+- A variante padrão do usuário vem aplicada sem pedir; o "Ensaiar" (spec 056)
+  vale com a variante.
+- Critério extra: **CA-045-05** Ctrl+K → nome da variante abre a rotina
+  preenchida e pronta para executar.

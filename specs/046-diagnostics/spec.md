@@ -72,3 +72,12 @@ erros iguais aparecem como milhares de linhas soltas.
 - **CA-046-04** Depois do expurgo do detalhe, o agregado do período continua
   igual e o grupo mantém seus exemplos.
 - **CA-046-05** Desenvolvedor não vê programas de outros namespaces.
+
+## Experiência e automação (P18, P19)
+- Perguntas em linguagem natural pelo assistente (spec 052): "o que mais
+  falhou este mês?" responde com a mesma consulta pronta.
+- Grupo de erro novo ou reaparecido avisa o dono sozinho (regra de alerta e
+  e-mail, specs 019 e 044) e vira tarefa (spec 051); "Depurar reexecução" a
+  um clique (spec 047).
+- Tela de abertura com as três respostas mais úteis já calculadas, sem
+  precisar montar filtro.

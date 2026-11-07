@@ -118,3 +118,14 @@ estados, atividades e benefícios próprios.
   ICMS com DIFAL e FCP conforme as tabelas da UF de destino.
 - **CA-049-07** (fase 3) Um documento de 2027 traz CBS e IBS nas alíquotas de
   transição do pacote, e o de 2026 nas do ano anterior.
+
+## Experiência e automação (P18, P19)
+- "Por que este imposto?" em todo documento: a explicação das regras
+  aplicadas em linguagem simples, também pelo assistente (spec 052).
+- Ensaio por data (spec 056): "como fica este pedido com as regras de 2027?"
+  num clique.
+- Pacotes de regras chegam pelas atualizações e rodam os casos de teste
+  sozinhos; só a diferença chega ao responsável tributário, como tarefa.
+- Aviso automático de vigência terminando sem regra seguinte (ex.: alíquota
+  de transição que acaba em 31/12 sem a do ano seguinte).
+- Nenhum valor de imposto é digitado à mão em documento.
