@@ -288,7 +288,8 @@ components() ->
      {<<"scheduler">>, fun scheduler/0},
      {<<"access_log">>, fun access_log/0},
      {<<"remote_systems">>, fun breakers/0},
-     {<<"integrations">>, fun integrations/0}].
+     {<<"integrations">>, fun integrations/0},
+     {<<"public_api">>, fun public_api/0}].
 
 database() ->
     T0 = erlang:monotonic_time(millisecond),
@@ -350,6 +351,15 @@ integrations() ->
                           "(SELECT count(*) FROM integration.inbox WHERE status = 'dead') AS dead", []) of
         {ok, #{<<"dead">> := 0}} -> {green, <<"nenhuma mensagem parada"/utf8>>};
         {ok, #{<<"dead">> := N}} -> {yellow, fmt("~b mensagem(ns) de integração esgotaram as tentativas", [N])};
+        _ -> {yellow, <<"não foi possível verificar"/utf8>>}
+    end.
+
+%% Spec 010 (RNF-010-10): API clients suspended by their circuit breaker.
+public_api() ->
+    case catch ana_db:rows("SELECT name FROM ana_system.api_client WHERE suspended_until > now() ORDER BY name LIMIT 20", []) of
+        {ok, []} -> {green, <<"nenhum cliente suspenso"/utf8>>};
+        {ok, Rows} -> {yellow, fmt("cliente(s) suspenso(s) por excesso de falhas: ~ts",
+                                   [lists:join(", ", [N || #{<<"name">> := N} <- Rows])])};
         _ -> {yellow, <<"não foi possível verificar"/utf8>>}
     end.
 

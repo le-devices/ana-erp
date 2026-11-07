@@ -274,6 +274,7 @@
       rotateApiSecret: (id) => API.request("POST", `/api/admin/api-clients/${encodeURIComponent(id)}/rotate-secret`, {}),
       dropOldApiSecret: (id) => API.request("POST", `/api/admin/api-clients/${encodeURIComponent(id)}/drop-old-secret`, {}),
       apiSigningSecret: (id) => API.request("POST", `/api/admin/api-clients/${encodeURIComponent(id)}/signing-secret`, {}),
+      releaseApiBreaker: (id) => API.request("POST", `/api/admin/api-clients/${encodeURIComponent(id)}/release-breaker`, {}),
       apiCalls: (client) => API.request("GET", "/api/admin/api-calls" + query({ client })),
       rotateApiKeys: () => API.request("POST", "/api/admin/api-keys/rotate", {}),
       notices: (unread) => API.request("GET", "/api/admin/checks/notices" + query(unread ? { unread: 1 } : {})),

@@ -771,7 +771,8 @@
   const STATE = { green: ["●", "normal", "ok"], yellow: ["▲", "atenção", "warn"], red: ["■", "falha", "off"] };
   const SEVERITY = { info: ["ℹ", "informação", ""], warning: ["▲", "atenção", "warn"], serious: ["◆", "sério", "off"], critical: ["■", "crítico", "off"] };
   const COMPONENT = { database: "Banco de dados", pool_core: "Conexões do núcleo", pool_programs: "Conexões dos programas",
-    python: "Processos Python", scheduler: "Agendamento", access_log: "Registro de acessos", remote_systems: "Sistemas remotos", integrations: "Integrações" };
+    python: "Processos Python", scheduler: "Agendamento", access_log: "Registro de acessos", remote_systems: "Sistemas remotos", integrations: "Integrações",
+    public_api: "API pública" };
   const stateChip = (s) => { const [icon, label, cls] = STATE[s] || ["?", s, ""]; return pill(`${icon} ${label}`, cls); };
   const sevChip = (s) => { const [icon, label, cls] = SEVERITY[s] || ["", s, ""]; return pill(`${icon} ${label}`, cls); };
   const n2 = (v) => (v === null || v === undefined ? "—" : Number(v).toLocaleString("pt-BR", { maximumFractionDigits: 1 }));
@@ -1767,7 +1768,7 @@
       { label: "Executa como", value: (c) => c.run_as },
       { label: "Escopo", value: (c) => c.scopes.join(", ") || "—" },
       { label: "Hoje", value: (c) => String(c.today), class: "num" },
-      { label: "Situação", value: (c) => c.active ? pill("ativo", "ok") : pill("desativado", "off") },
+      { label: "Situação", value: (c) => apiClientState(c) },
     ], list, { empty: "Nenhum cliente: a API pública está fechada.", onRow: (c) => guard(() => publicapi("clients", c.client_id)) }),
     el("div", { class: "form-card" },
       el("h3", { text: "Chaves de assinatura dos tokens" }),
@@ -1816,6 +1817,10 @@
     main().replaceChildren(...head, tabs, form);
   }
 
+  // RNF-010-10: a client suspended by its circuit breaker says until when.
+  const apiClientState = (c) => !c.active ? pill("desativado", "off")
+    : c.suspended_until ? pill(`▲ suspenso até ${fmtDate(c.suspended_until)}`, "warn") : pill("ativo", "ok");
+
   async function apiClientDetail(head, tabs, id) {
     const c = (await API.admin.apiClients()).find((x) => x.client_id === id);
     if (!c) return publicapi();
@@ -1853,7 +1858,13 @@
       el("div", { class: "form-card" },
         el("h3", { text: c.name }),
         el("p", {}, el("code", { text: c.client_id }), ` · ${API_KINDS[c.kind] || c.kind} · executa como ${c.run_as} · criado por ${c.created_by} em ${fmtDate(c.created_at)}`),
-        el("p", {}, c.active ? pill("ativo", "ok") : pill("desativado", "off"), ` ${c.today} chamada(s) hoje`),
+        el("p", {}, apiClientState(c), ` ${c.today} chamada(s) hoje`,
+          Number(c.breaker_openings) ? ` · disjuntor abriu ${c.breaker_openings} vez(es) em 7 dias` : ""),
+        c.suspended_until ? el("div", { class: "row-buttons" },
+          el("p", { class: "muted", text: "Suspenso pelo disjuntor: falhas técnicas demais (erro interno, tempo esgotado) nas chamadas deste cliente. Corrija a causa (veja as chamadas) e libere, ou aguarde o fim do prazo." }),
+          el("button", { type: "button", text: "Liberar agora", onclick: () => guard(async () => {
+            await API.admin.releaseApiBreaker(id); toast("Cliente liberado (vale em todos os nós em até 5 s)."); publicapi("clients", id);
+          }) })) : null,
         field("Escopo", scopes), field("Origens permitidas", origins), field("Endereços permitidos", ips),
         field("Chamadas por minuto", rate), field("Cota diária", quota), check("Exigir requisições assinadas (HMAC)", sign),
         el("div", { class: "row-buttons" }, save, toggle,

@@ -6,7 +6,7 @@
 - [x] T-010-04 `/oauth/token` client_credentials, segredo duplo na troca, proteção contra força bruta (RF-010-02, CA-010-01)
 - [x] T-010-05 Portão público: HTTPS/proxy confiável, HSTS, CORS em memória, escopo ∩ exposto ∩ papel, IPs permitidos (RF-010-05, 08, RNF-010-01, CA-010-04, 10)
 - [x] T-010-06 Limite por minuto, cota diária consolidada entre nós e fração de capacidade pública (RNF-010-04, 08, CA-010-07)
-- [ ] T-010-06b Disjuntor por cliente: suspender após excesso de 5xx/timeouts e avisar (RNF-010-10)
+- [x] T-010-06b Disjuntor por cliente: suspender após excesso de 5xx/timeouts e avisar (RNF-010-10, CA-010-12)
 - [x] T-010-07 Requisições assinadas HMAC + nonce (RF-010-06, CA-010-06)
 - [x] T-010-08 Idempotência com espera da chamada em andamento e falha segura (RF-010-07, RNF-010-09, CA-010-05)
 - [x] T-010-09 Chave publicável e programas `public` (RF-010-04, CA-010-09)

@@ -12,7 +12,7 @@
 -export([client/1, by_publishable/1, origin_allowed/1, check_secret/2, user_for/3, in_scope/2,
          create_client/2, update_client/3, rotate_secret/2, drop_secret/3, new_signing_secret/2, clients/0, calls/1]).
 -export([issue/2, validate/1, rotate_keys/1, keys/0]).
--export([admit/2, release/0, record/1, idempotency_begin/3, idempotency_end/4, nonce_ok/2, signature_ok/7,
+-export([admit/2, release/0, record/1, outcome/2, release_breaker/2, technical/1, idempotency_begin/3, idempotency_end/4, nonce_ok/2, signature_ok/7,
          ip_allowed/2, public_mode/0, secure/1]).
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2]).
 
@@ -27,7 +27,10 @@
 start_link() -> gen_server:start_link({local, ?MODULE}, ?MODULE, [], []).
 
 %% ana_listener, channel "ana_api": "client:<id>" | "keys" | "all".
-on_notify(_Channel, <<"client:", Id/binary>>) -> _ = catch ets:delete(?CLIENTS, Id), forget_origins();
+on_notify(_Channel, <<"client:", Id/binary>>) ->
+    _ = catch ets:delete(?CLIENTS, Id),
+    _ = catch ets:delete(?RATE, {tripped, Id}),                % the row (suspended or released) decides now
+    forget_origins();
 on_notify(_Channel, <<"keys">>) -> _ = catch ets:delete(?META, keys), ok;
 on_notify(_Channel, _) -> _ = catch ets:delete_all_objects(?CLIENTS), _ = catch ets:delete(?META, keys), forget_origins().
 
@@ -51,6 +54,7 @@ load_client(Id, Now) ->
             "SELECT c.client_id, c.name, c.kind, c.run_as, c.secret_hashes, c.publishable_hash, c.signing_ct, c.signing_nonce, "
             "  c.signing_tag, c.origins, c.redirect_uris, c.scopes, c.ip_allow::text[] AS ip_allow, c.rate_per_minute, "
             "  c.daily_quota, c.require_signature, "
+            "  COALESCE(extract(epoch FROM c.suspended_until)::bigint, 0) AS suspended_until_s, "
             "  c.active AND u.active AND (c.expires_at IS NULL OR c.expires_at > now()) AS usable, u.role "
             "FROM ana_system.api_client c JOIN ana_system.app_user u ON u.username = c.run_as WHERE c.client_id = $1", [Id]) of
         {ok, #{} = R} ->
@@ -265,6 +269,9 @@ clients() ->
                 "  c.publishable_hash IS NOT NULL AS publishable, c.signing_ct IS NOT NULL AS signing, c.origins, c.redirect_uris, "
                 "  c.scopes, c.ip_allow::text[] AS ip_allow, c.rate_per_minute, c.daily_quota, c.require_signature, c.active, "
                 "  c.expires_at, c.created_by, c.created_at, "
+                "  CASE WHEN c.suspended_until > now() THEN c.suspended_until END AS suspended_until, "
+                "  (SELECT count(*) FROM ana_system.api_breaker_event e WHERE e.client_id = c.client_id "
+                "     AND e.opened_at > now() - interval '7 days') AS breaker_openings, "
                 "  COALESCE((SELECT calls FROM ana_system.api_usage u WHERE u.client_id = c.client_id AND u.day = (now() AT TIME ZONE 'UTC')::date), 0) AS today "
                 "FROM ana_system.api_client c ORDER BY c.name", []).
 
@@ -378,10 +385,22 @@ rotate_keys(#{username := Who}) ->
 
 %% ---------------------------------------------------------------- limits (RNF-010-04, 08)
 
-%% {ok} | {error, rate, RetryAfterS} | {error, quota} | {error, overload}. release/0 after an ok.
--spec admit(map(), binary()) -> ok | {error, rate, pos_integer()} | {error, quota} | {error, overload}.
-admit(#{<<"client_id">> := Id, <<"rate_per_minute">> := Rate, <<"daily_quota">> := Quota}, _Ip) ->
+%% {ok} | {error, suspended, RetryAfterS} | {error, rate, RetryAfterS} | {error, quota} | {error, overload}.
+%% release/0 after an ok.
+-spec admit(map(), binary()) -> ok | {error, suspended | rate, pos_integer()} | {error, quota} | {error, overload}.
+admit(#{<<"client_id">> := Id} = C, Ip) ->
     NowS = erlang:system_time(second),
+    case suspended_until(C) of
+        Until when Until > NowS -> {error, suspended, Until - NowS};
+        _ -> admit(C, Ip, NowS, Id)
+    end.
+
+%% The client row (cache, every node) or this node's own trip while the NOTIFY travels.
+suspended_until(#{<<"client_id">> := Id} = C) ->
+    Local = case ets:lookup(?RATE, {tripped, Id}) of [{_, U}] -> U; [] -> 0 end,
+    max(Local, maps:get(<<"suspended_until_s">>, C, 0)).
+
+admit(#{<<"rate_per_minute">> := Rate, <<"daily_quota">> := Quota}, _Ip, NowS, Id) ->
     Min = NowS div 60,
     case ets:update_counter(?RATE, {rate, Id, Min}, 1, {{rate, Id, Min}, 0}) of
         N when N > Rate -> {error, rate, 60 - (NowS rem 60)};
@@ -402,6 +421,82 @@ admit(#{<<"client_id">> := Id, <<"rate_per_minute">> := Rate, <<"daily_quota">> 
 
 -spec release() -> ok.
 release() -> _ = ets:update_counter(?RATE, inflight, -1, {inflight, 0}), ok.
+
+%% ---------------------------------------------------------------- circuit breaker (RNF-010-10)
+
+%% Technical failures are the platform's or the program's fault (internal error, time out),
+%% never the caller's (invalid parameter, forbidden, business refusal): only those count.
+-spec technical(binary()) -> boolean().
+technical(Code) -> lists:member(Code, [<<"TIMEOUT">>, <<"INTERNAL">>, <<"EXCEPTION">>, <<"CPU_LIMIT">>, <<"MEMORY">>,
+                                       <<"SYNTAX">>, <<"SQL">>, <<"PROTOCOL">>, <<"PROCESS_EXITED">>, <<"UNAVAILABLE">>]).
+
+%% Every finished public call; per-minute buckets of this node, the last two minutes decide.
+-spec outcome(binary(), boolean()) -> ok.
+outcome(Id, Failed) ->
+    Min = erlang:system_time(second) div 60,
+    _ = ets:update_counter(?RATE, {calls, Id, Min}, 1, {{calls, Id, Min}, 0}),
+    case Failed of
+        false -> ok;
+        true ->
+            _ = ets:update_counter(?RATE, {fails, Id, Min}, 1, {{fails, Id, Min}, 0}),
+            Count = fun(K) -> lists:sum([N || M <- [Min - 1, Min], {_, N} <- ets:lookup(?RATE, {K, Id, M})]) end,
+            Fails = Count(fails),
+            Calls = Count(calls),
+            case Fails >= ana_settings:get(api_breaker_failures)
+                 andalso Fails * 100 >= ana_settings:get(api_breaker_ratio) * Calls of
+                true -> trip(Id, Fails, Calls);
+                false -> ok
+            end
+    end.
+
+%% One opening per period on the whole cluster: the conditional UPDATE decides who records it.
+trip(Id, Fails, Calls) ->
+    NowS = erlang:system_time(second),
+    Until = NowS + ana_settings:get(api_breaker_open_s),
+    case ets:insert_new(?RATE, {{tripping, Id}, NowS}) of
+        false -> ok;
+        true ->
+            ets:insert(?RATE, {{tripped, Id}, Until}),
+            forget_counts(Id),
+            _ = spawn(fun() ->
+                try record_trip(Id, Fails, Calls, Until) after ets:delete(?RATE, {tripping, Id}) end
+            end),
+            ok
+    end.
+
+record_trip(Id, Fails, Calls, Until) ->
+    case ana_db:one("UPDATE ana_system.api_client SET suspended_until = to_timestamp($2) WHERE client_id = $1 "
+                    "AND (suspended_until IS NULL OR suspended_until < now()) RETURNING name", [Id, Until]) of
+        {ok, #{<<"name">> := Name}} ->
+            _ = ana_db:exec("INSERT INTO ana_system.api_breaker_event (client_id, node, failures, calls, until) "
+                            "VALUES ($1, $2, $3, $4, to_timestamp($5))", [Id, ana_config:node_id(), Fails, Calls, Until]),
+            Msg = unicode:characters_to_binary(io_lib:format(
+                "API pública: cliente ~ts suspenso por ~b s (~b falhas técnicas em ~b chamadas)",
+                [Name, Until - erlang:system_time(second), Fails, Calls])),
+            _ = ana_db:exec("INSERT INTO ana_system.notice (kind, severity, message, link) "
+                            "VALUES ('api_breaker', 'serious', $1, '#/admin/publicapi')", [Msg]),
+            logger:warning("~ts", [Msg]),
+            notify(<<"client:", Id/binary>>);
+        _ -> ok
+    end.
+
+forget_counts(Id) ->
+    _ = ets:match_delete(?RATE, {{calls, Id, '_'}, '_'}),
+    _ = ets:match_delete(?RATE, {{fails, Id, '_'}, '_'}),
+    ok.
+
+%% By hand, before the period ends (Administração → API pública).
+-spec release_breaker(binary(), map()) -> {ok, map()} | {error, not_found}.
+release_breaker(Id, #{username := Who}) ->
+    case ana_db:one("UPDATE ana_system.api_client SET suspended_until = NULL WHERE client_id = $1 RETURNING client_id", [Id]) of
+        {ok, #{<<"client_id">> := _}} ->
+            _ = ana_db:exec("UPDATE ana_system.api_breaker_event SET released_by = $2, released_at = now() "
+                            "WHERE client_id = $1 AND released_at IS NULL AND until > now()", [Id, Who]),
+            ana_admin:log(Who, <<"api.breaker.release">>, Id, null, null),
+            notify(<<"client:", Id/binary>>),
+            {ok, #{released => Id}};
+        _ -> {error, not_found}
+    end.
 
 share() ->
     case catch list_to_integer(ana_config:text("ANA_PUBLIC_EXEC_SHARE", "50")) of
@@ -574,7 +669,9 @@ flush_usage() ->
 
 purge() ->
     Min = erlang:system_time(second) div 60,
-    _ = ets:select_delete(?RATE, [{{{rate, '_', '$1'}, '_'}, [{'<', '$1', Min - 2}], [true]}]),
+    _ = [ets:select_delete(?RATE, [{{{K, '_', '$1'}, '_'}, [{'<', '$1', Min - 2}], [true]}]) || K <- [rate, calls, fails]],
+    NowS = erlang:system_time(second),
+    _ = ets:select_delete(?RATE, [{{{tripped, '_'}, '$1'}, [{'=<', '$1', NowS}], [true]}]),
     _ = ana_db:exec("DELETE FROM ana_system.api_nonce WHERE expires_at < now()", []),
     _ = ana_db:exec("DELETE FROM ana_system.api_idempotency WHERE expires_at < now()", []),
     ok.

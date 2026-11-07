@@ -106,6 +106,10 @@ public_calls(U, C, Decoded, Body, Req) ->
     Calls = case Decoded of L when is_list(L) -> L; One -> [One] end,
     Ip = ana_http:ip(Req),
     case admit_all(C, Ip, length(Calls)) of
+        {error, suspended, After} ->
+            cowboy_req:reply(503, #{<<"retry-after">> => integer_to_binary(After), <<"content-type">> => <<"application/json">>},
+                             json:encode(#{error => #{code => <<"CLIENT_SUSPENDED">>,
+                                                      message => <<"cliente suspenso por excesso de falhas; tente depois"/utf8>>}}), Req);
         {error, rate, After} ->
             cowboy_req:reply(429, #{<<"retry-after">> => integer_to_binary(After), <<"content-type">> => <<"application/json">>},
                              json:encode(#{error => #{code => <<"RATE_LIMITED">>, message => <<"limite de chamadas por minuto"/utf8>>}}), Req);
@@ -168,6 +172,7 @@ wait_running(R, _, _, _, _) -> R.
 audited(U = #{username := Who}, C, Call, Ip, Key) ->
     T0 = erlang:monotonic_time(millisecond),
     Reply = call(U, Call),
+    ok = ana_api:outcome(maps:get(<<"client_id">>, C), failed(Reply)),
     Status = case Reply of
         #{error := #{code := Code}} when Code =:= -32601; Code =:= -32602; Code =:= -32600 -> 400;
         #{error := #{code := -32603}} -> 500;
@@ -178,6 +183,11 @@ audited(U = #{username := Who}, C, Call, Ip, Key) ->
                      ip => Ip, program => case Call of #{<<"method">> := M} when is_binary(M) -> M; _ -> null end,
                      status => Status, duration_ms => erlang:monotonic_time(millisecond) - T0, idempotency_key => Key}),
     Reply.
+
+%% RNF-010-10: what counts toward the client's circuit breaker.
+failed(#{error := #{code := -32603}}) -> true;
+failed(#{error := #{data := #{<<"code">> := Code}}}) -> ana_api:technical(Code);
+failed(_) -> false.
 
 rpc_error(Id, Code, Msg, Data) ->
     E = #{code => Code, message => Msg},

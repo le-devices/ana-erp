@@ -373,6 +373,8 @@ route(<<"POST">>, [<<"api-clients">>, Id, <<"rotate-secret">>], U, Req) ->
     reply(ana_api:rotate_secret(Id, U), Req);
 route(<<"POST">>, [<<"api-clients">>, Id, <<"drop-old-secret">>], U, Req) ->
     reply(ana_api:drop_secret(Id, true, U), Req);
+route(<<"POST">>, [<<"api-clients">>, Id, <<"release-breaker">>], U, Req) ->
+    reply(ana_api:release_breaker(Id, U), Req);
 route(<<"POST">>, [<<"api-clients">>, Id, <<"signing-secret">>], U, Req) ->
     reply(ana_api:new_signing_secret(Id, U), Req);
 route(<<"GET">>, [<<"api-calls">>], _U, Req) ->
