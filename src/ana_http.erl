@@ -17,6 +17,7 @@ start() ->
         {"/files/d/:token", ana_http_files, download},
         {"/share/:token", ana_http_files, share},
         {"/api/scheduler/[...]", ana_http_scheduler, scheduler},
+        {"/api/events", ana_http_events, events},                 % spec 062: live screens
         {"/api/[...]", ana_http_api, api},
         {"/rpc", ana_http_rpc, rpc},
         {"/hooks/:connector", ana_http_hooks, hooks},

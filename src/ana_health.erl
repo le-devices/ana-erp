@@ -20,7 +20,7 @@
 -define(EVERY_MS, 10000).
 -define(SAMPLE_EVERY, 30).                    % ticks (5 min)
 -define(METRICS, [<<"running">>, <<"failures_per_min">>, <<"memory_mb">>, <<"processes">>,
-                  <<"db_waiting">>, <<"python_ready">>]).
+                  <<"db_waiting">>, <<"python_ready">>, <<"max_message_queue">>]).
 
 start_link() ->
     gen_server:start_link({local, ?MODULE}, ?MODULE, [], []).
@@ -129,7 +129,8 @@ metrics(S = #{failures := Prev}) ->
           <<"memory_mb">> => erlang:memory(total) div (1024 * 1024),
           <<"processes">> => erlang:system_info(process_count),
           <<"db_waiting">> => Waiting,
-          <<"python_ready">> => Ready},
+          <<"python_ready">> => Ready,
+          <<"max_message_queue">> => ana_core_view:max_queue()},          % spec 062 (D6): a queue growing
     {M, S#{failures := {Now, Bad}}}.
 
 catch_counters() ->

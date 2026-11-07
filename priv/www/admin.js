@@ -34,7 +34,7 @@
   async function users(search = "") {
     const [list, groups] = await Promise.all([API.admin.users(search), API.admin.groups()]);
     const side = el("div");
-    const searchInput = el("input", { placeholder: "Buscar por login ou nome…", value: search });
+    const searchInput = el("input", { "aria-label": "Buscar por login ou nome…", placeholder: "Buscar por login ou nome…", value: search });
     searchInput.addEventListener("keydown", (e) => { if (e.key === "Enter") users(searchInput.value); });
 
     const showForm = (u) => side.replaceChildren(userForm(u, groups));
@@ -165,9 +165,9 @@
   function robotKeys(username) {
     const box = el("div", {}, el("div", { class: "muted", text: "Chaves de API" }));
     const list = el("div");
-    const name = el("input", { placeholder: "nome (ex.: integração loja)" });
+    const name = el("input", { "aria-label": "nome (ex.: integração loja)", placeholder: "nome (ex.: integração loja)" });
     const days = el("input", { type: "number", min: 1, placeholder: "validade em dias (vazio = sem)" });
-    const ips = el("input", { placeholder: "IPs/redes permitidos, separados por vírgula (vazio = qualquer)" });
+    const ips = el("input", { "aria-label": "IPs/redes permitidos, separados por vírgula (vazio = qualquer)", placeholder: "IPs/redes permitidos, separados por vírgula (vazio = qualquer)" });
     const out = el("div");
     async function load() {
       const keys = await API.admin.keys(username);
@@ -390,7 +390,7 @@
   // ------------------------------------------------------------------ commands
   async function commands() {
     const [list, programs] = await Promise.all([API.commands(), API.programs(false)]);
-    const code = el("input", { placeholder: "ex.: logtime" });
+    const code = el("input", { "aria-label": "ex.: logtime", placeholder: "ex.: logtime" });
     const program = el("select", {}, programs.filter((p) => p.kind === "program").map((p) => el("option", { value: p.name, text: p.name })));
     const description = el("input");
     main().replaceChildren(
@@ -420,8 +420,8 @@
   // ------------------------------------------------------------------ remote systems
   async function remote() {
     const list = await API.admin.remoteSystems();
-    const name = el("input", { placeholder: "ex.: matriz" });
-    const url = el("input", { placeholder: "https://erp.exemplo.com" });
+    const name = el("input", { "aria-label": "ex.: matriz", placeholder: "ex.: matriz" });
+    const url = el("input", { "aria-label": "https://erp.exemplo.com", placeholder: "https://erp.exemplo.com" });
     const username = el("input");
     const password = el("input", { type: "password", autocomplete: "new-password", placeholder: "vazio mantém a atual" });
     const timeout = el("input", { type: "number", value: 15000, min: 100, max: 120000 });
@@ -475,7 +475,7 @@
   async function limits() {
     const [profiles, groupsList] = await Promise.all([API.admin.limitProfiles(), API.admin.groups()]);
     const kind = el("select", {}, el("option", { value: "role", text: "papel" }), el("option", { value: "group", text: "grupo" }));
-    const target = el("input", { placeholder: "user | developer | admin | nome do grupo", list: "limit-targets" });
+    const target = el("input", { "aria-label": "user | developer | admin | nome do grupo", placeholder: "user | developer | admin | nome do grupo", list: "limit-targets" });
     const targets = el("datalist", { id: "limit-targets" },
       ["user", "developer", "admin", ...groupsList.map((g) => g.name)].map((t) => el("option", { value: t })));
     const inputs = Object.fromEntries(LIMIT_KEYS.map((k) => [k, el("input", { type: "number", min: 0, placeholder: k })]));
@@ -483,7 +483,7 @@
       kind.value = p.target_kind; target.value = p.target;
       for (const k of LIMIT_KEYS) inputs[k].value = p.limits[k] ?? "";
     };
-    const quotaUser = el("input", { placeholder: "login" });
+    const quotaUser = el("input", { "aria-label": "login", placeholder: "login" });
     const quotaMax = el("input", { type: "number", min: 0, placeholder: "simultâneas" });
     const quotaRate = el("input", { type: "number", min: 0, placeholder: "por minuto" });
 
@@ -598,7 +598,7 @@
       tasks: [["username", "Dono"], ["task", "Tarefa (prefixo)"]],
       trail: [["username", "Usuário ou robô"], ...period],
     }[kind];
-    const fields = inputs.map(([k, label]) => [k, el("input", { placeholder: label, value: filters[k] || "" })]);
+    const fields = inputs.map(([k, label]) => [k, el("input", { placeholder: label, "aria-label": label, value: filters[k] || "" })]);
     const detail = el("div");
     const columns = {
       executions: [
@@ -846,7 +846,8 @@
   }
 
   const METRIC = { running: "Execuções em andamento", failures_per_min: "Falhas por minuto", memory_mb: "Memória do núcleo (MB)",
-    processes: "Processos Erlang", db_waiting: "Esperando conexão com o banco", python_ready: "Processos Python prontos" };
+    processes: "Processos Erlang", db_waiting: "Esperando conexão com o banco", python_ready: "Processos Python prontos",
+    max_message_queue: "Maior fila de mensagens no núcleo" };
   const LEVEL = { yellow: "amarelo ou pior", red: "vermelho" };
 
   // RF-019-08 (T-019-08b): alert rules (threshold, window, destinations) and silences.
@@ -860,7 +861,7 @@
     const opt = (v, t) => el("option", { value: v, text: t });
 
     const id = el("input", { type: "hidden" });
-    const name = el("input", { placeholder: "Ex.: Memória alta" });
+    const name = el("input", { "aria-label": "Ex.: Memória alta", placeholder: "Ex.: Memória alta" });
     const source = el("select", {}, opt("health", "Saúde de componente"), opt("metric", "Métrica do nó"));
     const target = el("select");
     const level = el("select", {}, opt("red", "vermelho"), opt("yellow", "amarelo ou pior"));
@@ -895,11 +896,11 @@
     fill(null);
 
     const silRule = el("select", {}, opt("", "todas as regras"), a.rules.map((r) => opt(r.id, r.name)));
-    const silTarget = el("input", { placeholder: "alvo (vazio = todos)", list: "alert-targets" });
+    const silTarget = el("input", { "aria-label": "alvo (vazio = todos)", placeholder: "alvo (vazio = todos)", list: "alert-targets" });
     const silTargets = el("datalist", { id: "alert-targets" }, [...a.components, ...a.metrics].map((t) => opt(t, COMPONENT[t] || METRIC[t] || t)));
-    const silNode = el("input", { placeholder: "nó (vazio = todos)" });
+    const silNode = el("input", { "aria-label": "nó (vazio = todos)", placeholder: "nó (vazio = todos)" });
     const silMinutes = el("input", { type: "number", min: 1, max: 43200, value: 60 });
-    const silReason = el("input", { placeholder: "motivo (ex.: manutenção do banco)" });
+    const silReason = el("input", { "aria-label": "motivo (ex.: manutenção do banco)", placeholder: "motivo (ex.: manutenção do banco)" });
 
     main().replaceChildren(
       ...header("Alertas", "Regras sobre a saúde dos componentes e as métricas de cada nó. A condição precisa durar a janela inteira para abrir um incidente; ele se encerra sozinho quando a condição passa. Silêncios mantêm o registro, mas não avisam ninguém."),
@@ -962,6 +963,42 @@
       ], a.silences, { empty: "Nenhum silêncio nos últimos 7 dias." }));
   }
 
+  // Spec 062 (D6): a read-only look inside the running core.
+  async function core() {
+    const c = await API.admin.core();
+    const procTable = (title, rows, key, label) => el("div", {}, el("h3", { text: title }), table([
+      { label: "Processo", value: (p) => p.name },
+      { label, value: (p) => n2(p[key]), class: "num" },
+      { label: "Em", value: (p) => el("code", { text: p.current }) },
+    ], rows, { empty: "Nenhum processo com fila de mensagens agora.",
+               emptyAction: { label: "Atualizar", onClick: () => guard(core) } }));
+    const dropped = Object.entries(c.dropped || {});
+    main().replaceChildren(
+      ...header("Núcleo", "Dentro do núcleo em execução: memória, processos, filas de mensagens, áreas supervisionadas e reinícios da última hora. Só leitura; uma fila crescendo pode virar alerta (métrica \"Maior fila de mensagens no núcleo\")."),
+      el("div", { class: "row-buttons" }, el("button", { text: "Atualizar", onclick: () => guard(core) })),
+      el("div", { class: "stat-grid" },
+        ...[["Memória total", `${c.memory_mb.total} MB`], ["Processos (memória)", `${c.memory_mb.processes} MB`],
+            ["ETS", `${c.memory_mb.ets} MB`], ["Processos", n2(c.processes)], ["Fila de execução", n2(c.run_queue)],
+            ["Agendadores", n2(c.schedulers)], ["Nós", c.nodes.join(", ")]]
+          .map(([l, v]) => el("div", { class: "stat" }, el("div", { class: "label", text: l }), el("div", { class: "value", text: v })))),
+      el("h3", { text: "Áreas supervisionadas" }),
+      table([
+        { label: "Área", value: (a) => ({ ana_base_sup: "Base", ana_exec_area_sup: "Execução", ana_work_sup: "Trabalho de fundo",
+                                          ana_observe_sup: "Observação" })[a.area] || a.area },
+        { label: "Processos", value: (a) => a.children.map((x) => x.id).join(", ") },
+        { label: "Situação", value: (a) => a.children.every((x) => x.alive) ? pill("● todos ativos", "ok") : pill("▲ algum parado", "warn") },
+      ], c.areas),
+      el("h3", { text: "Reinícios na última hora" }),
+      table([{ label: "Quando", value: (r) => fmtDate(new Date(r.at * 1000).toISOString()) }, { label: "Área", value: (r) => r.area },
+             { label: "Processo", value: (r) => r.child }], c.restarts,
+            { empty: "Nenhum reinício: tudo estável.", emptyAction: { label: "Atualizar", onClick: () => guard(core) } }),
+      dropped.length ? el("p", { class: "muted", text: "Registros descartados por fila cheia: " + dropped.map(([k, v]) => `${k}: ${v}`).join(", ") }) : null,
+      el("div", { class: "admin-columns" },
+        procTable("Mais memória", c.top_memory, "memory_kb", "KB"),
+        procTable("Mais trabalho", c.top_reductions, "reductions", "Reduções")),
+      procTable("Filas de mensagens", c.top_queue, "queue", "Mensagens"));
+  }
+
   // Spec 050 (T-050-03, P18): how long screens take to open in the browsers, against the 1 s budget.
   async function uiperf(days = 7) {
     const rows = await API.admin.uiPerf(days);
@@ -993,7 +1030,7 @@
   async function sqlperf(filters = { order: "total" }) {
     const rows = await API.admin.obsSql(filters);
     const detail = el("div");
-    const program = el("input", { placeholder: "Programa (opcional)", value: filters.program || "" });
+    const program = el("input", { "aria-label": "Programa (opcional)", placeholder: "Programa (opcional)", value: filters.program || "" });
     const order = el("select", {}, [["total", "Tempo total"], ["mean", "Tempo médio"], ["max", "Tempo máximo"], ["calls", "Chamadas"]]
       .map(([v, l]) => el("option", { value: v, text: "Ordenar por " + l.toLowerCase() })));
     order.value = filters.order || "total";
@@ -1719,7 +1756,7 @@
   async function extensions() {
     const r = await API.admin.extensions();
     const point = el("select", {}, r.points.map((p) => el("option", { value: p.point, text: `${p.label} — ${p.point}` })));
-    const program = el("input", { placeholder: "ex.: cli.validar_faturamento" });
+    const program = el("input", { "aria-label": "ex.: cli.validar_faturamento", placeholder: "ex.: cli.validar_faturamento" });
     const position = el("input", { type: "number", value: 100, min: 1 });
     const byPoint = Object.fromEntries(r.points.map((p) => [p.point, p]));
     main().replaceChildren(
@@ -2029,7 +2066,7 @@
                        window.AnaScheduler.holidays(hol)]);
   }
 
-  const SECTIONS = { users, groups, settings, company, commands, remote, accounts, limits, consumption, scheduler, monitor, audit, retention, health, alerts, uiperf, sqlperf, advice, updates, integrations, checks, transports, datacopy, publicapi, license, extensions, telemetry };
+  const SECTIONS = { users, groups, settings, company, commands, remote, accounts, limits, consumption, scheduler, monitor, audit, retention, health, alerts, core, uiperf, sqlperf, advice, updates, integrations, checks, transports, datacopy, publicapi, license, extensions, telemetry };
 
   function show(section) {
     refreshUpdatesCount();

@@ -36,7 +36,7 @@
     const picker = el("input", { type: "file", multiple: true, hidden: true });
     picker.addEventListener("change", () => upload([...picker.files]));
     const progress = el("div", { class: "upload-progress" });
-    const search = el("input", { type: "search", placeholder: "Buscar arquivos por nome…" });
+    const search = el("input", { type: "search", placeholder: "Buscar arquivos por nome…", "aria-label": "Buscar arquivos por nome" });
     search.addEventListener("keydown", (e) => { if (e.key === "Enter" && search.value.trim()) guard(() => results(search.value.trim())); });
     const canUpload = data.level >= 3 && folder !== null;
     const list = el("div", { class: "files-list" },

@@ -11,7 +11,7 @@
     users: "Usuários", groups: "Grupos de acesso", limits: "Limites e cotas", company: "Empresa",
     settings: "Parâmetros", accounts: "Contas padrão", commands: "Comandos", remote: "Sistemas remotos",
     scheduler: "Agendamento", monitor: "Monitor", consumption: "Consumo", audit: "Auditoria", retention: "Retenção",
-    health: "Saúde", alerts: "Alertas", uiperf: "Desempenho das telas", sqlperf: "Desempenho do SQL", advice: "Dicas de otimização", updates: "Atualizações do produto",
+    health: "Saúde", alerts: "Alertas", core: "Núcleo", uiperf: "Desempenho das telas", sqlperf: "Desempenho do SQL", advice: "Dicas de otimização", updates: "Atualizações do produto",
     license: "Licença", extensions: "Extensões", telemetry: "Telemetria",
     integrations: "Integrações", checks: "Verificações", transports: "Transportes", datacopy: "Cópia de dados para testes",
     publicapi: "API pública",
@@ -118,6 +118,7 @@
     $("#user-avatar").title = `${display} — minha conta`;
     $("#notices-btn").hidden = isExternal();
     refreshNotices();
+    if (window.AnaLive && !isExternal()) window.AnaLive.start();          // spec 062: live bell and tasks
     refreshTitle(state.user.company, state.user.company_logo);
     // Spec 034 (RF-034-01): development and test instances are marked on every screen.
     const inst = state.user.instance || {};
@@ -342,7 +343,7 @@
     });
   }
 
-  window.AnaStudio = { go, replace, back, noteNav, refreshTitle, user: () => state.user, refreshTargets: buildTargets, canSee };
+  window.AnaStudio = { go, replace, back, noteNav, refreshTitle, user: () => state.user, refreshTargets: buildTargets, canSee, refreshNotices };
 
   document.addEventListener("DOMContentLoaded", () => {
     wire();

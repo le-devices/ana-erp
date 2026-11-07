@@ -48,7 +48,7 @@ Tarefas adiadas já concluídas (ordem acordada em out/2026): T-017-05b ✓, T-0
 3. ✓ T-037-06b — envio do link do documento por e-mail
 4. ✓ T-033-09b — base OSV por conector e aviso por e-mail
 5. ✓ 050 fase 1 — padrão de experiência que se verifica sozinho (T-050-01..04): tudo o que vier depois já nasce premium (`specs/050-premium-experience`)
-6. 062 fases 1 e 2 — Erlang ao máximo: supervisão por subsistema, eventos no lugar de ciclos, telas ao vivo, isolamento por conector, tela "Núcleo" — sempre medido, sem regressão (`specs/062-erlang-at-its-best`)
+6. ✓ 062 fases 1 e 2 (falta T-062-08b, no fim da fila) — Erlang ao máximo: supervisão por subsistema, eventos no lugar de ciclos, telas ao vivo, isolamento por conector, tela "Núcleo" — sempre medido, sem regressão (`specs/062-erlang-at-its-best`)
 7. 063 fase 1 — vida útil do disco: medir a escrita, orçamento testado na bateria, painel "Disco" com projeção de desgaste, alertas (`specs/063-disk-endurance`)
 8. 049 fase 1 — motor de impostos: motor, vigência, fórmulas, casos de teste, ISS e retenções (T-049-01..07) — antecipada: reforma tributária (`specs/049-tax-engine`)
 9. 049 fase 3 — CBS, IBS e Imposto Seletivo na transição (T-049-09) — 2027 já tem CBS cheia
@@ -75,7 +75,7 @@ Tarefas adiadas já concluídas (ordem acordada em out/2026): T-017-05b ✓, T-0
 30. 059 — NFS-e e NF-e (depende de certificado digital e ambiente de homologação: perguntar ao dono antes) (`specs/059-electronic-invoices`)
 31. T-040-10b — importação em lote rápida de cadastros
 32. T-039-16b — editor BPM: arrastar da paleta, alinhar e distribuir
-33. Por último, as que dependem de infraestrutura ou decisão: filiais sem internet (058), painel do parceiro (T-057-04b), MQTT (T-054-07b), S3 (T-016-02b, T-036-07b), antivírus (T-016-04b), registro de imagem (T-036-08b), OpenTelemetry (T-019-09b), mTLS (T-017-02c), SFTP/pasta/e-mail de entrada (T-017-02b), pacotes de conectores (T-017-08b), transporte (T-034-07b..09b), API (T-010-10b..14b; a 14b exige decisão), geocodificador simulado (T-032-06b), dígito verificador da inscrição estadual por UF (T-043-02b).
+33. Por último, as que dependem de infraestrutura ou decisão: filiais sem internet (058), painel do parceiro (T-057-04b), MQTT (T-054-07b), S3 (T-016-02b, T-036-07b), antivírus (T-016-04b), registro de imagem (T-036-08b), OpenTelemetry (T-019-09b), mTLS (T-017-02c), SFTP/pasta/e-mail de entrada (T-017-02b), pacotes de conectores (T-017-08b), transporte (T-034-07b..09b), API (T-010-10b..14b; a 14b exige decisão), geocodificador simulado (T-032-06b), dígito verificador da inscrição estadual por UF (T-043-02b), temporizadores do Erlang para prazos do BPM (T-062-08b).
 
 Fora da fila atual acima, escolha o **primeiro item da lista cuja `tasks.md` ainda tenha tarefas `[ ]`** (exceções: a T-023-09 é o item 5; as T-019-08b, T-019-09b, T-017-02b, T-017-02c, T-017-08b, T-016-02b, T-016-04b, T-033-09b, T-034-07b, T-034-08b, T-034-09b, T-032-06b, T-035-05b, T-036-07b, T-036-08b, T-037-06b, T-010-06b, T-010-10b, T-010-11b, T-010-12b, T-010-14b, T-040-10b, T-040-11b, T-039-16b e T-039-17b ficam para depois de todos os outros itens). Se tudo estiver `[x]`, apenas rode as suítes e relate.
 19. 041 — atendimento do pedido de venda conforme a política da empresa (`specs/041-sales-fulfillment-policy`) — implementada (T-041-01..08).

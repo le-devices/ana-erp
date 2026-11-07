@@ -22,7 +22,7 @@ start_link() ->
 %% Entry: #{username, auth, api_key_id, ip, method, path, status, duration_ms, detail}
 -spec record(map()) -> ok.
 record(Entry) ->
-    gen_server:cast(?MODULE, {record, Entry#{at => erlang:system_time(microsecond)}}).
+    ana_bounded:cast(?MODULE, {record, Entry#{at => erlang:system_time(microsecond)}}, 50000).   % spec 062 (D7)
 
 %% Attaches caller data to the current request (merged by cowboy_metrics_h).
 -spec tag(map(), cowboy_req:req()) -> ok.

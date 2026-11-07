@@ -613,7 +613,7 @@ mask(Addr, Bits, Size) ->
 %% ---------------------------------------------------------------- audit (RF-010-11), batched
 
 -spec record(map()) -> ok.
-record(Entry) -> gen_server:cast(?MODULE, {record, Entry}).
+record(Entry) -> ana_bounded:cast(?MODULE, {record, Entry}, 50000).   % spec 062 (D7)
 
 init([]) ->
     _ = ets:new(?CLIENTS, [named_table, public, set, {read_concurrency, true}]),

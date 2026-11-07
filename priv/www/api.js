@@ -74,6 +74,13 @@
       return data;
     },
 
+    /** Streamed response with the session token (live events, spec 062). */
+    stream(path) {
+      const headers = { "Accept": "text/event-stream" };
+      if (token) headers["Authorization"] = "Bearer " + token;
+      return fetch(path, { headers, cache: "no-store", credentials: "omit" });
+    },
+
     setToken(t) {
       token = t;
       try { t ? sessionStorage.setItem(KEY, t) : sessionStorage.removeItem(KEY); } catch (_) { /* ignore */ }
@@ -241,6 +248,7 @@
       deleteAlertRule: (id) => API.request("DELETE", `/api/admin/observability/alerts/rules/${enc(id)}`),
       createSilence: (body) => API.request("POST", "/api/admin/observability/alerts/silences", body),
       endSilence: (id) => API.request("POST", `/api/admin/observability/alerts/silences/${enc(id)}/end`, {}),
+      core: () => API.request("GET", "/api/admin/observability/core"),
       uiPerf: (days) => API.request("GET", "/api/admin/observability/ui" + query({ days })),
       obsSql: (filters) => API.request("GET", "/api/admin/observability/sql" + query(filters || {})),
       obsSqlDetail: (hash) => API.request("GET", `/api/admin/observability/sql/${enc(hash)}`),
