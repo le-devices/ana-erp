@@ -16,11 +16,43 @@ ferramenta de operação (`ana-ctl`).
 - Linux de 64 bits (Ubuntu 22.04/24.04, Debian 12, RHEL/Rocky/Alma 9 ou similar).
 - Docker Engine 24 ou mais novo com o plugin `docker compose` (v2) —
   instalação: <https://docs.docker.com/engine/install/>.
-- 2 vCPUs e 4 GB de memória (mínimo 2 GB); 50 GB de disco (mínimo 10 GB),
-  de preferência SSD.
+- Servidor dimensionado pela tabela abaixo (mínimo comercial: 2 vCPUs,
+  4 GB de memória e 50 GB de disco SSD). Com 2 GB o ERP funciona, mas só para
+  demonstração e avaliação.
 - Portas 80 e 443 livres no servidor (ou escolha outras).
 - Para certificado automático: um nome (ex.: `erp.empresa.com.br`) apontando
   para o servidor e as portas 80/443 acessíveis pela internet.
+
+## Dimensionamento
+
+Números **medidos** com o teste de carga do produto (7/11/2026, versão 0.1.0),
+com o ERP e o banco no mesmo servidor e uma base com ~135 mil parceiros,
+15 mil itens e 10 mil pedidos. "Usuários trabalhando ao mesmo tempo" são
+pessoas usando o ERP sem parar — uma ação a cada ~8 s, com 20 % das ações
+gravando (pedidos e faturamento) —, o que é mais intenso que o uso comum.
+Passar significa: toda ação de tela respondendo em até 1 s para 95 % das vezes
+e nenhum erro.
+
+| Porte | Servidor | Usuários trabalhando ao mesmo tempo — medido | Recomendado (com folga) |
+|---|---|---|---|
+| Pequeno (mínimo comercial) | 2 vCPUs, 4 GB, SSD 50 GB | 80 (com 100 já passa de 1 s) | até **50** |
+| Médio | 4 vCPUs, 8 GB, SSD 100 GB; `ANA_PG_SHARED_BUFFERS=2GB`, `ANA_PG_EFFECTIVE_CACHE=5GB` | 140 (com 160 já passa de 1 s) | até **90** |
+| Missão crítica (24/7, atualizar sem parar) | 2 nós do ERP com 2–4 vCPUs e 4 GB cada; banco com 4 vCPUs e 16 GB e uma réplica (ou banco gerenciado); SSD | estimado: até ~2× o médio | medir no ambiente do cliente |
+
+- A folga recomendada (cerca de 60 % do medido) cobre picos, relatórios mais
+  pesados que os do teste e o crescimento da base.
+- No limite, o gargalo é o processador: cada execução de programa roda num
+  processo Python isolado. A memória ficou folgada nos dois portes (ERP
+  ~250 MB, banco ~1 GB).
+- Missão crítica não foi medida com dois nós: o valor é estimativa a partir de
+  um nó. Meça no ambiente do cliente com o mesmo teste.
+- Para repetir a medição no servidor do cliente (com dados de teste, nunca na
+  produção em uso):
+  ```bash
+  ANA_URL=https://erp.empresa.com.br ANA_ADMIN_PASSWORD=… \
+    python3 tests/load/sizing_load.py --steps 20,40,60,80,100,120 --step-seconds 60
+  ```
+  Resultados desta medição: `tests/load/results/2026-11-07-sizing.json`.
 
 ## A. Servidor próprio (on-premise)
 
