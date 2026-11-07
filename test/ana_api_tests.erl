@@ -45,3 +45,9 @@ secure_test() ->
     after
         os:unsetenv("ANA_TRUSTED_PROXIES")
     end.
+
+%% Spec 010 (RNF-010-10): only the platform's or the program's failures open a client's breaker.
+t_010_06b_technical_failures_test() ->
+    [?assert(ana_api:technical(C)) || C <- [<<"TIMEOUT">>, <<"INTERNAL">>, <<"EXCEPTION">>, <<"MEMORY">>, <<"SQL">>]],
+    [?assertNot(ana_api:technical(C)) || C <- [<<"INVALID_PARAMETER">>, <<"FORBIDDEN">>, <<"NOT_FOUND">>,
+                                               <<"QUOTA_EXCEEDED">>, <<"ORDER_HELD">>]].

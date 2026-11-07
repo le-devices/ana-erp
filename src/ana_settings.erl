@@ -125,7 +125,13 @@ definitions() ->
      {transport_four_eyes, integer, 0, 1, "ANA_TRANSPORT_FOUR_EYES", 0,
       <<"Transporte: quem recebeu o pacote não pode importá-lo (1 = sim)"/utf8>>},
      {outbound_blocked, integer, 0, 1, "ANA_OUTBOUND_BLOCKED", 0,
-      <<"Bloquear chamadas a sistemas externos (instância de testes com dados copiados)"/utf8>>}].
+      <<"Bloquear chamadas a sistemas externos (instância de testes com dados copiados)"/utf8>>},
+     {api_breaker_failures, integer, 1, 100000, "ANA_API_BREAKER_FAILURES", 20,
+      <<"API pública: falhas técnicas (erro interno, tempo esgotado) em 2 min que suspendem o cliente"/utf8>>},
+     {api_breaker_ratio, integer, 1, 100, "ANA_API_BREAKER_RATIO", 50,
+      <<"API pública: proporção mínima de falhas nas chamadas do cliente para suspender (%)"/utf8>>},
+     {api_breaker_open_s, integer, 10, 86400, "ANA_API_BREAKER_OPEN_S", 120,
+      <<"API pública: duração da suspensão do cliente (s)"/utf8>>}].
 
 init_cache() ->
     _ = ets:new(?TAB, [named_table, public, set, {read_concurrency, true}]),

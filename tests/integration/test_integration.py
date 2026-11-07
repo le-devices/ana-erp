@@ -4577,6 +4577,54 @@ class TestPublicApi(Base):
         s, _, _ = http("GET", "/api/programs", token=self.token)                  # the ERP itself keeps answering
         self.assertEqual(s, 200)
 
+    def test_t_010_06b_breaker_suspends_on_technical_failures_only(self):
+        broken = self.program("quebra", "def main():\n    raise RuntimeError('defeito do programa')\n")
+        fine = self.program("ok", "PARAMS = {'x': {'type': 'int', 'required': True}}\n\ndef main(x):\n    return x\n")
+        setting = lambda k, v: self.assertEqual(http("PUT", f"/api/admin/settings/{k}", {"value": v}, self.token)[0], 200)
+        setting("api_breaker_failures", 5)
+        try:
+            caller = self.new_client(name=f"Cliente {SUFFIX} com erros de chamada")
+            tc = self.token_for(caller)
+            for _ in range(10):                                               # the caller's fault never counts
+                s, r, _ = self.rpc(tc, fine, {})
+                self.assertEqual(r["error"]["code"], -32602, r)
+            failing = self.new_client(name=f"Cliente {SUFFIX} com falhas")
+            tf = self.token_for(failing)
+            statuses = [self.rpc(tf, broken)[0] for _ in range(5)]
+            self.assertEqual(statuses, [200] * 5)                             # JSON-RPC errors travel inside 200
+            s, r, h = self.rpc(tf, fine, {"x": 1})
+            self.assertEqual((s, r["error"]["code"]), (503, "CLIENT_SUSPENDED"), r)
+            self.assertGreaterEqual(int(h.get("retry-after")), 60)
+            s, r, _ = self.rpc(tc, fine, {"x": 2})
+            self.assertEqual(r.get("result"), 2, r)                           # one client's breaker, not everybody's
+            cid = failing["client_id"]
+            self.assertEqual(psql(f"SELECT failures::text || '/' || calls FROM ana_system.api_breaker_event "
+                                  f"WHERE client_id = '{cid}'"), "5/5")
+            s, lst, _ = http("GET", "/api/admin/api-clients", token=self.token)
+            mine = {c["client_id"]: c for c in lst}
+            self.assertTrue(mine[cid]["suspended_until"])
+            self.assertIsNone(mine[caller["client_id"]]["suspended_until"])
+            s, notices, _ = http("GET", "/api/admin/checks/notices", token=self.token)
+            self.assertTrue(any(f"Cliente {SUFFIX} com falhas" in n["message"] for n in notices))
+            s, h, _ = http("POST", "/api/admin/observability/health/check", {}, self.token)
+            api = [c for c in h["components"] if c["component"] == "public_api"][0]
+            self.assertEqual(api["state"], "yellow")                          # alert rules can watch it (T-019-08b)
+            self.assertIn(f"Cliente {SUFFIX} com falhas", api["message"])
+            # Released by hand: calls pass again (every node within 5 s), recorded in the administration log.
+            s, c, _ = http("POST", f"/api/admin/api-clients/{cid}/release-breaker", {}, self.token)
+            self.assertEqual(s, 200, c)
+            end = time.time() + 10
+            while (r := self.rpc(tf, fine, {"x": 3}))[0] != 200 and time.time() < end:
+                time.sleep(0.5)
+            self.assertEqual(r[1].get("result"), 3, r)
+            self.assertEqual(psql(f"SELECT released_by FROM ana_system.api_breaker_event WHERE client_id = '{cid}'"), "admin")
+            self.assertEqual(psql(f"SELECT count(*) FROM ana_system.admin_log WHERE action = 'api.breaker.release' "
+                                  f"AND target = '{cid}'"), "1")
+            s, _, _ = http("POST", "/api/admin/api-clients/ana_ci_naoexiste0000000000/release-breaker", {}, self.token)
+            self.assertEqual(s, 404)
+        finally:
+            setting("api_breaker_failures", 20)
+
     def test_ca_010_09_publishable_key_public_programs_and_origin(self):
         pub = self.program("catalogo", "def main():\n    return ['A', 'B']\n", public=True)
         private = self.program("interno", "def main():\n    return 'segredo'\n")
