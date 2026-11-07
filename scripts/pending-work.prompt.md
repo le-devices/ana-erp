@@ -47,7 +47,7 @@ Tarefas adiadas já concluídas (ordem acordada em out/2026): T-017-05b ✓, T-0
 2. ✓ 044 — e-mail de saída por SMTP
 3. ✓ T-037-06b — envio do link do documento por e-mail
 4. ✓ T-033-09b — base OSV por conector e aviso por e-mail
-5. 050 fase 1 — padrão de experiência que se verifica sozinho (T-050-01..04): tudo o que vier depois já nasce premium (`specs/050-premium-experience`)
+5. ✓ 050 fase 1 — padrão de experiência que se verifica sozinho (T-050-01..04): tudo o que vier depois já nasce premium (`specs/050-premium-experience`)
 6. 062 fases 1 e 2 — Erlang ao máximo: supervisão por subsistema, eventos no lugar de ciclos, telas ao vivo, isolamento por conector, tela "Núcleo" — sempre medido, sem regressão (`specs/062-erlang-at-its-best`)
 7. 063 fase 1 — vida útil do disco: medir a escrita, orçamento testado na bateria, painel "Disco" com projeção de desgaste, alertas (`specs/063-disk-endurance`)
 8. 049 fase 1 — motor de impostos: motor, vigência, fórmulas, casos de teste, ISS e retenções (T-049-01..07) — antecipada: reforma tributária (`specs/049-tax-engine`)

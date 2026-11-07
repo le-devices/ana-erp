@@ -8,6 +8,8 @@
 <script src="studio/highlight.js" defer></script>
 <script src="studio/editor.js" defer></script>
 <script src="studio/api.js" defer></script>
+<script src="studio/errors.js" defer></script>
+<script src="studio/perf.js" defer></script>
 <script src="studio/ui.js" defer></script>
 <script src="studio/table.js" defer></script>
 <script src="studio/conditions.js" defer></script>
@@ -18,6 +20,7 @@
 <script src="studio/categories.js" defer></script>
 <script src="studio/ops.js" defer></script>
 <script src="studio/dev.js" defer></script>
+<script src="studio/patterns.js" defer></script>
 <script src="studio/admin.js" defer></script>
 <script src="studio/files.js" defer></script>
 <script src="studio/masterdata.js" defer></script>
@@ -109,6 +112,7 @@
       <nav class="tabs" role="tablist">
         <button class="tab active" data-side="programs">Programas</button>
         <button class="tab" data-side="data">Dados</button>
+        <button class="tab" data-side="patterns">Padrões</button>
       </nav>
       <div id="side-programs" class="side-content">
         <div class="side-toolbar">
@@ -120,6 +124,9 @@
       </div>
       <div id="side-data" class="side-content" hidden>
         <ul id="catalog-tree" class="tree"></ul>
+      </div>
+      <div id="side-patterns" class="side-content" hidden>
+        <p class="muted small-text">Regras e exemplos vivos de como toda tela do ANA se comporta (spec 050).</p>
       </div>
     </aside>
 
@@ -235,6 +242,9 @@
       </div>
     </section>
 
+    <!-- Pattern catalog (spec 050) -->
+    <section id="patterns-view" class="page-pad" hidden></section>
+
     <!-- Data workspace -->
     <section id="data-view" class="data-view page-pad" hidden>
       <div id="table-detail"><p class="muted">Escolha uma tabela no catálogo à esquerda.</p></div>
@@ -291,6 +301,7 @@
       <button class="nav-link" data-section="checks">Verificações <span class="nav-count" id="checks-count" hidden></span></button>
       <button class="nav-link" data-section="health">Saúde</button>
       <button class="nav-link" data-section="alerts">Alertas</button>
+      <button class="nav-link" data-section="uiperf">Desempenho das telas</button>
       <button class="nav-link" data-section="sqlperf">Desempenho do SQL</button>
       <button class="nav-link" data-section="advice">Dicas de otimização</button>
     </nav>

@@ -32,6 +32,12 @@ def main(name="mundo"):
   // ------------------------------------------------------------------ entry
   async function show(route) {
     if (!state.loaded) await init();
+    if (route[0] === "patterns") {                      // spec 050 (T-050-01)
+      selectSide("patterns");
+      showView("patterns");
+      window.AnaPatterns.render($("#patterns-view"));
+      return;
+    }
     if (route[0] === "data") {
       selectSide("data");
       showView("data");
@@ -61,12 +67,14 @@ def main(name="mundo"):
   function showView(v) {
     $("#program-view").hidden = v !== "program";
     $("#data-view").hidden = v !== "data";
+    $("#patterns-view").hidden = v !== "patterns";
   }
 
   function selectSide(side) {
     for (const b of $$("[data-side]")) b.classList.toggle("active", b.dataset.side === side);
     $("#side-programs").hidden = side !== "programs";
     $("#side-data").hidden = side !== "data";
+    $("#side-patterns").hidden = side !== "patterns";
   }
 
   function selectTab(tab) {
@@ -582,7 +590,8 @@ def main(name="mundo"):
   // ------------------------------------------------------------------ events
   function wire() {
     for (const b of $$("[data-side]")) b.addEventListener("click", () =>
-      window.AnaStudio.go(b.dataset.side === "data" ? "#/dev/data" : (state.current ? `#/dev/program/${state.current.name}` : "#/dev")));
+      window.AnaStudio.go(b.dataset.side === "data" ? "#/dev/data" : b.dataset.side === "patterns" ? "#/dev/patterns"
+        : (state.current ? `#/dev/program/${state.current.name}` : "#/dev")));
     for (const b of $$("[data-ptab]")) b.addEventListener("click", () => selectTab(b.dataset.ptab));
     for (const a of $$("[data-panel]")) a.addEventListener("click", () => showPanel(a.dataset.panel));
     $("#filter").addEventListener("input", drawTree);

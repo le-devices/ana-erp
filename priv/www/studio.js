@@ -11,7 +11,7 @@
     users: "Usuários", groups: "Grupos de acesso", limits: "Limites e cotas", company: "Empresa",
     settings: "Parâmetros", accounts: "Contas padrão", commands: "Comandos", remote: "Sistemas remotos",
     scheduler: "Agendamento", monitor: "Monitor", consumption: "Consumo", audit: "Auditoria", retention: "Retenção",
-    health: "Saúde", alerts: "Alertas", sqlperf: "Desempenho do SQL", advice: "Dicas de otimização", updates: "Atualizações do produto",
+    health: "Saúde", alerts: "Alertas", uiperf: "Desempenho das telas", sqlperf: "Desempenho do SQL", advice: "Dicas de otimização", updates: "Atualizações do produto",
     license: "Licença", extensions: "Extensões", telemetry: "Telemetria",
     integrations: "Integrações", checks: "Verificações", transports: "Transportes", datacopy: "Cópia de dados para testes",
     publicapi: "API pública",
@@ -232,6 +232,7 @@
     for (const b of $$(".area")) b.classList.toggle("active", b.dataset.area === area);
     closeMenus();
     for (const a of ["home", "ops", "bpm", "master", "files", "portal", "dev", "admin"]) $("#area-" + a).hidden = a !== area;
+    if (window.AnaPerf) window.AnaPerf.opening(location.hash);                      // spec 050 (T-050-03)
     try {
       if (area === "files") await window.AnaFiles.show(rest);
       else if (area === "portal") await window.AnaFiles.portal(rest);
@@ -240,7 +241,8 @@
       else if (area === "master") await window.AnaMaster.show(rest, query);
       else if (area === "bpm") await window.AnaBpm.show(rest, query);
       else if (area === "dev") await window.AnaDev.show(rest);
-      else if (area === "admin") window.AnaAdmin.show(rest[0] || "users");
+      else if (area === "admin") await window.AnaAdmin.show(rest[0] || "users");
+      if (window.AnaPerf) window.AnaPerf.opened();
       if (back) restoreScroll(state.here);
     } catch (e) { toast(window.AnaUI.errorText(e), true); }
   }

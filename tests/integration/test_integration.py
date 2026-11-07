@@ -7470,3 +7470,30 @@ class TestOutboundEmail(Base):
             http("PUT", "/api/admin/checks/config", {"notify_connector": None, "notify_recipients": []}, self.token)
             psql(f"DELETE FROM ana_system.vulnerability WHERE osv_id IN ('{feed_id}', '{query_id}')")
             http("POST", "/api/admin/checks/run", {"category": "dependencies"}, self.token)    # resolves the test findings
+
+
+# ---------------------------------------------------------------- spec 050
+class TestPremiumExperience(Base):
+    """Spec 050 (T-050-03): screens measure themselves in the browsers; a slow screen becomes a finding."""
+
+    def test_t_050_03_screen_performance_measured_and_judged(self):
+        screen = f"test-slow-{SUFFIX}"
+        slow = [{"screen": screen, "kind": "open", "ms": 3000, "long_tasks": 2} for _ in range(25)]
+        bad = [{"screen": "tem espaço", "kind": "open", "ms": 10}, {"screen": screen, "kind": "outro", "ms": 10},
+               {"screen": screen, "kind": "open", "ms": -5}, {"screen": screen, "kind": "open", "ms": "x"}]
+        s, c, _ = http("POST", "/api/ui/perf", {"samples": slow + bad + [{"screen": screen, "kind": "api", "ms": 40}]}, self.token)
+        self.assertEqual((s, c["accepted"]), (200, 26), c)
+        try:
+            s, rows, _ = http("GET", "/api/admin/observability/ui?days=1", token=self.token)
+            self.assertEqual(s, 200, rows)
+            mine = {r["kind"]: r for r in rows if r["screen"] == screen}
+            self.assertEqual((mine["open"]["samples"], mine["open"]["p95_ms"], mine["open"]["long_tasks"]), (25, 5000, 50))
+            self.assertEqual(mine["api"]["p95_ms"], 50)
+            http("POST", "/api/admin/checks/run", {"category": "performance"}, self.token)
+            s, c, _ = http("GET", "/api/admin/checks?category=performance&status=open", token=self.token)
+            self.assertTrue(any(f["rule"] == "ui_slow_screen" and f["target"] == screen for f in c["findings"]))
+            s, _, _ = http("POST", "/api/ui/perf", {"samples": slow}, None)
+            self.assertEqual(s, 401)                                    # only signed-in people send
+        finally:
+            psql(f"DELETE FROM ana_system.ui_perf WHERE screen = '{screen}'")
+            http("POST", "/api/admin/checks/run", {"category": "performance"}, self.token)

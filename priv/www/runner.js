@@ -529,7 +529,7 @@
   async function execute(a, params, ctx, wantResult) {
     try {
       const res = await ctx.run(a.program, params);
-      if (res.error) { window.AnaUI.toast(`${res.error.code}: ${res.error.message || ""}`, true); return false; }
+      if (res.error) { window.AnaUI.toast(window.AnaErrors.text(res.error), true); return false; }
       if (wantResult && a.download) return res;          // the file opens; the screen stays as it is
       window.AnaUI.toast(`${a.label}: feito.`);
       ctx.refresh();

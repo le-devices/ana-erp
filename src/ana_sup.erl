@@ -39,7 +39,8 @@ init([]) ->
         worker(ana_checks, []),
         worker(ana_bpm, []),          % single process engine: BPM cases and esteiras (specs 030, 039)
         worker(ana_health, []),
-        worker(ana_integration, [])
+        worker(ana_integration, []),
+        worker(ana_ui_perf, [])
     ],
     {ok, {#{strategy => one_for_one, intensity => 10, period => 60}, Children}}.
 

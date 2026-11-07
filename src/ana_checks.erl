@@ -23,7 +23,7 @@
     <<"integrity">> => [<<"shipped_files">>, <<"ledger_reconciliation">>, <<"master_quality">>],
     <<"robustness">> => [<<"wal_archiving">>, <<"base_backup">>, <<"restore_test">>, <<"dead_letters">>,
                          <<"open_breaker">>, <<"error_rate">>, <<"files_disk">>],
-    <<"performance">> => [<<"probe_regression">>]}).
+    <<"performance">> => [<<"probe_regression">>, <<"ui_slow_screen">>]}).
 -define(TRIVIAL, [<<"admin">>, <<"password">>, <<"123456">>, <<"12345678">>, <<"ana">>, <<"senha">>]).
 -define(TECHNICAL, [<<"EXCEPTION">>, <<"CPU_LIMIT">>, <<"MEMORY">>, <<"SYNTAX">>, <<"SQL">>, <<"INTERNAL">>, <<"TIMEOUT">>,
                     <<"OVERLOAD">>, <<"PROTOCOL">>, <<"PROCESS_EXITED">>, <<"SQL_LIMIT">>, <<"ROW_LIMIT">>,
@@ -233,7 +233,7 @@ rules(<<"integrity">>) -> [fun shipped_files/0, fun ledger_reconciliation/0, fun
 rules(<<"robustness">>) ->
     [fun wal_archiving/0, fun base_backup/0, fun restore_test/0, fun dead_letters/0, fun open_breaker/0,
      fun error_rate/0, fun files_disk/0];
-rules(<<"performance">>) -> [fun probe_regression/0].
+rules(<<"performance">>) -> [fun probe_regression/0, fun ui_slow_screen/0].
 
 %% ---------------------------------------------------------------- security (RF-033-03)
 
@@ -551,6 +551,15 @@ sample_probes() ->
     _ = ana_db:exec("INSERT INTO ana_system.perf_sample (probe, ms) SELECT * FROM unnest($1::text[], $2::text[]::real[])",
                     [[P || {P, _} <- Samples], [float_to_binary(Ms, [{decimals, 3}]) || {_, Ms} <- Samples]]),
     ok.
+
+%% Spec 050 (T-050-03, P18): a screen that takes more than 1 s to open for 5 % of the people.
+ui_slow_screen() ->
+    [{<<"ui_slow_screen">>, S, <<"warning">>,
+      fmt("Tela ~ts demora para abrir (p95 acima de ~ts ms)", [S, case P of null -> <<"5000">>; _ -> integer_to_binary(P) end]),
+      fmt("Nos últimos 7 dias, ~b aberturas; o orçamento é 1 s para 95 % delas.", [N]),
+      <<"Veja as chamadas da tela em Administração → Desempenho das telas e as consultas em Desempenho do SQL."/utf8>>,
+      #{screen => S, samples => N, p95_ms => P}}
+     || #{<<"screen">> := S, <<"samples">> := N, <<"p95_ms">> := P} <- ana_ui_perf:slow_screens()].
 
 %% Last hour's p95 against the median of the hourly p95 of the previous 7 days.
 probe_regression() ->

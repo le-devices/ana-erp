@@ -163,6 +163,10 @@ route(<<"POST">>, [<<"ui">>, <<"variants">>], Req) ->
     ana_http:require(Req, ?USER, fun(U) -> with_body(Req, fun(B, R) -> category_reply(ana_ui_state:save_variant(U, B), R) end) end);
 route(<<"DELETE">>, [<<"ui">>, <<"variants">>, Id], Req) ->
     ana_http:require(Req, ?USER, fun(U) -> with_id(Id, Req, fun(N) -> category_reply(ana_ui_state:delete_variant(U, N), Req) end) end);
+%% Spec 050 (T-050-03): how long screens and calls took in the browser (batched, aggregated in memory).
+route(<<"POST">>, [<<"ui">>, <<"perf">>], Req) ->
+    ana_http:require(Req, ?USER, fun(#{username := Who}) -> with_body(Req, fun(B, R) ->
+        ok_json(ana_ui_perf:record(maps:get(<<"samples">>, B, []), Who), R) end) end);
 route(<<"GET">>, [<<"ui">>, <<"settings">>], Req) ->
     ana_http:require(Req, ?USER, fun(U) -> ok_json(ana_ui_state:settings(U), Req) end);
 route(<<"PUT">>, [<<"ui">>, <<"settings">>], Req) ->

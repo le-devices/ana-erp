@@ -66,7 +66,8 @@
    *   columns: [{key, label, value(row) → text|number|Node, render?(row) → Node|text, num?, hidden?, class?}],
    *   rows, title, screen (key of the remembered layout and variants; none = not remembered),
    *   onOpen?(row) and opens?(row) → bool (row opens a document, spec 035), onRow?(row, tr),
-   *   extra?(row) → Node (last cell), bulk?: [{label, run(rows), danger?}], empty?, compact? (no toolbar)
+   *   extra?(row) → Node (last cell), bulk?: [{label, run(rows), danger?}], empty?, emptyAction? ({label, onClick|href},
+   *   spec 050: the action that fills an empty list), compact? (no toolbar)
    * }
    */
   function create(def) {
@@ -228,7 +229,9 @@
         return tr;
       });
       const span = cols.length + (hasBulk ? 1 : 0) + (def.extra ? 1 : 0);
-      if (!rows.length) trs.push(el("tr", {}, el("td", { colspan: span, class: "muted", text: def.empty || "Nada para mostrar." })));
+      if (!rows.length) trs.push(el("tr", {}, window.AnaUI && window.AnaUI.emptyCell
+        ? window.AnaUI.emptyCell(span, def.empty, def.emptyAction)
+        : el("td", { colspan: span, class: "muted empty-state", text: def.empty || "Nada para mostrar." })));
       else if (!shown.length) trs.push(el("tr", {}, el("td", { colspan: span, class: "muted", text: "Nenhuma linha com essa busca ou filtro." })));
       else if (list.length < shown.length) trs.push(el("tr", {}, el("td", { colspan: span, class: "muted" },
         `${shown.length - list.length} linha(s) a mais. `,
