@@ -51,6 +51,7 @@
       const headers = { "Accept": "application/json" };
       if (token) headers["Authorization"] = "Bearer " + token;
       if (body !== undefined) headers["Content-Type"] = "application/json";
+      const started = performance.now();
       const resp = await send(path, {
         method, headers, signal: options.signal,
         body: body === undefined ? undefined : JSON.stringify(body),
@@ -61,6 +62,7 @@
         const text = await resp.text();
         try { data = text ? JSON.parse(text) : null; } catch (_) { data = { error: { message: text } }; }
       }
+      if (window.AnaPerf) window.AnaPerf.api(performance.now() - started, path);     // spec 050 (T-050-03)
       if (resp.status === 401 && path !== "/api/session") {
         API.setToken(null);
         API.onExpired();
@@ -239,6 +241,7 @@
       deleteAlertRule: (id) => API.request("DELETE", `/api/admin/observability/alerts/rules/${enc(id)}`),
       createSilence: (body) => API.request("POST", "/api/admin/observability/alerts/silences", body),
       endSilence: (id) => API.request("POST", `/api/admin/observability/alerts/silences/${enc(id)}/end`, {}),
+      uiPerf: (days) => API.request("GET", "/api/admin/observability/ui" + query({ days })),
       obsSql: (filters) => API.request("GET", "/api/admin/observability/sql" + query(filters || {})),
       obsSqlDetail: (hash) => API.request("GET", `/api/admin/observability/sql/${enc(hash)}`),
       obsFlush: () => API.request("POST", "/api/admin/observability/sql/flush", {}),

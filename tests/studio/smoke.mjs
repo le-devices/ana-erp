@@ -3,6 +3,7 @@
 // Run: docker run --rm --network host -v $PWD/tests/studio:/t -w /t node:22-alpine \
 //      sh -c "npm i --silent --no-save jsdom@24 && node smoke.mjs"
 import { JSDOM, VirtualConsole } from "jsdom";
+import { Verifier } from "./ux_check.mjs";
 
 const ANA_URL = process.env.ANA_URL || "http://localhost:8080";
 const PASSWORD = process.env.ANA_ADMIN_PASSWORD || "admin";
@@ -22,6 +23,8 @@ async function open(username, password) {
     },
   });
   const w = dom.window;
+  w.__session = username;
+  current = w;
   await new Promise((r) => w.addEventListener("load", r));
   await until(() => !w.document.querySelector("#login-screen").hidden, "login screen", jsErrors);
   const f = w.document.querySelector("#login-form");
@@ -33,14 +36,21 @@ async function open(username, password) {
 }
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+// Spec 050 (T-050-02): every screen reached is checked against the premium-experience rules.
+const verifier = new Verifier();
+let current = null;
+const screenOf = (w) => `${w.__session} ${(w.location.hash || "#/home").split("?")[0].replace(/\/\d+(?=\/|$)/g, "/:id")}`;
 async function until(cond, label, errs = [], ms = 15000) {
   const end = Date.now() + ms;
-  while (Date.now() < end) { if (cond()) return; await sleep(50); }
+  while (Date.now() < end) {
+    if (cond()) { if (current && current.document.querySelector("#app-screen:not([hidden])")) verifier.check(current.document, screenOf(current)); return; }
+    await sleep(50);
+  }
   throw new Error("timed out waiting for: " + label + "\nJS errors: " + errs.join("\n"));
 }
 const ok = (c, m) => { if (!c) throw new Error("failed: " + m); console.log("✔", m); };
 const submit = (w, form) => form.dispatchEvent(new w.Event("submit", { cancelable: true }));
-const go = async (w, hash) => { w.location.hash = hash; await sleep(50); };
+const go = async (w, hash) => { current = w; w.location.hash = hash; await sleep(50); };
 
 // ---------------------------------------------------------------- admin/developer
 const { w, d, jsErrors } = await open("admin", PASSWORD);
@@ -124,6 +134,11 @@ d.querySelector("#table-detail .page-header button").click();
 submit(w, d.querySelector("#sql-form"));
 await until(() => text("#sql-result").includes("linha(s)"), "sql", jsErrors);
 ok(true, "catálogo e console SQL na mesma tela");
+
+// Spec 050 (T-050-01): the pattern catalog, with live examples built by the real components.
+await go(w, "#/dev/patterns");
+await until(() => text("#patterns-view").includes("Padrões de experiência") && d.querySelector("#patterns-view .empty-state button"), "patterns", jsErrors);
+ok(d.querySelectorAll("#patterns-view section").length >= 6, "catálogo de padrões com exemplos vivos (spec 050)");
 
 // Go-to bar
 d.querySelector("#command").value = "balance";
@@ -406,7 +421,7 @@ ok([...d.querySelectorAll("#admin-main .form-card option")].some((o) => o.value 
 for (const [section, marker] of [["groups", "Grupos de acesso"], ["limits", "Perfil de limite"], ["company", "Razão social"],
                                  ["settings", "ceiling_cpu_ms"], ["accounts", "service_revenue"], ["commands", "hello"],
                                  ["remote", "Sistemas remotos"], ["scheduler", "Feriados"], ["monitor", "Execuções ativas"], ["consumption", "CPU total"],
-                                 ["retention", "Expurgos recentes"], ["health", "Mudanças de estado"], ["alerts", "Componente em falha"], ["sqlperf", "Desempenho do SQL"],
+                                 ["retention", "Expurgos recentes"], ["health", "Mudanças de estado"], ["alerts", "Componente em falha"], ["uiperf", "Desempenho das telas"], ["sqlperf", "Desempenho do SQL"],
                                  ["advice", "Dicas de otimização"], ["updates", "Atualizações do produto"], ["license", "Usuários nomeados"], ["extensions", "Ligar um programa seu"], ["telemetry", "Exatamente o que é enviado"], ["company", "Logotipo"], ["groups", "Dados que os membros veem"], ["integrations", "Chamadas 24 h"], ["audit", "Auditoria"]]) {
   await go(w, `#/admin/${section}`);
   await until(() => text("#admin-main").includes(marker), section, jsErrors);
@@ -671,6 +686,13 @@ ok(!x.d.querySelector("#area-portal").hidden, "conta externa não entra no Desen
 ok(x.jsErrors.length === 0, "nenhum erro de JavaScript (portal)" + (x.jsErrors.length ? ": " + x.jsErrors.join("; ") : ""));
 await fetch(`${ANA_URL}/api/admin/users/${xname}`, { method: "PUT", headers: auth, body: JSON.stringify({ active: false }) });
 x.w.close();
+// ---------------------------------------------------------------- premium experience (spec 050)
+const ux = verifier.finish();
+if (ux.written !== undefined) console.log(`linha de base da experiência gravada: ${ux.written} violação(ões) conhecidas`);
+if (ux.fixed.length) console.log(`✔ ${ux.fixed.length} violação(ões) da linha de base já corrigida(s): rode com UX_BASELINE=write para atualizá-la`);
+ok(ux.fresh.length === 0, "nenhuma tela nova quebra o padrão de experiência (spec 050)" +
+   (ux.fresh.length ? ":\n  " + ux.fresh.join("\n  ") : ""));
 process.exit(0);
 
 function location_hash(win) { return win.location.hash; }
+

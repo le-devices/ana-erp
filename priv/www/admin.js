@@ -962,6 +962,34 @@
       ], a.silences, { empty: "Nenhum silêncio nos últimos 7 dias." }));
   }
 
+  // Spec 050 (T-050-03, P18): how long screens take to open in the browsers, against the 1 s budget.
+  async function uiperf(days = 7) {
+    const rows = await API.admin.uiPerf(days);
+    const ms = (v) => (v === null || v === undefined ? "> 5000" : n2(v));
+    const opens = rows.filter((r) => r.kind === "open").sort((a, b) => (b.p95_ms ?? 1e9) - (a.p95_ms ?? 1e9));
+    const top = opens.slice(0, 10);
+    const period = el("select", { "aria-label": "Período" }, [[1, "Hoje"], [7, "Últimos 7 dias"], [30, "Últimos 30 dias"]]
+      .map(([v, l]) => el("option", { value: v, text: l })));
+    period.value = String(days);
+    period.addEventListener("change", () => guard(() => uiperf(Number(period.value))));
+    main().replaceChildren(
+      ...header("Desempenho das telas", "Quanto cada tela leva para abrir e quanto duram as chamadas dela, medido nos navegadores de quem usa. Orçamento: 95 % das aberturas em até 1 s; acima disso vira apontamento nas Verificações."),
+      el("div", { class: "admin-toolbar" }, period),
+      top.length ? window.AnaCharts.render({ type: "bar", title: "Telas mais lentas para abrir (p95)", format: "number", unit: "ms",
+        x: top.map((r) => r.screen), series: [{ name: "p95", values: top.map((r) => r.p95_ms ?? 5000) }] }) : null,
+      table([
+        { label: "Tela", value: (r) => r.screen },
+        { label: "Medida", value: (r) => (r.kind === "open" ? "abrir a tela" : "chamadas ao servidor") },
+        { label: "Amostras", value: (r) => n2(r.samples), class: "num" },
+        { label: "Média (ms)", value: (r) => n2(r.avg_ms), class: "num" },
+        { label: "p50 (ms)", value: (r) => ms(r.p50_ms), class: "num" },
+        { label: "p95 (ms)", value: (r) => r.kind === "open" && (r.p95_ms === null || r.p95_ms > r.budget_ms)
+            ? pill(`▲ ${ms(r.p95_ms)}`, "warn") : ms(r.p95_ms), class: "num" },
+        { label: "Travamentos", value: (r) => n2(r.long_tasks), class: "num" },
+      ], rows, { empty: "Ainda sem medições: as telas se medem sozinhas enquanto as pessoas usam o Estúdio.",
+                 emptyAction: { label: "Atualizar", onClick: () => guard(() => uiperf(days)) } }));
+  }
+
   async function sqlperf(filters = { order: "total" }) {
     const rows = await API.admin.obsSql(filters);
     const detail = el("div");
@@ -2001,7 +2029,7 @@
                        window.AnaScheduler.holidays(hol)]);
   }
 
-  const SECTIONS = { users, groups, settings, company, commands, remote, accounts, limits, consumption, scheduler, monitor, audit, retention, health, alerts, sqlperf, advice, updates, integrations, checks, transports, datacopy, publicapi, license, extensions, telemetry };
+  const SECTIONS = { users, groups, settings, company, commands, remote, accounts, limits, consumption, scheduler, monitor, audit, retention, health, alerts, uiperf, sqlperf, advice, updates, integrations, checks, transports, datacopy, publicapi, license, extensions, telemetry };
 
   function show(section) {
     refreshUpdatesCount();
@@ -2010,7 +2038,7 @@
     current = section;
     for (const b of $$("#area-admin .nav-link")) b.classList.toggle("active", b.dataset.section === section);
     main().replaceChildren(el("p", { class: "muted", text: "Carregando…" }));
-    guard(() => SECTIONS[section]());
+    return guard(() => SECTIONS[section]());
   }
 
   function wire() {

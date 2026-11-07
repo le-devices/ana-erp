@@ -27,7 +27,9 @@
     return isNaN(d) ? String(s) : d.toLocaleString("pt-BR");
   }
 
+  // Spec 050 (T-050-04): what happened and what to do; the technical code only for developers.
   function errorText(e) {
+    if (window.AnaErrors && e && (e instanceof window.AnaApiError || e.code)) return window.AnaErrors.text(e);
     if (e instanceof window.AnaApiError) return `${e.code || e.status}: ${e.message}`;
     return String((e && e.message) || e);
   }
@@ -47,7 +49,7 @@
   function table(columns, rows, options = {}) {
     if (options.screen && window.AnaTable) {
       return window.AnaTable.create({ title: options.title, screen: options.screen, rows, empty: options.empty,
-        onRow: options.onRow, bulk: options.bulk,
+        emptyAction: options.emptyAction, onRow: options.onRow, bulk: options.bulk,
         columns: columns.map((c, i) => ({ key: c.key || c.label || "#" + i, label: c.label, value: c.value, class: c.class })) });
     }
     const t = el("table", { class: "grid-table" });
@@ -62,9 +64,18 @@
       }
       tb.append(tr);
     }
-    if (!rows.length) tb.append(el("tr", {}, el("td", { colspan: columns.length, class: "muted", text: options.empty || "Nada para mostrar." })));
+    if (!rows.length) tb.append(el("tr", {}, emptyCell(columns.length, options.empty, options.emptyAction)));
     t.append(tb);
     return t;
+  }
+
+  /** Spec 050 (D3, P18): an empty list says why and offers the action that fills it
+   *  (emptyAction: {label, onClick} or {label, href}). */
+  function emptyCell(span, text, action) {
+    const btn = !action ? null : action.href
+      ? el("a", { href: action.href, class: "button small", text: action.label })
+      : el("button", { type: "button", class: "small", text: action.label, onclick: action.onClick });
+    return el("td", { colspan: span, class: "muted empty-state" }, el("span", { text: (text || "Nada para mostrar.") + (btn ? " " : "") }), btn);
   }
 
   const cellText = (v) => (v === null || v === undefined ? "" : typeof v === "object" ? JSON.stringify(v) : String(v));
@@ -252,5 +263,5 @@
   document.addEventListener("DOMContentLoaded", () => enhance(document));
 
   window.AnaPrefs = Prefs;
-  window.AnaUI = { $, $$, el, fmtDate, errorText, toast, table, pill, splitter, pinnable, icon, enhance, cellText };
+  window.AnaUI = { $, $$, el, fmtDate, errorText, toast, table, emptyCell, pill, splitter, pinnable, icon, enhance, cellText };
 })();

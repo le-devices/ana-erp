@@ -227,6 +227,8 @@ route(<<"GET">>, [<<"observability">>, <<"health">>], _U, Req) ->
 route(<<"POST">>, [<<"observability">>, <<"health">>, <<"check">>], _U, Req) ->
     _ = ana_health:check_now(),
     reply(ana_observability:health(), Req);
+route(<<"GET">>, [<<"observability">>, <<"ui">>], _U, Req) ->
+    reply(ana_ui_perf:report(max(1, min(90, ana_http:qs_int(<<"days">>, Req, 7)))), Req);
 route(<<"GET">>, [<<"observability">>, <<"alerts">>], _U, Req) ->
     reply(ana_alerts:overview(), Req);
 route(<<"POST">>, [<<"observability">>, <<"alerts">>, <<"rules">>], U, Req) ->

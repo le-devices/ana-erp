@@ -285,8 +285,10 @@
         if (res.error) {
           status.textContent = "não concluída";
           status.className = "run-state error";
-          output.append(el("div", { class: "end error" }, el("strong", { text: res.error.message || res.error.code }),
-            el("span", { class: "muted", text: `  (${res.error.code})` })));
+          const why = window.AnaErrors.describe(res.error);
+          output.append(el("div", { class: "end error" }, el("strong", { text: why.title }),
+            why.action ? el("div", { text: why.action }) : null,
+            why.technical ? el("div", { class: "muted small", text: why.technical }) : null));
         } else {
           status.textContent = `concluído em ${res.duration_ms} ms`;
           status.className = "run-state ok";
@@ -318,7 +320,7 @@
         simOut.replaceChildren();
         const events = res.events || (res.error && res.error.events) || [];
         for (const ev of events) if (ev.type === "output") R.drawOutput(simOut, ev, { ...ctx, screen: "sim:" + r.name });
-        if (res.error) simOut.append(el("div", { class: "end error" }, el("strong", { text: res.error.message || res.error.code })));
+        if (res.error) simOut.append(el("div", { class: "end error" }, el("strong", { text: window.AnaErrors.text(res.error) })));
         else if (!simOut.childNodes.length) simOut.append(el("p", { class: "muted", text: "A simulação não mostrou nada." }));
         simWhen.textContent = `simulado às ${new Date().toLocaleTimeString("pt-BR")} · nada foi gravado`;
       } catch (e) { simOut.replaceChildren(el("div", { class: "end error", text: errorText(e) })); }

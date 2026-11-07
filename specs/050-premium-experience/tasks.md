@@ -1,10 +1,10 @@
 # 050 — Tarefas
 
 Fase 1 — padrão que se verifica sozinho (vale para tudo o que vier depois)
-- [ ] T-050-01 Catálogo de padrões e página "Padrões" (RF-050-01, D1)
-- [ ] T-050-02 Verificador automático de telas nos testes do Estúdio (RF-050-02, CA-050-01)
-- [ ] T-050-03 Medição e orçamento de desempenho da interface; apontamento nas Verificações (RF-050-03, RNF-050-01, D2)
-- [ ] T-050-04 Catálogo de mensagens de erro com causa e ação (RF-050-07, CA-050-04)
+- [x] T-050-01 Catálogo de padrões e página "Padrões" (RF-050-01, D1)
+- [x] T-050-02 Verificador automático de telas nos testes do Estúdio (RF-050-02, CA-050-01)
+- [x] T-050-03 Medição e orçamento de desempenho da interface; apontamento nas Verificações (RF-050-03, RNF-050-01, D2)
+- [x] T-050-04 Catálogo de mensagens de erro com causa e ação (RF-050-07, CA-050-04)
 
 Fase 2 — recursos transversais
 - [ ] T-050-05 Paleta de comandos global e ajuda de atalhos (RF-050-04, D4, CA-050-02)

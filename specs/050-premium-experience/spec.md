@@ -1,6 +1,17 @@
 # 050 — Experiência premium (padrão de UX e auditoria de todas as telas)
 
-Situação: especificada (nov/2026).
+Situação: fase 1 implementada (nov/2026); fases 2 e 3 na fila.
+
+Decisões de implementação (fase 1): o verificador (`tests/studio/ux_check.mjs`) roda em cada tela que o
+teste do Estúdio alcança — campo e controle sem nome acessível, imagem sem texto alternativo, lista vazia
+sem ação, texto técnico fora do Desenvolvimento e da Administração, id repetido — e compara com a linha de
+base `tests/studio/ux_baseline.json` (35 violações que já existiam, corrigidas na fase 3); violação nova
+faz a bateria falhar. Listas vazias ganharam `emptyAction`. O catálogo de erros (`errors.js`) traduz os
+códigos técnicos em "o que houve e o que fazer"; desenvolvedores e administradores também veem o código. O
+Estúdio mede abertura de telas, chamadas e travamentos (`perf.js`) e envia em lote; o núcleo agrega em
+memória e grava um histograma por dia, tela e tipo uma vez por minuto (`ana_ui_perf`, P15); tela com p95
+acima de 1 s vira o apontamento `ui_slow_screen`; tela "Desempenho das telas" na Administração. Página
+"Padrões" no Desenvolvimento com as regras e exemplos vivos.
 
 ## Problema
 O ANA já tem uma linguagem visual (spec 029), arquitetura da informação e
