@@ -1048,11 +1048,12 @@
   const SEV_ORDER = ["critical", "serious", "warning", "info"];
 
   async function checks(tab = "findings", filter = { status: "open", category: "" }) {
-    const tabs = el("div", { class: "sub-tabs" }, [["findings", "Achados"], ["inventory", "Inventário e vulnerabilidades"]]
+    const tabs = el("div", { class: "sub-tabs" }, [["findings", "Achados"], ["inventory", "Inventário e vulnerabilidades"], ["notify", "Avisos e base automática"]]
       .map(([k, l]) => el("button", { class: k === tab ? "active" : "", text: l, onclick: () => guard(() => checks(k, filter)) })));
     const head = header("Verificações", "Segurança da configuração, componentes com vulnerabilidade conhecida, integridade dos arquivos, " +
       "robustez (cópias, filas, erros) e desempenho, verificados periodicamente pelo robô system. Missão crítica: o que é crítico vira aviso no sino.");
     if (tab === "inventory") return checksInventory(head, tabs, filter);
+    if (tab === "notify") return checksConfig(head, tabs);
     const [data, notices] = await Promise.all([API.admin.checks(filter), API.admin.notices(true).catch(() => [])]);
     const counts = {};
     for (const c of data.counts) (counts[c.category] = counts[c.category] || {})[c.severity] = c.n;
@@ -1098,6 +1099,48 @@
     })) : el("p", { class: "muted", text: filter.status === "open" ? "Nenhum achado aberto" + (filter.category ? " nesta categoria." : ". Bom sinal.") : "Nada aqui." });
     main().replaceChildren(...head, tabs, noticeBox || "", el("div", { class: "row-buttons" }, runBtn("all", "Verificar tudo agora")),
       cards, status, list);
+  }
+
+  // T-033-09b: the vulnerability base kept up to date by a connector, and new findings sent by e-mail or chat.
+  async function checksConfig(head, tabs) {
+    const c = await API.admin.checksConfig();
+    const opt = (v, t) => el("option", { value: v, text: t });
+    const conn = el("select", {}, opt("", "— só no sino do Estúdio —"),
+      c.connectors.map((k) => opt(k.name, `${k.name} (${k.kind === "smtp" ? "e-mail" : "HTTP/chat"})${k.description ? " — " + k.description : ""}`)));
+    conn.value = c.notify_connector || "";
+    const to = el("input", { value: (c.notify_recipients || []).join(", "), placeholder: "e-mails separados por vírgula (para conector de e-mail)" });
+    const min = el("select", {}, [["critical", "só críticos"], ["serious", "sérios e críticos"], ["warning", "atenção, sérios e críticos"]].map(([v, l]) => opt(v, l)));
+    min.value = c.notify_min_severity || "critical";
+    const feed = c.feed_available
+      ? el("div", {},
+          el("p", {}, "Conector ", el("code", { text: c.feed_available }), c.feed_at
+            ? ` · última atualização ${fmtDate(c.feed_at)}: ` : " · ainda não atualizada",
+            c.feed_at ? (c.feed_ok ? pill(`✓ ${c.feed_message}`, "ok") : pill(`■ ${c.feed_message}`, "off")) : ""),
+          el("p", { class: "muted small", text: "Atualiza sozinha uma vez por dia, junto com a verificação de dependências." }),
+          el("button", { type: "button", text: "Atualizar agora", onclick: (e) => guard(async () => {
+            e.target.disabled = true;
+            const r = await API.admin.checksFeedRefresh();
+            toast(`Base atualizada: ${r.feed_message}. ${r.check.found} achado(s) de dependências.`);
+            checks("notify");
+          }) }))
+      : el("div", {},
+          el("p", { text: "Desligada: a base é enviada à mão (aba Inventário). Para atualizar sozinha, crie um conector HTTP com as opções:" }),
+          el("pre", { class: "params-json", text: '{"purpose": "osv_feed", "mode": "feed", "path": "/caminho/do/arquivo-osv.json"}\n' +
+                                                    'ou, com URL base https://api.osv.dev:\n{"purpose": "osv_feed", "mode": "query"}' }),
+          el("button", { type: "button", class: "quiet", text: "Ir para Conectores", onclick: () => location.hash = "#/admin/integrations" }));
+    main().replaceChildren(...head, tabs,
+      el("div", { class: "admin-columns" },
+        el("div", { class: "form-card" }, el("h3", { text: "Base de vulnerabilidades automática" }), feed),
+        el("form", { class: "form-card", onsubmit: (e) => { e.preventDefault(); guard(async () => {
+          await API.admin.checksSaveConfig({ notify_connector: conn.value || null, notify_min_severity: min.value,
+            notify_recipients: to.value.split(/[,;\s]+/).map((x) => x.trim()).filter(Boolean) });
+          toast("Avisos configurados.");
+          checks("notify");
+        }); } },
+          el("h3", { text: "Avisos por e-mail ou chat" }),
+          el("p", { class: "muted small", text: "Achados novos a partir da gravidade escolhida vão numa só mensagem por verificação. Os críticos continuam também no sino." }),
+          field("Conector", conn), field("Destinatários", to), field("Gravidade mínima", min),
+          el("div", { class: "row-buttons" }, el("button", { class: "primary", type: "submit", text: "Salvar" })))));
   }
 
   async function checksInventory(head, tabs, filter) {

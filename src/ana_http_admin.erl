@@ -278,6 +278,12 @@ route(<<"POST">>, [<<"checks">>, <<"run">>], U = #{username := Who}, Req) ->
             Ok -> reply(Ok, R)
         end
     end);
+route(<<"GET">>, [<<"checks">>, <<"config">>], _U, Req) ->
+    reply(ana_checks:config(), Req);
+route(<<"PUT">>, [<<"checks">>, <<"config">>], U, Req) ->
+    with_body(Req, fun(B, R) -> reply(ana_checks:save_config(B, U), R) end);
+route(<<"POST">>, [<<"checks">>, <<"feed">>, <<"refresh">>], U, Req) ->
+    reply(ana_checks:refresh_feed(U), Req);
 route(<<"GET">>, [<<"checks">>, <<"notices">>], _U, Req) ->
     reply(ana_checks:notices(ana_http:qs_int(<<"unread">>, Req, 0) =:= 1), Req);
 route(<<"POST">>, [<<"checks">>, <<"notices">>, Id, <<"read">>], _U, Req) ->

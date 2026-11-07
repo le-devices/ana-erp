@@ -75,5 +75,13 @@ degradaram. O administrador só descobre quando algo quebra.
 ## Decisões
 - Nenhuma consulta externa sem o administrador ligar o conector (P13 e
   ambientes isolados); arquivo OSV enviado à mão é o caminho padrão.
+- T-033-09b: o conector da base é um conector HTTP com `options.purpose =
+  "osv_feed"` — `mode: "feed"` (GET de um arquivo OSV, ex.: espelho interno)
+  ou `mode: "query"` (API do osv.dev com o inventário). Atualiza junto com a
+  verificação diária de dependências e por "Atualizar agora"; falha vira o
+  achado `vulnerability_feed_failed`. Achados novos a partir da gravidade
+  configurada vão numa só mensagem pelo conector escolhido (e-mail pelo SMTP
+  da spec 044, ou mensagem `checks.findings` para um programa de chat), além
+  do sino.
 - Varredura da imagem (pacotes do sistema) roda na construção e o resultado
   segue no inventário; em execução só se confere.
