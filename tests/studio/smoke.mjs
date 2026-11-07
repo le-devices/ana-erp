@@ -434,6 +434,12 @@ for (const [section, marker] of [["groups", "Grupos de acesso"], ["limits", "Per
   if (section === "integrations") {
     [...d.querySelectorAll("#admin-main .sub-tabs button")].find((b) => b.textContent === "Conectores").click();
     await until(() => text("#admin-main").includes("Segredos (só escrita)"), "connectors", jsErrors);
+    // Spec 044: an e-mail (SMTP) connector shows its own fields instead of the HTTP ones.
+    const kindSel = [...d.querySelectorAll("#admin-main .form-card select")].find((x) => [...x.options].some((o) => o.value === "smtp"));
+    kindSel.value = "smtp"; kindSel.dispatchEvent(new w.Event("change"));
+    const shown = (label) => [...d.querySelectorAll("#admin-main .form-card label")].some((l) => !l.hidden && l.textContent.startsWith(label));
+    ok(shown("Servidor SMTP") && shown("Remetente") && !shown("URL base"), "conector de e-mail (SMTP) mostra os próprios campos (spec 044)");
+    kindSel.value = "http_api"; kindSel.dispatchEvent(new w.Event("change"));
     [...d.querySelectorAll("#admin-main .sub-tabs button")].find((b) => b.textContent === "Saída").click();
     await until(() => text("#admin-main").includes("Último erro"), "outbox", jsErrors);
     ok(true, "integrações: painel, conectores com segredos só de escrita e mensagens (spec 017)");

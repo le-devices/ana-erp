@@ -1424,7 +1424,7 @@
       const f = {
         name: el("input", { value: c.name || "", placeholder: "ex.: banco_x", disabled: !!c.name }),
         description: el("input", { value: c.description || "" }),
-        kind: el("select", {}, [["http_api", "Saída HTTP (API)"], ["webhook_in", "Webhook de entrada"]].map(([v, l]) => el("option", { value: v, text: l, selected: c.kind === v }))),
+        kind: el("select", {}, [["http_api", "Saída HTTP (API)"], ["webhook_in", "Webhook de entrada"], ["smtp", "E-mail (SMTP)"]].map(([v, l]) => el("option", { value: v, text: l, selected: c.kind === v }))),
         base_url: el("input", { value: c.base_url || "", placeholder: "https://api.exemplo.com" }),
         auth: el("select", {}, [["none", "Nenhuma"], ["basic", "Usuário e senha"], ["bearer", "Token"], ["api_key", "Chave de API"], ["oauth2_client", "OAuth2 (client credentials)"]].map(([v, l]) => el("option", { value: v, text: l, selected: (c.auth || "none") === v }))),
         token_url: el("input", { value: c.token_url || "", placeholder: "https://… (OAuth2)" }),
@@ -1438,6 +1438,33 @@
         options: el("textarea", { rows: 3, class: "params-json", value: JSON.stringify(c.options || {}, null, 1) }),
         active: el("input", { type: "checkbox", checked: c.active !== false }),
       };
+      // Spec 044: an e-mail (SMTP) connector keeps its settings in the options; the password goes to the vault.
+      const o = c.options || {};
+      const sm = {
+        host: el("input", { value: o.host || "", placeholder: "smtp.empresa.com.br" }),
+        port: el("input", { type: "number", min: 1, max: 65535, value: o.port || "", placeholder: "587 (STARTTLS) ou 465 (TLS)" }),
+        security: el("select", {}, [["starttls", "STARTTLS (obrigatório)"], ["tls", "TLS direto"], ["none", "Sem criptografia (não recomendado)"]]
+          .map(([v, l]) => el("option", { value: v, text: l, selected: (o.security || "starttls") === v }))),
+        from: el("input", { value: o.from || "", placeholder: "erp@empresa.com.br" }),
+        from_name: el("input", { value: o.from_name || "", placeholder: "nome do remetente" }),
+        reply_to: el("input", { value: o.reply_to || "", placeholder: "responder para (opcional)" }),
+        ca_cert: el("textarea", { rows: 2, class: "params-json", value: o.ca_cert || "", placeholder: "-----BEGIN CERTIFICATE----- (só para CA própria)" }),
+        allow_plain: el("input", { type: "checkbox", checked: o.allow_plain === true }),
+        default_email: el("input", { type: "checkbox", checked: c.default_email === true }),
+      };
+      const testTo = el("input", { type: "email", placeholder: "para (e-mail de teste)" });
+      const smtpOnly = [field("Servidor SMTP", sm.host), field("Porta", sm.port), field("Segurança", sm.security), field("Remetente", sm.from),
+        field("Nome do remetente", sm.from_name), field("Responder para", sm.reply_to), field("CA própria (PEM)", sm.ca_cert),
+        check("Permitir sem criptografia (aparece nas Verificações)", sm.allow_plain), check("Conector de e-mail padrão", sm.default_email),
+        el("div", { class: "row-buttons" },
+          el("button", { type: "button", class: "quiet", text: "Testar conexão", disabled: !c.name, onclick: () => guard(async () => {
+            await API.admin.smtpTest(c.name, {}); toast("Conexão com o servidor de e-mail ok.");
+          }) }),
+          testTo,
+          el("button", { type: "button", class: "quiet", text: "Enviar e-mail de teste", disabled: !c.name, onclick: () => guard(async () => {
+            if (!testTo.value.trim()) { toast("Informe o destinatário do teste.", true); return; }
+            const r = await API.admin.smtpTest(c.name, { to: testTo.value.trim() }); toast(`Enviado: ${r.server_reply || "ok"}`);
+          }) }))];
       const secrets = el("div");
       const drawSecrets = () => {
         const have = new Map((c.secrets || []).map((x) => [x.key, x]));
@@ -1458,35 +1485,51 @@
       f.auth.addEventListener("change", drawSecrets);
       f.kind.addEventListener("change", drawSecrets);
       drawSecrets();
+      const httpOnly = [field("URL base", f.base_url), field("URL do token (OAuth2)", f.token_url), field("Hosts permitidos", f.allowed_hosts),
+        field("Programa de entrega (saída)", f.outbound_program), field("Programa de processamento (entrada)", f.inbound_program)];
+      const showKind = () => {
+        const smtp = f.kind.value === "smtp";
+        for (const n of smtpOnly) n.hidden = !smtp;
+        for (const n of httpOnly) n.hidden = smtp;
+      };
+      f.kind.addEventListener("change", showKind);
       side.replaceChildren(el("form", { class: "form-card", onsubmit: (e) => { e.preventDefault(); guard(async () => {
         let options;
         try { options = JSON.parse(f.options.value || "{}"); } catch (_) { toast("Opções devem ser um JSON de objeto.", true); return; }
         const name = f.name.value.trim();
+        const smtp = f.kind.value === "smtp";
+        if (smtp) {
+          Object.assign(options, { host: sm.host.value.trim(), security: sm.security.value, from: sm.from.value.trim(),
+            from_name: sm.from_name.value.trim() || null, reply_to: sm.reply_to.value.trim() || null,
+            ca_cert: sm.ca_cert.value.trim() || null, allow_plain: sm.allow_plain.checked });
+          if (sm.port.value) options.port = Number(sm.port.value);
+        }
         await API.admin.saveConnector(name, { description: f.description.value, kind: f.kind.value, base_url: f.base_url.value.trim() || null,
           auth: f.auth.value, token_url: f.token_url.value.trim() || null,
           allowed_hosts: f.allowed_hosts.value.split(",").map((h) => h.trim()).filter(Boolean),
           outbound_program: f.outbound_program.value.trim() || null, inbound_program: f.inbound_program.value.trim() || null,
           run_as: f.run_as.value.trim() || "system", max_attempts: Number(f.max_attempts.value), timeout_ms: Number(f.timeout_ms.value),
-          rate_per_min: Number(f.rate_per_min.value), options, active: f.active.checked });
+          rate_per_min: Number(f.rate_per_min.value), options, active: f.active.checked, default_email: smtp && sm.default_email.checked });
         toast("Conector salvo."); integrations("connectors");
       }); } },
         el("h3", { text: c.name ? `Conector ${c.name}` : "Novo conector" }),
-        field("Nome", f.name), field("Descrição", f.description), field("Tipo", f.kind), field("URL base", f.base_url),
-        field("Autenticação", f.auth), field("URL do token (OAuth2)", f.token_url), field("Hosts permitidos", f.allowed_hosts),
-        field("Programa de entrega (saída)", f.outbound_program), field("Programa de processamento (entrada)", f.inbound_program),
+        field("Nome", f.name), field("Descrição", f.description), field("Tipo", f.kind), field("Autenticação", f.auth),
+        ...httpOnly, ...smtpOnly,
         field("Roda como (usuário dono)", f.run_as), field("Tentativas", f.max_attempts), field("Tempo máximo (ms)", f.timeout_ms),
         field("Chamadas por minuto", f.rate_per_min), field("Opções para os programas (JSON)", f.options), check("Ativo", f.active),
         el("div", { class: "row-buttons" }, el("button", { class: "primary", type: "submit", text: "Salvar" })),
         secrets,
         c.kind === "webhook_in" ? el("p", { class: "muted small", text: `Endereço: POST /hooks/${c.name} com cabeçalhos ${c.timestamp_header} (segundos), ${c.signature_header} = sha256=<HMAC-SHA256 hex de "carimbo.corpo"> e ${c.event_id_header}.` }) : null));
+      showKind();
     };
     form();
     return el("div", { class: "admin-columns" },
       el("div", {}, el("div", { class: "row-buttons" }, el("button", { text: "Novo conector", onclick: () => form() })),
         table([
           { label: "Nome", value: (c) => c.name },
-          { label: "Tipo", value: (c) => (c.kind === "http_api" ? "saída HTTP" : "webhook") },
-          { label: "Destino", value: (c) => c.base_url || `/hooks/${c.name}` },
+          { label: "Tipo", value: (c) => ({ http_api: "saída HTTP", webhook_in: "webhook", smtp: "e-mail (SMTP)" })[c.kind] || c.kind },
+          { label: "Destino", value: (c) => c.kind === "smtp" ? `${(c.options || {}).host || "?"}:${(c.options || {}).port || ""}${c.default_email ? " · padrão" : ""}`
+            : c.base_url || `/hooks/${c.name}` },
           { label: "Segredos", value: (c) => (c.secrets.length ? c.secrets.map((x) => x.key).join(", ") : "—") },
           { label: "Situação", value: (c) => (c.active ? pill("ativo", "ok") : pill("inativo", "off")) },
         ], data.connectors, { empty: "Nenhum conector.", onRow: (c) => form(c) })),

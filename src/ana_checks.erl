@@ -18,7 +18,7 @@
 -define(RULES, #{
     <<"security">> => [<<"trivial_password">>, <<"example_secret">>, <<"weak_policy">>, <<"too_many_admins">>,
                        <<"pending_password_change">>, <<"stale_api_key">>, <<"open_share_links">>,
-                       <<"connector_without_hosts">>, <<"short_audit_retention">>],
+                       <<"connector_without_hosts">>, <<"short_audit_retention">>, <<"smtp_plaintext">>],
     <<"dependencies">> => [<<"vulnerable_component">>, <<"vulnerability_feed">>],
     <<"integrity">> => [<<"shipped_files">>, <<"ledger_reconciliation">>, <<"master_quality">>],
     <<"robustness">> => [<<"wal_archiving">>, <<"base_backup">>, <<"restore_test">>, <<"dead_letters">>,
@@ -126,7 +126,7 @@ safe(F) ->
 rules(<<"security">>) ->
     [fun trivial_password/0, fun example_secret/0, fun weak_policy/0, fun too_many_admins/0,
      fun pending_password_change/0, fun stale_api_key/0, fun open_share_links/0, fun connector_without_hosts/0,
-     fun short_audit_retention/0];
+     fun short_audit_retention/0, fun smtp_plaintext/0];
 rules(<<"dependencies">>) -> [fun inventory/0, fun ana_osv:findings/0, fun vulnerability_feed/0];
 rules(<<"integrity">>) -> [fun shipped_files/0, fun ledger_reconciliation/0, fun master_quality/0];
 rules(<<"robustness">>) ->
@@ -226,6 +226,15 @@ connector_without_hosts() ->
     [{<<"connector_without_hosts">>, N, <<"serious">>, fmt("Conector ~ts sem lista de hosts permitidos", [N]),
       <<"Sem a lista, o conector aceita endereços montados pelos programas: risco de enviar dados ou segredos a outro host."/utf8>>,
       <<"Informe os hosts permitidos do conector (Administração → Integrações)."/utf8>>, #{connector => N}}
+     || #{<<"name">> := N} <- Rows].
+
+%% Spec 044 (D1): e-mail without encryption is allowed only on purpose, and it stays visible.
+smtp_plaintext() ->
+    {ok, Rows} = ana_db:rows("SELECT name FROM integration.connector WHERE active AND kind = 'smtp' "
+                             "AND options ->> 'security' = 'none' ORDER BY name", []),
+    [{<<"smtp_plaintext">>, N, <<"serious">>, fmt("Conector de e-mail ~ts sem criptografia", [N]),
+      <<"As mensagens (e a senha, se houver) trafegam abertas na rede até o servidor de e-mail."/utf8>>,
+      <<"Use TLS ou STARTTLS no conector (Administração → Integrações)."/utf8>>, #{connector => N}}
      || #{<<"name">> := N} <- Rows].
 
 short_audit_retention() ->

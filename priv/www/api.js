@@ -280,6 +280,7 @@
       notices: (unread) => API.request("GET", "/api/admin/checks/notices" + query(unread ? { unread: 1 } : {})),
       noticeRead: (id) => API.request("POST", `/api/admin/checks/notices/${id}/read`, {}),
       connectors: () => API.request("GET", "/api/admin/connectors"),
+      smtpTest: (name, body) => API.request("POST", `/api/admin/connectors/${encodeURIComponent(name)}/smtp-test`, body),
       saveConnector: (name, body) => API.request("PUT", `/api/admin/connectors/${encodeURIComponent(name)}`, body),
       saveSecret: (name, key, value, expires_at) =>
         API.request("PUT", `/api/admin/connectors/${encodeURIComponent(name)}/secrets/${key}`, { value, expires_at: expires_at || null }),

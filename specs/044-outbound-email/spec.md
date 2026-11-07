@@ -1,6 +1,15 @@
 # 044 — E-mail de saída (SMTP)
 
-Situação: especificada (nov/2026).
+Situação: implementada (nov/2026).
+
+Decisões de implementação: o envio é do núcleo (`ana_smtp`, cliente próprio sem dependência): os
+programas nunca veem a senha nem abrem conexão. A configuração fica nas opções do conector (`host`,
+`port`, `security`, `from`, `from_name`, `reply_to`, `ca_cert`, `allow_plain`); usuário e senha no cofre.
+`ana.send_email` grava pela função `integration.enqueue_email` (SECURITY DEFINER), que resolve o conector
+padrão. Na entrega, o trabalhador da integração lê os anexos com a permissão de quem enviou, respeita o
+limite por minuto sem gastar tentativa e manda recusas permanentes (5xx, anexo não permitido) direto para
+paradas. Conector sem criptografia exige `allow_plain` e vira apontamento "smtp_plaintext" nas
+Verificações. Regra de alerta com conector SMTP exige destinatários e manda abertura e encerramento.
 
 ## Problema
 O ANA só envia e-mail por um conector HTTP de gateway (spec 017, usado pelos

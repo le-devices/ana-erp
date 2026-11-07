@@ -6,7 +6,7 @@
 %% timeout, per-minute rate limit and circuit breaker, verifies TLS and logs each
 %% call (without secrets).
 -module(ana_connector).
--export([init_tables/0, http/5, lookup/1, target_url/3]).
+-export([init_tables/0, http/5, lookup/1, target_url/3, rate_ok/1]).
 
 -define(TOKENS, ana_connector_tokens).
 -define(RATE, ana_connector_rate).

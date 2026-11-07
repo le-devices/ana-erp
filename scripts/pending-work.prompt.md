@@ -41,7 +41,7 @@ Tarefas adiadas já concluídas (ordem acordada em out/2026): T-017-05b ✓, T-0
 
 **Fila atual — acordada com o dono do produto em 07/11/2026; uma por vez, nesta ordem, e ela prevalece sobre a regra de escolha abaixo** (specs novas 043–049 escritas a pedido do dono, entremeadas com as adiadas que ainda faltavam):
 1. ✓ 043 — cadastro fiscal de pessoas (falta T-043-02b, dígito da IE por UF, para o fim da fila): CNPJ alfanumérico (em vigor desde jul/2026; o validador atual o recusa), CPF, inscrições, contribuinte, regime (`specs/043-fiscal-registry`)
-2. 044 — e-mail de saída por SMTP como tipo de conector, `ana.send_email` transacional (`specs/044-outbound-email`)
+2. ✓ 044 — e-mail de saída por SMTP como tipo de conector, `ana.send_email` transacional (`specs/044-outbound-email`)
 3. T-037-06b — envio do link do documento por e-mail (agora pelo SMTP da 044)
 4. T-033-09b — base OSV por conector e aviso por e-mail
 5. 045 — variantes de execução (parâmetros salvos, valores dinâmicos, campos protegidos; tela, agendamento e API) (`specs/045-execution-variants`)
