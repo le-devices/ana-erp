@@ -94,3 +94,11 @@ SQL, chamadas externas), reproduzir passo a passo e, em casos raros, intervir
   vale; ponto de registro grava o valor sem pausar.
 - **CA-047-06** O relatório da sessão lista cada comando e alteração, e é
   enviado ao aprovador ao fim.
+
+## Experiência e automação (P18, P19)
+- Pedir e aprovar acesso emergencial em até 3 toques, inclusive pelo celular
+  com notificação (spec 060).
+- "Depurar reexecução" a um clique a partir de qualquer erro (execução,
+  diagnóstico, chamado de suporte — specs 046 e 057).
+- Revogação, relatório e cobrança de revisão são automáticos; a pessoa só
+  revisa.

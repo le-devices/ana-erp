@@ -67,3 +67,11 @@ minha atenção" e chegar a qualquer rotina em dois toques.
   fatura abre o documento.
 - **CA-048-05** Indicador que falha mostra "indisponível" e o resto do painel
   funciona.
+
+## Experiência e automação (P18, P19)
+- Blocos sugeridos pelo uso (spec 051): rotinas e variantes usadas com
+  frequência viram bloco proposto.
+- Entrada do assistente (spec 052) e da paleta de comandos (spec 050) no
+  topo do painel.
+- Painel em modo TV (tela cheia, atualização automática) para chão de fábrica
+  e equipes (spec 054).

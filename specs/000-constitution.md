@@ -140,3 +140,43 @@ estoque, bancos, em elaboração) tem conciliação automática contra a
 contabilidade, com divergência zero esperada e aviso quando não for. Toda
 spec declara o que gera automaticamente e qual conciliação a cobre;
 estorno é sempre por documento (nunca lançamento manual corrigindo outro).
+
+## P18. Experiência premium
+O ANA é vendido também pela sensação de uso: rápido, claro, sem becos sem
+saída e agradável de usar o dia inteiro. Toda tela, rotina, documento e
+mensagem segue o padrão de experiência da spec 050, e uma tela só está
+pronta quando passa nas verificações automáticas desse padrão:
+- **rápido**: resposta visível em até 100 ms a cada ação (estado de
+  carregamento, nunca tela parada); tela aberta em até 1 s com os dados
+  usuais; listas grandes roláveis sem travar;
+- **sem becos sem saída**: toda tela diz o que fazer a seguir (próxima ação,
+  spec 020); todo erro diz o que aconteceu e como resolver, em português
+  simples, com o campo destacado; nada de código técnico para o usuário
+  final;
+- **seguro de mexer**: o que grava pode ser ensaiado antes (simulação) e o
+  que pode ser desfeito tem "desfazer"; o que não pode avisa antes;
+- **menos digitação**: valores padrão inteligentes, preenchimento pelo que já
+  se sabe (cadastro, último uso, variante), busca em toda lista, atalhos de
+  teclado e paleta de comandos;
+- **consistente**: os mesmos componentes, palavras e gestos em todo o
+  sistema; tema claro e escuro; acessível (WCAG 2.2 AA) e utilizável no
+  celular;
+- **bonito sem enfeite**: tipografia, espaçamento e gráficos da linguagem
+  visual (spec 029); número e situação antes de texto longo.
+Segurança, robustez e desempenho continuam vindo antes (P10–P12): nenhuma
+facilidade de uso contorna permissão, auditoria ou validação.
+
+## P19. Automação por padrão
+O que se repete é feito pelo ERP, não pela pessoa. Toda spec declara, além do
+que gera automaticamente (P17), **o que a pessoa deixa de fazer**:
+- toda rotina pode ser agendada, disparada por evento ou encadeada numa
+  esteira/processo (specs 018, 030, 039) sem programar;
+- tarefas repetitivas viram sugestão ("você faz isto toda segunda: agendar?")
+  e regras simples "quando… então…" sem código;
+- toda decisão rotineira tem política configurável (alçadas, exceções) em vez
+  de pergunta caso a caso; só o que foge da política chega a uma pessoa, já
+  com o contexto para decidir;
+- toda integração externa é automática e com nova tentativa (spec 017); a
+  pessoa só vê o que falhou de vez, com o motivo e o botão de reprocessar;
+- toda automação tem dono (P14), fica na auditoria e pode ser ensaiada antes
+  de ligar.
