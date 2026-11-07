@@ -7497,3 +7497,75 @@ class TestPremiumExperience(Base):
         finally:
             psql(f"DELETE FROM ana_system.ui_perf WHERE screen = '{screen}'")
             http("POST", "/api/admin/checks/run", {"category": "performance"}, self.token)
+
+
+# ---------------------------------------------------------------- spec 062
+class TestErlangCore(Base):
+    """Spec 062: per-connector isolation, delivery by event, live screens, core view."""
+
+    def connector(self, name, program):
+        s, c, _ = http("PUT", f"/api/admin/connectors/{name}", {"kind": "http_api", "base_url": "http://localhost:8080",
+                                                                 "outbound_program": program}, self.token)
+        self.assertEqual(s, 200, c)
+
+    def test_ca_062_02_slow_connector_does_not_hold_the_others(self):
+        slow_p, fast_p = f"test.slow_out_{SUFFIX}", f"test.fast_out_{SUFFIX}"
+        self.save(slow_p, "import time\ndef main(message, connector, attempt=1):\n    time.sleep(6)\n    return 'ok'\n")
+        self.save(fast_p, "def main(message, connector, attempt=1):\n    return 'ok'\n")
+        slow, fast = f"t{SUFFIX}_slowc", f"t{SUFFIX}_fastc"
+        self.connector(slow, slow_p)
+        self.connector(fast, fast_p)
+        sender = f"test.send2_{SUFFIX}"
+        self.save(sender, "def main(conn, n=1):\n    return [ana.send(conn, 'x', {'i': i}) for i in range(n)]\n")
+        try:
+            self.run_program(sender, {"conn": slow, "n": 8})              # more than the slow connector's slots
+            time.sleep(0.5)
+            ids = self.run_program(sender, {"conn": fast, "n": 3})[1]["result"]
+            end = time.time() + 3
+            q = f"SELECT count(*) FROM integration.outbox WHERE id IN ({','.join(map(str, ids))}) AND status = 'done'"
+            while time.time() < end and psql(q) != "3":
+                time.sleep(0.1)
+            self.assertEqual(psql(q), "3")                                  # delivered while the slow one is busy
+            self.assertEqual(psql(f"SELECT count(*) FROM integration.outbox WHERE connector = '{slow}' AND status = 'done'"), "0")
+            # RNF-062-02: by event, not by the next poll (was up to 1 s).
+            ms = psql(f"SELECT max(extract(epoch FROM done_at - created_at) * 1000)::int FROM integration.outbox "
+                      f"WHERE id IN ({','.join(map(str, ids))})")
+            self.assertLess(int(ms), 1000, ms)
+        finally:
+            for c in (slow, fast):
+                http("PUT", f"/api/admin/connectors/{c}", {"kind": "webhook_in", "active": False}, self.token)
+
+    def test_ca_062_03_task_reaches_the_screen_live(self):
+        import threading
+        got, ready = [], threading.Event()
+
+        def listen():
+            req = urllib.request.Request(URL + "/api/events", headers={"Authorization": "Bearer " + self.token})
+            with urllib.request.urlopen(req, timeout=15) as r:
+                for raw in r:
+                    line = raw.decode().strip()
+                    if line == "event: ready":
+                        ready.set()
+                    elif line.startswith("event: "):
+                        got.append((line[7:], time.time()))
+                        return
+        t = threading.Thread(target=listen, daemon=True)
+        t.start()
+        self.assertTrue(ready.wait(5))
+        t0 = time.time()
+        psql("INSERT INTO bpm.notification (username, kind, message) VALUES ('admin', 'task', 'tarefa ao vivo do teste')")
+        t.join(5)
+        psql("DELETE FROM bpm.notification WHERE message = 'tarefa ao vivo do teste'")
+        self.assertEqual(got and got[0][0], "tasks")
+        self.assertLess(got[0][1] - t0, 1.0)                               # without reloading, under 1 s
+        s, _, _ = http("GET", "/api/events", token=None)
+        self.assertEqual(s, 401)
+
+    def test_t_062_09_core_view(self):
+        s, c, _ = http("GET", "/api/admin/observability/core", token=self.token)
+        self.assertEqual(s, 200, c)
+        self.assertEqual({a["area"] for a in c["areas"]}, {"ana_base_sup", "ana_exec_area_sup", "ana_work_sup", "ana_observe_sup"})
+        self.assertTrue(all(x["alive"] for a in c["areas"] for x in a["children"]))
+        self.assertGreater(c["processes"], 50)
+        s, ov, _ = http("GET", "/api/admin/observability/alerts", token=self.token)
+        self.assertIn("max_message_queue", ov["metrics"])                  # a growing queue can raise an alert

@@ -248,6 +248,7 @@
       deleteAlertRule: (id) => API.request("DELETE", `/api/admin/observability/alerts/rules/${enc(id)}`),
       createSilence: (body) => API.request("POST", "/api/admin/observability/alerts/silences", body),
       endSilence: (id) => API.request("POST", `/api/admin/observability/alerts/silences/${enc(id)}/end`, {}),
+      core: () => API.request("GET", "/api/admin/observability/core"),
       uiPerf: (days) => API.request("GET", "/api/admin/observability/ui" + query({ days })),
       obsSql: (filters) => API.request("GET", "/api/admin/observability/sql" + query(filters || {})),
       obsSqlDetail: (hash) => API.request("GET", `/api/admin/observability/sql/${enc(hash)}`),

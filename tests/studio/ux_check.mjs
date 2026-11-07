@@ -75,12 +75,15 @@ export class Verifier {
     this.screens.add(screen);
     for (const v of audit(d)) this.seen.set(`${screen}|${v.rule}|${v.element}`, true);
   }
-  /** {fresh: [...], fixed: [...]}; with UX_BASELINE=write the baseline becomes what exists now. */
+  /** {fresh: [...], fixed: [...]}. UX_BASELINE=write adds what exists now to the baseline and never drops
+   *  an entry: a run does not reach every state of every screen, so an entry missing from one run is not
+   *  proof of a fix (an entry left after a real fix is harmless; remove it by hand when the area is audited). */
   finish() {
     const now = [...this.seen.keys()].sort();
     if (process.env.UX_BASELINE === "write") {
-      fs.writeFileSync(BASELINE, JSON.stringify(now, null, 1) + "\n");
-      return { fresh: [], fixed: [], written: now.length };
+      const all = [...new Set([...this.baseline, ...now])].sort();
+      fs.writeFileSync(BASELINE, JSON.stringify(all, null, 1) + "\n");
+      return { fresh: [], fixed: [], written: all.length };
     }
     const fresh = now.filter((k) => !this.baseline.has(k));
     const fixed = [...this.baseline].filter((k) => this.screens.has(k.split("|")[0]) && !this.seen.has(k));

@@ -1,6 +1,18 @@
 # 062 — Erlang ao máximo (sem pagar em desempenho nem robustez)
 
-Situação: especificada (nov/2026).
+Situação: fases 1 e 2 implementadas (nov/2026), exceto T-062-08b; fase 3 na fila.
+
+Decisões de implementação: quatro áreas (`ana_area_sup`: base, execução, trabalho de fundo, observação),
+cada uma com 10 reinícios/60 s; o barramento é o `pg` do OTP (escopo `ana_events`), e os fatos do banco
+chegam por `NOTIFY ana_wake` disparado por gatilhos (só depois do COMMIT) e repassado pelo ouvinte de cada
+nó — funciona sem a distribuição Erlang. O motor BPM já acordava por NOTIFY e ficou como estava. A
+integração virou coordenador + um processo por conector (`ana_connector_worker`, 4 vagas cada), acordado
+por evento, por temporizador na próxima nova tentativa e por uma varredura de segurança de 10 s. Registros
+de estatística, acesso e chamadas da API usam `ana_bounded` (descarte contado acima de 50 mil mensagens).
+Telas ao vivo por SSE (`/api/events`, até 5 por usuário), eventos só dizem "mudou" e a tela relê o que pode
+ver. Tela "Núcleo" na Administração e a métrica `max_message_queue` nas regras de alerta.
+Medição (`tests/load/core_baseline.py`, resultados em `tests/load/results/2026-11-07-core-*.json`): fila de
+integração p50 983 → 15 ms e p95 1.492 → 27 ms; execução, carga e memória ociosa iguais.
 
 ## Problema
 O núcleo do ANA é Erlang/OTP (P3), mas usa a plataforma de forma

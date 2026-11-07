@@ -11,7 +11,7 @@
     users: "Usuários", groups: "Grupos de acesso", limits: "Limites e cotas", company: "Empresa",
     settings: "Parâmetros", accounts: "Contas padrão", commands: "Comandos", remote: "Sistemas remotos",
     scheduler: "Agendamento", monitor: "Monitor", consumption: "Consumo", audit: "Auditoria", retention: "Retenção",
-    health: "Saúde", alerts: "Alertas", uiperf: "Desempenho das telas", sqlperf: "Desempenho do SQL", advice: "Dicas de otimização", updates: "Atualizações do produto",
+    health: "Saúde", alerts: "Alertas", core: "Núcleo", uiperf: "Desempenho das telas", sqlperf: "Desempenho do SQL", advice: "Dicas de otimização", updates: "Atualizações do produto",
     license: "Licença", extensions: "Extensões", telemetry: "Telemetria",
     integrations: "Integrações", checks: "Verificações", transports: "Transportes", datacopy: "Cópia de dados para testes",
     publicapi: "API pública",
