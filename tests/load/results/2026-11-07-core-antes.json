@@ -1,0 +1,25 @@
+{
+ "label": "antes",
+ "date": "2026-11-07 16:06",
+ "head": "a563589",
+ "outbox": {
+  "messages": 40,
+  "p50_ms": 983.0,
+  "p95_ms": 1492.4
+ },
+ "execution": {
+  "runs": 100,
+  "p50_ms": 7.3,
+  "p95_ms": 90.5
+ },
+ "load": {
+  "users": 60,
+  "actions_per_s": 8.3,
+  "errors": 1,
+  "worst_interactive_p95_ms": 114.2
+ },
+ "idle": {
+  "beam_memory_mb": 68.5,
+  "beam_processes": 163
+ }
+}

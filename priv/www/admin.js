@@ -846,7 +846,8 @@
   }
 
   const METRIC = { running: "Execuções em andamento", failures_per_min: "Falhas por minuto", memory_mb: "Memória do núcleo (MB)",
-    processes: "Processos Erlang", db_waiting: "Esperando conexão com o banco", python_ready: "Processos Python prontos" };
+    processes: "Processos Erlang", db_waiting: "Esperando conexão com o banco", python_ready: "Processos Python prontos",
+    max_message_queue: "Maior fila de mensagens no núcleo" };
   const LEVEL = { yellow: "amarelo ou pior", red: "vermelho" };
 
   // RF-019-08 (T-019-08b): alert rules (threshold, window, destinations) and silences.
