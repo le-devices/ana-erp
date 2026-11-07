@@ -71,7 +71,9 @@ dv=$(docker version -f '{{.Server.Version}}' | cut -d. -f1)
 [ "${dv:-0}" -ge 24 ] || fail "Docker $dv encontrado; é preciso a versão 24 ou mais nova"
 mem_mb=$(awk '/MemTotal/ {print int($2/1024)}' /proc/meminfo)
 [ "$mem_mb" -ge 1800 ] || fail "memória de ${mem_mb} MB; o mínimo é 2 GB (recomendado 4 GB ou mais)"
-[ "$mem_mb" -ge 3800 ] || echo "  aviso: ${mem_mb} MB de memória; recomendado 4 GB ou mais"
+[ "$mem_mb" -ge 3800 ] || echo "  aviso: ${mem_mb} MB de memória: serve só para demonstração; para uso comercial, 4 GB ou mais (Dimensionamento no INSTALL.md)"
+cpus=$(nproc 2>/dev/null || echo 1)
+[ "$cpus" -ge 2 ] || echo "  aviso: ${cpus} vCPU: o mínimo comercial é 2 vCPUs (Dimensionamento no INSTALL.md)"
 mkdir -p "$DIR"
 free_gb=$(df -Pk "$DIR" | awk 'NR==2 {print int($4/1048576)}')
 [ "$free_gb" -ge 10 ] || fail "${free_gb} GB livres em $DIR; o mínimo é 10 GB (recomendado 50 GB)"
