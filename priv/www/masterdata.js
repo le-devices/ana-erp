@@ -471,6 +471,32 @@
           toast(err.message + used, true);
         }
       } }) : null,
+      // Spec 043 (D6): outside lookup (CNPJ): fills empty fields, shows differences to confirm, never saves.
+      e.fetch && editable ? el("button", { type: "button", class: "quiet", text: e.fetch.label, onclick: async () => {
+        const src = boxes.find((b) => b.f.name === e.fetch.field);
+        const doc = src && src.ctl.get();
+        if (!doc) { src && src.showErr("preencha para buscar"); return; }
+        try {
+          const r = await call(e.fetch.program, { [e.fetch.param]: doc });
+          const diffs = [];
+          for (const [k, v] of Object.entries(r.values || {})) {
+            const b = boxes.find((x) => x.f.name === k);
+            if (!b || b.readonly) continue;
+            const cur = b.ctl.get();
+            if (cur === null || cur === undefined || cur === "") b.ctl.set(v);
+            else if (String(cur) !== String(v)) diffs.push([b, v]);
+          }
+          banner.hidden = false;
+          banner.className = "md-banner";
+          banner.replaceChildren(el("span", { text: `Dados de ${r.tax_id}${r.status ? " — situação: " + r.status : ""}. ` +
+            (diffs.length ? "Diferente do que está na ficha: " + diffs.map(([b, v]) => `${b.f.label}: ${v}`).join("; ") + ". " : "Campos vazios preenchidos. ") +
+            "Nada foi gravado: confira e salve. " }),
+            diffs.length ? el("button", { type: "button", class: "quiet small", text: "Usar os dados encontrados", onclick: () => {
+              for (const [b, v] of diffs) b.ctl.set(v);
+              banner.hidden = true;
+            } }) : null);
+        } catch (err) { toast(err.message, true); }
+      } }) : null,
       existing ? el("button", { type: "button", class: "quiet", text: "Possíveis duplicados", onclick: async () => {
         try { const r = await call("master.duplicates", { entity: e.name, key: String(rec.key) });
               duplicateDialog(e, r.candidates, null, rec); }

@@ -13,6 +13,7 @@ from decimal import Decimal, InvalidOperation
 
 import ana
 from ana_lib.master import entities as E
+from ana_lib.util import tax_id as tid
 
 ROLE_RANK = {"user": 0, "developer": 1, "admin": 2}
 IDENT = re.compile(r"^[a-z_][a-z0-9_]*$")
@@ -115,8 +116,17 @@ def describe(name=None):
                     "tabs": [{"label": t["label"], "kind": t["kind"], "fields": [public_field(f) for f in t.get("fields", [])]}
                              for t in d["tabs"]],
                     "can_edit": can(d, "edit"), "can_approve": can(d, "approve"), "approval": bool(policies.get(n)),
-                    "quality": [q["label"] for q in d.get("quality", [])]})
+                    "quality": [q["label"] for q in d.get("quality", [])],
+                    "fetch": fetch_of(d)})
     return out
+
+
+def fetch_of(d):
+    """Spec 043 (D6): the entity's outside lookup, when its connector exists (else None: no button)."""
+    f = d.get("fetch")
+    if not f or not ana.sql_value(f["available"]):
+        return None
+    return {k: f[k] for k in ("label", "program", "field", "param")}
 
 
 def routes():
@@ -144,26 +154,6 @@ def _decimal(v):
     if "," in s:
         s = s.replace(".", "").replace(",", ".")
     return Decimal(s)
-
-
-def tax_id_ok(v):
-    d = re.sub(r"\D", "", v)
-    if len(d) == 11 and len(set(d)) > 1:
-        for n in (9, 10):
-            s = sum(int(d[i]) * (n + 1 - i) for i in range(n))
-            r = (s * 10) % 11 % 10
-            if r != int(d[n]):
-                return None
-        return f"{d[:3]}.{d[3:6]}.{d[6:9]}-{d[9:]}"
-    if len(d) == 14 and len(set(d)) > 1:
-        w = [6, 5, 4, 3, 2, 9, 8, 7, 6, 5, 4, 3, 2]
-        for n in (12, 13):
-            s = sum(int(d[i]) * w[i + (13 - n)] for i in range(n))
-            r = s % 11
-            if (0 if r < 2 else 11 - r) != int(d[n]):
-                return None
-        return f"{d[:2]}.{d[2:5]}.{d[5:8]}/{d[8:12]}-{d[12:]}"
-    return None
 
 
 def coerce(f, value):
@@ -220,8 +210,9 @@ def coerce(f, value):
                 return None, "e-mail inválido"
             return v, None
         if t == "tax_id":
-            v = tax_id_ok(str(value))
-            return (v, None) if v else (None, "CNPJ/CPF inválido: confira os números (dígito verificador)")
+            # Spec 043: the database's rule (alphanumeric CNPJ included), never a copy of it.
+            return (tid.format(value), None) if tid.valid(value) else \
+                (None, "CNPJ/CPF inválido: confira os números e letras (dígito verificador)")
         if t == "state":
             v = str(value).strip().upper()
             return (v, None) if v in UF else (None, "UF inválida")

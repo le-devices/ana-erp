@@ -310,11 +310,24 @@
   async function company() {
     const c = await API.admin.company();
     const fields = [["legal_name", "Razão social"], ["display_name", "Nome de exibição (ao lado da marca do ANA e nos documentos; vazio = razão social)"],
-                    ["tax_id", "CNPJ / documento"], ["address", "Endereço"],
+                    ["tax_id", "CNPJ (numérico ou alfanumérico)"], ["address", "Endereço"],
                     ["city", "Cidade"], ["state", "UF"], ["email", "E-mail"], ["phone", "Telefone"],
                     ["latitude", "Latitude (ex.: -23,5505)"], ["longitude", "Longitude (ex.: -46,6333)"],
                     ["public_url", "Endereço público do ERP (ex.: https://erp.empresa.com.br) — usado nos links enviados a clientes"]];
     const inputs = Object.fromEntries(fields.map(([k]) => [k, el("input", { value: c[k] || "" })]));
+    // Spec 043 (D4): fiscal data of the company (the same rules as the partners, checked by the database).
+    const choose = (key, options) => {
+      const s = el("select", {}, el("option", { value: "", text: "— não informado —" }), options.map(([v, l]) => el("option", { value: v, text: l })));
+      s.value = c[key] || "";
+      return s;
+    };
+    inputs.state_registration = el("input", { value: c.state_registration || "", placeholder: "só números ou ISENTO" });
+    inputs.icms_taxpayer = choose("icms_taxpayer", [["taxpayer", "Contribuinte"], ["exempt", "Isento"], ["non_taxpayer", "Não contribuinte"]]);
+    inputs.municipal_registration = el("input", { value: c.municipal_registration || "" });
+    inputs.tax_regime = choose("tax_regime", [["simples", "Simples Nacional"], ["simples_excess", "Simples Nacional — excesso de sublimite"],
+      ["presumed", "Lucro Presumido"], ["real", "Lucro Real"], ["mei", "MEI"], ["public", "Órgão público"], ["nonprofit", "Entidade sem fins lucrativos"]]);
+    const fiscal = [["state_registration", "Inscrição estadual"], ["icms_taxpayer", "Contribuinte do ICMS"],
+                    ["municipal_registration", "Inscrição municipal"], ["tax_regime", "Regime tributário"]];
     main().replaceChildren(
       ...header("Empresa", "Dados da empresa usados em documentos e no título do Estúdio. As coordenadas servem para distâncias até os clientes; o endereço público aparece nos links de download enviados a clientes e fornecedores."),
       el("form", { class: "form-card", onsubmit: async (e) => {
@@ -326,6 +339,9 @@
           window.AnaStudio && window.AnaStudio.refreshTitle(body.display_name || body.legal_name);
         });
       } }, fields.map(([k, label]) => field(label, inputs[k])),
+        el("h3", { text: "Dados fiscais" }),
+        el("p", { class: "muted", text: "CNPJ (numérico ou alfanumérico), inscrição estadual pelo formato da UF e coerência com o indicador do ICMS são conferidos ao salvar. O motor de impostos usa estes dados." }),
+        fiscal.map(([k, label]) => field(label, inputs[k])),
         el("div", { class: "row-buttons" }, el("button", { class: "primary", type: "submit", text: "Salvar" }))),
       logoCard(c));
   }

@@ -10,6 +10,7 @@ import csv
 import io
 
 from ana_lib.master import core
+from ana_lib.util import tax_id as tid
 
 PARAMS = {
     "entity": {"type": "str", "required": True, "label": "cadastro"},
@@ -70,6 +71,10 @@ def main(entity, content, mapping=None, confirm=False):
         if key and any(f["name"] == d["key"] for f in fields):
             values[d["key"]] = key          # the business key is also a field (code): needed to create
         parsed.append((n, key, values))
+    # Spec 043: every document of the file checked by the database in one query, not one per line.
+    doc_fields = [f["name"] for f in fields if f.get("type") == "tax_id"]
+    if doc_fields:
+        tid.prefetch(v.get(f) for _, _, v in parsed for f in doc_fields)
     found = match_existing(d, parsed, exact)          # line → id of an existing record (key or exact rule)
     current = core.current_values(d, sorted(set(found.values())))
     result, counts = [], {"new": 0, "update": 0, "same": 0, "error": 0}
@@ -134,7 +139,7 @@ def match_existing(d, parsed, exact_fields):
             if n in out or not v or not str(v).strip():
                 continue
             if f == "tax_id":
-                v = core.tax_id_ok(str(v)) or v
+                v = (tid.format(v) if tid.valid(v) else None) or v
             wanted.setdefault(str(v).strip().lower(), []).append(n)
         if not wanted:
             continue
