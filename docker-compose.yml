@@ -34,8 +34,8 @@ services:
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres_change_this_password}
       ANA_DB_PASSWORD: ${ANA_DB_PASSWORD:-ana_change_this_password}
     # RNF-007-04: work in memory as much as possible; size to the host.
-    # RF-025-07 (SSD): compressed WAL, spaced checkpoints, prewarm list saved
-    # only at shutdown. fsync / full_page_writes / synchronous_commit stay on.
+    # RF-025-07 / spec 063 (SSD): compressed WAL, spaced checkpoints, prewarm list saved
+    # only at shutdown, queries spilling over 10 MB to temporary files logged (D6). fsync / full_page_writes / synchronous_commit stay on.
     command: >
       postgres -c shared_preload_libraries=citus,pg_prewarm
                -c pg_prewarm.autoprewarm=on
@@ -52,6 +52,8 @@ services:
                -c max_wal_size=2GB
                -c min_wal_size=256MB
                -c pg_prewarm.autoprewarm_interval=0
+               -c log_temp_files=10240
+               -c log_checkpoints=on
     volumes:
       - data:/var/lib/postgresql/data
       # RF-023-06: WAL archive and base backups (scripts/backup.sh); empty until enabled.

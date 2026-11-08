@@ -1,0 +1,34 @@
+{
+ "version": "2026-11-07",
+ "tolerance": 0.5,
+ "idle_tolerance": 2.0,
+ "floor_bytes": 8192,
+ "note": "Orçamento de escrita (spec 063, D1): bytes de WAL por operação típica e por hora com o sistema ocioso, medidos pelo teste TestDiskEndurance. Limite = maior entre orçamento × (1 + tolerância) e orçamento + floor_bytes (o ocioso usa idle_tolerance). Baixar o orçamento é sempre bem-vindo (ANA_DISK_BUDGET=write grava o que foi medido).",
+ "idle_wal_bytes_per_hour": 228954,
+ "operations": {
+  "short_run": {
+   "label": "Executar rotina curta",
+   "wal_bytes": 5259
+  },
+  "create_order": {
+   "label": "Criar pedido",
+   "wal_bytes": 21344
+  },
+  "invoice_order": {
+   "label": "Faturar pedido",
+   "wal_bytes": 23531
+  },
+  "public_api_call": {
+   "label": "Chamada da API pública",
+   "wal_bytes": 5231
+  },
+  "import_1000_parties": {
+   "label": "Importar 1.000 cadastros",
+   "wal_bytes": 2180708
+  },
+  "alert_cycle": {
+   "label": "Ciclo de alertas",
+   "wal_bytes": 434
+  }
+ }
+}

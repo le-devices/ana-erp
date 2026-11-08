@@ -72,6 +72,10 @@ services:
                -c wal_compression=lz4
                -c checkpoint_timeout=15min
                -c max_wal_size=2GB
+               -c min_wal_size=256MB
+               -c pg_prewarm.autoprewarm_interval=0
+               -c log_temp_files=10240
+               -c log_checkpoints=on
                -c archive_mode=on
                -c archive_timeout=300
                -c "archive_command=test ! -f /var/lib/postgresql/archive/wal/%f && cp %p /var/lib/postgresql/archive/wal/%f"

@@ -30,7 +30,9 @@ hash(Norm) ->
 
 %% [{Hash, Sql, Calls, TotalUs, MaxUs, Rows}] of one execution of Program.
 record(_Program, []) -> ok;
-record(Program, Stats) -> ana_bounded:cast(?MODULE, {record, Program, Stats}, 50000).   % spec 062 (D7)
+record(Program, Stats) ->
+    ana_disk:note_writes(Program, Stats),                                                   % spec 063 (D4)
+    ana_bounded:cast(?MODULE, {record, Program, Stats}, 50000).   % spec 062 (D7)
 
 n_plus_one(Program, Hash, Sql, Calls, At, ExecId) ->
     gen_server:cast(?MODULE, {n_plus_one, Program, Hash, Sql, Calls, At, ExecId}).

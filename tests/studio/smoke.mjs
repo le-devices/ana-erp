@@ -421,7 +421,7 @@ ok([...d.querySelectorAll("#admin-main .form-card option")].some((o) => o.value 
 for (const [section, marker] of [["groups", "Grupos de acesso"], ["limits", "Perfil de limite"], ["company", "Razão social"],
                                  ["settings", "ceiling_cpu_ms"], ["accounts", "service_revenue"], ["commands", "hello"],
                                  ["remote", "Sistemas remotos"], ["scheduler", "Feriados"], ["monitor", "Execuções ativas"], ["consumption", "CPU total"],
-                                 ["retention", "Expurgos recentes"], ["health", "Mudanças de estado"], ["alerts", "Componente em falha"], ["core", "Áreas supervisionadas"], ["uiperf", "Desempenho das telas"], ["sqlperf", "Desempenho do SQL"],
+                                 ["retention", "Expurgos recentes"], ["health", "Mudanças de estado"], ["alerts", "Componente em falha"], ["core", "Áreas supervisionadas"], ["disk", "Resistência do SSD"], ["uiperf", "Desempenho das telas"], ["sqlperf", "Desempenho do SQL"],
                                  ["advice", "Dicas de otimização"], ["updates", "Atualizações do produto"], ["license", "Usuários nomeados"], ["extensions", "Ligar um programa seu"], ["telemetry", "Exatamente o que é enviado"], ["company", "Logotipo"], ["groups", "Dados que os membros veem"], ["integrations", "Chamadas 24 h"], ["audit", "Auditoria"]]) {
   await go(w, `#/admin/${section}`);
   await until(() => text("#admin-main").includes(marker), section, jsErrors);

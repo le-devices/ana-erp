@@ -18,14 +18,19 @@ init(Req, _) ->
                 false ->
                     {ok, ana_http:reply_error(429, <<"TOO_MANY_STREAMS">>, <<"conexões ao vivo demais abertas"/utf8>>, Req), done};
                 true ->
-                    ok = ana_events:subscribe(<<"user:", U/binary>>),
-                    ok = ana_events:subscribe(<<"notices">>),
-                    Req2 = cowboy_req:stream_reply(200, #{<<"content-type">> => <<"text/event-stream">>,
-                                                          <<"cache-control">> => <<"no-store">>,
-                                                          <<"x-accel-buffering">> => <<"no">>}, Req),
-                    ok = cowboy_req:stream_events(#{event => <<"ready">>, data => <<"{}">>}, nofin, Req2),
-                    erlang:send_after(?HEARTBEAT_MS, self(), heartbeat),
-                    {cowboy_loop, Req2, #{user => U}, hibernate}
+                    try
+                        ok = ana_events:subscribe(<<"user:", U/binary>>),
+                        ok = ana_events:subscribe(<<"notices">>),
+                        Req2 = cowboy_req:stream_reply(200, #{<<"content-type">> => <<"text/event-stream">>,
+                                                              <<"cache-control">> => <<"no-store">>,
+                                                              <<"x-accel-buffering">> => <<"no">>}, Req),
+                        ok = cowboy_req:stream_events(#{event => <<"ready">>, data => <<"{}">>}, nofin, Req2),
+                        erlang:send_after(?HEARTBEAT_MS, self(), heartbeat),
+                        {cowboy_loop, Req2, #{user => U}, hibernate}
+                    catch C:R:St ->
+                        release(U),                             % a stream that never started is not counted
+                        erlang:raise(C, R, St)
+                    end
             end;
         {ok, _} -> {ok, ana_http:reply_error(403, <<"FORBIDDEN">>, <<"papel insuficiente">>, Req), done};
         _ -> {ok, ana_http:reply_error(401, <<"NOT_AUTHENTICATED">>, <<"credencial ausente ou inválida"/utf8>>, Req), done}
@@ -43,11 +48,13 @@ info(heartbeat, Req, S) ->
     {ok, Req, S, hibernate};
 info(_, Req, S) -> {ok, Req, S, hibernate}.
 
-terminate(_, _, #{user := U}) ->
+terminate(_, _, #{user := U}) -> release(U);
+terminate(_, _, _) -> ok.
+
+release(U) ->
     _ = catch ets:update_counter(?TAB, {sse, U}, -1),
     _ = catch ets:update_counter(?TAB, sse_total, -1),
-    ok;
-terminate(_, _, _) -> ok.
+    ok.
 
 %% Counted in the shared metrics table (no extra process): at most PER_USER and PER_NODE streams.
 admit(U) ->

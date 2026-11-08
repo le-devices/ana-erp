@@ -7537,21 +7537,26 @@ class TestErlangCore(Base):
 
     def test_ca_062_03_task_reaches_the_screen_live(self):
         import threading
-        got, ready = [], threading.Event()
+        got, ready, failed = [], threading.Event(), []
 
         def listen():
             req = urllib.request.Request(URL + "/api/events", headers={"Authorization": "Bearer " + self.token})
-            with urllib.request.urlopen(req, timeout=15) as r:
-                for raw in r:
-                    line = raw.decode().strip()
-                    if line == "event: ready":
-                        ready.set()
-                    elif line.startswith("event: "):
-                        got.append((line[7:], time.time()))
-                        return
+            try:
+                with urllib.request.urlopen(req, timeout=15) as r:
+                    for raw in r:
+                        line = raw.decode().strip()
+                        if line == "event: ready":
+                            ready.set()
+                        elif line.startswith("event: "):
+                            got.append((line[7:], time.time()))
+                            return
+            except Exception as e:                                         # shown in the failure, not lost in the thread
+                failed.append(f"{type(e).__name__}: {e} {getattr(e, 'read', lambda: b'')()[:300]!r}")
+                ready.set()
         t = threading.Thread(target=listen, daemon=True)
         t.start()
-        self.assertTrue(ready.wait(5))
+        self.assertTrue(ready.wait(10), "o fluxo ao vivo não respondeu em 10 s")
+        self.assertEqual(failed, [])
         t0 = time.time()
         psql("INSERT INTO bpm.notification (username, kind, message) VALUES ('admin', 'task', 'tarefa ao vivo do teste')")
         t.join(5)
@@ -7569,3 +7574,221 @@ class TestErlangCore(Base):
         self.assertGreater(c["processes"], 50)
         s, ov, _ = http("GET", "/api/admin/observability/alerts", token=self.token)
         self.assertIn("max_message_queue", ov["metrics"])                  # a growing queue can raise an alert
+
+
+# ---------------------------------------------------------------- spec 063
+BUDGET_FILE = os.path.join(REPO, "priv", "disk_budget.json")
+
+
+def wal_bytes():
+    return int(psql("SELECT wal_bytes::bigint FROM pg_stat_wal"))
+
+
+class TestDiskEndurance(Base):
+    """Spec 063 (T-063-01..03; P15): bytes of WAL per typical operation and with the system idle, against the
+    versioned budget in priv/disk_budget.json; the "Disco" panel; a jump in writing becomes an incident naming
+    the table and the program. ANA_DISK_BUDGET=write rewrites the budget with what was measured."""
+
+    @classmethod
+    def setUpClass(cls):
+        super().setUpClass()
+        with open(BUDGET_FILE, encoding="utf-8") as f:
+            cls.budget = json.load(f)
+        cls.rules = []
+
+    @classmethod
+    def tearDownClass(cls):
+        for r in cls.rules:
+            http("DELETE", f"/api/admin/observability/alerts/rules/{r}", token=cls.token)
+
+    def setUp(self):
+        if not psql_available():
+            self.skipTest("psql no contêiner indisponível")
+
+    def quiet(self, seconds=120):
+        """Waits for autovacuum and checkpoints started by earlier tests to finish (they are not ours)."""
+        end = time.time() + seconds
+        while time.time() < end and psql("SELECT count(*) FROM pg_stat_activity WHERE backend_type = 'autovacuum worker' "
+                                         "OR (backend_type = 'client backend' AND usename <> 'postgres' AND state = 'active' "
+                                         "AND pid <> pg_backend_pid())") != "0":
+            time.sleep(1)
+
+    def idle_rate(self):
+        """WAL bytes per second with nothing running: a 2 min window, repeated (up to three, the lowest wins) only
+        when it went over the budget — autovacuum woken by earlier tests is not the idle system."""
+        best = None
+        limit = self.budget["idle_wal_bytes_per_hour"] * (1 + self.budget["idle_tolerance"])
+        for _ in range(3):
+            self.quiet()
+            a, t0 = wal_bytes(), time.time()
+            time.sleep(120)
+            rate = (wal_bytes() - a) / (time.time() - t0)
+            best = rate if best is None else min(best, rate)
+            if best * 3600 <= limit:
+                break
+        return best
+
+    def measure(self, setup, op, n, settle=2.0, trials=2):
+        """WAL bytes of one operation: (window − idle × duration) / n, the lowest of the trials. Asynchronous
+        writers (access log 1 s, API usage 10 s, SQL statistics flushed on demand) land inside the window."""
+        best = None
+        for _ in range(trials):
+            ctx = setup() if setup else None
+            self.quiet()
+            a, t0 = wal_bytes(), time.time()
+            for i in range(n):
+                op(ctx, i)
+            http("POST", "/api/admin/observability/sql/flush", {}, self.token)
+            time.sleep(settle)
+            got = (wal_bytes() - a - self.idle * (time.time() - t0)) / n
+            best = got if best is None else min(best, got)
+        return max(0, round(best))
+
+    # -- operations (D1)
+    def run_ok(self, program, params):
+        s, c, _ = self.run_program(program, params)
+        self.assertEqual(s, 200, c)
+        self.assertNotIn("error", c, c.get("error"))
+        return c["result"]
+
+    def new_orders(self, n):
+        self.run_ok("inventory.stock_in", {"product": "ACUCAR-1", "quantity": n, "document": f"DISK-{SUFFIX}"})
+        return [self.run_ok("sales.create_order", {"customer": 2, "items": [{"product": "ACUCAR-1", "quantity": 1}]})["number"]
+                for _ in range(n)]
+
+    def api_setup(self):
+        robot = f"disk{SUFFIX}"
+        if robot not in CREATED_USERS:
+            CREATED_USERS.append(robot)
+            s, c, _ = http("POST", "/api/admin/users", {"username": robot, "kind": "robot", "role": "user"}, self.token)
+            self.assertEqual(s, 200, c)
+            self.save(f"test.disk{SUFFIX}.eco", "def main(x):\n    return {'x': x}\n", exposed=True)
+            s, cl, _ = http("POST", "/api/admin/api-clients", {"name": "Disco", "run_as": robot,
+                                                               "scopes": [f"test.disk{SUFFIX}.*"]}, self.token)
+            self.assertEqual(s, 200, cl)
+            type(self).api_client = cl
+        cl = type(self).api_client
+        basic = base64.b64encode(f"{cl['client_id']}:{cl['client_secret']}".encode()).decode()
+        req = urllib.request.Request(URL + "/oauth/token", data=b"grant_type=client_credentials", method="POST",
+                                     headers={"Content-Type": "application/x-www-form-urlencoded", "Authorization": "Basic " + basic})
+        with urllib.request.urlopen(req, timeout=30) as r:
+            return json.loads(r.read())["access_token"]
+
+    def api_call(self, token, i):
+        body = json.dumps({"jsonrpc": "2.0", "method": f"test.disk{SUFFIX}.eco", "params": {"x": i}, "id": i}).encode()
+        req = urllib.request.Request(URL + "/rpc", data=body, method="POST",
+                                     headers={"Content-Type": "application/json", "Authorization": "Bearer " + token})
+        with urllib.request.urlopen(req, timeout=30) as r:
+            self.assertIn("result", json.loads(r.read()))
+
+    def import_setup(self):
+        tag = str(int(time.time() * 1000))[-6:]
+        lines = ["Nome;Tipo;CNPJ/CPF;E-mail;UF"]
+        for i in range(1000):
+            lines.append(f"Disco {tag} {i:04d};customer;{cnpj(f'{tag[-4:]}{i:04d}9876')};disk{i}.{tag}@exemplo.com.br;SP")
+        return "\n".join(lines) + "\n"
+
+    def import_run(self, content, _i):
+        r = self.run_ok("master.import", {"entity": "party", "content": content, "confirm": True})
+        self.assertEqual(r["new"], 1000, r)
+
+    def test_ca_063_01_writing_within_budget(self):
+        self.idle = self.idle_rate()
+        got = {"idle_wal_bytes_per_hour": round(self.idle * 3600)}
+        ops = {
+            "short_run": (None, lambda _c, i: self.run_ok("demo.hello", {"name": f"disk{i}"}), 20, 2.0),
+            "create_order": (None, lambda _c, _i: self.run_ok(
+                "sales.create_order", {"customer": 2, "items": [{"product": "ACUCAR-1", "quantity": 1}]}), 10, 2.0),
+            "invoice_order": (lambda: self.new_orders(10), lambda c, i: self.run_ok("sales.invoice_order", {"number": c[i]}), 10, 2.0),
+            "public_api_call": (self.api_setup, self.api_call, 20, 11.0),
+            "import_1000_parties": (self.import_setup, self.import_run, 1, 2.0),
+            "alert_cycle": (None, lambda _c, _i: http("POST", "/api/admin/observability/health/check", {}, self.token), 10, 1.0),
+        }
+        for name, (setup, op, n, settle) in ops.items():
+            got[name] = self.measure(setup, op, n, settle=settle, trials=1 if name == "import_1000_parties" else 2)
+        print("\n  escrita medida (bytes de WAL):", json.dumps(got), file=sys.stderr)
+        if os.environ.get("ANA_DISK_BUDGET") == "write":
+            b = dict(self.budget)
+            b["version"] = datetime.date.today().isoformat()
+            b["idle_wal_bytes_per_hour"] = got["idle_wal_bytes_per_hour"]
+            b["operations"] = {k: {**self.budget["operations"].get(k, {}), "wal_bytes": v}
+                               for k, v in got.items() if k != "idle_wal_bytes_per_hour"}
+            with open(BUDGET_FILE, "w", encoding="utf-8") as f:
+                json.dump(b, f, ensure_ascii=False, indent=1)
+                f.write("\n")
+            return
+        tol = self.budget["tolerance"]
+        over = []
+        limit = self.budget["idle_wal_bytes_per_hour"] * (1 + self.budget["idle_tolerance"])
+        if got["idle_wal_bytes_per_hour"] > limit:
+            over.append(f"sistema ocioso: {got['idle_wal_bytes_per_hour']} B/h, orçamento {self.budget['idle_wal_bytes_per_hour']} B/h "
+                        f"(+{round(100 * (got['idle_wal_bytes_per_hour'] / self.budget['idle_wal_bytes_per_hour'] - 1))}%)")
+        for k, spec in self.budget["operations"].items():
+            if got[k] > max(spec["wal_bytes"] * (1 + tol), spec["wal_bytes"] + self.budget["floor_bytes"]):
+                over.append(f"{spec['label']}: {got[k]} B, orçamento {spec['wal_bytes']} B "
+                            f"(+{round(100 * (got[k] / spec['wal_bytes'] - 1))}%)")
+        self.assertEqual(over, [], f"escrita acima do orçamento (tolerância {round(tol * 100)}%): " + "; ".join(over))
+
+    def test_ca_063_02_03_disk_panel_and_wear_projection(self):
+        s, before, _ = http("GET", "/api/admin/settings", token=self.token)
+        old = {x["key"]: x["value"] for x in before if x["key"] in ("disk_tbw_tb", "disk_used_pct")}
+        try:
+            self.assertEqual(http("PUT", "/api/admin/settings/disk_tbw_tb", {"value": 600}, self.token)[0], 200)
+            self.assertEqual(http("PUT", "/api/admin/settings/disk_used_pct", {"value": 10}, self.token)[0], 200)
+            s, d, _ = http("GET", "/api/admin/observability/disk", token=self.token)
+            self.assertEqual(s, 200, d)
+        finally:
+            for k, v in old.items():
+                http("PUT", f"/api/admin/settings/{k}", {"value": v}, self.token)
+        lh = d["last_hour"]
+        self.assertGreaterEqual(lh["minutes"], 0)
+        self.assertIn("wal_bytes", lh)
+        self.assertIsInstance(lh["tables"], list)                                     # what wrote most
+        self.assertEqual(d["budget"]["idle_wal_bytes_per_hour"], self.budget["idle_wal_bytes_per_hour"])
+        p = d["projection"]
+        self.assertTrue(p["informed"])
+        self.assertEqual((p["tbw_tb"], p["used_pct"]), (600, 10))
+        self.assertTrue(p["years_left"] is None or p["years_left"] > 0, p)
+        self.assertTrue(any(r["backend_type"] == "checkpointer" for r in d["io"]), d["io"])
+        self.assertIn("checkpoints_req", d["checkpoints"])
+        self.assertEqual(psql("SELECT setting FROM pg_settings WHERE name = 'log_temp_files'"), "10240")   # D6: who spills
+        self.assertTrue(d["suggestions"])
+        self.assertIn("wal_mb_per_hour", d["rates"])
+        # D5: the wear read by "ana-ctl disk" (SMART/NVMe) wins over the value typed in.
+        ev = psql("INSERT INTO ana_system.ops_event (kind, ok, detail) VALUES ('disk_health', true, "
+                  "'{\"device\": \"/dev/nvme0n1\", \"model\": \"Teste\", \"used_pct\": 37, \"written_bytes\": 1000, \"healthy\": true}') "
+                  "RETURNING id").splitlines()[0]
+        try:
+            http("PUT", "/api/admin/settings/disk_tbw_tb", {"value": 600}, self.token)
+            s, d2, _ = http("GET", "/api/admin/observability/disk", token=self.token)
+            self.assertEqual((d2["disk_health"]["model"], d2["projection"]["used_pct"]), ("Teste", 37))
+        finally:
+            psql(f"DELETE FROM ana_system.ops_event WHERE id = {ev}")
+            http("PUT", "/api/admin/settings/disk_tbw_tb", {"value": old.get("disk_tbw_tb", 0)}, self.token)
+
+    def test_ca_063_04_writing_jump_names_table_and_program(self):
+        table = f"test_disk.rewrite_{SUFFIX}"
+        psql(f"CREATE SCHEMA IF NOT EXISTS test_disk; GRANT USAGE ON SCHEMA test_disk TO ana_exec; "
+             f"CREATE TABLE {table} AS SELECT g AS id, repeat('x', 120) AS pad FROM generate_series(1, 100000) g; "
+             f"GRANT SELECT, UPDATE ON {table} TO ana_exec")
+        prog = f"test.disk_rewrite_{SUFFIX}"
+        try:
+            self.save(prog, f"def main():\n    return ana.sql_exec(\"UPDATE {table} SET pad = md5(random()::text) || pad\")\n")
+            s, r, _ = http("POST", "/api/admin/observability/disk/sample", {}, self.token)
+            self.assertEqual(s, 200, r)
+            base = r["rates"].get("wal_mb_per_hour", 0)
+            s, c, _ = http("POST", "/api/admin/observability/alerts/rules",
+                           {"name": f"Escrita {SUFFIX}", "source": "metric", "target": "wal_mb_per_hour", "op": ">",
+                            "threshold": base + 300, "window_s": 0, "severity": "warning", "level": None}, self.token)
+            self.assertEqual(s, 200, c)
+            self.rules.append(c["id"])
+            for _ in range(3):                                   # the routine that rewrites a whole table
+                self.run_ok(prog, {})
+            s, r, _ = http("POST", "/api/admin/observability/disk/sample", {}, self.token)
+            self.assertGreater(r["rates"]["wal_mb_per_hour"], base + 300, r)
+            http("POST", "/api/admin/observability/health/check", {}, self.token)
+            msg = psql(f"SELECT message FROM ana_system.incident WHERE rule_id = {c['id']} ORDER BY id DESC LIMIT 1")
+            self.assertIn(table, msg)
+            self.assertIn(prog, msg)
+        finally:
+            psql(f"DROP TABLE IF EXISTS {table}")
