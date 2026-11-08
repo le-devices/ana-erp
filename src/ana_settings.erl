@@ -131,7 +131,12 @@ definitions() ->
      {api_breaker_ratio, integer, 1, 100, "ANA_API_BREAKER_RATIO", 50,
       <<"API pública: proporção mínima de falhas nas chamadas do cliente para suspender (%)"/utf8>>},
      {api_breaker_open_s, integer, 10, 86400, "ANA_API_BREAKER_OPEN_S", 120,
-      <<"API pública: duração da suspensão do cliente (s)"/utf8>>}].
+      <<"API pública: duração da suspensão do cliente (s)"/utf8>>},
+     %% Spec 063 (D3): the endurance of the server SSD, for the wear projection of the "Disco" panel.
+     {disk_tbw_tb, integer, 0, 1000000, "ANA_DISK_TBW_TB", 0,
+      <<"Disco: resistência do SSD informada pelo fabricante (TBW, em TB; 0 = não informada)"/utf8>>},
+     {disk_used_pct, integer, 0, 100, "ANA_DISK_USED_PCT", 0,
+      <<"Disco: desgaste já usado do SSD (%), quando o ana-ctl não consegue ler"/utf8>>}].
 
 init_cache() ->
     _ = ets:new(?TAB, [named_table, public, set, {read_concurrency, true}]),

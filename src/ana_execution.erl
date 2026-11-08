@@ -1262,8 +1262,8 @@ note_sql(_Res, St = #st{sql_cur = undefined}) -> St;
 note_sql(Res, St = #st{sql_cur = {T0, Sql, At}}) ->
     Us = now_us() - T0,
     Rows = case Res of
-        {ok, #{rows := R}} when is_list(R) -> length(R);
-        {ok, #{affected := N}} when is_integer(N) -> N;
+        {ok, #{rows := [_ | _] = R}} -> length(R);
+        {ok, #{affected := N}} when is_integer(N) -> N;       % writes: rows changed (spec 063)
         _ -> 0
     end,
     Norm = ana_sql_stats:normalize(Sql),

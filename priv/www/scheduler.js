@@ -165,8 +165,8 @@
 
   async function holidays(container) {
     const list = await API.scheduler.holidays();
-    const day = el("input", { type: "date" });
-    const desc = el("input", { placeholder: "descrição" });
+    const day = el("input", { type: "date", "aria-label": "Dia do feriado", required: true });
+    const desc = el("input", { placeholder: "descrição", "aria-label": "Descrição do feriado" });
     container.replaceChildren(
       el("form", { class: "inline-form", onsubmit: async (e) => {
         e.preventDefault();
@@ -178,7 +178,8 @@
         { label: "", value: (h) => el("div", { class: "cell-actions" }, el("button", { class: "danger small", text: "Remover", onclick: async () => {
             await API.scheduler.deleteHoliday(h.day); holidays(container);
           } })) },
-      ], list, { empty: "Nenhum feriado cadastrado (dias úteis = segunda a sexta)." }));
+      ], list, { empty: "Nenhum feriado cadastrado (dias úteis = segunda a sexta).",
+                 emptyAction: { label: "Cadastrar o primeiro feriado", onClick: () => day.focus() } }));
   }
 
   async function notifications(container, unreadOnly) {

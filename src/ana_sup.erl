@@ -44,6 +44,7 @@ init([]) ->
                worker(ana_checks, []),
                worker(ana_ui_perf, []),
                worker(ana_core_view, []),
+               worker(ana_disk, []),               % spec 063: how much the database writes
                worker(ana_telemetry, [])],
     Children = [area(ana_base_sup, Base), area(ana_exec_area_sup, Exec), area(ana_work_sup, Work),
                 area(ana_observe_sup, Observe)],

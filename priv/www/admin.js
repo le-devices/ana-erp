@@ -847,7 +847,8 @@
 
   const METRIC = { running: "Execuções em andamento", failures_per_min: "Falhas por minuto", memory_mb: "Memória do núcleo (MB)",
     processes: "Processos Erlang", db_waiting: "Esperando conexão com o banco", python_ready: "Processos Python prontos",
-    max_message_queue: "Maior fila de mensagens no núcleo" };
+    max_message_queue: "Maior fila de mensagens no núcleo", wal_mb_per_hour: "Escrita de WAL no banco (MB/h)",
+    temp_mb_per_hour: "Arquivos temporários do banco (MB/h)" };
   const LEVEL = { yellow: "amarelo ou pior", red: "vermelho" };
 
   // RF-019-08 (T-019-08b): alert rules (threshold, window, destinations) and silences.
@@ -997,6 +998,81 @@
         procTable("Mais memória", c.top_memory, "memory_kb", "KB"),
         procTable("Mais trabalho", c.top_reductions, "reductions", "Reduções")),
       procTable("Filas de mensagens", c.top_queue, "queue", "Mensagens"));
+  }
+
+  // Spec 063 (D3; P15): how much the database writes, who wrote it and how long the SSD lasts at this pace.
+  const mb = (b) => (b === null || b === undefined ? "—" : (b >= 1e9 ? `${n2(b / 1e9)} GB` : `${n2(b / 1e6)} MB`));
+  async function disk() {
+    const d = await API.admin.disk();
+    const lh = d.last_hour || {};
+    const budget = d.budget || {};
+    const idleBudget = budget.idle_wal_bytes_per_hour;
+    const perHour = lh.minutes ? (lh.wal_bytes || 0) * 60 / lh.minutes : null;
+    const p = d.projection || {};
+    const ck = d.checkpoints || {};
+    const stat = (l, v, sub) => el("div", { class: "stat" }, el("div", { class: "label", text: l }), el("div", { class: "value", text: v }),
+      sub ? el("div", { class: "sub", text: sub }) : null);
+    const within = idleBudget && perHour !== null ? (perHour <= idleBudget * (1 + (budget.tolerance || 0))
+      ? pill("● dentro do orçamento de ocioso", "ok") : pill("▲ acima do orçamento de ocioso", "warn")) : null;
+    const tbw = el("input", { type: "number", min: "0", step: "1", "aria-label": "Resistência do SSD (TBW, em TB)",
+                              value: p.informed ? String(p.tbw_tb) : "" });
+    const used = el("input", { type: "number", min: "0", max: "100", step: "1", "aria-label": "Desgaste já usado (%)",
+                               value: p.informed ? String(p.used_pct) : "0" });
+    const saveTbw = () => guard(async () => {
+      await API.admin.saveSetting("disk_tbw_tb", Number(tbw.value || 0));
+      await API.admin.saveSetting("disk_used_pct", Number(used.value || 0));
+      toast("Resistência do disco salva.");
+      await disk();
+    });
+    const projection = p.informed
+      ? (p.years_left === null ? "sem escrita medida ainda" : `${n2(p.years_left)} anos no ritmo atual`)
+      : "informe a resistência do SSD";
+    const days = d.days || [];
+    main().replaceChildren(
+      ...header("Disco", "Quanto o banco de dados grava (WAL, páginas de dados e arquivos temporários), quem mais escreveu e quanto tempo o SSD dura neste ritmo. A medição só lê estatísticas do PostgreSQL; uma hora sem escrita não grava nada."),
+      el("div", { class: "row-buttons" }, el("button", { text: "Atualizar", onclick: () => guard(disk) })),
+      el("div", { class: "stat-grid" },
+        stat("Última hora", mb((lh.wal_bytes || 0) + (lh.data_bytes || 0) + (lh.temp_bytes || 0)),
+             lh.minutes ? `WAL ${mb(lh.wal_bytes)} · dados ${mb(lh.data_bytes)} · temporários ${mb(lh.temp_bytes)} em ${lh.minutes} min` : "medindo…"),
+        stat("Ritmo de WAL agora", `${n2((d.rates || {}).wal_mb_per_hour)} MB/h`, "últimos 5 minutos; pode virar alerta"),
+        stat("Média por dia", days.length ? mb(days.slice(0, Math.max(1, days.length - 1)).reduce((a, x) => a + x.total_bytes, 0) / Math.max(1, days.length - 1)) : "—",
+             days.length ? `${days.length} dia(s) medidos` : "o primeiro dia aparece após uma hora com escrita"),
+        stat("Vida útil restante", projection, p.informed ? `TBW ${n2(p.tbw_tb)} TB, ${n2(p.used_pct)}% já usado${d.disk_health ? " (lido do disco)" : ""}` : null),
+        stat("Checkpoints", `${n2(ck.checkpoints_timed)} programados · ${n2(ck.checkpoints_req)} forçados`,
+             `max_wal_size ${ck.max_wal_size} · intervalo ${ck.checkpoint_timeout}`),
+        stat("Tamanho", mb((d.sizes || {}).database_bytes), `banco · repositório de arquivos ${mb((d.sizes || {}).files_bytes)}`)),
+      within ? el("p", {}, within, el("span", { class: "muted", text: ` Orçamento de ocioso: ${mb(idleBudget)} de WAL por hora (versão ${budget.version}).` })) : null,
+      days.length >= 2 ? window.AnaCharts.render({ type: "stacked", title: "Escrita por dia", subtitle: "últimos 35 dias", format: "number", unit: "MB",
+        x: days.map((x) => x.day), series: [{ name: "WAL", values: days.map((x) => Math.round(x.wal_bytes / 1e6)) },
+                                            { name: "Páginas de dados", values: days.map((x) => Math.round(x.data_bytes / 1e6)) },
+                                            { name: "Temporários", values: days.map((x) => Math.round(x.temp_bytes / 1e6)) }] }) : null,
+      el("h3", { text: "Resistência do SSD" }),
+      d.disk_health ? el("p", {}, d.disk_health.healthy === false ? pill("■ o disco indica falha: troque-o", "off") : pill("● disco saudável", "ok"),
+        el("span", { class: "muted", text: ` ${d.disk_health.model || d.disk_health.device || "disco"}: ${d.disk_health.used_pct ?? "—"}% da vida útil usada${d.disk_health.written_bytes ? `, ${mb(d.disk_health.written_bytes)} gravados no total` : ""} — lido por ana-ctl em ${fmtDate(d.disk_health.at)}.` }))
+        : el("p", { class: "muted", text: "Para o ERP ler o desgaste do próprio SSD, rode \"ana-ctl disk\" como root no servidor (precisa do smartmontools); a leitura aparece aqui." }),
+      el("p", { class: "muted", text: "O fabricante informa o TBW (terabytes que podem ser gravados) na ficha do disco. Com ele e a escrita média por dia, o painel projeta quando planejar a troca." }),
+      el("div", { class: "form-grid" }, el("label", {}, "TBW (TB)", tbw), el("label", {}, "Já usado (%)", used),
+        el("div", { class: "row-buttons" }, el("button", { text: "Salvar", onclick: saveTbw }))),
+      el("div", { class: "admin-columns" },
+        el("div", {}, el("h3", { text: "Tabelas que mais mudaram na última hora" }), table([
+          { label: "Tabela", value: (t) => el("code", { text: t.table }) }, { label: "Linhas", value: (t) => n2(t.rows), class: "num" }],
+          lh.tables || [], { empty: "Nada mudou na última hora.", emptyAction: { label: "Atualizar", onClick: () => guard(disk) } })),
+        el("div", {}, el("h3", { text: "Programas que mais escreveram" }), table([
+          { label: "Programa", value: (t) => t.program }, { label: "Tabela", value: (t) => el("code", { text: t.table }) },
+          { label: "Linhas", value: (t) => n2(t.rows), class: "num" }],
+          lh.programs || [], { empty: "Nenhum programa escreveu na última hora.", emptyAction: { label: "Atualizar", onClick: () => guard(disk) } }))),
+      el("h3", { text: "Escrita por tipo de processo (desde o início das estatísticas)" }),
+      table([
+        { label: "Processo", value: (r) => r.backend_type }, { label: "Objeto", value: (r) => r.object }, { label: "Contexto", value: (r) => r.context },
+        { label: "Gravado", value: (r) => mb(r.write_bytes), class: "num" }, { label: "Crescimento de arquivo", value: (r) => mb(r.extend_bytes), class: "num" }],
+        d.io || [], { empty: "Sem escrita registrada." }),
+      el("h3", { text: "Tabelas que mais cresceram (30 dias)" }),
+      table([{ label: "Tabela", value: (g) => el("code", { text: g.table_name }) }, { label: "Tamanho", value: (g) => mb(g.bytes), class: "num" },
+             { label: "Crescimento", value: (g) => mb(g.growth_bytes), class: "num" }],
+        d.growth || [], { empty: "O crescimento aparece depois da primeira análise diária." }),
+      el("h3", { text: "Sugestões para o servidor" }),
+      el("p", { class: "muted", text: "O ERP nunca muda a configuração do sistema operacional nem desliga proteções do banco (fsync, full_page_writes): só sugere." }),
+      el("ul", {}, (d.suggestions || []).map((t) => el("li", { text: t }))));
   }
 
   // Spec 050 (T-050-03, P18): how long screens take to open in the browsers, against the 1 s budget.
@@ -2066,7 +2142,7 @@
                        window.AnaScheduler.holidays(hol)]);
   }
 
-  const SECTIONS = { users, groups, settings, company, commands, remote, accounts, limits, consumption, scheduler, monitor, audit, retention, health, alerts, core, uiperf, sqlperf, advice, updates, integrations, checks, transports, datacopy, publicapi, license, extensions, telemetry };
+  const SECTIONS = { users, groups, settings, company, commands, remote, accounts, limits, consumption, scheduler, monitor, audit, retention, health, alerts, core, disk, uiperf, sqlperf, advice, updates, integrations, checks, transports, datacopy, publicapi, license, extensions, telemetry };
 
   function show(section) {
     refreshUpdatesCount();

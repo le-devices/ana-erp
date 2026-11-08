@@ -227,6 +227,11 @@ route(<<"GET">>, [<<"observability">>, <<"health">>], _U, Req) ->
 route(<<"POST">>, [<<"observability">>, <<"health">>, <<"check">>], _U, Req) ->
     _ = ana_health:check_now(),
     reply(ana_observability:health(), Req);
+route(<<"GET">>, [<<"observability">>, <<"disk">>], _U, Req) ->
+    reply(ana_disk:overview(), Req);
+route(<<"POST">>, [<<"observability">>, <<"disk">>, <<"sample">>], _U, Req) ->
+    ok = ana_disk:sample_now(),
+    reply({ok, #{rates => ana_disk:rates()}}, Req);
 route(<<"GET">>, [<<"observability">>, <<"core">>], _U, Req) ->
     reply(ana_core_view:snapshot(), Req);
 route(<<"GET">>, [<<"observability">>, <<"ui">>], _U, Req) ->

@@ -19,3 +19,4 @@ Fase 3 — revisão do que já existe (P20)
 - [ ] T-062-11 Integração, conectores, webhooks e e-mail
 - [ ] T-062-12 Agendamento, esteiras e BPM
 - [ ] T-062-13 Observabilidade, alertas e verificações; arquivos; cache, permissões e sessões; alta disponibilidade
+- [ ] T-062-14 Experimento medido: Mnesia `ram_copies` (nada em disco) para estado efêmero compartilhado entre os nós — cotas e limites por minuto, disjuntor por cliente da API, cache de sessão — contra o que existe hoje (ETS por nó, `pg`, NOTIFY). Adotar só se a medição mostrar ganho real; nunca para dados do ERP (o PostgreSQL continua a única fonte da verdade: cópias, PITR, auditoria, SQL dos programas) e com comportamento definido e testado (caos) na divisão de rede

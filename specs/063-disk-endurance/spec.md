@@ -1,6 +1,6 @@
 # 063 — Vida útil do disco: escrita medida, com orçamento e vigiada
 
-Situação: especificada (nov/2026).
+Situação: fase 1 implementada (nov/2026); fase 2 pendente.
 
 ## Problema
 SSDs têm um limite de escrita (TBW): cada byte gravado consome vida útil, e

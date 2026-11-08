@@ -249,6 +249,7 @@
       createSilence: (body) => API.request("POST", "/api/admin/observability/alerts/silences", body),
       endSilence: (id) => API.request("POST", `/api/admin/observability/alerts/silences/${enc(id)}/end`, {}),
       core: () => API.request("GET", "/api/admin/observability/core"),
+      disk: () => API.request("GET", "/api/admin/observability/disk"),
       uiPerf: (days) => API.request("GET", "/api/admin/observability/ui" + query({ days })),
       obsSql: (filters) => API.request("GET", "/api/admin/observability/sql" + query(filters || {})),
       obsSqlDetail: (hash) => API.request("GET", `/api/admin/observability/sql/${enc(hash)}`),

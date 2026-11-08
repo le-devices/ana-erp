@@ -54,6 +54,28 @@ e nenhum erro.
   ```
   Resultados desta medição: `tests/load/results/2026-11-07-sizing.json`.
 
+### Vida útil do disco (SSD)
+
+O ERP mede quanto o banco grava e mostra em **Administração → Disco**: escrita
+por hora e por dia, quem mais escreveu e, informando o TBW do SSD (ficha do
+fabricante), a projeção de anos restantes. Medido em 7/11/2026 (bytes de WAL):
+sistema ocioso ~0,2 MB por hora; criar ou faturar um pedido ~20 KB; rotina
+curta ou chamada da API ~5 KB; importar 1.000 cadastros ~2 MB. Esses valores
+são o orçamento de escrita do produto (`priv/disk_budget.json`), testado a
+cada versão. Mesmo com centenas de pedidos por dia, um SSD comum de 300 TBW
+dura décadas; o que gasta disco é carga anormal, e um salto de escrita pode
+virar alerta (métrica "Escrita de WAL no banco").
+
+A instalação padrão já vem ajustada: WAL comprimido, checkpoints espaçados,
+temporários do ERP em memória, logs com rotação e limite de tamanho. O ERP
+nunca desliga proteções do banco (`fsync`, `full_page_writes`). No servidor,
+recomendamos montar o disco com `noatime`, deixar o TRIM periódico ligado
+(`systemctl enable --now fstrim.timer`), guardar as cópias em outro disco e,
+com dois discos, pôr o WAL num volume próprio. Com o arquivo de WAL ligado
+(produção), `archive_timeout` (padrão 5 min) troca de segmento sempre que houve
+escrita: cada troca copia 16 MB; um valor maior grava menos, ao custo de uma
+janela maior de perda se o servidor inteiro se perder.
+
 ## A. Servidor próprio (on-premise)
 
 1. **Copie o pacote** do ANA para o servidor e descompacte:

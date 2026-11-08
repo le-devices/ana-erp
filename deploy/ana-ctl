@@ -3,6 +3,7 @@
 #
 #   ana-ctl status                 containers and health
 #   ana-ctl doctor                 full diagnosis (exit 1 when something needs attention)
+#   ana-ctl disk                   wear of the SSD (SMART/NVMe, needs smartctl and root) and server suggestions (spec 063)
 #   ana-ctl backup                 full database copy now (also run daily by cron)
 #   ana-ctl restore-test           restores the last copy in a throwaway container and checks it
 #   ana-ctl upgrade --source DIR   builds the new version from a package and updates node by node
@@ -69,6 +70,50 @@ set_env() {      # set_env KEY VALUE (keeps mode 600)
   chmod 600 "$DIR/.env"
 }
 
+disk_health() {  # spec 063 (D5): wear of the disk holding the data; reads only, never changes the system
+  local root dev disk json
+  root="$(docker info -f '{{.DockerRootDir}}' 2>/dev/null || echo /)"
+  dev="$(df -P "$root" 2>/dev/null | awk 'NR==2 {print $1}' || true)"
+  disk="$(lsblk -no PKNAME "$dev" 2>/dev/null | head -1 || true)"; disk="/dev/${disk:-$(basename "${dev:-disco}")}"
+  if ! command -v smartctl >/dev/null 2>&1 || ! command -v python3 >/dev/null 2>&1; then
+    say "  [sugestão] instale smartmontools (smartctl) para o ERP acompanhar o desgaste do SSD"
+  elif [ "$(id -u)" != "0" ]; then
+    say "  [sugestão] rode como root para ler o desgaste do SSD ($disk)"
+  elif json="$(smartctl -j -a "$disk" 2>/dev/null || true)"; [ -n "$json" ]; then
+    local line
+    line="$(printf '%s' "$json" | python3 -c '
+import json, sys
+d = json.load(sys.stdin)
+nv = d.get("nvme_smart_health_information_log") or {}
+used, written = nv.get("percentage_used"), None
+if nv.get("data_units_written") is not None:
+    written = nv["data_units_written"] * 512000
+for page in (d.get("ata_device_statistics") or {}).get("pages", []):
+    for t in page.get("table", []):
+        if t.get("name") == "Percentage Used Endurance Indicator":
+            used = t.get("value")
+for a in (d.get("ata_smart_attributes") or {}).get("table", []):
+    if a.get("id") == 241 and written is None:
+        written = a.get("raw", {}).get("value", 0) * 512
+out = {"device": d.get("device", {}).get("name"), "model": d.get("model_name"), "used_pct": used,
+       "written_bytes": written, "healthy": (d.get("smart_status") or {}).get("passed")}
+print(json.dumps(out))' 2>/dev/null || true)"
+    if [ -n "$line" ]; then
+      used="$(printf '%s' "$line" | python3 -c 'import json,sys; v=json.load(sys.stdin)["used_pct"]; print("" if v is None else int(v))' || true)"
+      if [ -n "$used" ] && [ "$used" -ge 80 ]; then bad "SSD $disk com ${used}% da vida útil usada: planeje a troca"
+      elif [ -n "$used" ]; then ok "SSD $disk com ${used}% da vida útil usada"
+      else ok "disco $disk lido (sem indicador de desgaste)"; fi
+      healthy="$(printf '%s' "$line" | python3 -c 'import json,sys; print(json.load(sys.stdin)["healthy"])' || true)"
+      [ "$healthy" = "False" ] && bad "SMART de $disk indica falha: troque o disco"
+      record disk_health true "$line"
+    fi
+  fi
+  { findmnt -no OPTIONS --target "$root" 2>/dev/null || true; } | grep -qw noatime \
+    || say "  [sugestão] monte o disco de dados com noatime (menos escrita a cada leitura)"
+  systemctl is-enabled fstrim.timer >/dev/null 2>&1 \
+    || say "  [sugestão] ligue o TRIM periódico: systemctl enable --now fstrim.timer"
+}
+
 case "$CMD" in
   status)
     compose ps
@@ -91,6 +136,7 @@ case "$CMD" in
       crit=$(psql_db "SELECT count(*) FROM ana_system.advice WHERE status = 'open' AND severity = 'critical'" 2>/dev/null || echo "?")
       [ "$crit" = "0" ] && ok "verificações do ERP sem achados críticos" || bad "$crit achado(s) crítico(s) em Administração → Verificações"
     fi
+    disk_health
     say ""
     [ $PROBLEMS -eq 0 ] && say "Tudo certo." || { say "$PROBLEMS ponto(s) de atenção."; exit 1; }
     ;;
@@ -164,6 +210,8 @@ case "$CMD" in
     [ -n "${ANA_IMAGE_PREVIOUS:-}" ] || { say "não há versão anterior registrada" >&2; exit 2; }
     exec "$0" --dir "$DIR" upgrade --image "$ANA_IMAGE_PREVIOUS"
     ;;
+
+  disk) disk_health; [ $PROBLEMS -eq 0 ] || exit 1 ;;
 
   logs) compose logs -f --tail 200 "$@" ;;
 

@@ -20,7 +20,9 @@
 -define(EVERY_MS, 10000).
 -define(SAMPLE_EVERY, 30).                    % ticks (5 min)
 -define(METRICS, [<<"running">>, <<"failures_per_min">>, <<"memory_mb">>, <<"processes">>,
-                  <<"db_waiting">>, <<"python_ready">>, <<"max_message_queue">>]).
+                  <<"db_waiting">>, <<"python_ready">>, <<"max_message_queue">>,
+                  <<"wal_mb_per_hour">>, <<"temp_mb_per_hour">>]).        % spec 063 (D4): writing to disk
+-define(DISK_METRICS, [<<"wal_mb_per_hour">>, <<"temp_mb_per_hour">>]).
 
 start_link() ->
     gen_server:start_link({local, ?MODULE}, ?MODULE, [], []).
@@ -131,7 +133,7 @@ metrics(S = #{failures := Prev}) ->
           <<"db_waiting">> => Waiting,
           <<"python_ready">> => Ready,
           <<"max_message_queue">> => ana_core_view:max_queue()},          % spec 062 (D6): a queue growing
-    {M, S#{failures := {Now, Bad}}}.
+    {maps:merge(M, ana_disk:rates()), S#{failures := {Now, Bad}}}.
 
 catch_counters() ->
     try ana_execution:counters() catch _:_ -> #{} end.
@@ -196,12 +198,23 @@ holding(R = #{<<"source">> := <<"metric">>, <<"target">> := T, <<"op">> := Op, <
     case maps:get(T, M, undefined) of
         V when is_number(V) ->
             case holds(Op, V, Limit) of
-                true -> [{{maps:get(<<"id">>, R), T}, fmt("~ts = ~ts (regra: ~ts ~ts)", [T, num(V), Op, num(Limit)])}];
+                true -> [{{maps:get(<<"id">>, R), T}, fmt("~ts = ~ts (regra: ~ts ~ts)~ts", [T, num(V), Op, num(Limit), who(T)])}];
                 false -> []
             end;
         _ -> []
     end;
 holding(_, _, _) -> [].
+
+%% A jump in writing names what wrote it (spec 063, CA-063-04).
+who(T) ->
+    case lists:member(T, ?DISK_METRICS) of
+        true -> case catch ana_disk:culprit_text() of
+                    <<>> -> <<>>;
+                    B when is_binary(B) -> <<" — "/utf8, B/binary>>;
+                    _ -> <<>>
+                end;
+        false -> <<>>
+    end.
 
 -spec holds(atom() | binary(), term(), term()) -> boolean().
 holds(health, St, <<"yellow">>) -> St =:= yellow orelse St =:= red;
