@@ -95,6 +95,7 @@ inglês, como no código (constituição, P2a).
 | 062 | [Erlang ao máximo](062-erlang-at-its-best/spec.md) | Supervisão por subsistema, eventos no lugar de ciclos (no nó, entre nós e no navegador), isolamento por conector e por fluxo, temporizadores do Erlang, tela "Núcleo"; revisão de todos os subsistemas existentes; sempre medido, sem regressão | fases 1 e 2 implementadas (falta T-062-08b; fase 3 na fila) |
 | 063 | [Vida útil do disco](063-disk-endurance/spec.md) | Orçamento de escrita por operação e com o sistema ocioso testado na bateria, painel "Disco" com projeção de desgaste do SSD, alertas de salto de escrita, ajustes do banco e temporários em memória; revisão de todas as funcionalidades | fase 1 implementada |
 | 064 | [Portão de qualidade dos programas](064-program-quality-gate/spec.md) | Inspeção automática (segurança, desempenho, robustez, padrões, experiência, disco) enquanto se digita; regras configuráveis, linha de base e isenções aprovadas; testes e cobertura dos programas; desempenho comparado com a versão anterior; portão obrigatório e assinado no transporte para a produção | especificada |
+| 065 | [Valores da empresa](065-company-values/spec.md) | Valores nomeados, tipados e com vigência (simples, referência a cadastro, lista, seleção) que rotinas, SQL, variantes, agendamentos, regras, esteiras e impostos leem pelo nome; por ambiente e filial; atualizados por rotinas; em memória em cada nó; onde é usado, quatro olhos e transporte | especificada |
 
 ## Glossário
 
@@ -103,6 +104,7 @@ inglês, como no código (constituição, P2a).
 | Programa | `program` | Código Python versionado no banco, executado pelo núcleo. |
 | Programa exposto | `exposed = true` | Programa chamável de fora do ERP (JSON-RPC). |
 | Biblioteca | `kind = 'library'` | Programa importável por outros (`import ana_lib.<nome>`). |
+| Valor da empresa | `company_value` | Valor de negócio com nome, tipo e vigência, mantido pela empresa e lido pelas rotinas pelo nome (`ana.value`), sem mudar código (spec 065). |
 | Unidade de Trabalho | *execution transaction* | Transação única que envolve uma execução inteira, incluindo chamadas aninhadas. |
 | Execução | `execution` | Registro de uma rodada de um programa: parâmetros, saída, resultado, status. |
 | Comando | `command` | Atalho curto digitado na barra do Estúdio que abre um programa. |
