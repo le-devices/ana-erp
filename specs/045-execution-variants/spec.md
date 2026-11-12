@@ -18,7 +18,8 @@ estoque central").
   ou uma expressão de uma lista fechada: hoje, ontem, início/fim do mês
   (atual, anterior), início/fim do ano, hoje ± N dias, usuário atual,
   centro de custo do usuário, empresa da instalação. Resolvida na hora da
-  execução — nunca código livre.
+  execução — nunca código livre. A lista de expressões e os valores nomeados
+  (`{{valor:nome}}`) vêm da spec 065, num só lugar.
 - **D3 — Campos protegidos e ocultos.** A variante pode travar um campo (o
   usuário não altera) ou ocultá-lo; parâmetros obrigatórios sem valor
   continuam pedidos.
