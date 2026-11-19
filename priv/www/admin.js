@@ -1483,8 +1483,9 @@
           { label: "Cadastrada por", value: (o) => `${o.created_by} em ${fmtDate(o.created_at)}` },
           { label: "", value: (o) => el("button", { type: "button", class: "quiet small", text: "Remover", onclick: () => guard(async () => {
               await API.admin.deleteOrigin(o.name); transports("keys"); }) }) },
-        ], origins, { empty: "Nenhuma origem: esta instância ainda não aceita pacotes." }),
-        el("div", { class: "row-buttons" }, name, pub, el("button", { type: "button", text: "Cadastrar origem", onclick: () => guard(async () => {
+        ], origins, { empty: "Nenhuma origem: esta instância ainda não aceita pacotes.",
+                      emptyAction: { label: "Cadastrar a primeira origem", onClick: () => name.focus() } }),
+        el("div", { class: "row-buttons" }, field("Nome da origem", name), field("Chave pública da origem", pub), el("button", { type: "button", text: "Cadastrar origem", onclick: () => guard(async () => {
           await API.admin.saveOrigin(name.value.trim(), pub.value.trim()); toast("Origem cadastrada."); transports("keys");
         }) }))));
   }

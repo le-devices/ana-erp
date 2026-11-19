@@ -15,7 +15,7 @@ services:
       - |
         set -e
         if [ ! -s /var/lib/postgresql/data/PG_VERSION ]; then
-          until pg_basebackup -h db -U replicator -D /var/lib/postgresql/data -R -X stream; do
+          until pg_basebackup -h db -U replicator -D /var/lib/postgresql/data -R -X stream -c fast; do
             echo "waiting for the primary"; sleep 2; done
         fi
         exec postgres -D /var/lib/postgresql/data -c shared_preload_libraries=citus,pg_prewarm \

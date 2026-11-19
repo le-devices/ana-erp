@@ -252,8 +252,8 @@ retry_joins(C, #{<<"id">> := Id, <<"compiled">> := Comp}, _Facts, _Vars) ->
             %% A synthetic finished task keeps the single path of navigation (and the trail).
             {ok, [#{<<"id">> := Tok}]} = ana_db:rows(C, "INSERT INTO bpm.token (case_id, node, status) VALUES ($1, $2, 'active') "
                                                         "RETURNING id", [Id, J]),
-            {ok, _} = ana_db:query(C, "INSERT INTO bpm.task (case_id, token_id, node, kind, name, status, how, finished_at) "
-                                      "VALUES ($1, $2, $3, 'rule', 'Junção', 'done', 'auto', now())", [Id, Tok, J]),
+            {ok, _} = ana_db:query(C, <<"INSERT INTO bpm.task (case_id, token_id, node, kind, name, status, how, finished_at) "
+                                        "VALUES ($1, $2, $3, 'rule', 'Junção', 'done', 'auto', now())"/utf8>>, [Id, Tok, J]),
             true
     end.
 
@@ -322,7 +322,7 @@ create_task(C, #{<<"id">> := Id, <<"doc_key">> := Key, <<"title">> := Title, <<"
     end,
     case Status of
         <<"waiting">> when Kind =:= <<"human">>; Kind =:= <<"approval">> ->
-            notify(C, TaskId, Id, <<"task">>, <<"Nova tarefa: "/utf8, Name/binary, " — ", Title/binary>>);
+            notify(C, TaskId, Id, <<"task">>, <<"Nova tarefa: "/utf8, Name/binary, " — "/utf8, Title/binary>>);
         _ -> ok
     end,
     Vars.
@@ -472,8 +472,8 @@ start_child(C, TId, Parent, Proc) ->
                 "VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING id", [Proc, V, Ent, Key, Name, TId, By]),
             {ok, [#{<<"id">> := Tok}]} = ana_db:rows(C, "INSERT INTO bpm.token (case_id, node) VALUES ($1, $2) RETURNING id",
                                                      [Child, Start]),
-            {ok, _} = ana_db:query(C, "INSERT INTO bpm.task (case_id, token_id, node, kind, name, status, how, finished_at) "
-                                      "VALUES ($1, $2, $3, 'rule', 'Início', 'done', 'auto', now())", [Child, Tok, Start]),
+            {ok, _} = ana_db:query(C, <<"INSERT INTO bpm.task (case_id, token_id, node, kind, name, status, how, finished_at) "
+                                        "VALUES ($1, $2, $3, 'rule', 'Início', 'done', 'auto', now())"/utf8>>, [Child, Tok, Start]),
             event(C, Child, Start, <<"start">>, By, #{<<"parent_case">> => Parent}),
             {ok, _} = ana_db:query(C, "UPDATE bpm.task SET status = 'waiting', child_case = $2, lease_until = NULL WHERE id = $1",
                                    [TId, Child]),
