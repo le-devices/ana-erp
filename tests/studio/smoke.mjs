@@ -51,6 +51,16 @@ async function until(cond, label, errs = [], ms = 15000) {
 const ok = (c, m) => { if (!c) throw new Error("failed: " + m); console.log("✔", m); };
 const submit = (w, form) => form.dispatchEvent(new w.Event("submit", { cancelable: true }));
 const go = async (w, hash) => { current = w; w.location.hash = hash; await sleep(50); };
+// Data a screen needs is created by the suite itself: on CI each suite starts from a clean database.
+let rpcToken = null;
+async function rpc(method, params) {
+  rpcToken ??= (await (await fetch(ANA_URL + "/api/session", { method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ username: "admin", password: PASSWORD }) })).json()).token;
+  const r = await (await fetch(ANA_URL + "/rpc", { method: "POST", headers: { "Content-Type": "application/json", Authorization: "Bearer " + rpcToken },
+    body: JSON.stringify({ jsonrpc: "2.0", id: 1, method, params }) })).json();
+  if (r.error) throw new Error(`${method}: ${JSON.stringify(r.error)}`);
+  return r.result;
+}
 
 // ---------------------------------------------------------------- admin/developer
 const { w, d, jsErrors } = await open("admin", PASSWORD);
@@ -227,16 +237,8 @@ ok([...d.querySelectorAll("#ops-main .table-box button")].some((b) => b.textCont
   pin.click();
 }
 // Definition with the simulation beside it and the condition builder (RF-020-13/14, CA-020-08/09).
-// The builder lists the facts of an open sales order: the suite creates its own, so it does not depend on
-// data left by other suites (each one starts from a clean database on CI).
-{
-  const tk = (await (await fetch(ANA_URL + "/api/session", { method: "POST", headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ username: "admin", password: PASSWORD }) })).json()).token;
-  const r = await (await fetch(ANA_URL + "/rpc", { method: "POST", headers: { "Content-Type": "application/json", Authorization: "Bearer " + tk },
-    body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "sales.create_order",
-      params: { customer: 1, items: [{ product: "FEIJAO-1", quantity: 1 }] } }) })).json();
-  if (r.error) throw new Error("could not create the sales order for the condition builder: " + JSON.stringify(r.error));
-}
+// The builder lists the facts of an open sales order.
+await rpc("sales.create_order", { customer: 1, items: [{ product: "FEIJAO-1", quantity: 1 }] });
 await go(w, "#/ops/flows/flows.step_condition?flow=sales&step=2&_form=1");
 await until(() => d.querySelector("#ops-main .sim-split .cond-builder") && d.querySelector("#ops-main .cond-line select option[value=total]"), "condition builder", jsErrors);
 {
@@ -265,7 +267,9 @@ await until(() => d.querySelector("#ops-main .sim-split .cond-builder") && d.que
   ok(text("#ops-main .sim-when").includes("nada foi gravado"), "simulação ao lado com hora, sem gravar (CA-020-08)");
 }
 
-// Planning grid by period and its chart (RF-020-15/16, CA-020-10/11).
+// Planning grid by period and its chart (RF-020-15/16, CA-020-10/11): at least four budget lines in the year.
+for (const account of ["5.1.1", "5.1.2", "5.1.3", "5.1.4"])
+  await rpc("finance.save_budget", { cost_center: "GERAL", account, months: ["2026-01", "2026-02", "2026-03"], amount: "100" });
 await go(w, "#/ops/finance/finance.budget_plan?start=2026-01&end=2026-12");
 await until(() => d.querySelector("#ops-main .plan-grid tbody td.cell"), "planning grid", jsErrors);
 {

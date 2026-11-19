@@ -7782,9 +7782,13 @@ class TestDiskEndurance(Base):
                             "threshold": base + 300, "window_s": 0, "severity": "warning", "level": None}, self.token)
             self.assertEqual(s, 200, c)
             self.rules.append(c["id"])
-            for _ in range(3):                                   # the routine that rewrites a whole table
+            # The routine that rewrites a whole table. The rate is WAL per hour since the previous sample, so a
+            # slower machine spreads the same writing over more time: sample after each run, up to five.
+            for _ in range(5):
                 self.run_ok(prog, {})
-            s, r, _ = http("POST", "/api/admin/observability/disk/sample", {}, self.token)
+                s, r, _ = http("POST", "/api/admin/observability/disk/sample", {}, self.token)
+                if r["rates"]["wal_mb_per_hour"] > base + 300:
+                    break
             self.assertGreater(r["rates"]["wal_mb_per_hour"], base + 300, r)
             http("POST", "/api/admin/observability/health/check", {}, self.token)
             msg = psql(f"SELECT message FROM ana_system.incident WHERE rule_id = {c['id']} ORDER BY id DESC LIMIT 1")
