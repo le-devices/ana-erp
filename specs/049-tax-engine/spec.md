@@ -1,6 +1,6 @@
 # 049 — Motor de impostos
 
-Situação: especificada (nov/2026).
+Situação: especificada (nov/2026); fase 1 em implementação (19/11/2026), com o Simples Nacional antecipado (D10).
 
 ## Problema
 Hoje só a fatura de projeto calcula imposto (ISS, com alíquota e retenção no
@@ -67,6 +67,20 @@ estados, atividades e benefícios próprios.
   certificado digital) fica fora desta spec (spec futura), mas o resultado do
   motor já traz os campos de que ela precisará.
 
+- **D10 — Simples Nacional na fase 1; reforma logo depois (19/11/2026).**
+  Decisão do dono do produto: o caso de referência (empresa de P&D por
+  hora/homem, a constituir) será do Simples Nacional. A fase 1 passa a incluir
+  o Simples: receita bruta dos últimos 12 meses (RBT12, com a regra de início
+  de atividade), faixas e alíquota efetiva por anexo, repartição do ISS dentro
+  do Simples, **fator R** (folha dos 12 meses ÷ RBT12, anexo V ou III) com
+  acompanhamento mensal e aviso quando se aproxima do limite, e as retenções
+  de quem presta serviço pelo Simples (ISS retido pela alíquota efetiva; as
+  federais normalmente não se aplicam). RBT12 e folha saem da contabilidade
+  (contas configuráveis), nunca digitadas. A fase 3 (CBS, IBS, IS) vem logo
+  após a fase 1, antes das demais; ICMS, ST, DIFAL e IPI ficam na fase 2,
+  depois. A emissão de nota (spec 059) continua fora: o ANA calcula, registra
+  e contabiliza.
+
 ## Requisitos funcionais
 - **RF-049-01** Serviço de cálculo (D1) com resultado por item e total e a
   explicação das regras aplicadas.
@@ -82,10 +96,11 @@ estados, atividades e benefícios próprios.
 - **RF-049-07** Integração com vendas, projetos, compras, notas de
   fornecedor, devoluções, contabilidade e títulos (D7); migração do ISS dos
   projetos.
-- **RF-049-08** Fase 1 (D8): ISS por município e retenções federais e
-  municipais com mínimos e responsabilidade.
-- **RF-049-09** Fase 2 (D8): ICMS (próprio, ST, DIFAL, FCP), IPI, PIS/COFINS,
-  Simples Nacional.
+- **RF-049-08** Fase 1 (D8, D10): ISS por município e retenções federais e
+  municipais com mínimos e responsabilidade; Simples Nacional (RBT12, faixas,
+  alíquota efetiva, anexos, repartição do ISS, fator R com aviso).
+- **RF-049-09** Fase 2 (D8): ICMS (próprio, ST, DIFAL, FCP), IPI, PIS/COFINS
+  (o Simples Nacional foi antecipado para a fase 1, D10).
 - **RF-049-10** Fase 3 (D8): CBS, IBS e Imposto Seletivo na transição.
 - **RF-049-11** Registro: cada cálculo guardado com o documento (entrada,
   regras e versões usadas, resultado) — recalcular uma fatura antiga dá o
@@ -114,6 +129,12 @@ estados, atividades e benefícios próprios.
   diferença e exige confirmação; sem casos afetados, ativa direto.
 - **CA-049-05** Fórmula com código livre ou função desconhecida é recusada ao
   salvar.
+- **CA-049-08** (D10) Empresa do Simples com serviço de P&D: com folha de 12
+  meses ≥ 28% da RBT12 a fatura usa o anexo III, abaixo usa o anexo V, com a
+  alíquota efetiva da faixa; o ISS retido pelo tomador usa a parcela do ISS na
+  alíquota efetiva; nenhuma retenção federal; no primeiro ano a RBT12 segue a
+  regra de início de atividade. Fator R a menos de 2 pontos do limite gera
+  aviso.
 - **CA-049-06** (fase 2) Venda interestadual para não contribuinte calcula
   ICMS com DIFAL e FCP conforme as tabelas da UF de destino.
 - **CA-049-07** (fase 3) Um documento de 2027 traz CBS e IBS nas alíquotas de
