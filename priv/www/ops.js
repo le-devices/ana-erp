@@ -339,6 +339,14 @@
         { label: "Status", value: (x) => el("span", { class: "status-" + x.status, text: x.status + (x.error ? ` (${x.error})` : "") }) },
         { label: "ms", value: (x) => x.duration_ms ?? "…", class: "num" },
       ], rows.slice(0, 15), { empty: "Você ainda não executou esta rotina.",
+        // Spec 050: the empty history offers the next step. A routine with simulation saves with its main
+        // button, so there the step is filling the definition, never saving by surprise.
+        emptyAction: simName
+          ? { label: "Preencher a definição", onClick: () => form.node.querySelector("input, select, textarea")?.focus() }
+          : { label: "Executar agora", onClick: () => {
+              const b = form.node.querySelector(".run-button");
+              if (b && !b.disabled) b.click(); else form.node.querySelector("input, select, textarea")?.focus();
+            } },
         onRow: async (x) => { detail.textContent = JSON.stringify(await API.execution(x.id), null, 2); } }));
     }
 
