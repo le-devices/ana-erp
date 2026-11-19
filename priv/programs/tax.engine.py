@@ -17,6 +17,7 @@ No tax, regime or rate is named here: all of it is data (`tax.*` tables), delive
 import datetime
 import hashlib
 import json
+import re
 import time
 import unicodedata
 from decimal import Decimal, ROUND_HALF_UP
@@ -24,7 +25,7 @@ from decimal import Decimal, ROUND_HALF_UP
 from ana_lib.tax import formula as fx
 
 CENT = Decimal("0.01")
-MONEY = ("base", "amount", "withheld", "credit")
+MONEY = ("base", "amount", "withheld", "credit", "charged")   # charged: added to the price ("por fora")
 ENTITIES = ("company", "party", "item", "contract")
 REGISTRY_FIELDS = {          # registry columns every document carries (not tax law: identity and address)
     "company": ("id", "tax_id", "city", "state", "country", "person_kind"),
@@ -109,13 +110,17 @@ def _same(a, b):
 
 
 def specificity(criteria):
-    n, plen = 0, 0
-    for want in (criteria or {}).values():
+    """(criteria naming one entity — a contract, a person, an item —, number of criteria, prefix length): a rule for one
+    contract always beats a general rule of the regime, whatever the number of general criteria."""
+    ids, n, plen = 0, 0, 0
+    for path, want in (criteria or {}).items():
         n += 1
+        if path.endswith((".code", ".id")) and not isinstance(want, dict):
+            ids += 1
         if isinstance(want, dict) and "prefix" in want:
             ps = want["prefix"] if isinstance(want["prefix"], list) else [want["prefix"]]
             plen += min(len(str(p)) for p in ps)
-    return (n, plen)
+    return (ids, n, plen)
 
 
 def _values(want):
@@ -230,14 +235,12 @@ def _field(row, field):
     return fx.dec(v) if isinstance(v, (int, float)) and not isinstance(v, bool) else (fx.dec(v) if _numeric_text(v) else v)
 
 
+_NUMBER = re.compile(r"^-?(0|[1-9][0-9]*)(\.[0-9]+)?$")
+
+
 def _numeric_text(v):
-    if not isinstance(v, str):
-        return False
-    try:
-        Decimal(v)
-        return True
-    except Exception:  # noqa: BLE001
-        return False
+    """'0.6' and '12' are numbers; codes such as '000' or '01' stay text."""
+    return isinstance(v, str) and bool(_NUMBER.match(v))
 
 
 def attributes_of(data, entity, ident, registry_row, day, explicit=None):
@@ -382,12 +385,12 @@ def compute(doc, data, indicator=None):
                 acc["rules"].append(res["rule_id"])
 
     taxes = [doc_results[t["code"]] for t in data.taxes if t["code"] in doc_results]
-    tot = {k: sum((x.get(k, Decimal(0)) for x in taxes), Decimal(0)) for k in ("amount", "withheld", "credit")}
+    tot = {k: sum((x.get(k, Decimal(0)) for x in taxes), Decimal(0)) for k in ("amount", "withheld", "credit", "charged")}
     return {
         "date": day.isoformat(), "total": money(total), "taxes": taxes,
         "items": [{"index": i, "taxes": [{"tax": k, **v} for k, v in res.items()]} for i, res in enumerate(item_results)],
         "totals": {k: money(v) for k, v in tot.items()},
-        "net": money(total - tot["withheld"]),
+        "net": money(total - tot["withheld"] + tot["charged"]),
         "explanation": explanation,
         "rules": [{"id": k, "version": v} for k, v in sorted(used.items())],
         "indicators": {k: v for k, v in memo.items()},
@@ -401,7 +404,7 @@ def _plain(v):
 
 def postings(result, data):
     """Journal lines by accounting role (generic): [(role_target, debit, credit, tax)]. The caller posts the
-    receivable for the net and the revenue for the total."""
+    receivable for the net (total − withheld + charged) and the revenue for the total."""
     roles = {t["code"]: _json(t.get("roles")) for t in data.taxes}
     lines = []
     for t in result["taxes"]:
@@ -417,6 +420,8 @@ def postings(result, data):
             lines.append((need("payable"), Decimal(0), t["amount"], t["tax"]))
         if t.get("withheld"):
             lines.append((need("withheld"), t["withheld"], Decimal(0), t["tax"]))
+        if t.get("charged"):                         # collected from the customer on top of the price
+            lines.append((need("payable"), Decimal(0), t["charged"], t["tax"]))
         if t.get("credit"):
             lines.append((need("credit"), t["credit"], Decimal(0), t["tax"]))
             lines.append((need("credit_offset"), Decimal(0), t["credit"], t["tax"]))
@@ -429,7 +434,7 @@ def explain_text(result):
     for e in result["explanation"]:
         crit = ", ".join(f"{k} = {v}" for k, v in e["criteria"].items()) or "regra geral"
         v = e["values"]
-        parts = [f"{k} {v[k]}" for k in ("base", "rate", "amount", "withheld", "credit") if v.get(k) is not None]
+        parts = [f"{k} {v[k]}" for k in ("base", "rate", "amount", "withheld", "credit", "charged") if v.get(k) is not None]
         where = f"item {e['item'] + 1}" if e["item"] is not None else "documento"
         out.append(f"{e['tax']} ({where}): regra {e['rule_id']} \"{e['rule']}\" porque {crit}; " + ", ".join(parts))
     return out

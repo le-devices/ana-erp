@@ -8026,3 +8026,65 @@ class TestTaxEngine(Base):
         self.assertEqual(ctx.exception.code, "FORBIDDEN")
         self.assertTrue(self.client.call("tax.overview")["taxes"] >= 1)
         self.assertIn("alerts", self.client.call("tax.watch"))
+
+    # ------------------------------------------------------------ phase 3: the reform only as a package (P21)
+    def test_ca_049_07_reform_package_2026_highlighted_2027_charged(self):
+        for pkg in ("br_services", "br_reform"):
+            r = self.client.call("tax.apply_package", package=pkg, reason="reforma tributária (spec 049, fase 3)", confirm=True)
+            self.assertTrue(r["applied"], r)
+            self.assertEqual(r["case_failures"], [], r)
+        doc = {"operation": "sale", "emitter": {"regime": "presumed"}, "recipient": {"person_kind": "company", "regime": "real"},
+               "items": [{"description": "Placa de controle", "amount": "10000.00"}]}
+        r26 = self.client.call("tax.calculate", document={**doc, "date": "2026-11-19"})
+        r27 = self.client.call("tax.calculate", document={**doc, "date": "2027-02-01"})
+        self.assertEqual((r26["totals"]["charged"], r26["net"]), ("0.00", "10000.00"))
+        self.assertEqual((self.amount(r27, "cbs", "charged"), self.amount(r27, "ibs", "charged"), r27["net"]),
+                         ("870.00", "10.00", "10880.00"))
+        kinds = {a["kind"] for a in self.client.call("tax.watch")["alerts"]}
+        self.assertIn("estimated", kinds)                                    # the 2027 reference rate is still an estimate
+
+    def test_ca_049_10_charged_on_top_of_the_project_invoice(self):
+        TestTaxEngine.seq += 1
+        code = f"G{SUFFIX}{self.seq}"
+        self.client.call("projects.save_project", code=code, name="Projeto da reforma", customer=self.customer, manager="admin",
+                         status="active", billing="hourly", tasks=[{"code": "1", "name": "Firmware"}],
+                         team=[{"employee": self.employee, "profile": "HW"}], rates={"HW": "100"})
+        tax = self.new_tax(payable="revenue_tax_payable")
+        self.rule(tax, {"contract.code": code}, [["base", "amount"], ["rate", "0.1"], ["charged", "round(base * rate, 2)"]])
+        self.client.call("projects.log_time", project=code, task="1", hours=10, description="firmware", employee=self.employee,
+                         entry_date=str(datetime.date.today() - datetime.timedelta(days=4)))
+        self.client.call("projects.approve_time", project=code)
+        inv = self.client.call("projects.invoice_project", project=code)
+        self.assertEqual((inv["total"], inv["net_amount"]), ("1000.00", "1100.00"))
+        doc = f"INV-{inv['number']}"
+        self.assertEqual(self.count("finance.bill", f"document = '{doc}' AND amount = 1100"), 1)
+        self.assertEqual(self.scalar("SELECT sum(l.credit)::text FROM finance.journal_line l JOIN finance.journal_entry e "
+                                     f"ON e.id = l.entry_id WHERE e.document = '{doc}' AND l.account = '2.1.7'"), "100.00")
+        self.assertTrue(self.run_program("finance.trial_balance")[1]["result"]["balanced"])
+
+    def test_ca_049_11_credit_on_the_supplier_invoice(self):
+        sup = self.client.call("base.save_party", kind="supplier", name=f"Fornecedor regular {SUFFIX}")["id"]
+        tax = self.new_tax(credit="tax_recoverable", credit_offset="5.1.5")
+        self.rule(tax, {"doc.operation": "purchase", "recipient.id": sup},
+                  [["base", "round(amount / 1.1, 2)"], ["rate", "0.1"], ["credit", "round(base * rate, 2)"]])
+        prod = f"RF{SUFFIX}"
+        self.client.call("base.save_product", code=prod, description=f"Componente da reforma {SUFFIX}", price="30")
+        self.client.call("supply.save_supplier_item", product=prod, supplier=sup, price="10.00", preferred=True)
+        before = self.scalar("SELECT supplier_invoice FROM supply.policy WHERE id = 1")
+        self.client.call("supply.settings", supplier_invoice="match")
+        try:
+            _, rt = new_user("user")
+            q = Ana(URL, token=rt).call("supply.request_purchase", reason="reforma", product=prod, quantity=11)
+            self.client.call("supply.approve_request", request=q["number"])
+            order = self.client.call("supply.create_orders", requests=[q["number"]])["orders"][0]
+            self.client.call("supply.receive", order=order, line=1, quantity=11, price="10")
+            r = self.client.call("supply.register_invoice", order=order, number=f"NFR-{SUFFIX}", amount="110.00")
+            self.assertEqual(r["status"], "accepted")
+            doc = f"NF-NFR-{SUFFIX}-OC-{order}"
+            got = json.loads(self.scalar("SELECT json_agg(json_build_array(l.account, l.debit::text, l.credit::text))::text "
+                                         f"FROM finance.journal_line l JOIN finance.journal_entry e ON e.id = l.entry_id WHERE e.document = '{doc}'"))
+            self.assertTrue({("1.1.10", "10.00", "0.00"), ("5.1.5", "0.00", "10.00")} <= {tuple(x) for x in got}, got)
+            self.assertEqual(self.count("tax.calculation", "doc_kind = 'supplier_invoice'") >= 1, True)
+            self.assertTrue(self.run_program("finance.trial_balance")[1]["result"]["balanced"])
+        finally:
+            self.client.call("supply.settings", supplier_invoice=before)

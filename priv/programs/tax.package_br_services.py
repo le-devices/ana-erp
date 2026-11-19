@@ -11,7 +11,7 @@ withholding rules for services; the company's tax officer validates them before 
 """
 
 NAME = "br_services"
-VERSION = "2026.11.1"
+VERSION = "2026.11.2"
 TITLE = "Serviços no Brasil: Simples Nacional (anexos III e V, fator R), ISS e retenções"
 NOTICE = "Pacote de exemplo do produto — conferir com o contador antes de usar."
 
@@ -102,7 +102,7 @@ RULES = [
          ["withheld", "round(base * rate, 2)"]]},
     {"key": "iss-own", "tax": "iss", "name": "ISS do prestador fora do Simples — alíquota do município",
      "valid_from": "2018-01-01",
-     "criteria": {"emitter.regime": _NOT_SIMPLES},
+     "criteria": {"emitter.regime": _NOT_SIMPLES, "doc.operation": _SERVICE},
      "formulas": [
          ["rate", "table('iss_city', emitter.uf + '/' + emitter.city)"],
          ["base", "amount"],
