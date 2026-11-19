@@ -12,7 +12,7 @@
 -behaviour(gen_server).
 
 -export([start_link/0, note_writes/2, rates/0, culprits/0, culprit_text/0, overview/0, sample_now/0]).
--export([write_table/1, projection/3]).
+-export([write_table/1, projection/3, suggestions/1]).
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2]).
 
 -define(TAB, ana_disk_writes).
@@ -254,7 +254,7 @@ overview(#{samples := Samples}) ->
                     "ORDER BY COALESCE(writes, 0) DESC", []);
         false -> {ok, []}
     end,
-    {ok, [Ck]} = ana_db:rows(
+    {ok, [Ck0]} = ana_db:rows(
         "SELECT checkpoints_timed, checkpoints_req, buffers_checkpoint, buffers_clean, buffers_backend, "
         "  (SELECT stats_reset FROM pg_stat_wal) AS since, "
         "  (SELECT wal_bytes::bigint FROM pg_stat_wal) AS wal_bytes, "
@@ -264,6 +264,7 @@ overview(#{samples := Samples}) ->
         "  current_setting('wal_compression') AS wal_compression, current_setting('log_temp_files') AS log_temp_files, "
         "  current_setting('archive_mode') AS archive_mode, current_setting('archive_timeout') AS archive_timeout "
         "FROM pg_stat_bgwriter", []),
+    Ck = recent_checkpoints(Ck0),
     {ok, Growth} = ana_db:rows(
         "SELECT table_name, (array_agg(bytes ORDER BY day DESC))[1] AS bytes, "
         "  (array_agg(bytes ORDER BY day DESC))[1] - (array_agg(bytes ORDER BY day))[1] AS growth_bytes, "
@@ -343,10 +344,20 @@ archive_short(T) ->
         _ -> false
     end.
 
+%% Checkpoints of the last 7 days (finding d of spec 063): the counters run since the statistics
+%% were last reset, so a configuration fixed long ago would keep being blamed.
+recent_checkpoints(Ck = #{<<"checkpoints_timed">> := T, <<"checkpoints_req">> := R}) ->
+    case ana_db:one("SELECT checkpoints_timed, checkpoints_req FROM ana_system.disk_sample "
+                    "WHERE hour > now() - interval '7 days' AND checkpoints_timed IS NOT NULL ORDER BY hour LIMIT 1", []) of
+        {ok, #{<<"checkpoints_timed">> := T0, <<"checkpoints_req">> := R0}} when T >= T0, R >= R0 ->
+            Ck#{<<"recent_timed">> => T - T0, <<"recent_req">> => R - R0, <<"recent_days">> => 7};
+        _ -> Ck#{<<"recent_timed">> => T, <<"recent_req">> => R, <<"recent_days">> => null}
+    end.
+
 %% Server configuration the ERP suggests and never changes (D5, D6).
 suggestions(Ck) ->
-    Timed = maps:get(<<"checkpoints_timed">>, Ck),
-    Req = maps:get(<<"checkpoints_req">>, Ck),
+    Timed = maps:get(<<"recent_timed">>, Ck),
+    Req = maps:get(<<"recent_req">>, Ck),
     [<<"Mais da metade dos checkpoints foi forçada pelo volume de WAL: aumente max_wal_size para espaçá-los."/utf8>>
      || Req > Timed, Req > 10]
     ++ [<<"log_temp_files está desligado: ligue-o (por exemplo 10MB) para saber quais consultas derramam em arquivos temporários."/utf8>>

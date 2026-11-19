@@ -31,7 +31,7 @@ services:
       ANA_NODE_NAME: ana@ana2.cluster
       <<: *cluster-env
     ports:
-      - "8081:8080"
+      - "${ANA2_PORT:-8081}:8080"
     depends_on:
       db:
         condition: service_healthy
