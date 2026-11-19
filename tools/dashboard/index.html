@@ -75,6 +75,9 @@ tr:hover td { background: var(--wash); }
 .chips button { font: inherit; font-size: 12.5px; border: 1px solid var(--border); background: var(--surface-1); color: var(--text-secondary); border-radius: 999px; padding: 3px 10px; cursor: pointer; }
 .chips button[aria-pressed="true"] { color: var(--text-primary); border-color: var(--series-1); font-weight: 600; }
 ol.queue { margin: 6px 0 0; padding-left: 22px; }
+.jobs { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 190px), 1fr)); gap: 4px 14px; margin: 8px 0 4px; }
+.ci-head { display: flex; flex-wrap: wrap; gap: 6px 12px; align-items: baseline; }
+.ci-head a, ul.plain a { color: inherit; }
 ol.queue li { margin: 4px 0; }
 ol.queue li.done { color: var(--muted); }
 ol.queue li.next { font-weight: 600; }
@@ -96,6 +99,13 @@ details summary { cursor: pointer; color: var(--text-secondary); margin-top: 6px
     <button class="theme" id="theme" type="button" title="Tema claro/escuro">◐ tema</button>
   </header>
   <section class="grid tiles" id="tiles"></section>
+  <section class="grid cards" id="ci-band">
+    <div class="card"><h2>Bateria de testes (GitHub Actions)</h2>
+      <p class="note" id="ci-note">Última rodada e cada suíte; o merge na dev só entra com tudo verde.</p>
+      <div id="ci-latest"></div><ul class="plain" id="ci-runs"></ul></div>
+    <div class="card"><h2>Pedidos de merge abertos</h2>
+      <p class="note">Com a situação da bateria no último commit de cada um.</p><ul class="plain" id="ci-pulls"></ul></div>
+  </section>
   <section class="grid cards">
     <div class="card"><h2>Tarefas ao longo do tempo</h2>
       <p class="note">Tarefas conhecidas (nas listas de tarefas das specs) e concluídas, acumuladas por dia.</p>
@@ -307,6 +317,7 @@ function render(d) {
   $("#queue").replaceChildren(...d.queue.map((q) => el("li", { class: q.done ? "done" : q === next ? "next" : "" },
     (q.done ? "✓ " : q === next ? "▶ " : "") + q.text)));
 
+  renderCI(d.ci);
   renderTable(d);
   const bySpec = Object.fromEntries(d.specs.map((s) => [s.id, s.title]));
   $("#pending").replaceChildren(...d.pending.map((t) => el("li", {}, el("b", { text: t.id }), ` ${t.deferred ? "(adiada) " : ""}`,
@@ -316,6 +327,41 @@ function render(d) {
   const totalLines = Object.values(d.code).reduce((a, b) => a + b, 0);
   $("#code").replaceChildren(...Object.entries(d.code).map(([lang, n]) => el("li", {}, el("b", { text: lang }), ` ${nf.format(n)} linhas`,
     el("span", { class: "bar" }, el("i", { style: `width:${Math.round((n / totalLines) * 100)}%` })))));
+}
+
+// GitHub band: state always shown as icon + word, never color alone.
+const RUN_STATE = {
+  success: ["✓", "verde", "var(--good)"], failure: ["✗", "falhou", "var(--critical)"], cancelled: ["–", "cancelada", "var(--muted)"],
+  skipped: ["–", "pulada", "var(--muted)"], timed_out: ["✗", "estourou o tempo", "var(--critical)"],
+  in_progress: ["●", "rodando", "var(--warning)"], queued: ["●", "na fila", "var(--warning)"], waiting: ["●", "aguardando", "var(--warning)"],
+};
+function runState(x) {
+  const [icon, word, color] = RUN_STATE[x.status === "completed" ? x.conclusion : x.status] || ["?", x.conclusion || x.status || "—", "var(--muted)"];
+  return el("span", { class: "status" }, el("span", { class: "dot", style: `background:${color}`, "aria-hidden": "true" }), `${icon} ${word}`);
+}
+const link = (href, text) => el("a", { href, target: "_blank", rel: "noopener noreferrer", text });
+function renderCI(ci) {
+  const empty = (msg) => [el("li", { class: "sub", text: msg })];
+  if (!ci || !ci.configured || ci.error) {
+    const why = !ci ? "sem dados do GitHub" : ci.error || ci.reason;
+    $("#ci-latest").replaceChildren(el("p", { class: "sub" }, `Bateria indisponível: ${why}. `,
+      !ci || ci.error ? "" : "Crie um token só de leitura (veja tools/dashboard/README.md)."));
+    $("#ci-runs").replaceChildren(); $("#ci-pulls").replaceChildren(...empty("—"));
+    return;
+  }
+  const [last, ...older] = ci.runs;
+  $("#ci-latest").replaceChildren(...(last ? [
+    el("div", { class: "ci-head" }, runState(last), el("b", {}, link(last.url, last.title)),
+      el("span", { class: "sub", text: `${last.branch} @ ${last.sha} · ${new Date(last.started).toLocaleString("pt-BR")}`
+        + (last.minutes != null ? ` · ${last.minutes} min` : "") })),
+    el("div", { class: "jobs" }, ...ci.jobs.map((j) => el("div", {}, runState(j), " ", el("span", { text: j.name.replace(/^suite \((.*)\)$/, "$1") }),
+      j.minutes != null ? el("span", { class: "sub", text: ` ${j.minutes} min` }) : "")))] : [el("p", { class: "sub", text: "Nenhuma rodada ainda." })]));
+  $("#ci-runs").replaceChildren(...older.map((r) => el("li", {}, runState(r), " ", link(r.url, r.title),
+    el("div", { class: "sub", text: `${r.branch} @ ${r.sha} · ${new Date(r.started).toLocaleString("pt-BR")}` }))));
+  $("#ci-pulls").replaceChildren(...(ci.pulls.length ? ci.pulls.map((p) => el("li", {},
+    el("b", {}, link(p.url, `#${p.number}`)), " ", el("span", { text: p.title + (p.draft ? " (rascunho)" : "") }),
+    el("div", { class: "sub" }, `${p.head} → ${p.base} · bateria: `, p.battery ? runState(p.battery) : "ainda não rodou")))
+    : empty("Nenhum pedido aberto.")));
 }
 
 const COLS = [
