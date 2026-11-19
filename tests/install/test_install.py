@@ -92,6 +92,25 @@ class TestInstall(unittest.TestCase):
         r = ctl("restore-test")
         self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
 
+    def test_b2_rf_063_05_archive_window_is_an_installation_parameter(self):
+        """RF-063-05/D10: the WAL archive window (RPO) comes from --archive-minutes and changes with ana-ctl."""
+        def show():
+            r = subprocess.run(["docker", "compose", "--project-directory", DIR, "-f", os.path.join(DIR, "docker-compose.prod.yml"),
+                                "--env-file", os.path.join(DIR, ".env"), "exec", "-T", "db", "psql", "-U", "postgres", "-At",
+                                "-c", "SHOW archive_timeout"], capture_output=True, text=True, timeout=60)
+            return r.stdout.strip()
+        self.assertEqual(env()["ANA_PG_ARCHIVE_TIMEOUT"], "600")             # run.sh installs with --archive-minutes 10
+        self.assertEqual(show(), "10min")
+        self.assertEqual(ctl("archive-minutes", "0").returncode, 2)          # never disables the archive window
+        self.assertEqual(ctl("archive-minutes", "61").returncode, 2)
+        r = ctl("archive-minutes", "15")
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.assertEqual((env()["ANA_PG_ARCHIVE_TIMEOUT"], show()), ("900", "15min"))
+        self.assertEqual(oct(os.stat(os.path.join(DIR, ".env")).st_mode & 0o777), "0o600")
+        self.assertIn("15 min", ctl("archive-minutes").stdout)
+        s, h = http("GET", "/health")
+        self.assertEqual(h["status"], "ok")                                  # the ERP is back after the database restart
+
     def test_c_ca_036_02_upgrade_without_errors(self):
         t = self.token()
         old = env()["ANA_IMAGE"]
