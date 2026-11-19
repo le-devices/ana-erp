@@ -1,6 +1,6 @@
 # 049 — Motor de impostos
 
-Situação: especificada (nov/2026); fase 1 em implementação (19/11/2026), com o Simples Nacional antecipado (D10).
+Situação: fase 1 implementada (19/11/2026), com o Simples Nacional antecipado (D10) e o modelo genérico (D11, P21); próxima: fase 3 (CBS, IBS, IS).
 
 ## Problema
 Hoje só a fatura de projeto calcula imposto (ISS, com alíquota e retenção no
