@@ -365,7 +365,8 @@ ok(text("#ops-main .rows-foot").includes("1.499.998,50"), "total da grade com v�
 ok(d.querySelectorAll("#ops-main .rows-editor tbody tr").length === 2, "botão Adicionar item cria nova linha");
 ok(JSON.parse(d.querySelector("#ops-main input[type=hidden][name=items]").value)[0].price === "1.50", "linhas viajam como lista de itens, decimal sem vírgula");
 
-// Documents open from their row (spec 035): keyboard (Enter) and mouse
+// Documents open from their row (spec 035): keyboard (Enter) and mouse. The customer has an invoiced order.
+await rpc("sales.invoice_order", { number: (await rpc("sales.create_order", { customer: 1, items: [{ product: "FEIJAO-1", quantity: 1 }] })).number });
 await go(w, "#/ops/files/files.my_invoices?customer=1");
 await until(() => d.querySelector("#ops-main tr.row-open"), "invoice rows", jsErrors);
 const invoiceRow = d.querySelector("#ops-main tr.row-open");
