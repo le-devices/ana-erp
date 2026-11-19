@@ -124,6 +124,7 @@ def match_existing(d, parsed, exact_fields):
     keys = {str(k): n for n, k, _ in parsed if k}
     if keys:
         kv = sorted(keys)
+        # ana:lint-ok dynamic_sql — nomes de tabela e coluna vêm da definição fixa da entidade; valores do usuário vão em $n
         for r in ana.sql(f"SELECT t.{d['key']}::text AS k, t.{d['id']}::text AS id FROM {d['table']} t "
                          f"WHERE t.{d['key']}::text = ANY($1::text[])", kv):
             for n, k, _ in parsed:
@@ -143,6 +144,7 @@ def match_existing(d, parsed, exact_fields):
             wanted.setdefault(str(v).strip().lower(), []).append(n)
         if not wanted:
             continue
+        # ana:lint-ok dynamic_sql — nomes de tabela e coluna vêm da definição fixa da entidade; valores do usuário vão em $n
         rows = ana.sql(f"SELECT DISTINCT ON (base.norm({col})) base.norm({col}) AS v, t.{d['id']}::text AS id FROM {d['table']} t "
                        f"WHERE base.norm({col}) IN (SELECT base.norm(x) FROM unnest($1::text[]) x)", list(wanted))
         by_norm = {r["v"]: r["id"] for r in rows}

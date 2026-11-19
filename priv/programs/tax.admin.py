@@ -10,7 +10,7 @@ tax.change. Generic: no tax or regime is named here.
 import copy
 import datetime
 import hashlib
-import importlib
+import importlib  # ana:lint-ok forbidden_import — só import_module de pacotes de regras (tax.package_*)
 import json
 from decimal import Decimal
 
@@ -203,6 +203,7 @@ def load_package(name):
     if not name.replace("_", "").isalnum():
         raise ana.Error("TAX_PACKAGE", "nome de pacote inválido")
     try:
+        # ana:lint-ok dynamic_import — nome validado acima e espaço fixo ana_lib.tax.package_*: só pacotes de regras
         return importlib.import_module(f"ana_lib.tax.package_{name}")
     except ImportError:
         raise ana.Error("TAX_PACKAGE", f"pacote {name} não encontrado (programa tax.package_{name})") from None
