@@ -2,8 +2,11 @@
 # ana:kind library
 """Spec 038 (RF-038-10). Shared by supply.register_invoice and supply.invoices."""
 
+import datetime
+
 import ana
 from ana_lib.finance import banking
+from ana_lib.tax import engine as tax_engine
 
 
 def accept(inv, user):
@@ -19,6 +22,17 @@ def accept(inv, user):
         lines.append([entry, "@purchase_price_variance", 0, -i["difference"]])
     lines.append([entry, "@suppliers", 0, i["amount"]])
     ana.sql_batch("INSERT INTO finance.journal_line (entry_id, account, debit, credit) VALUES ($1, finance.account_for(substr($2, 2)), $3, $4)", lines)
+    # Spec 049 (D7, phase 3): credits of the taxes paid on the purchase, by the rules in force (none → nothing posted).
+    try:
+        calc = tax_engine.calculate({"operation": "purchase", "date": datetime.date.today(), "recipient": i["supplier_id"],
+                                     "items": [{"description": f"nota {i['number']}", "amount": i["amount"]}]})
+    except tax_engine.TaxError as e:
+        raise ana.Error(e.code, f"impostos da nota {i['number']}: {e.message}") from None
+    if calc["postings"]:
+        ana.sql_batch("INSERT INTO finance.journal_line (entry_id, account, debit, credit) VALUES ($1, $2, $3, $4)",
+                      [[entry, tax_engine.account(x["account"]), x["debit"], x["credit"]] for x in calc["postings"]])
+    if calc["taxes"]:
+        tax_engine.save(calc, "supplier_invoice", str(inv))
     bill = ana.sql_value("INSERT INTO finance.bill (kind, party_id, document, due_date, amount, entry_id, account) "
                          "VALUES ('payable', $1, $2, $3, $4, $5, finance.account_for('suppliers')) RETURNING id",
                          i["supplier_id"], doc, i["due_date"], i["amount"], entry)

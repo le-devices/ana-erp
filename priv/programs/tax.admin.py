@@ -60,7 +60,8 @@ def check_rule(rule, data=None):
         raise ana.Error("TAX_FORMULA", e.text()) from None
     names = {n for n, _ in compiled}
     roles = _j(ana.sql_value("SELECT roles FROM tax.tax WHERE code = $1", rule["tax"])) or {}
-    needs = {"amount": ("expense", "payable"), "withheld": ("withheld",), "credit": ("credit", "credit_offset")}
+    needs = {"amount": ("expense", "payable"), "withheld": ("withheld",), "credit": ("credit", "credit_offset"),
+             "charged": ("payable",)}
     for out, rs in needs.items():
         for r in rs:
             if out in names and not roles.get(r):
@@ -83,7 +84,7 @@ def run_case(case, data):
         total = sum((i["amount"] for i in doc["items"]), Decimal(0))
         fixed = {k: fx.dec(v) for k, v in (doc_in.get("indicators") or {}).items()}
         r = engine.compute(doc, data, lambda c: fixed[c] if c in fixed else engine.indicator_value(data, c, day, total))
-        return {"ok": True, "taxes": {t["tax"]: {k: str(t[k]) for k in ("base", "rate", "amount", "withheld", "credit") if k in t}
+        return {"ok": True, "taxes": {t["tax"]: {k: str(t[k]) for k in ("base", "rate", "amount", "withheld", "credit", "charged") if k in t}
                                       for t in r["taxes"]}, "totals": {k: str(v) for k, v in r["totals"].items()}}
     except (engine.TaxError, fx.FormulaError) as e:
         return {"ok": False, "error": getattr(e, "message", str(e))}
@@ -208,7 +209,7 @@ def load_package(name):
 
 
 def package_content(pkg):
-    keys = ("ATTRIBUTES", "INDICATORS", "TAXES", "TABLES", "RULES", "CASES", "CODES")
+    keys = ("ACCOUNTS", "ATTRIBUTES", "INDICATORS", "TAXES", "TABLES", "RULES", "CASES", "CODES")
     content = {k.lower(): getattr(pkg, k, []) for k in keys}
     content["version"] = getattr(pkg, "VERSION", "")
     return content
@@ -290,6 +291,13 @@ def apply_package(name, reason, confirm=False):
 
 def _write_package(pname, content, add, retire, reason):
     user = ana.context.user
+    for a in content.get("accounts", []):      # accounts the package needs; the company's choices are never overwritten
+        ana.sql_exec("INSERT INTO finance.account (code, description, nature, postable, cost_center_policy) "
+                     "VALUES ($1, $2, $3, true, $4) ON CONFLICT DO NOTHING", a["code"], a["description"], a["nature"],
+                     a.get("cost_center_policy", "none"))
+        if a.get("key"):
+            ana.sql_exec("INSERT INTO finance.default_account (key, account, description) VALUES ($1, $2, $3) ON CONFLICT DO NOTHING",
+                         a["key"], a["code"], a.get("key_description") or a["description"])
     for t in content["taxes"]:
         ana.sql_exec("INSERT INTO tax.tax (code, name, sequence, scope, roles, package, updated_by) "
                      "VALUES ($1, $2, $3, $4, $5::text::jsonb, $6, $7) ON CONFLICT (code) DO UPDATE SET name = EXCLUDED.name, "
@@ -383,6 +391,14 @@ def alerts(today=None):
         if abs(v - th) <= margin:
             out.append({"kind": "indicator", "severity": "warning", "target": f"indicator:{code}",
                         "text": f"{w.get('message') or code}: hoje {v} (limite {th})", "value": str(v)})
+    for t in data.tables:                       # estimated values (e.g. a rate still waiting for the law) in use soon
+        d = _j(t.get("data")) or {}
+        if d.get("estimated") and engine.valid_on(t, today) or (d.get("estimated") and t.get("valid_from")
+                                                             and today < engine.as_date(t["valid_from"]) <= horizon):
+            out.append({"kind": "estimated", "severity": "warning", "target": f"table:{t['table_name']}:{t['key']}:{t.get('valid_from')}",
+                        "text": f"tabela {t['table_name']} ({t['key']}, a partir de {engine.as_date(t['valid_from']):%d/%m/%Y}) usa valor "
+                                f"estimado: {d.get('note') or 'confirme o valor oficial'}",
+                        "action": {"program": "tax.import_table", "params": {"table": t["table_name"]}}})
     seen = set()
     for r in data.rules:
         for c in engine.conflicts(r, data.rules):

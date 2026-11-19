@@ -34,7 +34,7 @@ def main(document):
                 chosen, verdict = None, e.message
             for r in sorted(cands, key=lambda r: engine.specificity(r.get("criteria")), reverse=True):
                 rows.append({"item": i + 1, "tributo": t["name"], "regra": f"{r['id']} {r['name']}",
-                             "especificidade": "{} critério(s), prefixo {}".format(*engine.specificity(r.get("criteria"))),
+                             "especificidade": "{} de entidade, {} critério(s), prefixo {}".format(*engine.specificity(r.get("criteria"))),
                              "resultado": "VALE" if chosen and chosen["id"] == r["id"] else (verdict or "menos específica")})
     ana.table(rows, title=f"Regras candidatas em {day:%d/%m/%Y}")
     if not rows:

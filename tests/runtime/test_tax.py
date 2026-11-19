@@ -228,6 +228,90 @@ class Validity(unittest.TestCase):
         self.assertEqual((a25["regime"], a26["regime"], a27["regime"]), ("real", "simples", "presumed"))
 
 
+reform = _load("tax.package_br_reform")
+
+
+def both_packages(extra_tables=()):
+    rules, i = [], 1
+    for pkg in (package, reform):
+        for r in pkg.RULES:
+            rules.append({**r, "id": i, "version": 1, "status": "active"})
+            i += 1
+    attrs = {(a["entity"], a["code"]): a for a in package.ATTRIBUTES + reform.ATTRIBUTES}
+    return engine.Data(taxes=package.TAXES + reform.TAXES, rules=rules, tables=package.TABLES + reform.TABLES + list(extra_tables),
+                       attributes=list(attrs.values()), indicators=package.INDICATORS)
+
+
+class Reform(unittest.TestCase):
+    """Phase 3 (T-049-09, CA-049-07): CBS and IBS of the transition enter only as a package (P21)."""
+
+    def check(self, case, r):
+        by = {t["tax"]: t for t in r["taxes"]}
+        for tax, fields in case["expected"].get("taxes", {}).items():
+            for k, v in fields.items():
+                self.assertEqual(by[tax][k], D(v), (case["key"], tax, k, r["explanation"]))
+        for k, v in case["expected"].get("totals", {}).items():
+            self.assertEqual(r["totals"][k], D(v), (case["key"], k))
+
+    def test_ca_049_07_package_cases(self):
+        for case in reform.CASES:
+            with self.subTest(case=case["key"]):
+                self.check(case, run(case["document"], both_packages()))
+
+    def test_ca_049_07_2026_highlighted_2027_charged(self):
+        doc = dict(reform.CASES[0]["document"])
+        r26 = run(doc, both_packages(), {})
+        r27 = run({**doc, "date": "2027-02-01"}, both_packages(), {})
+        cbs26 = r26["items"][0]["taxes"]
+        out = {t["tax"]: t["outputs"] for t in cbs26}
+        self.assertEqual((out["cbs"]["highlighted"], out["ibs"]["highlighted"]), (D("90.00"), D("10.00")))
+        self.assertEqual((r26["totals"]["charged"], r26["net"]), (D("0.00"), D("10000.00")))
+        self.assertEqual((r27["totals"]["charged"], r27["net"]), (D("880.00"), D("10880.00")))   # added to the price
+        self.assertEqual(out["cbs"]["cst"], "000")
+        lines = engine.postings(r27, both_packages())
+        self.assertEqual(sorted((a, d, c) for a, d, c, _ in lines),
+                         [("revenue_tax_payable", D(0), D("10.00")), ("revenue_tax_payable", D(0), D("870.00"))])
+        r29 = run({**doc, "date": "2029-03-01"}, both_packages(), {})
+        self.assertEqual({t["tax"]: t["charged"] for t in r29["taxes"]}, {"cbs": D("880.00"), "ibs": D("177.00")})
+
+    def test_base_excludes_iss_and_reduced_class(self):
+        tables = [{"table_name": "iss_city", "key": "SP/campinas", "valid_from": "2020-01-01", "value": "0.05"},
+                  {"table_name": "reform_class", "key": "RED60", "valid_from": "2026-01-01", "value": "0",
+                   "data": {"reduction": "0.6", "cst": "200"}}]
+        doc = {"operation": "service_sale", "date": "2027-02-01", "emitter": {"regime": "presumed", "uf": "SP", "city": "campinas"},
+               "recipient": {"person_kind": "individual"},
+               "items": [{"amount": "1000.00", "attributes": {"cclasstrib": "RED60"}}]}
+        r = run(doc, both_packages(tables), {})
+        by = {t["tax"]: t for t in r["taxes"]}
+        self.assertEqual(by["iss"]["amount"], D("50.00"))
+        self.assertEqual(by["cbs"]["base"], D("950.00"))                                  # without the ISS
+        self.assertEqual(by["cbs"]["charged"], D("33.06"))                                # 950 × 8,7% × 40%
+
+    def test_credit_only_from_regular_supplier(self):
+        doc = dict(reform.CASES[3]["document"])
+        self.assertEqual(run(doc, both_packages(), {})["totals"]["credit"], D("88.00"))
+        simples = {**doc, "recipient": {"regime": "simples"}}
+        self.assertEqual(run(simples, both_packages(), {})["totals"]["credit"], D("0.00"))
+        opted = {**doc, "recipient": {"regime": "simples", "reform_option": "regular"}}
+        self.assertEqual(run(opted, both_packages(), {})["totals"]["credit"], D("88.00"))
+
+    def test_rule_for_one_contract_beats_general_rules(self):
+        r_general = {"id": 1, "tax": "t", "name": "geral", "status": "active", "valid_from": "2020-01-01",
+                     "criteria": {"emitter.regime": "real", "doc.operation": "service_sale"}, "formulas": [["amount", "1"]]}
+        r_contract = {"id": 2, "tax": "t", "name": "contrato", "status": "active", "valid_from": "2020-01-01",
+                      "criteria": {"contract.code": "P1", "doc.operation": "service_sale"}, "formulas": [["amount", "2"]]}
+        self.assertEqual(engine.conflicts(r_contract, [r_general]), [])
+        env = {"emitter.regime": "real", "doc.operation": "service_sale", "contract.code": "P1"}
+        self.assertEqual(engine.choose([r_general, r_contract], env, datetime.date(2026, 1, 1))["id"], 2)
+
+    def test_p21_reform_needs_no_migration(self):
+        migrations = sorted(os.listdir(os.path.join(ROOT, "priv", "migrations")))
+        text = "".join(open(os.path.join(ROOT, "priv", "migrations", m), encoding="utf-8").read().lower()
+                       for m in migrations if m > "064")
+        self.assertNotIn("cbs", text)
+        self.assertNotIn("ibs", text)
+
+
 class NoLawInCode(unittest.TestCase):
     """RNF-049-05 (P21): the engine and the language never name a tax, a regime or a rate."""
 

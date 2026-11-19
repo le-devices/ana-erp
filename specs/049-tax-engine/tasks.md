@@ -17,5 +17,7 @@ Pendências menores da fase 1 (fim da fila):
 Fase 2 — tributos sobre mercadorias (depois da fase 3, D10)
 - [ ] T-049-08 ICMS (próprio, ST, DIFAL, FCP), IPI, PIS/COFINS; vendas, compras, notas de fornecedor e devoluções (RF-049-07, 09, CA-049-06)
 
-Fase 3 — reforma tributária (logo após a fase 1, D10)
-- [ ] T-049-09 CBS, IBS e Imposto Seletivo na transição, alíquotas por ano e créditos (RF-049-10, CA-049-07)
+Fase 3 — reforma tributária (logo após a fase 1, D10) — entrou como o pacote `br_reform`, sem migração (P21)
+- [x] T-049-09 CBS, IBS e Imposto Seletivo na transição, alíquotas por ano e créditos (RF-049-10, CA-049-07)
+- [ ] T-049-09b Alíquotas de referência oficiais de CBS e IBS (resolução do Senado) no pacote `br_reform`, no lugar das estimadas
+- [ ] T-049-09c Pagamento dividido (split payment) na conciliação dos recebimentos; vendas de mercadoria e devoluções pelo motor

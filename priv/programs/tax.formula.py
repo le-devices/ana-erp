@@ -23,7 +23,7 @@ FUNCTIONS = {
     "round": (1, 2), "floor": (1, 2), "ceil": (1, 2), "min": (2, 20), "max": (2, 20), "abs": (1, 1),
     "has": (1, 1), "table": (2, 3), "bracket": (4, 4), "indicator": (1, 1), "tax": (2, 2),
 }
-OUTPUTS = ("base", "rate", "amount", "withheld", "credit")
+OUTPUTS = ("base", "rate", "amount", "withheld", "credit", "charged")
 MAX_LENGTH = 2000
 
 _BINOPS = {ast.Add: "+", ast.Sub: "-", ast.Mult: "*", ast.Div: "/"}
@@ -181,8 +181,8 @@ def validate(formulas, paths=None):
             e.formula = name
             raise
         seen.append(name)
-    if "amount" not in seen and "withheld" not in seen and "credit" not in seen:
-        raise FormulaError("a regra precisa de amount, withheld ou credit")
+    if not {"amount", "withheld", "credit", "charged"} & set(seen):
+        raise FormulaError("a regra precisa de amount, withheld, credit ou charged")
     return out
 
 

@@ -126,7 +126,8 @@ def main(project, through=None, payment_days=30):
     result = {"number": inv["number"], "total": total, "service_tax": tax, "withheld": withheld,
               "net_amount": net, "bill": bill, "entry": entry, "lines": len(lines), "pdf": pdf,
               "taxes": [{"tax": t["tax"], "name": t["name"], "amount": t.get("amount", Decimal(0)),
-                         "withheld": t.get("withheld", Decimal(0))} for t in calc["taxes"]],
+                         "withheld": t.get("withheld", Decimal(0)), "charged": t.get("charged", Decimal(0))}
+                        for t in calc["taxes"]],
               "tax_calculation": calc_id}
     ana.extend("after_invoice_project", {**result, "project": p["code"]})
     return result
@@ -153,12 +154,17 @@ def store_pdf(p, number, lines, total, calc, net, payment_days):
     doc.line(50, y, 560, y)
     doc.text(380, y - 16, "Total", bold=True)
     doc.text(480, y - 16, money(total), bold=True)
+    charged = [t for t in calc["taxes"] if t.get("charged")]
+    for t in charged:                                                                        # spec 049: added to the price
+        y -= 14
+        doc.text(300, y - 16, f"{t['name']} (acrescido)")
+        doc.text(480, y - 16, money(t["charged"]))
     retained = [t for t in calc["taxes"] if t.get("withheld")]
     for t in retained:                                                                       # spec 049: one line per tax
         y -= 14
         doc.text(300, y - 16, f"{t['name']} retido")
         doc.text(480, y - 16, money(t["withheld"]))
-    if retained:
+    if retained or charged:
         y -= 14
         doc.text(380, y - 16, "Líquido a pagar", bold=True)
         doc.text(480, y - 16, money(net), bold=True)
