@@ -227,6 +227,16 @@ ok([...d.querySelectorAll("#ops-main .table-box button")].some((b) => b.textCont
   pin.click();
 }
 // Definition with the simulation beside it and the condition builder (RF-020-13/14, CA-020-08/09).
+// The builder lists the facts of an open sales order: the suite creates its own, so it does not depend on
+// data left by other suites (each one starts from a clean database on CI).
+{
+  const tk = (await (await fetch(ANA_URL + "/api/session", { method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ username: "admin", password: PASSWORD }) })).json()).token;
+  const r = await (await fetch(ANA_URL + "/rpc", { method: "POST", headers: { "Content-Type": "application/json", Authorization: "Bearer " + tk },
+    body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "sales.create_order",
+      params: { customer: 1, items: [{ product: "FEIJAO-1", quantity: 1 }] } }) })).json();
+  if (r.error) throw new Error("could not create the sales order for the condition builder: " + JSON.stringify(r.error));
+}
 await go(w, "#/ops/flows/flows.step_condition?flow=sales&step=2&_form=1");
 await until(() => d.querySelector("#ops-main .sim-split .cond-builder") && d.querySelector("#ops-main .cond-line select option[value=total]"), "condition builder", jsErrors);
 {

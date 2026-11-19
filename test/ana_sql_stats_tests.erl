@@ -20,3 +20,18 @@ plan_summary_test() ->
     [Scan] = maps:get(seq_scans, S),
     ?assertEqual(<<"ana_test.x_missing">>, maps:get(table, Scan)),
     ?assertEqual([<<"city">>, <<"name">>], maps:get(columns, Scan)).
+
+%% RF-019-06 with permission by data (spec 009 D10): the row-security terms the database adds to every
+%% statement on base.party are not the statement's filter, so they never reach the index tip.
+plan_summary_ignores_row_security_test() ->
+    F = <<"((party.city = $1) AND ((NOT base.scope_portfolio()) OR (party.kind = 'supplier'::text) OR "
+          "(party.salesperson = current_setting('ana.username'::text, true))))">>,
+    Plan = [#{<<"Plan">> => #{<<"Node Type">> => <<"Seq Scan">>, <<"Relation Name">> => <<"party">>,
+                              <<"Schema">> => <<"base">>, <<"Plan Rows">> => 100, <<"Filter">> => F}}],
+    [Scan] = maps:get(seq_scans, ana_sql_stats:summarize_plan(Plan)),
+    ?assertEqual([<<"city">>], maps:get(columns, Scan)),
+    %% A quoted ' AND ' inside a literal does not split the filter.
+    G = <<"((party.name = 'a AND b'::text) AND (party.city = $1))">>,
+    [Scan2] = maps:get(seq_scans, ana_sql_stats:summarize_plan(
+        [#{<<"Plan">> => #{<<"Node Type">> => <<"Seq Scan">>, <<"Relation Name">> => <<"party">>, <<"Filter">> => G}}])),
+    ?assertEqual([<<"city">>, <<"name">>], maps:get(columns, Scan2)).

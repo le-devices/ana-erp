@@ -54,7 +54,7 @@ detect(Name, Head) ->
                         true ->
                             case text(Head) of
                                 true -> {ok, text_mime(Ext)};
-                                false -> {error, <<"o conteúdo não é texto, como .", Ext/binary, " exige"/utf8>>}
+                                false -> {error, <<"o conteúdo não é texto, como ."/utf8, Ext/binary, " exige"/utf8>>}
                             end;
                         false -> {ok, <<"application/octet-stream">>}   % firmware images, CAD and the like
                     end
