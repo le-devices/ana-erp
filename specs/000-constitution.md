@@ -207,3 +207,33 @@ vivo para quem usa, e **nunca** quando piora algum dos dois primeiros:
   bateria inteira — inclusive caos e alta disponibilidade — continua verde.
 Vale também para o que já está implementado: a spec 062 revisa cada
 subsistema existente com esse critério.
+
+## P21. Legislação é dado, nunca estrutura
+O ANA atende **qualquer empresa, em qualquer regime tributário** (Simples
+Nacional, MEI, lucro presumido, lucro real, imunes e isentas, e os regimes
+que vierem), e uma mudança de lei **nunca** exige mudar tabela, coluna,
+código do núcleo ou programa do produto. Tudo o que a legislação define é
+dado com vigência, entregue em pacotes e aceito pelo responsável tributário:
+- **tributos, regimes e classificações são cadastros**, não listas fixas no
+  código nem colunas: um tributo novo (CBS, IBS, IS), um código novo
+  (cClassTrib, CST, benefício) ou um regime novo entra como dado;
+- **atributos fiscais** de empresa, pessoas, itens e projetos ficam num
+  cadastro de atributos com vigência (o regime da empresa muda de um ano
+  para o outro), não em colunas criadas para cada lei;
+- **cálculos são fórmulas da linguagem fechada** com tabelas de apoio
+  (faixas progressivas, alíquotas por ano, por município, por código); o
+  motor só conhece mecanismos genéricos — faixa, tabela, soma de contas
+  numa janela de meses, arredondamento — nunca o nome de um tributo ou de
+  um regime;
+- **indicadores apurados** (receita dos últimos 12 meses, folha, fator R e
+  os que vierem) são definidos como dado sobre a contabilidade, nunca
+  digitados e nunca programados para um regime;
+- **contabilização e títulos** seguem papéis declarados no tributo
+  (despesa, a recolher, retido, crédito a recuperar), não código por
+  tributo;
+- o critério de aceite é a própria transição da reforma: CBS, IBS e Imposto
+  Seletivo, e cada ano da transição, entram **só com pacotes de regras**,
+  sem migração de banco e sem alterar programa.
+Caso realmente fora da linguagem: um "programa de exceção" declarado na
+regra, executado com limites e registrado — e sinal para ampliar os
+mecanismos genéricos.

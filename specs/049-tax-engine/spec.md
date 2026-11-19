@@ -1,6 +1,6 @@
 # 049 — Motor de impostos
 
-Situação: especificada (nov/2026).
+Situação: fase 1 implementada (19/11/2026), com o Simples Nacional antecipado (D10) e o modelo genérico (D11, P21); próxima: fase 3 (CBS, IBS, IS).
 
 ## Problema
 Hoje só a fatura de projeto calcula imposto (ISS, com alíquota e retenção no
@@ -67,6 +67,31 @@ estados, atividades e benefícios próprios.
   certificado digital) fica fora desta spec (spec futura), mas o resultado do
   motor já traz os campos de que ela precisará.
 
+- **D10 — Simples Nacional na fase 1; reforma logo depois (19/11/2026).**
+  Decisão do dono do produto: o caso de referência (empresa de P&D por
+  hora/homem, a constituir) será do Simples Nacional. A fase 1 passa a incluir
+  o Simples: receita bruta dos últimos 12 meses (RBT12, com a regra de início
+  de atividade), faixas e alíquota efetiva por anexo, repartição do ISS dentro
+  do Simples, **fator R** (folha dos 12 meses ÷ RBT12, anexo V ou III) com
+  acompanhamento mensal e aviso quando se aproxima do limite, e as retenções
+  de quem presta serviço pelo Simples (ISS retido pela alíquota efetiva; as
+  federais normalmente não se aplicam). RBT12 e folha saem da contabilidade
+  (contas configuráveis), nunca digitadas. A fase 3 (CBS, IBS, IS) vem logo
+  após a fase 1, antes das demais; ICMS, ST, DIFAL e IPI ficam na fase 2,
+  depois. A emissão de nota (spec 059) continua fora: o ANA calcula, registra
+  e contabiliza.
+- **D11 — Qualquer empresa, qualquer regime; lei nova é só dado (P21,
+  19/11/2026).** O motor não conhece nenhum tributo nem regime pelo nome:
+  tributos, regimes e códigos são cadastros; atributos fiscais de empresa,
+  pessoas, itens e projetos ficam num cadastro de atributos **com vigência**
+  (sem colunas por lei); critérios de regra apontam para qualquer atributo do
+  documento; fórmulas usam só mecanismos genéricos (tabela, faixa
+  progressiva, indicador apurado, arredondamento); indicadores (RBT12, folha,
+  fator R…) são definidos como dado sobre a contabilidade; contabilização e
+  títulos seguem papéis declarados no tributo. O Simples, as retenções e a
+  reforma inteira chegam como pacotes de regras. Teste de aceite: a fase 3
+  (CBS, IBS, IS) entra sem migração e sem mudar programa.
+
 ## Requisitos funcionais
 - **RF-049-01** Serviço de cálculo (D1) com resultado por item e total e a
   explicação das regras aplicadas.
@@ -82,10 +107,11 @@ estados, atividades e benefícios próprios.
 - **RF-049-07** Integração com vendas, projetos, compras, notas de
   fornecedor, devoluções, contabilidade e títulos (D7); migração do ISS dos
   projetos.
-- **RF-049-08** Fase 1 (D8): ISS por município e retenções federais e
-  municipais com mínimos e responsabilidade.
-- **RF-049-09** Fase 2 (D8): ICMS (próprio, ST, DIFAL, FCP), IPI, PIS/COFINS,
-  Simples Nacional.
+- **RF-049-08** Fase 1 (D8, D10): ISS por município e retenções federais e
+  municipais com mínimos e responsabilidade; Simples Nacional (RBT12, faixas,
+  alíquota efetiva, anexos, repartição do ISS, fator R com aviso).
+- **RF-049-09** Fase 2 (D8): ICMS (próprio, ST, DIFAL, FCP), IPI, PIS/COFINS
+  (o Simples Nacional foi antecipado para a fase 1, D10).
 - **RF-049-10** Fase 3 (D8): CBS, IBS e Imposto Seletivo na transição.
 - **RF-049-11** Registro: cada cálculo guardado com o documento (entrada,
   regras e versões usadas, resultado) — recalcular uma fatura antiga dá o
@@ -101,6 +127,9 @@ estados, atividades e benefícios próprios.
   alteração tem autor, motivo e casos de teste executados registrados.
 - **RNF-049-04** Nenhum cálculo de imposto fora do motor (verificação
   automática no código dos programas do produto).
+- **RNF-049-05** (D11, P21) O código do motor e dos programas não contém
+  nome de tributo, regime ou alíquota: verificação automática; tributos,
+  regimes, atributos, indicadores e regras são dados.
 
 ## Critérios de aceite
 - **CA-049-01** Fatura de serviço para tomador com retenção: ISS, IRRF e
@@ -114,6 +143,16 @@ estados, atividades e benefícios próprios.
   diferença e exige confirmação; sem casos afetados, ativa direto.
 - **CA-049-05** Fórmula com código livre ou função desconhecida é recusada ao
   salvar.
+- **CA-049-08** (D10) Empresa do Simples com serviço de P&D: com folha de 12
+  meses ≥ 28% da RBT12 a fatura usa o anexo III, abaixo usa o anexo V, com a
+  alíquota efetiva da faixa; o ISS retido pelo tomador usa a parcela do ISS na
+  alíquota efetiva; nenhuma retenção federal; no primeiro ano a RBT12 segue a
+  regra de início de atividade. Fator R a menos de 2 pontos do limite gera
+  aviso.
+- **CA-049-09** (D11) Um tributo novo com regra, tabela de alíquotas por ano,
+  atributo novo de item e conta própria é criado e calculado numa fatura só
+  por cadastro (ou pacote), sem migração e sem mudar programa; uma empresa
+  que muda de regime numa data calcula pelo regime de cada data.
 - **CA-049-06** (fase 2) Venda interestadual para não contribuinte calcula
   ICMS com DIFAL e FCP conforme as tabelas da UF de destino.
 - **CA-049-07** (fase 3) Um documento de 2027 traz CBS e IBS nas alíquotas de

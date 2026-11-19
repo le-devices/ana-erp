@@ -53,7 +53,9 @@ routines() ->
       <<"Faturamento mensal de projetos: horas, despesas refaturáveis e marcos concluídos até o fim do mês anterior."/utf8>>},
      {<<"estoque.reposicao">>, <<"supply.suggest_replenishment">>,
       #{<<"create">> => true}, <<"30 5 * * 1-5">>,
-      <<"Reposição de estoque: abaixo do ponto de pedido vira solicitação de compra (segue a alçada de aprovação)."/utf8>>}].
+      <<"Reposição de estoque: abaixo do ponto de pedido vira solicitação de compra (segue a alçada de aprovação)."/utf8>>},
+     {<<"impostos.vigilancia">>, <<"tax.watch">>, #{}, <<"0 6 * * 1-5">>,
+      <<"Vigilância fiscal (spec 049): pacote de regras não aplicado, vigência terminando sem regra seguinte, indicador perto do limite (fator R) e regras em conflito."/utf8>>}].
 
 ensure_routines() ->
     case ana_db:one("SELECT username FROM ana_system.app_user WHERE role = 'admin' AND active AND kind <> 'robot' "

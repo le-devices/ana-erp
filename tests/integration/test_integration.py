@@ -7852,3 +7852,177 @@ class TestDiskEndurance(Base):
             self.assertIn(prog, msg)
         finally:
             psql(f"DROP TABLE IF EXISTS {table}")
+
+
+# ---------------------------------------------------------------- spec 049
+class TestTaxEngine(Base):
+    """Spec 049, phase 1 (D10 Simples, D11 legislation is data). Each test uses its own taxes, attributes and
+    contracts, so the invoices checked by other suites never change."""
+
+    @classmethod
+    def setUpClass(cls):
+        super().setUpClass()
+        c = cls.client
+        cls.s = SUFFIX[-6:]
+        cls.employee = c.call("projects.save_employee", name=f"Engenheira fiscal {SUFFIX}", profile="HW",
+                              hourly_cost="90")["id"]
+        cls.customer = c.call("base.save_party", name=f"Tomador fiscal {SUFFIX}")["id"]
+        cls.seq = 0
+
+    def err(self, function, **params):
+        with self.assertRaises(AnaRemoteError) as ctx:
+            self.client.call(function, **params)
+        return ctx.exception
+
+    def new_tax(self, scope="item", **roles):
+        TestTaxEngine.seq += 1
+        code = f"t{self.s}{self.seq}"
+        self.client.call("tax.save_tax", code=code, name=f"Tributo de teste {self.seq}", sequence=900 + self.seq,
+                         scope=scope, roles=roles or {"expense": "tax_on_revenue", "payable": "revenue_tax_payable"})
+        return code
+
+    def new_attr(self, entity="item"):
+        TestTaxEngine.seq += 1
+        code = f"a{self.s}{self.seq}"
+        self.client.call("tax.save_attribute", entity=entity, code=code, description="atributo de teste")
+        return code
+
+    def rule(self, tax, criteria, formulas, valid_from="2020-01-01", activate=True):
+        r = self.client.call("tax.save_rule", tax=tax, name=f"regra {tax}", valid_from=valid_from,
+                             criteria=criteria, formulas=formulas)["rule"]
+        if activate:
+            a = self.client.call("tax.activate_rule", rule=r, reason="teste da spec 049", confirm=True)
+            self.assertTrue(a["activated"], a)
+        return r
+
+    def amount(self, result, tax, field="amount"):
+        return next((t.get(field) for t in result["taxes"] if t["tax"] == tax), None)
+
+    def test_ca_049_08_package_applies_and_its_cases_confer(self):
+        r = self.client.call("tax.apply_package", package="br_services", reason="teste da spec 049", confirm=True)
+        self.assertTrue(r["applied"], r)
+        self.assertEqual(r["case_failures"], [], r)
+        self.assertGreaterEqual(self.count("tax.rule", "package = 'br_services' AND status = 'active'"), 7)
+        again = self.client.call("tax.apply_package", package="br_services", reason="de novo")
+        self.assertTrue(again["applied"] and again["rules_new"] == 0, again)                 # idempotent, no differences
+        doc = {"operation": "service_sale", "date": "2026-11-19", "emitter": {"regime": "simples"},
+               "recipient": {"person_kind": "company", "regime": "real"},
+               "items": [{"description": "Horas de P&D", "quantity": 10, "unit_price": "1000.00",
+                          "attributes": {"simples_annex": "fator_r"}}]}
+        iii = self.client.call("tax.calculate", document={**doc, "indicators": {"rbt12": "300000", "payroll12": "90000",
+                                                                               "fator_r": "0.3"}})
+        v = self.client.call("tax.calculate", document={**doc, "indicators": {"rbt12": "300000", "payroll12": "60000",
+                                                                             "fator_r": "0.2"}})
+        self.assertEqual((self.amount(iii, "simples"), self.amount(v, "simples")), ("808.00", "1650.00"))
+        self.assertEqual(iii["totals"]["withheld"], "0.00")                                  # no federal withholding
+        self.assertTrue(any("simples" in e["tax"] for e in iii["explanation"]))
+
+    def test_ca_049_05_free_code_is_refused_when_saved(self):
+        tax = self.new_tax()
+        for formulas in ([["amount", "__import__('os').system('id')"]], [["amount", "mystery(1)"]],
+                         [["amount", "item.x.__class__"]], [["base", "amount"]]):
+            e = self.err("tax.save_rule", tax=tax, name="maliciosa", valid_from="2020-01-01", formulas=formulas)
+            self.assertIn(e.code, ("TAX_FORMULA", "TAX_CRITERIA"), formulas)
+
+    def test_ca_049_03_tie_is_refused_on_activation(self):
+        tax, attr = self.new_tax(), self.new_attr()
+        self.rule(tax, {f"item.{attr}": "A"}, [["amount", "round(amount * 0.01, 2)"]])
+        r2 = self.rule(tax, {f"item.{attr}": ["A", "B"]}, [["amount", "round(amount * 0.02, 2)"]], activate=False)
+        e = self.err("tax.activate_rule", rule=r2, reason="teste", confirm=True)
+        self.assertEqual(e.code, "TAX_RULE_CONFLICT")
+        r3 = self.rule(tax, {f"item.{attr}": "B"}, [["amount", "round(amount * 0.03, 2)"]], activate=False)
+        self.assertTrue(self.client.call("tax.activate_rule", rule=r3, reason="sem conflito")["activated"])
+
+    def test_ca_049_02_04_new_validity_cases_and_reproduction(self):
+        tax, attr = self.new_tax(), self.new_attr()
+        r1 = self.rule(tax, {f"item.{attr}": "A"}, [["base", "amount"], ["rate", "0.01"], ["amount", "round(base * rate, 2)"]])
+        doc = {"operation": "x", "items": [{"amount": "1000.00", "attributes": {attr: "A"}}]}
+        case = self.client.call("tax.save_case", name=f"Caso {tax}", document=doc,
+                                expected={"taxes": {tax: {"amount": "10.00"}}})["case"]
+        today = datetime.date.today()
+        r2 = self.client.call("tax.copy_rule", rule=r1, valid_from=str(today),
+                              formulas=[["base", "amount"], ["rate", "0.02"], ["amount", "round(base * rate, 2)"]])["rule"]
+        a = self.client.call("tax.activate_rule", rule=r2, reason="nova alíquota")
+        self.assertFalse(a["activated"])                                                     # CA-049-04: the case changes
+        self.assertEqual([d["case"] for d in a["differences"]], [case])
+        a = self.client.call("tax.activate_rule", rule=r2, reason="nova alíquota", confirm=True)
+        self.assertTrue(a["activated"], a)
+        self.assertEqual(self.scalar(f"SELECT valid_to::text FROM tax.rule WHERE id = {r1}"), str(today - datetime.timedelta(days=1)))
+        future = str(today + datetime.timedelta(days=30))
+        r3 = self.client.call("tax.copy_rule", rule=r2, valid_from=future,
+                              formulas=[["base", "amount"], ["rate", "0.03"], ["amount", "round(base * rate, 2)"]])["rule"]
+        self.client.call("tax.save_case", case=case, name=f"Caso {tax}", document=doc,
+                         expected={"taxes": {tax: {"amount": "20.00"}}})
+        self.assertTrue(self.client.call("tax.activate_rule", rule=r3, reason="lei futura")["activated"])   # nothing changes today
+        calc = lambda day: self.amount(self.client.call("tax.calculate", document={**doc, "date": day}), tax)
+        self.assertEqual((calc(str(today - datetime.timedelta(days=1))), calc(str(today)), calc(future)),
+                         ("10.00", "20.00", "30.00"))                                       # CA-049-02
+        sim = self.client.call("tax.simulate", on=future, document=doc)
+        self.assertEqual(self.amount(sim, tax), "30.00")
+        self.client.call("tax.save_case", case=case, name=f"Caso {tax}", document=doc, active=False)
+        e = self.err("tax.save_rule", rule=r2, formulas=[["amount", "1"]])
+        self.assertEqual(e.code, "TAX_RULE_ACTIVE")                                          # an active rule never changes
+
+    def test_ca_049_09_new_tax_attribute_table_and_validity_only_by_data(self):
+        tax, attr = self.new_tax(), self.new_attr("party")
+        tbl = f"rate_{self.s}"
+        nxt = datetime.date.today().year + 1
+        self.client.call("tax.import_table", table=tbl, rehearse=False,
+                         csv=f"key;valid_from;valid_to;value\nx;2020-01-01;{nxt - 1}-12-31;0.009\nx;{nxt}-01-01;;0.088")
+        self.rule(tax, {f"recipient.{attr}": "sim"}, [["rate", f"table('{tbl}', 'x')"], ["base", "amount"],
+                                                      ["amount", "round(base * rate, 2)"]])
+        later = datetime.date(nxt, 3, 1)
+        self.client.call("tax.set_attribute", attribute=f"party.{attr}", target=str(self.customer), value="sim",
+                         valid_from=str(later))
+        doc = {"operation": "service_sale", "recipient": self.customer, "items": [{"amount": "1000.00"}]}
+        now = self.client.call("tax.calculate", document={**doc, "date": str(datetime.date.today())})
+        then = self.client.call("tax.calculate", document={**doc, "date": str(later)})
+        self.assertIsNone(self.amount(now, tax))                                             # attribute not yet valid
+        self.assertEqual(self.amount(then, tax), "88.00")                                    # next year's rate
+
+    def test_ca_049_01_project_invoice_withholdings_titles_and_accounts(self):
+        TestTaxEngine.seq += 1
+        code = f"F{SUFFIX}{self.seq}"
+        self.client.call("projects.save_project", code=code, name="Projeto fiscal", customer=self.customer, manager="admin",
+                         status="active", billing="hourly", tasks=[{"code": "1", "name": "Firmware"}],
+                         team=[{"employee": self.employee, "profile": "HW"}], rates={"HW": "200"},
+                         service_tax_rate="0.05", service_tax_withheld=True)
+        irrf = self.new_tax("document", withheld="federal_withheld")
+        self.rule(irrf, {"contract.code": code}, [["base", "amount"], ["rate", "0.015"], ["value", "round(base * rate, 2)"],
+                                                  ["applies", "value > 10"], ["withheld", "value"]])
+        self.client.call("projects.log_time", project=code, task="1", hours=10, description="firmware", employee=self.employee,
+                         entry_date=str(datetime.date.today() - datetime.timedelta(days=3)))
+        self.client.call("projects.approve_time", project=code)
+        inv = self.client.call("projects.invoice_project", project=code)
+        taxes = {t["tax"]: t for t in inv["taxes"]}
+        self.assertEqual(inv["total"], "2000.00")
+        self.assertEqual((taxes["iss"]["amount"], taxes["iss"]["withheld"], taxes[irrf]["withheld"]), ("100.00", "100.00", "30.00"))
+        self.assertEqual(inv["net_amount"], "1870.00")
+        doc = f"INV-{inv['number']}"
+        self.assertEqual(self.count("finance.bill", f"document = '{doc}' AND amount = 1870"), 1)            # title by the net
+        lines = {(r[0], r[1], r[2]) for r in json.loads(self.scalar(
+            "SELECT json_agg(json_build_array(l.account, l.debit::text, l.credit::text))::text FROM finance.journal_line l "
+            f"JOIN finance.journal_entry e ON e.id = l.entry_id WHERE e.document = '{doc}'"))}
+        self.assertTrue({("1.1.2", "1870.00", "0.00"), ("4.1.2", "0.00", "2000.00"), ("4.9.1", "100.00", "0.00"),
+                         ("2.1.5", "0.00", "100.00"), ("2.1.5", "100.00", "0.00"), ("1.1.9", "30.00", "0.00")} <= lines, lines)
+        self.assertTrue(self.run_program("finance.trial_balance")[1]["result"]["balanced"])
+        calc = self.scalar(f"SELECT tax_calculation_id FROM projects.invoice WHERE number = {inv['number']}")
+        self.assertTrue(self.client.call("tax.recalculate", calculation=int(calc))["same"])                # RF-049-11
+
+    def test_rnf_049_01_two_hundred_items_fast(self):
+        tax, attr = self.new_tax(), self.new_attr()
+        self.rule(tax, {f"item.{attr}": "A"}, [["base", "amount"], ["rate", "0.0123"], ["amount", "round(base * rate, 2)"]])
+        doc = {"operation": "x", "items": [{"quantity": 1 + i % 7, "unit_price": "12.34", "attributes": {attr: "A"}}
+                                           for i in range(200)]}
+        self.client.call("tax.calculate", document=doc)                                               # warms the cache
+        r = self.client.call("tax.calculate", document=doc)
+        self.assertEqual(len(r["items"]), 200)
+        self.assertLess(r["elapsed_ms"], 300, r["elapsed_ms"])
+
+    def test_rnf_049_03_only_tax_officers_change_rules(self):
+        user = Ana(URL, token=new_user("user")[1])
+        with self.assertRaises(AnaRemoteError) as ctx:
+            user.call("tax.save_tax", code=f"z{self.s}", name="Proibido")
+        self.assertEqual(ctx.exception.code, "FORBIDDEN")
+        self.assertTrue(self.client.call("tax.overview")["taxes"] >= 1)
+        self.assertIn("alerts", self.client.call("tax.watch"))

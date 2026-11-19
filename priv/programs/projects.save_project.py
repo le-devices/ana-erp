@@ -15,6 +15,7 @@ Example:
 from decimal import Decimal
 
 from ana_lib.projects import access
+from ana_lib.tax import admin as tax_admin
 
 PARAMS = {
     "code": {"type": "str", "required": True, "label": "código"},
@@ -70,6 +71,10 @@ def main(code, tasks=(), team=(), rates=None, customer=None, **fields):
                      "description = COALESCE($13, description), cost_center = COALESCE($14, cost_center) WHERE id = $1",
                      project_id, *[fields.get(c) for c in COLUMNS])
         created = False
+    if fields.get("service_tax_rate") is not None or fields.get("service_tax_withheld") is not None:
+        # Spec 049 (D11): the rate typed on the project becomes a rule of this contract in the tax engine.
+        cur = ana.sql_one("SELECT service_tax_rate, service_tax_withheld FROM projects.project WHERE id = $1", project_id)
+        tax_admin.contract_rate(code, cur["service_tax_rate"], cur["service_tax_withheld"])
 
     if tasks:
         ana.sql_batch(
