@@ -27,3 +27,13 @@ note_writes_test() ->
                                           {<<"h1">>, <<"UPDATE t.x SET a = 1">>, 1, 0, 0, 3}]),
     ?assertEqual([{{w, <<"p.a">>, <<"t.x">>}, 8}], ets:lookup(ana_disk_writes, {w, <<"p.a">>, <<"t.x">>})),
     ets:delete(ana_disk_writes).
+
+%% Finding (d): the advice about forced checkpoints looks at the last days, not at the counters
+%% accumulated since the statistics were reset.
+checkpoint_advice_test_() ->
+    Ck = fun(T, R) -> #{<<"recent_timed">> => T, <<"recent_req">> => R, <<"log_temp_files">> => <<"10MB">>,
+                        <<"wal_compression">> => <<"lz4">>, <<"archive_mode">> => <<"off">>, <<"archive_timeout">> => <<"0">>} end,
+    Forced = fun(S) -> lists:any(fun(X) -> binary:match(X, <<"max_wal_size">>) =/= nomatch end, S) end,
+    [?_assert(Forced(ana_disk:suggestions(Ck(5, 40)))),
+     ?_assertNot(Forced(ana_disk:suggestions(Ck(600, 16)))),
+     ?_assertNot(Forced(ana_disk:suggestions(Ck(3, 8))))].

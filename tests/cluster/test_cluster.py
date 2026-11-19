@@ -12,8 +12,8 @@ import unittest
 import urllib.error
 import urllib.request
 
-NODE1 = "http://localhost:8080"
-NODE2 = "http://localhost:8081"
+NODE1 = "http://localhost:" + os.environ.get("ANA_PORT", "8080")   # ports configurable: the host may use them
+NODE2 = "http://localhost:" + os.environ.get("ANA2_PORT", "8081")
 COOKIE = os.environ.get("ANA_TEST_COOKIE", "ana-cluster-test-cookie")
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 COMPOSE = ["docker", "compose", "-f", os.path.join(ROOT, "docker-compose.yml"),

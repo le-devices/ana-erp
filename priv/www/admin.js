@@ -458,7 +458,7 @@
         { label: "Uso", value: (a) => el("div", {}, el("div", { text: a.description }), el("code", { class: "muted", text: a.key })) },
         { label: "Conta atual", value: (a) => `${a.account} — ${a.account_description}` },
         { label: "Nova conta", value: (a) => {
-            const input = el("input", { value: a.account, placeholder: "ex.: 1.1.2" });
+            const input = el("input", { value: a.account, placeholder: "ex.: 1.1.2", "aria-label": `Nova conta para ${a.description}` });
             return el("div", { class: "row-buttons" }, input, el("button", { text: "Salvar", onclick: () => guard(async () => {
               await API.admin.saveDefaultAccount(a.key, input.value.trim());
               toast("Conta padrão atualizada.");

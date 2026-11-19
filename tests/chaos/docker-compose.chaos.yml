@@ -15,5 +15,5 @@ services:
     volumes:
       - ./tests/chaos/haproxy.cfg:/usr/local/etc/haproxy/haproxy.cfg:ro
     ports:
-      - "8090:8090"
+      - "${ANA_LB_PORT:-8090}:8090"
     depends_on: [ana, ana2]

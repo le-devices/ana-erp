@@ -21,6 +21,7 @@
 -define(MAGIC, <<"ANADC1\n">>).
 -define(CHUNK, 1048576).
 -define(FETCH, 1000).
+-define(BATCH, 500).
 -define(SUM_COLUMNS, [<<"amount">>, <<"total">>, <<"quantity">>, <<"debit">>, <<"credit">>, <<"price">>, <<"hours">>]).
 
 business_schemas() -> ?SCHEMAS.
@@ -106,13 +107,19 @@ do_export(Id, Key) ->
         erlang:raise(C, R, St)
     end.
 
-export_table(C, #{name := T, columns := Cols}, Rules, W0) ->
+export_table(C, Table = #{name := T, columns := Cols}, Rules, W0) ->
     Kinds = maps:from_list([{N, K} || #{name := N, type := Ty} <- Cols,
                                       K <- [ana_mask:kind_for(T, N, Ty, Rules)], K =/= <<"keep">>]),
     Names = [N || #{name := N} <- Cols],
     W1 = line(W0, #{<<"table">> => T, <<"columns">> => Names, <<"masked">> => Kinds}),
     Q = quote(T),
-    {ok, [], []} = epgsql:squery(C, ["DECLARE ana_copy NO SCROLL CURSOR FOR SELECT to_jsonb(t)::text FROM ", Q, " t"]),
+    %% A table pointing to itself leaves in key order: parents usually come before their rows, so
+    %% the load keeps almost nothing aside (spec 063).
+    Order = case Table of
+        #{self := [_ | _], pk := [_ | _] = Pk} -> [" ORDER BY ", lists:join(", ", [["t.", qi(K)] || K <- Pk])];
+        _ -> []
+    end,
+    {ok, [], []} = epgsql:squery(C, ["DECLARE ana_copy NO SCROLL CURSOR FOR SELECT to_jsonb(t)::text FROM ", Q, " t", Order]),
     Key = maps:get(key, W1),
     {W2, N} = fetch_loop(C, Names, Kinds, Key, W1, 0),
     _ = epgsql:squery(C, "CLOSE ana_copy"),
@@ -278,7 +285,6 @@ load(C, R0, Header, Opts) ->
     _ = Truncate =/= [] andalso ok =:= sq(C, ["TRUNCATE ", lists:join(", ", Truncate)]),
     _ = [ok = sq(C, ["DELETE FROM ", quote(N), " t WHERE NOT EXISTS (SELECT 1 FROM ana_system.app_user u WHERE u.party_id = t.id)"])
          || N <- Kept, N =:= <<"base.party">>],
-    ok = sq(C, "CREATE TEMP TABLE ana_stage (r jsonb) ON COMMIT DROP"),
     {Loaded, Manifest} = load_sections(C, R0, ByName, Kept, [], undefined),
     _ = [fill(C, F) || #{fixes := Fs} <- Loaded, F <- Fs],
     _ = [setval(C, T) || T <- Tables],
@@ -296,6 +302,9 @@ load(C, R0, Header, Opts) ->
         {[], false} -> {ok, Res}
     end.
 
+%% Disk endurance (spec 063, finding b): rows go straight from the file into their table, 500 at a
+%% time; there is no staging table (it spilled ~440 MB of temporary writes per copy). Only the few
+%% values that must wait (a cycle, a row pointing to a row not loaded yet) are kept aside.
 load_sections(C, R, ByName, Kept, Acc, Cur) ->
     case next(R) of
         eof -> throw({abort, <<"arquivo da cópia sem manifesto"/utf8>>});
@@ -303,64 +312,122 @@ load_sections(C, R, ByName, Kept, Acc, Cur) ->
         {#{<<"table">> := T, <<"columns">> := Cols}, R2} ->
             case maps:get(T, ByName, undefined) of
                 undefined -> throw({abort, <<"tabela da cópia não existe aqui (versões diferentes?): "/utf8, T/binary>>});
-                _ -> ok = sq(C, "TRUNCATE ana_stage"), load_sections(C, R2, ByName, Kept, Acc, {T, Cols, [], 0})
+                Info -> load_sections(C, R2, ByName, Kept, Acc, {plan(Info, Cols, lists:member(T, Kept)), [], [], 0, #{}})
             end;
         {#{<<"r">> := Row}, R2} ->
-            {T, Cols, Batch, N} = Cur,
+            {Plan, Batch, Keys, Len, Got} = Cur,
             Batch2 = [iolist_to_binary(json:encode(Row)) | Batch],
-            case length(Batch2) >= 500 of
-                true -> ok = stage(C, Batch2), load_sections(C, R2, ByName, Kept, Acc, {T, Cols, [], N + 500});
-                false -> load_sections(C, R2, ByName, Kept, Acc, {T, Cols, Batch2, N})
+            Keys2 = case Plan of
+                #{batch_key := undefined} -> Keys;
+                #{batch_key := K} -> [key_text(maps:get(K, Row, null)) | Keys]
+            end,
+            case Len + 1 >= ?BATCH of
+                true -> load_sections(C, R2, ByName, Kept, Acc,
+                                      {Plan, [], [], 0, insert_batch(C, Plan, Batch2, Keys2, Len + 1, Got)});
+                false -> load_sections(C, R2, ByName, Kept, Acc, {Plan, Batch2, Keys2, Len + 1, Got})
             end;
         {#{<<"end">> := T, <<"rows">> := Rows}, R2} ->
-            {T, Cols, Batch, _} = Cur,
-            ok = stage(C, Batch),
-            Info = insert_table(C, maps:get(T, ByName), Cols, lists:member(T, Kept)),
-            load_sections(C, R2, ByName, Kept, [Info#{expected => Rows} | Acc], undefined);
+            {Plan = #{pk := Pk}, Batch, Keys, Len, Got0} = Cur,
+            Got = insert_batch(C, Plan, Batch, Keys, Len, Got0),
+            Info = #{table => T, rows => maps:get(rows, Got, 0), skipped => maps:get(skipped, Got, 0),
+                     fixes => [{T, Col, Pk} || Col <- maps:get(fixes, Got, [])], expected => Rows},
+            load_sections(C, R2, ByName, Kept, [Info | Acc], undefined);
         {_, R2} -> load_sections(C, R2, ByName, Kept, Acc, Cur)
     end.
 
-stage(_, []) -> ok;
-stage(C, Batch) ->
-    {ok, _} = ana_db:query(C, "INSERT INTO ana_stage (r) SELECT x::jsonb FROM unnest($1::text[]) AS x", [Batch]),
-    ok.
-
-insert_table(C, #{name := T, columns := TCols, external := Ext, pk := Pk, deferred := Deferred}, FileCols, Upsert) ->
+%% The statements for one table, built once.
+%% - a column breaking a cycle is loaded empty and filled at the end (fill/2);
+%% - a reference to the same table is loaded only when that row is already in, else filled at the end;
+%% - a reference to a system table missing here is emptied when allowed, else the row is skipped (counted).
+plan(#{name := T, columns := TCols, external := Ext, self := Self, pk := Pk, deferred := Deferred}, FileCols, Upsert) ->
     Here = [N || #{name := N} <- TCols],
     Cols = [N || N <- FileCols, lists:member(N, Here)],
-    Fixes = [defer(C, T, Col, Pk) || Col <- Deferred, lists:member(Col, Cols), Pk =/= []],
-    %% References to system tables (e.g. a connector) that do not exist here: emptied when the
-    %% column allows it, otherwise the row is skipped (and counted).
-    Skipped = lists:sum([fix_external(C, X) || X <- Ext, lists:member(maps:get(column, X), Cols)]),
+    %% A row pointing to a row of the same batch is fine: PostgreSQL checks references at the end of
+    %% the statement, when the whole batch is in. The batch's keys go along as $2.
+    BatchKey = case lists:usort([RC || {Col, RC} <- Self, lists:member(Col, Cols), not lists:member(Col, Deferred)]) of
+        [K] when Pk =/= [] -> K;
+        _ -> undefined
+    end,
+    BatchCheck = fun(Col) ->
+        case BatchKey of
+            undefined -> [];
+            _ -> [" AND NOT (p.", qi(Col), "::text = ANY($2::text[]))"]
+        end
+    end,
+    Later = case Pk of
+        [] -> [];
+        _ -> [{Col, always} || Col <- Deferred, lists:member(Col, Cols)] ++
+             [{Col, [missing(Col, quote(T), RC), BatchCheck(Col)]}
+              || {Col, RC} <- Self, lists:member(Col, Cols), not lists:member(Col, Deferred)]
+    end,
+    ExtIn = [X || X = #{column := Col} <- Ext, lists:member(Col, Cols), not lists:keymember(Col, 1, Later)],
+    Expr = fun(Col) ->
+        case {lists:keyfind(Col, 1, Later), [X || X = #{column := Cx, nullable := true} <- ExtIn, Cx =:= Col]} of
+            {{_, always}, _} -> "NULL";
+            {{_, Missing}, _} -> ["CASE WHEN NOT (", Missing, ") THEN p.", qi(Col), " END"];
+            {false, [#{ref_table := RT, ref_column := RC}]} -> ["CASE WHEN NOT (", missing(Col, RT, RC), ") THEN p.", qi(Col), " END"];
+            {false, []} -> ["p.", qi(Col)]
+        end
+    end,
+    Strict = [["NOT (", missing(Col, RT, RC), ")"] || #{column := Col, ref_table := RT, ref_column := RC, nullable := false} <- ExtIn],
     Conflict = case {Upsert, Pk} of
         {true, [_ | _]} -> [" ON CONFLICT (", lists:join(", ", [qi(K) || K <- Pk]), ") DO UPDATE SET ",
                             lists:join(", ", [[qi(N), " = EXCLUDED.", qi(N)] || N <- Cols, not lists:member(N, Pk)])];
         _ -> []
     end,
-    case epgsql:squery(C, ["INSERT INTO ", quote(T), " (", lists:join(", ", [qi(N) || N <- Cols]), ") OVERRIDING SYSTEM VALUE ",
-                           "SELECT ", lists:join(", ", [["p.", qi(N)] || N <- Cols]),
-                           " FROM ana_stage s, jsonb_populate_record(NULL::", quote(T), ", s.r) p", Conflict]) of
-        {ok, N} -> #{table => T, rows => N, skipped => Skipped, fixes => Fixes};
+    From = [" FROM unnest($1::text[]) u(t), LATERAL (SELECT u.t::jsonb AS r) s, jsonb_populate_record(NULL::", quote(T), ", s.r) p"],
+    Insert = iolist_to_binary(
+        ["INSERT INTO ", quote(T), " (", lists:join(", ", [qi(N) || N <- Cols]), ") OVERRIDING SYSTEM VALUE ",
+         "SELECT ", lists:join(", ", [Expr(N) || N <- Cols]), From,
+         case Strict of [] -> []; _ -> [" WHERE ", lists:join(" AND ", Strict)] end, Conflict]),
+    Aside = [{Col, iolist_to_binary(
+                ["INSERT INTO ana_fix (tbl, col, r) SELECT ", lit(T), ", ", lit(Col), ", s.r",
+                 From, " WHERE ",
+                 case How of always -> ["p.", qi(Col), " IS NOT NULL"]; _ -> How end])}
+             || {Col, How} <- Later],
+    #{table => T, pk => Pk, insert => Insert, aside => Aside, batch_key => BatchKey}.
+
+key_text(null) -> null;
+key_text(B) when is_binary(B) -> B;
+key_text(N) when is_integer(N) -> integer_to_binary(N);
+key_text(V) -> iolist_to_binary(json:encode(V)).
+
+%% True when the row points (through Col) to a row that is not in RefTable. Compared in the
+%% column's own type, so the referenced key's index is used.
+missing(Col, RefTable, RefCol) ->
+    ["p.", qi(Col), " IS NOT NULL AND NOT EXISTS (SELECT 1 FROM ", RefTable, " x WHERE x.", qi(RefCol), " = p.", qi(Col), ")"].
+
+insert_batch(_, _, [], _, _, Got) -> Got;
+insert_batch(C, #{table := T, insert := Insert, aside := Aside, batch_key := BatchKey}, Batch, Keys, Len, Got) ->
+    Params = case BatchKey of undefined -> [Batch]; _ -> [Batch, Keys] end,
+    Fixes = lists:foldl(fun({Col, Sql}, Acc) ->
+        ok = sq(C, "CREATE TEMP TABLE IF NOT EXISTS ana_fix (tbl text, col text, r jsonb) ON COMMIT DROP"),
+        case ana_db:query(C, Sql, Params) of
+            {ok, #{affected := 0}} -> Acc;
+            {ok, _} -> lists:usort([Col | Acc]);
+            {error, E} -> throw({abort, iolist_to_binary(["falha ao carregar ", T, ": ", maps:get(message, ana_db:sql_error(E))])})
+        end
+    end, maps:get(fixes, Got, []), Aside),
+    replan(C, maps:get(batches, Got, 0) + 1),
+    case ana_db:query(C, Insert, Params) of
+        {ok, Res} ->
+            N = maps:get(affected, Res),
+            Got#{rows => maps:get(rows, Got, 0) + N, skipped => maps:get(skipped, Got, 0) + Len - N, fixes => Fixes,
+                 batches => maps:get(batches, Got, 0) + 1};
         {error, E} -> throw({abort, iolist_to_binary(["falha ao carregar ", T, ": ", maps:get(message, ana_db:sql_error(E))])})
     end.
 
-%% Cycle broken at this column: values kept aside, loaded empty, filled by fill/2 at the end.
-defer(C, T, Col, Pk) ->
-    Tmp = ["ana_fix_", integer_to_list(erlang:unique_integer([positive]))],
-    ok = sq(C, ["CREATE TEMP TABLE ", Tmp, " ON COMMIT DROP AS SELECT r FROM ana_stage WHERE r->>", lit(Col), " IS NOT NULL"]),
-    ok = sq(C, ["UPDATE ana_stage SET r = jsonb_set(r, '{", Col, "}', 'null') WHERE r->>", lit(Col), " IS NOT NULL"]),
-    {T, Col, Pk, iolist_to_binary(Tmp)}.
+%% The table was just emptied and grows batch after batch. PostgreSQL keeps a plan made while it was
+%% small (its own reference checks included) and would then scan the whole table for every row.
+%% Plans are dropped each time the table doubles, so they are remade for its size (~10 per table).
+replan(C, Batches) when Batches >= 4, Batches band (Batches - 1) =:= 0 -> ok = sq(C, "DISCARD PLANS");
+replan(_, _) -> ok.
 
-fill(C, {T, Col, Pk, Tmp}) ->
-    ok = sq(C, ["UPDATE ", quote(T), " t SET ", qi(Col), " = p.", qi(Col), " FROM ", Tmp, " f, jsonb_populate_record(NULL::",
-                quote(T), ", f.r) p WHERE ", lists:join(" AND ", [["t.", qi(K), " = p.", qi(K)] || K <- Pk])]).
-
-fix_external(C, #{column := Col, ref_table := RT, ref_column := RC, nullable := Nullable}) ->
-    Missing = ["s.r->>", lit(Col), " IS NOT NULL AND NOT EXISTS (SELECT 1 FROM ", RT, " x WHERE x.", qi(RC), "::text = s.r->>", lit(Col), ")"],
-    case Nullable of
-        true -> {ok, _} = epgsql:squery(C, ["UPDATE ana_stage s SET r = jsonb_set(r, '{", Col, "}', 'null') WHERE ", Missing]), 0;
-        false -> {ok, N} = epgsql:squery(C, ["DELETE FROM ana_stage s WHERE ", Missing]), N
-    end.
+%% Values kept aside, put in once every table is loaded.
+fill(C, {T, Col, Pk}) ->
+    ok = sq(C, ["UPDATE ", quote(T), " t SET ", qi(Col), " = p.", qi(Col), " FROM ana_fix f, jsonb_populate_record(NULL::",
+                quote(T), ", f.r) p WHERE f.tbl = ", lit(T), " AND f.col = ", lit(Col), " AND ",
+                lists:join(" AND ", [["t.", qi(K), " = p.", qi(K)] || K <- Pk])]).
 
 setval(C, #{name := T, serials := Serials}) ->
     [ok = sq(C, ["SELECT setval(", lit(Seq), ", GREATEST(COALESCE((SELECT max(", qi(Col), ") FROM ", quote(T), "), 0), 1), ",
@@ -432,7 +499,9 @@ tables(C) ->
               pk => [Col || [Rel, Col] <- PRows, Rel =:= O],
               external => [#{column => Col, ref_table => quote(RT), ref_column => RC,
                              nullable => lists:member(true, [Nl || [Rel2, Cn, _, Nl, _] <- CRows, Rel2 =:= O, Cn =:= Col])}
-                           || [Rel, To, RT, Col, RC, 1] <- FRows, Rel =:= O, not lists:member(To, Oids)]}
+                           || [Rel, To, RT, Col, RC, 1] <- FRows, Rel =:= O, not lists:member(To, Oids)],
+              self => [{Col, RC} || [Rel, To, _, Col, RC, 1] <- FRows, Rel =:= O, To =:= O,
+                                    lists:member(true, [Nl || [Rel2, Cn, _, Nl, _] <- CRows, Rel2 =:= O, Cn =:= Col])]}
             || [N, O] <- TRows],
     Nullable = fun(O, Col) -> lists:member(true, [Nl || [Rel2, Cn, _, Nl, _] <- CRows, Rel2 =:= O, Cn =:= Col]) end,
     Edges = [{maps:get(Rel, Name), maps:get(To, Name), Col, Nullable(Rel, Col) andalso Card =:= 1}

@@ -744,21 +744,32 @@ event(Action, Folder, File, Version, User, Ip, Detail) ->
     ok.
 
 %% RNF-016-03: oldest-verified blobs first; returns the corrupted or missing ones.
+%% Disk endurance (spec 063, finding c): a blob is re-read at most once every ?REVERIFY_DAYS days, and
+%% the ones that passed are marked in a single statement; a run with nothing due writes nothing.
+-define(REVERIFY_DAYS, 7).
 verify_sample(N) ->
     case ana_vault:enabled() of
         false -> [];
         true ->
-            Bad = [Sha || #{<<"sha256">> := Sha, <<"iv">> := IV, <<"mac">> := Mac}
-                              <- rows("SELECT sha256, iv, mac FROM files.blob ORDER BY verified_at NULLS FIRST LIMIT $1", [N]),
-                          not check_blob(Sha, IV, Mac)],
-            Bad
+            %% At least N per run, more when needed for every blob to be re-read within the period
+            %% (a run every 15 min: 672 runs a week).
+            Due = rows("SELECT sha256, iv, mac FROM files.blob "
+                       "WHERE COALESCE(verified_at, created_at) < now() - make_interval(days => $2) OR verified_at IS NULL "
+                       "ORDER BY COALESCE(verified_at, created_at) "
+                       "LIMIT (SELECT greatest($1, ceil(reltuples / (96 * $2))::int) FROM pg_class WHERE oid = 'files.blob'::regclass)",
+                       [N, ?REVERIFY_DAYS]),
+            {Good, Bad} = lists:partition(fun(#{<<"sha256">> := Sha, <<"iv">> := IV, <<"mac">> := Mac}) ->
+                                              check_blob(Sha, IV, Mac)
+                                          end, Due),
+            _ = Good =/= [] andalso
+                ana_db:exec("UPDATE files.blob SET verified_at = now() WHERE sha256 = ANY($1::text[])",
+                            [[Sha || #{<<"sha256">> := Sha} <- Good]]),
+            [Sha || #{<<"sha256">> := Sha} <- Bad]
     end.
 
 check_blob(Sha, IV, Mac) ->
     case ana_files_store:verify(Sha, base64:decode(IV), base64:decode(Mac)) of
-        true ->
-            {ok, _} = ana_db:exec("UPDATE files.blob SET verified_at = now() WHERE sha256 = $1", [Sha]),
-            true;
+        true -> true;
         false ->
             logger:error("files: blob ~ts failed the integrity check", [Sha]),
             false

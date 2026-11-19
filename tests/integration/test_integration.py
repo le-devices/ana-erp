@@ -6,6 +6,7 @@ Run: ANA_URL=http://localhost:8080 python3 -m unittest discover -s tests/integra
 """
 
 import base64
+import hashlib
 import concurrent.futures
 import datetime
 from decimal import Decimal
@@ -2724,6 +2725,27 @@ class TestFileRepository(Base):
     def pdf(self, text="ok"):
         return b"%PDF-1.4\n% " + text.encode() + b"\n%%EOF\n"
 
+    def test_rnf_016_03_integrity_rechecked_weekly_not_every_run(self):
+        # RNF-016-03 with spec 063 (c): a stored file is re-read and marked at most once a week.
+        if not psql_available():
+            self.skipTest("psql no contêiner indisponível")
+        data = f"integridade {SUFFIX} {time.time()}".encode()
+        s, c, _ = self.upload(self.fa, f"integridade-{SUFFIX}.txt", data)
+        self.assertEqual(s, 200, c)
+        sha = hashlib.sha256(data).hexdigest()
+        psql(f"UPDATE files.blob SET verified_at = '2000-01-01' WHERE sha256 = '{sha}'")         # the most overdue
+        run = lambda: http("POST", "/api/admin/observability/advice/run", {}, self.token)
+        self.assertEqual(run()[0], 200)
+        first = psql(f"SELECT verified_at > now() - interval '1 hour', xmin FROM files.blob WHERE sha256 = '{sha}'")
+        self.assertTrue(first.startswith("t|"), first)                           # due: re-read and marked
+        self.assertEqual(run()[0], 200)
+        self.assertEqual(psql(f"SELECT 't|' || xmin FROM files.blob WHERE sha256 = '{sha}'"), first)   # not due: untouched
+        bad = [a for a in self.advice_open() if a["rule"] == "file_integrity" and a["target"] == sha]
+        self.assertEqual(bad, [])
+
+    def advice_open(self):
+        return http("GET", "/api/admin/observability/advice?status=open", token=self.token)[1]
+
     def test_ca_016_01_external_sees_only_what_was_granted(self):
         s, c, _ = self.upload(self.fa, "entregavel.pdf", self.pdf("A"))
         self.assertEqual(s, 200, c)
@@ -3780,10 +3802,15 @@ class TestTransports(Base):
         s, c, _ = http("POST", f"/api/admin/datacopy/{up['id']}/import", {"key": base64.b64encode(b"x" * 32).decode(), "dry_run": True}, self.token)
         self.assertEqual(s, 200, c)
         self.assertEqual(self.wait_copy(up["id"])["status"], "failed")       # wrong key
+        temp = "SELECT coalesce(sum(writes * op_bytes), 0)::bigint FROM pg_stat_io WHERE object = 'temp relation'"
+        t0 = int(psql(temp)) if psql_available() else None
         s, c, _ = http("POST", f"/api/admin/datacopy/{up['id']}/import",
                        {"key": e["key"], "dry_run": True, "probes": [name, email, doc], "inspect_parties": [p1, p2]}, self.token)
         self.assertEqual(s, 200, c)
         res = self.wait_copy(up["id"])
+        if t0 is not None:                       # spec 063 (b): straight into the tables, no staging table on disk
+            time.sleep(11)                       # other sessions report their I/O within ~10 s
+            self.assertLess(int(psql(temp)) - t0, 2 * 1024 * 1024, "a carga da cópia gravou em tabela temporária")
         self.assertEqual(res["status"], "checked", res)
         r = res["result"]
         self.assertEqual((r["mismatches"], r["dry_run"]), ([], True))
@@ -7765,6 +7792,35 @@ class TestDiskEndurance(Base):
         finally:
             psql(f"DELETE FROM ana_system.ops_event WHERE id = {ev}")
             http("PUT", "/api/admin/settings/disk_tbw_tb", {"value": old.get("disk_tbw_tb", 0)}, self.token)
+
+    def table_tuples(self, table):
+        """(inserted, updated) rows of a table as PostgreSQL counts them; other sessions report within ~10 s."""
+        ins, upd = psql(f"SELECT n_tup_ins, n_tup_upd FROM pg_stat_user_tables WHERE relid = '{table}'::regclass").split("|")
+        return int(ins), int(upd)
+
+    def test_ca_063_05_short_task_written_once_and_idle_task_not_at_all(self):
+        # Finding (a): a short task is one INSERT, already finished — not INSERT 'running' + UPDATE.
+        self.quiet()
+        a = self.table_tuples("ana_system.task_run")
+        for _ in range(3):
+            s, c, _ = http("POST", "/api/analytics/refresh", {}, self.token)          # asked by a person: always recorded
+            self.assertEqual(s, 200, c)
+        end, b = time.time() + 15, a
+        while time.time() < end and b[0] - a[0] < 3:
+            time.sleep(1)
+            b = self.table_tuples("ana_system.task_run")
+        self.assertGreaterEqual(b[0] - a[0], 3, (a, b))
+        self.assertEqual(b[1] - a[1], 0, f"tarefas curtas regravadas ao terminar: {a} -> {b}")
+        rows = psql("SELECT status, finished_at IS NOT NULL, finished_at >= started_at FROM ana_system.task_run "
+                    "WHERE task = 'analytics.refresh' AND username = 'admin' ORDER BY id DESC LIMIT 3").splitlines()
+        self.assertEqual(rows, ["success|t|t"] * 3)
+        # A periodic run with nothing to do leaves no record (still reported by the status).
+        s, st, _ = http("GET", "/api/admin/monitor", token=self.token)
+        self.assertEqual(s, 200, st)
+        idle = psql("SELECT count(*) FROM ana_system.task_run WHERE task = 'analytics.refresh' AND username = 'system' "
+                    "AND detail IN ('unchanged', 'already_running') "
+                    f"AND started_at > now() - make_interval(secs => {st['uptime_s']})")
+        self.assertEqual(idle, "0")
 
     def test_ca_063_04_writing_jump_names_table_and_program(self):
         table = f"test_disk.rewrite_{SUFFIX}"

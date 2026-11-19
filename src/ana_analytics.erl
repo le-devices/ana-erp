@@ -20,6 +20,8 @@ refresh(Owner, Origin) ->
         %% RF-025-01: periodic runs skip when sources did not change; asked by a person, always recalculates.
         Force = Origin =/= <<"internal">>,
         case ana_db:one("SELECT analytics.refresh($1) AS r", [Force]) of
+            %% P15/spec 063: a periodic run that found nothing to do leaves no record.
+            {ok, #{<<"r">> := Res}} when not Force, Res =/= <<"refreshed">> -> {skip, Res};
             {ok, #{<<"r">> := Res}} -> {ok, Res};
             {error, E} -> {error, E}
         end
