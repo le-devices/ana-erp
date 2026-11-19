@@ -296,8 +296,8 @@ load(C, R0, Header, Opts) ->
             probes_found => probes(C, maps:get(probes, Opts), Names),
             parties => inspect(C, maps:get(inspect, Opts))},
     case {Check, maps:get(dry_run, Opts)} of
-        {[_ | _], _} -> throw({abort, iolist_to_binary(["contagens ou totais não conferem: ",
-                                                        json:encode(Check)])});
+        {[_ | _], _} -> throw({abort, unicode:characters_to_binary(["contagens ou totais não conferem: ",
+                                                                    json:encode(Check)])});
         {[], true} -> {error, {dry_run, Res}};
         {[], false} -> {ok, Res}
     end.
@@ -600,8 +600,8 @@ file(Id) ->
 
 %% Files older than 48 h are removed (they hold a copy of the whole business data, masked).
 purge() ->
-    _ = ana_db:exec("UPDATE ana_system.datacopy SET status = 'failed', error = 'interrompida (nó reiniciado?)', finished_at = now() "
-                    "WHERE status = 'running' AND created_at < now() - interval '12 hours'", []),
+    _ = ana_db:exec(<<"UPDATE ana_system.datacopy SET status = 'failed', error = 'interrompida (nó reiniciado?)', finished_at = now() "
+                      "WHERE status = 'running' AND created_at < now() - interval '12 hours'"/utf8>>, []),
     {ok, Rows} = ana_db:rows("UPDATE ana_system.datacopy SET status = 'expired' WHERE created_at < now() - interval '48 hours' "
                              "AND status IN ('ready', 'uploaded', 'checked', 'failed') AND file_path IS NOT NULL RETURNING file_path", []),
     _ = [file:delete(binary_to_list(P)) || #{<<"file_path">> := P} <- Rows],

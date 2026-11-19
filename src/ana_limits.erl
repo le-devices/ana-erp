@@ -105,7 +105,7 @@ validate(Limits) when is_map(Limits) ->
     Errors = lists:filtermap(fun({K, V}) ->
         case lists:keyfind(K, 1, keys()) of
             false -> {true, [K, " desconhecido"]};
-            _ when not is_integer(V); V < 0 -> {true, [K, " deve ser inteiro ≥ 0"]};
+            _ when not is_integer(V); V < 0 -> {true, [K, <<" deve ser inteiro ≥ 0"/utf8>>]};
             {_, _, Ceil, _} ->
                 C = ana_settings:get(Ceil),
                 case C > 0 andalso V > C of

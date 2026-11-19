@@ -165,9 +165,12 @@ table(#{<<"Relation Name">> := R} = N) ->
     end;
 table(_) -> null.
 
-%% Column names compared in the filter: "(name = $1)", "(lower(name) ~~ ...)".
+%% Column names compared in the filter: "(name = $1)", "(lower(name) ~~ ...)". The conditions the database
+%% adds for permission by data (row security, spec 009 D10: base.scope_*() and the ana.* settings) are not
+%% the statement's own filter: their columns would turn the index tip into a wrong one.
 columns(null) -> [];
-columns(F) when is_binary(F) ->
+columns(F0) when is_binary(F0) ->
+    F = iolist_to_binary(lists:join(<<" AND ">>, [C || C <- conjuncts(F0), not row_security(C)])),
     {ok, Re} = re:compile("\\(?([a-z_][a-z0-9_]*)\\)?\\s*(=|<>|<=|>=|<|>|~~\\*?|!~~|IS\\b|= ANY)", [caseless]),
     Found = case re:run(F, Re, [global, {capture, [1], binary}]) of
         {match, Ms} -> [M || [M] <- Ms];
@@ -176,6 +179,44 @@ columns(F) when is_binary(F) ->
     Skip = [<<"lower">>, <<"upper">>, <<"coalesce">>, <<"text">>, <<"date">>, <<"numeric">>, <<"integer">>],
     lists:usort([C || C <- Found, not lists:member(string:lowercase(C), Skip)]);
 columns(_) -> [].
+
+row_security(C) ->
+    binary:match(C, [<<"scope_cc(">>, <<"scope_portfolio(">>, <<"scope_projects(">>, <<"current_setting('ana.">>]) =/= nomatch.
+
+%% The top-level AND terms of a plan filter: "((a = $1) AND ((x) OR (y)))" -> ["(a = $1)", "((x) OR (y))"].
+conjuncts(F) ->
+    B = unwrap(string:trim(F)),
+    [string:trim(T) || T <- split_and(B, 0, <<>>, []), T =/= <<>>].
+
+unwrap(<<"(", _/binary>> = B) when byte_size(B) >= 2 ->
+    Inner = binary:part(B, 1, byte_size(B) - 2),
+    case binary:last(B) =:= $) andalso balanced(Inner, 0) of
+        true -> unwrap(string:trim(Inner));
+        false -> B
+    end;
+unwrap(B) -> B.
+
+balanced(<<>>, D) -> D =:= 0;
+balanced(<<"(", R/binary>>, D) -> balanced(R, D + 1);
+balanced(<<")", _/binary>>, 0) -> false;
+balanced(<<")", R/binary>>, D) -> balanced(R, D - 1);
+balanced(<<"'", R/binary>>, D) -> balanced(skip_quoted(R), D);
+balanced(<<_, R/binary>>, D) -> balanced(R, D).
+
+skip_quoted(<<"''", R/binary>>) -> skip_quoted(R);
+skip_quoted(<<"'", R/binary>>) -> R;
+skip_quoted(<<_, R/binary>>) -> skip_quoted(R);
+skip_quoted(<<>>) -> <<>>.
+
+split_and(<<>>, _, Cur, Acc) -> lists:reverse([Cur | Acc]);
+split_and(<<" AND ", R/binary>>, 0, Cur, Acc) -> split_and(R, 0, <<>>, [Cur | Acc]);
+split_and(<<"(", R/binary>>, D, Cur, Acc) -> split_and(R, D + 1, <<Cur/binary, "(">>, Acc);
+split_and(<<")", R/binary>>, D, Cur, Acc) -> split_and(R, D - 1, <<Cur/binary, ")">>, Acc);
+split_and(<<"'", R/binary>>, D, Cur, Acc) ->
+    Rest = skip_quoted(R),
+    Quoted = binary:part(R, 0, byte_size(R) - byte_size(Rest)),
+    split_and(Rest, D, <<Cur/binary, "'", Quoted/binary>>, Acc);
+split_and(<<C, R/binary>>, D, Cur, Acc) -> split_and(R, D, <<Cur/binary, C>>, Acc).
 
 sizes([]) -> #{};
 sizes(Tables) ->

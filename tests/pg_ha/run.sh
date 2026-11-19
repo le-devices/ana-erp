@@ -19,6 +19,8 @@ $COMPOSE exec -T db psql -U postgres -c "SELECT pg_reload_conf()" >/dev/null
 $COMPOSE up -d --build
 status=0
 python3 -m unittest discover -s tests/pg_ha -v || status=$?
+# On failure, keep what the replica said before it is removed (diagnosis on CI, where nothing survives the run).
+[ "$status" = 0 ] || { echo "---- db2 (replica) log"; $COMPOSE logs --no-color --tail 120 db2 || true; }
 $COMPOSE stop ana2 lb db2 && $COMPOSE rm -f ana2 lb db2 >/dev/null
 $COMPOSE exec -T db psql -U postgres -c "SELECT pg_drop_replication_slot(slot_name) FROM pg_replication_slots WHERE slot_name = 'db2_slot'" >/dev/null 2>&1 || true
 docker compose up -d --remove-orphans
