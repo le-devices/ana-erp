@@ -2015,7 +2015,8 @@ class TestObservability(Base):
         s, p, _ = http("GET", f"/api/programs/{name}/performance", token=self.token)
         self.assertEqual(s, 200, p)
         got = {(f["line"], f["rule"]) for f in p["lint"]}
-        self.assertTrue({(2, "select_star"), (3, "leading_wildcard"), (4, "dynamic_sql"), (6, "sql_in_loop")} <= got, got)
+        # Spec 064 (RF-064-01): a write inside a loop is the disk rule write_in_loop (reads in loops stay sql_in_loop).
+        self.assertTrue({(2, "select_star"), (3, "leading_wildcard"), (4, "dynamic_sql"), (6, "write_in_loop")} <= got, got)
         self.assertEqual([f["severity"] for f in p["lint"] if f["rule"] == "dynamic_sql"], ["serious"])
 
 
