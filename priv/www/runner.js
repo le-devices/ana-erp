@@ -10,13 +10,13 @@
     base: "Cadastros", master: "Cadastros", inventory: "Estoque", sales: "Vendas", finance: "Financeiro",
     projects: "Projetos", analytics: "Analítico", supply: "Compras", production: "Produção",
     logistics: "Logística e campo", field: "Logística e campo", demo: "Demonstração", files: "Documentos e arquivos",
-    integration: "Integrações", flows: "Processos", bpm: "Processos", docs: "Documentos e arquivos",
+    integration: "Integrações", flows: "Processos", bpm: "Processos", docs: "Documentos e arquivos", tax: "Fiscal",
   };
   const moduleOf = (name) => name.split(".")[0];
   const moduleLabel = (m) => MODULES[m] || m.charAt(0).toUpperCase() + m.slice(1);
   // Spec 020 (RF-020-19): business area and category of a routine ("Área/Categoria" in the program header);
   // without it, the area of the namespace. Programs of the company without a namespace of the product: "Da empresa".
-  const AREA_ORDER = ["Vendas", "Compras", "Estoque", "Produção", "Logística e campo", "Projetos", "Financeiro", "Contabilidade",
+  const AREA_ORDER = ["Vendas", "Compras", "Estoque", "Produção", "Logística e campo", "Projetos", "Financeiro", "Contabilidade", "Fiscal",
                       "Cadastros", "Processos", "Analítico", "Integrações", "Documentos e arquivos", "Demonstração"];
   const areaOf = (r) => (r.category ? r.category.split("/")[0].trim() : MODULES[moduleOf(r.name)] || "Da empresa");
   const categoryOf = (r) => (r.category && r.category.includes("/") ? r.category.split("/").slice(1).join("/").trim() : "Outras");

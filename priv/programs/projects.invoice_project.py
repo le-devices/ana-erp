@@ -12,6 +12,7 @@ import datetime
 from decimal import Decimal, ROUND_HALF_UP
 
 from ana_lib.projects import access
+from ana_lib.tax import engine
 from ana_lib.util.format import money
 from ana_lib.util.pdf import Pdf, company as letterhead_company
 
@@ -65,10 +66,21 @@ def main(project, through=None, payment_days=30):
         raise ana.Error("NOTHING_TO_INVOICE", f"nada a faturar no projeto {p['code']} até {through}")
 
     total = sum((l[4] for l in lines), Decimal(0))
-    tax_rate = p["service_tax_rate"]
-    tax = cents(total * tax_rate)
-    withheld = p["service_tax_withheld"] and tax > 0
-    net = total - tax if withheld else total
+    # Spec 049: every tax comes from the engine (rules with validity, the Simples, withholdings) — never from here.
+    try:
+        calc = engine.calculate({"operation": "service_sale", "date": datetime.date.today(), "recipient": p["customer_id"],
+                                 "contract": p["code"],
+                                 "items": [{"description": l[1], "quantity": l[2], "unit_price": l[3], "amount": l[4]}
+                                           for l in lines]})
+    except engine.TaxError as e:
+        raise ana.Error(e.code, f"impostos da fatura: {e.message}") from None
+    withheld_total = calc["totals"]["withheld"]
+    tax = withheld_total if withheld_total > 0 else calc["totals"]["amount"]
+    tax_rate = (tax / total).quantize(Decimal("0.0001")) if total else Decimal(0)
+    withheld = withheld_total > 0
+    net = calc["net"]
+    if net <= 0:
+        raise ana.Error("NET_NOT_POSITIVE", f"as retenções ({money(withheld_total)}) consomem a fatura inteira ({money(total)})")
 
     inv = ana.sql_one(
         "INSERT INTO projects.invoice (project_id, customer_id, through_date, total, service_tax_rate, "
@@ -86,16 +98,16 @@ def main(project, through=None, payment_days=30):
     entry = ana.sql_value(
         "INSERT INTO finance.journal_entry (memo, document, created_by) VALUES ($1, $2, $3) RETURNING id",
         f"Fatura de serviços {inv['number']} — projeto {p['code']}", document, ana.context.user)
-    journal = [[entry, "customers", net, 0], [entry, "service_revenue", 0, total]]
-    if withheld:
-        journal.append([entry, "service_tax_withheld", tax, 0])
-    ana.sql_batch("INSERT INTO finance.journal_line (entry_id, account, debit, credit) "
-                  "VALUES ($1, finance.account_for($2), $3, $4)", journal)
+    journal = [[entry, finance_account("customers"), net, 0], [entry, finance_account("service_revenue"), 0, total]]
+    journal += [[entry, engine.account(x["account"]), x["debit"], x["credit"]] for x in calc["postings"]]
+    ana.sql_batch("INSERT INTO finance.journal_line (entry_id, account, debit, credit) VALUES ($1, $2, $3, $4)", journal)
     bill = ana.sql_value(
         "INSERT INTO finance.bill (kind, party_id, document, due_date, amount, entry_id) "
         "VALUES ('receivable', $1, $2, $3, $4, $5) RETURNING id",
         p["customer_id"], document, datetime.date.today() + datetime.timedelta(days=payment_days), net, entry)
-    ana.sql_exec("UPDATE projects.invoice SET bill_id = $2, entry_id = $3 WHERE id = $1", inv["id"], bill, entry)
+    calc_id = engine.save(calc, "project_invoice", inv["number"])                               # RF-049-11
+    ana.sql_exec("UPDATE projects.invoice SET bill_id = $2, entry_id = $3, tax_calculation_id = $4 WHERE id = $1",
+                 inv["id"], bill, entry, calc_id)
 
     ids = [i for h in hours for i in h["ids"]]
     if ids:
@@ -110,14 +122,21 @@ def main(project, through=None, payment_days=30):
 
     ana.table([{"origem": l[0], "descrição": l[1], "qtd": l[2], "unitário": money(l[3]), "valor": money(l[4])}
                for l in lines], title=f"Fatura {inv['number']}")
-    pdf = store_pdf(p, inv["number"], lines, total, tax, withheld, net, payment_days)
+    pdf = store_pdf(p, inv["number"], lines, total, calc, net, payment_days)
     result = {"number": inv["number"], "total": total, "service_tax": tax, "withheld": withheld,
-              "net_amount": net, "bill": bill, "entry": entry, "lines": len(lines), "pdf": pdf}
+              "net_amount": net, "bill": bill, "entry": entry, "lines": len(lines), "pdf": pdf,
+              "taxes": [{"tax": t["tax"], "name": t["name"], "amount": t.get("amount", Decimal(0)),
+                         "withheld": t.get("withheld", Decimal(0))} for t in calc["taxes"]],
+              "tax_calculation": calc_id}
     ana.extend("after_invoice_project", {**result, "project": p["code"]})
     return result
 
 
-def store_pdf(p, number, lines, total, tax, withheld, net, payment_days):
+def finance_account(key):
+    return ana.sql_value("SELECT finance.account_for($1)", key)
+
+
+def store_pdf(p, number, lines, total, calc, net, payment_days):
     """Spec 016 (CA-016-05): the invoice as PDF in the customer's folder (Faturas is shared
     with the customer's portal accounts). A storage problem never undoes the invoice."""
     company = letterhead_company()
@@ -134,13 +153,18 @@ def store_pdf(p, number, lines, total, tax, withheld, net, payment_days):
     doc.line(50, y, 560, y)
     doc.text(380, y - 16, "Total", bold=True)
     doc.text(480, y - 16, money(total), bold=True)
-    if withheld:
-        doc.text(380, y - 30, "Imposto retido")
-        doc.text(480, y - 30, money(tax))
-        doc.text(380, y - 44, "Líquido a pagar", bold=True)
-        doc.text(480, y - 44, money(net), bold=True)
+    retained = [t for t in calc["taxes"] if t.get("withheld")]
+    for t in retained:                                                                       # spec 049: one line per tax
+        y -= 14
+        doc.text(300, y - 16, f"{t['name']} retido")
+        doc.text(480, y - 16, money(t["withheld"]))
+    if retained:
+        y -= 14
+        doc.text(380, y - 16, "Líquido a pagar", bold=True)
+        doc.text(480, y - 16, money(net), bold=True)
+    y -= 16
     venc = datetime.date.today() + datetime.timedelta(days=payment_days)
-    doc.text(50, y - 70, f"Vencimento: {venc:%d/%m/%Y}", size=10)
+    doc.text(50, y - 40, f"Vencimento: {venc:%d/%m/%Y}", size=10)
     try:
         r = ana.files.publish("bill", p["customer_id"], f"Fatura {number}.pdf", doc.build(),
                               comment=f"Fatura de serviços {number} — projeto {p['code']}")

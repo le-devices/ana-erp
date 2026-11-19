@@ -17,6 +17,7 @@ No tax, regime or rate is named here: all of it is data (`tax.*` tables), delive
 import datetime
 import hashlib
 import json
+import time
 import unicodedata
 from decimal import Decimal, ROUND_HALF_UP
 
@@ -558,6 +559,7 @@ def indicator_value(data, code, day, doc_total=Decimal(0), depth=0):
 
 def calculate(document, record=None):
     """Calculates a document. record = (doc_kind, doc_ref) stores the calculation (RF-049-11)."""
+    started = time.perf_counter()
     data = load()
     doc = normalize(document, data)
     total = sum((i["amount"] for i in doc["items"]), Decimal(0))
@@ -565,15 +567,33 @@ def calculate(document, record=None):
     fixed = {k: fx.dec(v) for k, v in (document.get("indicators") or {}).items()}   # simulations and test cases
     result = compute(doc, data, lambda code: fixed[code] if code in fixed else indicator_value(data, code, day, total))
     result["postings"] = [{"account": a, "debit": d, "credit": c, "tax": t} for a, d, c, t in postings(result, data)]
+    result["input"] = doc
+    result["elapsed_ms"] = round((time.perf_counter() - started) * 1000, 1)
     if record:
-        kind, ref = record
-        payload = canonical({"input": doc, "result": {k: v for k, v in result.items() if k != "explanation"}})
-        result["calculation"] = ana.sql_value(
-            "INSERT INTO tax.calculation (doc_kind, doc_ref, fact_date, input, rules, result, hash, created_by) "
-            "VALUES ($1, $2, $3, $4::text::jsonb, $5::text::jsonb, $6::text::jsonb, $7, $8) RETURNING id",
-            kind, str(ref), day, canonical(doc), canonical(result["rules"]), canonical(result),
-            hashlib.sha256(payload.encode()).hexdigest(), ana.context.user)
+        save(result, *record)
     return result
+
+
+def save(result, kind, ref):
+    """Stores the calculation with its document (RF-049-11); returns its id."""
+    doc = result["input"]
+    body = {k: v for k, v in result.items() if k not in ("input", "elapsed_ms")}
+    payload = canonical({"input": doc, "result": body})
+    result["calculation"] = ana.sql_value(
+        "INSERT INTO tax.calculation (doc_kind, doc_ref, fact_date, input, rules, result, hash, created_by) "
+        "VALUES ($1, $2, $3, $4::text::jsonb, $5::text::jsonb, $6::text::jsonb, $7, $8) RETURNING id",
+        kind, str(ref), as_date(doc["date"]), canonical(doc), canonical(result["rules"]), canonical(body),
+        hashlib.sha256(payload.encode()).hexdigest(), ana.context.user)
+    return result["calculation"]
+
+
+def burden_rate(document, sample=Decimal("10000.00")):
+    """Share of the revenue that the emitter pays in taxes for a document like this one (projections and margins):
+    calculated by the rules on a sample amount, never by a rate typed in a program."""
+    doc = dict(document)
+    doc["items"] = [{"description": "amostra", "quantity": 1, "unit_price": sample}]
+    r = calculate(doc)
+    return (r["totals"]["amount"] / sample).quantize(Decimal("0.000001"))
 
 
 def account(role_target):

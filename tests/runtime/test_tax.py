@@ -241,5 +241,23 @@ class NoLawInCode(unittest.TestCase):
             self.assertEqual(found, [], name)
 
 
+class NoTaxOutsideTheEngine(unittest.TestCase):
+    """RNF-049-04: product programs never multiply by a tax rate; taxes come from tax.engine."""
+
+    PATTERN = re.compile(r"(\*\s*[\w.\[\]\"']*(tax_rate|iss_rate|_tax_pct)\b)|(\b(tax_rate|iss_rate)[\w\[\]\"']*\s*\*)"
+                         r"|\b(icms|ipi|pis|cofins|csll|irrf|inss|cbs|ibs)_?(rate|aliq\w*)\b")
+
+    def test_rnf_049_04_no_tax_calculation_outside_the_engine(self):
+        bad = []
+        for name in sorted(os.listdir(PROGRAMS)):
+            if not name.endswith(".py") or name.startswith("tax."):
+                continue
+            with open(os.path.join(PROGRAMS, name), encoding="utf-8") as f:
+                for n, line in enumerate(f, start=1):
+                    if self.PATTERN.search(line) and not line.lstrip().startswith("#"):
+                        bad.append(f"{name}:{n}: {line.strip()}")
+        self.assertEqual(bad, [])
+
+
 if __name__ == "__main__":
     unittest.main()
