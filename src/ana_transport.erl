@@ -98,9 +98,15 @@ export(B, User = #{username := Who}) ->
                 {_, {error, E}, _} -> {error, E};
                 {_, _, {error, E}} -> {error, E};
                 {{ok, P}, {ok, C}, {ok, S}} ->
-                    case key(User) of
-                        {ok, _Pub, Priv} -> sign_and_store(Title, B, P ++ C ++ S, Priv, Who);
-                        E -> E
+                    %% Spec 064 (D7, CA-064-01): every program of the package through the quality gate; the report
+                    %% travels inside the signed manifest.
+                    {ok, Gate} = ana_quality:gate(Programs),
+                    case {maps:get(ok, Gate), key(User)} of
+                        {false, _} -> {error, #{code => <<"QUALITY_GATE">>, report => Gate,
+                                                message => <<"portão de qualidade: há achados que bloqueiam o transporte "
+                                                             "(corrija, ou peça isenção a outra pessoa)"/utf8>>}};
+                        {true, {ok, _Pub, Priv}} -> sign_and_store(Title, B#{quality_gate => Gate}, P ++ C ++ S, Priv, Who);
+                        {true, E} -> E
                     end
             end
     end.
@@ -112,6 +118,7 @@ sign_and_store(Title, B, Items, Priv, Who) ->
                  <<"author">> => Who, <<"origin">> => ana_instance:name(), <<"instance">> => ana_instance:role(),
                  <<"product_version">> => ana_instance:product_version(),
                  <<"created_at">> => list_to_binary(calendar:system_time_to_rfc3339(erlang:system_time(second), [{offset, "Z"}])),
+                 <<"quality_gate">> => maps:get(quality_gate, B, null),
                  <<"items">> => Items},
     Bytes = iolist_to_binary(json:encode(Manifest)),
     Sig = crypto:sign(eddsa, none, Bytes, [Priv, ed25519]),
@@ -234,7 +241,11 @@ check_manifest(#{<<"origin">> := Origin, <<"items">> := Items, <<"title">> := T,
         Bad =/= [] -> {error, iolist_to_binary([<<"itens com conteúdo que não confere com o hash: "/utf8>>, lists:join(<<", ">>, Bad)])};
         true ->
             case Major(PV) =:= Major(ana_instance:product_version()) of
-                true -> {ok, M, Sha};
+                true ->
+                    case ana_quality:check_manifest(M) of
+                        ok -> {ok, M, Sha};
+                        Refused -> Refused
+                    end;
                 false -> {error, <<"pacote de outra versão maior do produto ("/utf8, PV/binary, ")">>}
             end
     end;

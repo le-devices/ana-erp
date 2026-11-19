@@ -1340,13 +1340,14 @@
   const ITEM_STATUS = { new: ["novo", "ok"], unchanged: ["igual", ""], update: ["atualiza", "ok"], conflict: ["conflito", "off"] };
 
   async function transports(tab = "list", detail = null) {
-    const tabs = el("div", { class: "sub-tabs" }, [["list", "Pacotes"], ["send", "Montar pacote"], ["receive", "Receber pacote"], ["keys", "Chave e origens"]]
+    const tabs = el("div", { class: "sub-tabs" }, [["list", "Pacotes"], ["send", "Montar pacote"], ["receive", "Receber pacote"], ["exemptions", "Isenções"], ["keys", "Chave e origens"]]
       .map(([k, l]) => el("button", { class: k === tab ? "active" : "", text: l, onclick: () => guard(() => transports(k)) })));
     const head = header("Transportes", "Leve programas, comandos e parâmetros da instância de desenvolvimento e testes para a produção: " +
       "pacote assinado, verificação prévia (conflitos e dependências), importação numa transação, sem parada, e desfazer com um clique.");
     if (tab === "send") return transportSend(head, tabs);
     if (tab === "receive") return transportReceive(head, tabs);
     if (tab === "keys") return transportKeys(head, tabs);
+    if (tab === "exemptions") return qualityExemptions(head, tabs);
     if (detail) return transportDetail(head, tabs, detail);
     const list = await API.admin.transports();
     main().replaceChildren(...head, tabs, table([
@@ -1437,18 +1438,76 @@
     const tests = el("textarea", { rows: 2, placeholder: "ex.: suíte de integração verde; testado com a massa de 05/10" });
     const commands = el("input", { type: "text", placeholder: "códigos separados por vírgula (opcional)" });
     const settings = el("input", { type: "text", placeholder: "parâmetros separados por vírgula (opcional)" });
+    const gateBox = el("div", {});
     const split = (v) => v.split(",").map((x) => x.trim()).filter(Boolean);
     main().replaceChildren(...head, tabs, el("div", { class: "form-card" },
       field("Título do pacote", title), field("O que muda e por quê", desc), field("Testes feitos", tests),
       el("h4", {}, "Programas ", count), filter, listBox,
       field("Comandos", commands), field("Parâmetros", settings),
-      el("div", { class: "row-buttons" }, el("button", { type: "button", text: "Gerar pacote assinado", onclick: () => guard(async () => {
-        const r = await API.admin.exportTransport({ title: title.value, description: desc.value, tests: tests.value, programs: [...chosen],
-                                                    commands: split(commands.value), settings: split(settings.value) });
-        API.saveBlob(new Blob([JSON.stringify(r.package)], { type: "application/json" }), r.file_name);
-        toast(`Pacote #${r.id} gerado: leve o arquivo ${r.file_name} à produção (Transportes → Receber pacote).`);
-      }) }))));
+      el("div", { class: "row-buttons" }, el("button", { type: "button", text: "Gerar pacote assinado", onclick: async () => {
+        gateBox.replaceChildren();
+        try {
+          const r = await API.admin.exportTransport({ title: title.value, description: desc.value, tests: tests.value, programs: [...chosen],
+                                                      commands: split(commands.value), settings: split(settings.value) });
+          API.saveBlob(new Blob([JSON.stringify(r.package)], { type: "application/json" }), r.file_name);
+          toast(`Pacote #${r.id} gerado com o portão de qualidade verde: leve o arquivo ${r.file_name} à produção (Transportes → Receber pacote).`);
+        } catch (e) {
+          if (e.code === "QUALITY_GATE" && e.body && e.body.error && e.body.error.report) gateBox.replaceChildren(gateReport(e.body.error.report));
+          toast(errorText(e), true);
+        }
+      } })), gateBox));
     draw();
+  }
+
+  // Spec 064 (D7, CA-064-01): what blocks the package, per program, with the way to fix it.
+  function gateReport(report) {
+    const rows = [];
+    for (const p of report.programs) for (const f of p.blocking) rows.push({ program: p.name, ...f });
+    return el("div", { class: "form-card" },
+      el("h4", { text: `Portão de qualidade: ${rows.length} achado(s) bloqueiam (a partir de "${report.level}")` }),
+      el("p", { class: "muted", text: "Corrija no Estúdio (o editor mostra cada achado na linha) ou peça isenção: outra pessoa aprova na aba Isenções." }),
+      table([
+        { label: "Programa", value: (r) => el("a", { href: `#/dev/program/${r.program}`, text: r.program }) },
+        { label: "Linha", value: (r) => String(r.line), class: "num" },
+        { label: "Gravidade", value: (r) => r.severity },
+        { label: "O que", value: (r) => r.message },
+        { label: "Como resolver", value: (r) => r.suggestion || "" },
+      ], rows, { empty: "Nada bloqueia." }));
+  }
+
+  // Spec 064 (D3, CA-064-02): exemptions decided by someone other than who asked (the database refuses otherwise).
+  async function qualityExemptions(head, tabs) {
+    const list = await API.qualityExemptions({});
+    const me = (window.AnaStudio && window.AnaStudio.user && window.AnaStudio.user()) || {};
+    const ST = { requested: ["aguardando decisão", "warn"], approved: ["aprovada", "ok"], refused: ["recusada", "off"] };
+    const decide = (x, approve) => guard(async () => {
+      await API.decideExemption(x.id, approve, null);
+      toast(approve ? "Isenção aprovada." : "Isenção recusada.");
+      transports("exemptions");
+    });
+    main().replaceChildren(...head, tabs,
+      el("p", { class: "muted", text: "Isenções do portão de qualidade: quem pede não decide. Aprovada, vale até a data e libera o transporte daquele achado." }),
+      table([
+        { label: "Programa", value: (x) => el("a", { href: `#/dev/program/${x.program}`, text: x.program }) },
+        { label: "Regra", value: (x) => x.rule },
+        { label: "Motivo", value: (x) => x.reason },
+        { label: "Até", value: (x) => fmtDate(x.valid_until) },
+        { label: "Pedida por", value: (x) => x.requested_by },
+        { label: "Situação", value: (x) => { const [l, c] = ST[x.status] || [x.status, ""]; return pill(l, c); } },
+        { label: "Decisão", value: (x) => x.status !== "requested" ? `${x.decided_by || ""}` : x.requested_by === me.username
+            ? el("span", { class: "muted", text: "outra pessoa decide" })
+            : el("span", { class: "row-buttons" }, el("button", { type: "button", text: "Aprovar", onclick: () => decide(x, true) }),
+                 el("button", { type: "button", class: "quiet", text: "Recusar", onclick: () => decide(x, false) })) },
+      ], list, { empty: "Nenhum pedido de isenção. Eles nascem no Estúdio, na faixa de qualidade abaixo do editor.",
+                 emptyAction: { label: "Abrir o Estúdio", onClick: () => { location.hash = "#/dev"; } } }),
+      el("div", { class: "form-card" },
+        el("h4", { text: "Adotar o portão em programas antigos" }),
+        el("p", { class: "muted", text: "Aceita os achados que já existem hoje como linha de base: daqui em diante só achados novos bloqueiam o transporte." }),
+        el("div", { class: "row-buttons" }, el("button", { type: "button", text: "Registrar linha de base de todos os programas", onclick: () => guard(async () => {
+          if (!confirm("Registrar os achados atuais de todos os programas como linha de base?")) return;
+          const r = await API.admin.qualityBaseline([]);
+          toast(`Linha de base registrada: ${r.findings} achado(s) em ${r.programs} programa(s).`);
+        }) }))));
   }
 
   function transportReceive(head, tabs) {

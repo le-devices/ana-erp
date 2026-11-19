@@ -191,6 +191,19 @@ button.link:hover strong { color: var(--accent); }
 .editor .num { height: var(--lh); font: 12px/var(--lh) var(--mono); color: var(--text-2); text-align: right; padding-right: 8px; cursor: pointer; position: relative; }
 .editor .num.bp::before { content: ""; position: absolute; left: 6px; top: 5px; width: 10px; height: 10px; border-radius: 50%; background: var(--breakpoint); }
 .editor .num.current { color: var(--text); font-weight: 700; }
+/* Spec 064: quality findings on the line numbers (shape + colour, never colour alone) */
+.editor .num.finding::after { position: absolute; left: 4px; top: 0; font-size: 11px; line-height: var(--lh); }
+.editor .num.finding.sev-info::after { content: "ℹ"; color: var(--text-2); }
+.editor .num.finding.sev-warning::after { content: "▲"; color: var(--warn); }
+.editor .num.finding.sev-serious::after, .editor .num.finding.sev-critical::after { content: "◆"; color: var(--danger); }
+.editor .num.finding.sev-serious, .editor .num.finding.sev-critical { color: var(--danger); font-weight: 700; }
+.quality-strip { border: 1px solid var(--border); border-top: 0; background: var(--surface-2); padding: 6px 10px; font-size: 13px; }
+.quality-strip .q-head { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }
+.quality-strip ul { list-style: none; margin: 6px 0 0; padding: 0; max-height: 9.5em; overflow: auto; }
+.quality-strip li { display: flex; gap: 8px; align-items: baseline; padding: 2px 0; }
+.quality-strip li .sev-serious, .quality-strip li .sev-critical { color: var(--danger); }
+.quality-strip li .sev-warning { color: var(--warn); }
+.quality-strip .exemption-form { display: grid; gap: 6px; margin: 6px 0 6px 24px; max-width: 640px; }
 .editor .area { position: relative; overflow: hidden; }
 .editor pre, .editor textarea {
   margin: 0; padding: 6px 12px; border: 0; font: 13px/var(--lh) var(--mono); tab-size: 4;

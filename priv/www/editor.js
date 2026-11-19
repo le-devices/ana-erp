@@ -5,6 +5,7 @@
 (function () {
   const LINE_HEIGHT = 20; // must match --lh in the CSS
   const INDENT = "    ";
+  const SEV_LABEL = { info: "informação", warning: "atenção", serious: "sério", critical: "crítico" };
 
   class Editor {
     constructor(root) {
@@ -12,6 +13,7 @@
       this.breakpoints = new Set();
       this.currentLine = null;
       this.errorLine = null;
+      this.findings = new Map();          // spec 064: line → findings of the quality inspection
       this.onChange = () => {};
       this.onBreakpointsChange = () => {};
 
@@ -66,6 +68,16 @@
 
     setBreakpoints(lines) { this.breakpoints = new Set(lines); this._renderGutter(); }
 
+    /** Spec 064 (RF-064-02): findings of the quality inspection marked on their lines while typing. */
+    setFindings(list) {
+      this.findings = new Map();
+      for (const f of list || []) {
+        if (!this.findings.has(f.line)) this.findings.set(f.line, []);
+        this.findings.get(f.line).push(f);
+      }
+      this._renderGutter();
+    }
+
     markCurrent(line) {
       this.currentLine = line;
       this._placeBands();
@@ -107,6 +119,13 @@
         const d = el("div", "num");
         if (this.breakpoints.has(i)) d.classList.add("bp");
         if (this.currentLine === i) d.classList.add("current");
+        const found = this.findings.get(i);
+        if (found) {
+          const order = ["info", "warning", "serious", "critical"];
+          const worst = found.map((f) => f.severity).sort((a, b) => order.indexOf(b) - order.indexOf(a))[0];
+          d.classList.add("finding", "sev-" + worst);
+          d.title = found.map((f) => `${SEV_LABEL[f.severity] || f.severity}: ${f.message}`).join("\n");
+        }
         d.dataset.line = i;
         d.textContent = i;
         frag.appendChild(d);

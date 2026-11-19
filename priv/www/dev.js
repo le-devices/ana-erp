@@ -54,7 +54,7 @@ def main(name="mundo"):
   async function init() {
     state.loaded = true;
     editor = new window.AnaEditor($("#editor"));
-    editor.onChange = () => markDirty(true);
+    editor.onChange = () => { markDirty(true); quality.schedule(); };
     editor.onBreakpointsChange = (lines) => {
       if (state.exec && state.exec.debugging) API.command(state.exec.id, { action: "breakpoints", lines }).catch(() => {});
     };
@@ -153,6 +153,7 @@ def main(name="mundo"):
       editor.markCurrent(null);
       fillProperties(p);
       markDirty(false);
+      quality.load();
       notice(p.warning ? "⚠ " + p.warning
              : p.customized ? "Programa do produto customizado nesta instalação — fora do suporte padrão." : "", true);
       buildParams(p.params);
@@ -221,6 +222,104 @@ def main(name="mundo"):
     return out;
   }
 
+  // Spec 064 (RF-064-02, CA-064-01): the quality inspection while typing — findings on their lines and a strip
+  // under the editor saying what blocks the transport, how to fix it, and a way to ask for an exemption.
+  const quality = (() => {
+    const ORDER = ["info", "warning", "serious", "critical"];
+    const ICON = { info: "ℹ", warning: "▲", serious: "◆", critical: "◆" };
+    const LABEL = { info: "informação", warning: "atenção", serious: "sério", critical: "crítico" };
+    let timer = null, abort = null, level = "serious", levelKnown = false, exemptions = new Map(), last = null;
+    const strip = () => $("#quality-strip");
+    const blocks = (f) => ORDER.indexOf(f.severity) >= ORDER.indexOf(level);
+
+    function clear() { clearTimeout(timer); if (abort) abort.abort(); editor.setFindings([]); strip().hidden = true; last = null; }
+
+    function schedule() { clearTimeout(timer); timer = setTimeout(run, 500); }
+
+    async function load() {
+      if (!levelKnown) {                         // the installation's blocking severity, read once after login
+        try { level = (await API.qualityGate([])).level || level; levelKnown = true; } catch (_) { /* default */ }
+      }
+      exemptions = new Map();
+      if (state.current && state.current.version) {
+        try {
+          for (const x of await API.qualityExemptions({ program: state.current.name })) {
+            if (x.status !== "refused" && !exemptions.has(x.fingerprint)) exemptions.set(x.fingerprint, x);
+          }
+        } catch (_) { /* the strip still works without the exemptions */ }
+      }
+      run();
+    }
+
+    async function run() {
+      const source = editor.value;
+      if (!source.trim()) { clear(); return; }
+      if (abort) abort.abort();
+      abort = new AbortController();
+      let r;
+      try { r = await API.inspectProgram(source, abort.signal); } catch (e) { if (e.name !== "AbortError") { strip().hidden = true; } return; }
+      last = r;
+      editor.setFindings(r.ok ? r.lint : [{ line: r.syntax.line, severity: "critical", message: r.syntax.message }]);
+      draw();
+    }
+
+    function jump(line) { selectTab("code"); editor.markError(line); editor.focus(); }
+
+    function draw() {
+      const box = strip();
+      const r = last;
+      if (!r) { box.hidden = true; return; }
+      box.hidden = false;
+      if (!r.ok) {
+        box.replaceChildren(el("div", { class: "q-head" }, el("strong", { class: "sev-critical", text: `◆ Erro de sintaxe na linha ${r.syntax.line}:` }),
+          el("span", { text: r.syntax.message }), el("button", { class: "link", text: "ir para a linha", onclick: () => jump(r.syntax.line) })));
+        return;
+      }
+      const list = [...r.lint].sort((a, b) => ORDER.indexOf(b.severity) - ORDER.indexOf(a.severity) || a.line - b.line);
+      const blocking = list.filter((f) => blocks(f) && !(exemptions.get(f.fingerprint) || {}).status?.startsWith("approved"));
+      const head = el("div", { class: "q-head" },
+        el("strong", { class: blocking.length ? "sev-serious" : "", text: blocking.length
+          ? `◆ ${blocking.length} achado(s) bloqueiam o transporte para a produção`
+          : "✓ Nada bloqueia o transporte" }),
+        el("span", { class: "muted", text: list.length ? `${list.length} achado(s) no total · bloqueia a partir de "${LABEL[level]}"` : "nenhum achado" }));
+      const items = list.slice(0, 50).map((f) => {
+        const ex = exemptions.get(f.fingerprint);
+        const li = el("li", {},
+          el("span", { class: "sev-" + f.severity, "aria-label": LABEL[f.severity], text: ICON[f.severity] }),
+          el("button", { class: "link", text: `linha ${f.line}`, onclick: () => jump(f.line) }),
+          el("span", { text: f.message }),
+          f.suggestion ? el("span", { class: "muted", text: "— " + f.suggestion }) : null,
+          ex ? el("span", { class: "pill", text: ex.status === "approved" ? `isenção aprovada até ${fmtDate(ex.valid_until)}` : "isenção pedida, aguardando outra pessoa" })
+             : blocks(f) && state.current && state.current.version && !state.dirty
+               ? el("button", { class: "quiet small", text: "Pedir isenção", onclick: () => askExemption(li, f) }) : null);
+        return li;
+      });
+      box.replaceChildren(head, items.length ? el("ul", {}, ...items) : null);
+    }
+
+    function askExemption(li, f) {
+      if (li.querySelector(".exemption-form")) return;
+      const reason = el("textarea", { rows: 2, placeholder: "ex.: o valor vem de uma lista fixa de colunas; nada vem do usuário" });
+      const until = el("input", { type: "date", value: new Date(Date.now() + 30 * 864e5).toISOString().slice(0, 10) });
+      const form = el("div", { class: "exemption-form" },
+        el("label", {}, "Por que este achado é aceitável", reason),
+        el("label", {}, "Isenção válida até", until),
+        el("div", { class: "row-buttons" },
+          el("button", { class: "primary", text: "Enviar pedido", onclick: async () => {
+            try {
+              await API.requestExemption({ program: state.current.name, fingerprint: f.fingerprint, reason: reason.value, valid_until: until.value });
+              toast("Pedido enviado: outra pessoa aprova em Administração → Transportes → Isenções.");
+              load();
+            } catch (e) { toast(errorText(e), true); }
+          } }),
+          el("button", { class: "quiet", text: "Cancelar", onclick: () => form.remove() })));
+      li.after(form);
+      reason.focus();
+    }
+
+    return { schedule, load, clear };
+  })();
+
   function markDirty(v) {
     state.dirty = v;
     $("#dirty").hidden = !v;
@@ -236,6 +335,7 @@ def main(name="mundo"):
     editor.readOnly = false;
     fillProperties(state.current);
     markDirty(true);
+    quality.load();
     notice("");
     buildParams({ name: { type: "str", default: "mundo" } });
     selectTab("code");
@@ -287,6 +387,7 @@ def main(name="mundo"):
       toast(`Programa ${p.name} excluído.`);
       state.current = null;
       markDirty(false);
+      quality.clear();
       editor.value = "";
       editor.readOnly = true;
       $("#program-name").textContent = "Nenhum programa aberto";

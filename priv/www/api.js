@@ -99,6 +99,12 @@
 
     programs: (inactive) => API.request("GET", "/api/programs" + query({ inactive: inactive ? 1 : 0 })),
     programPerformance: (name) => API.request("GET", `/api/programs/${enc(name)}/performance`),
+    // Spec 064: quality gate.
+    inspectProgram: (source, signal) => API.request("POST", "/api/programs/inspect", { source }, { signal }),
+    qualityGate: (names) => API.request("GET", "/api/quality/gate" + query({ programs: names.join(",") })),
+    qualityExemptions: (filter) => API.request("GET", "/api/quality/exemptions" + query(filter || {})),
+    requestExemption: (body) => API.request("POST", "/api/quality/exemptions", body),
+    decideExemption: (id, approve, note) => API.request("POST", `/api/quality/exemptions/${id}/${approve ? "approve" : "refuse"}`, { note }),
     program: (n) => API.request("GET", `/api/programs/${enc(n)}`),
     saveProgram: (n, fields) => API.request("PUT", `/api/programs/${enc(n)}`, fields),
     purgeProgram: (n) => API.request("DELETE", `/api/programs/${enc(n)}?purge=1`),
@@ -272,6 +278,7 @@
       saveOrigin: (name, public_key) => API.request("PUT", `/api/admin/transports/origins/${encodeURIComponent(name)}`, { public_key }),
       deleteOrigin: (name) => API.request("DELETE", `/api/admin/transports/origins/${encodeURIComponent(name)}`),
       exportTransport: (body) => API.request("POST", "/api/admin/transports/export", body),
+      qualityBaseline: (programs) => API.request("POST", "/api/admin/quality/baseline", { programs: programs || [] }),
       receiveTransport: (blob) => API.raw("POST", "/api/admin/transports/receive", blob),
       importTransport: (id, body) => API.request("POST", `/api/admin/transports/${id}/import`, body, { accept: [409] }),
       revertTransport: (id) => API.request("POST", `/api/admin/transports/${id}/revert`, {}),
