@@ -9,6 +9,7 @@
 #   ana-ctl upgrade --source DIR   builds the new version from a package and updates node by node
 #   ana-ctl upgrade --image TAG    same, with an image already built or pulled
 #   ana-ctl rollback               back to the previous image
+#   ana-ctl archive-minutes [N]    shows or changes (1-60) the maximum loss window of the WAL archive (spec 063)
 #   ana-ctl logs [service]         follows the logs
 #   ana-ctl install-cron           daily backup and monthly restore test (cron, needs root)
 #   ana-ctl uninstall [--purge --yes]   stops everything; --purge also erases the data
@@ -136,6 +137,7 @@ case "$CMD" in
       crit=$(psql_db "SELECT count(*) FROM ana_system.advice WHERE status = 'open' AND severity = 'critical'" 2>/dev/null || echo "?")
       [ "$crit" = "0" ] && ok "verificações do ERP sem achados críticos" || bad "$crit achado(s) crítico(s) em Administração → Verificações"
     fi
+    has_localdb && say "  [info]  janela máxima de perda (arquivo de WAL): $(( ${ANA_PG_ARCHIVE_TIMEOUT:-300} / 60 )) min (ana-ctl archive-minutes N)"
     disk_health
     say ""
     [ $PROBLEMS -eq 0 ] && say "Tudo certo." || { say "$PROBLEMS ponto(s) de atenção."; exit 1; }
@@ -213,6 +215,23 @@ case "$CMD" in
 
   disk) disk_health; [ $PROBLEMS -eq 0 ] || exit 1 ;;
 
+  archive-minutes)
+    # Maximum loss window if the whole server is lost (RPO, spec 063): while there are writes, the WAL archive
+    # closes and copies a 16 MB segment at most this often. Shorter = less loss, more disk writes.
+    has_localdb || { say "banco gerenciado: a janela de perda é a do provedor"; exit 0; }
+    if [ -z "${1:-}" ]; then
+      say "janela máxima de perda: $(( ${ANA_PG_ARCHIVE_TIMEOUT:-300} / 60 )) min (no banco: $(psql_db "SHOW archive_timeout" 2>/dev/null || echo '?'))"
+      exit 0
+    fi
+    case "$1" in [1-9]|[1-5][0-9]|60) ;; *) say "informe de 1 a 60 minutos" >&2; exit 2 ;; esac
+    set_env ANA_PG_ARCHIVE_TIMEOUT $(( $1 * 60 )); export ANA_PG_ARCHIVE_TIMEOUT=$(( $1 * 60 ))
+    say "aplicando $1 min: o banco reinicia (pausa de alguns segundos; as telas se reconectam sozinhas)"
+    compose up -d db
+    for n in $(nodes); do wait_ready "$n" 300 && ok "$n pronto" || bad "$n não ficou pronto"; done
+    say "no banco: $(psql_db "SHOW archive_timeout")"
+    [ $PROBLEMS -eq 0 ] || exit 1
+    ;;
+
   logs) compose logs -f --tail 200 "$@" ;;
 
   install-cron)
@@ -244,5 +263,5 @@ CRON
 
   up) compose up -d; for n in $(nodes); do wait_ready "$n" 300 && ok "$n pronto" || bad "$n não ficou pronto"; done ;;
 
-  *) sed -n '2,16p' "$0"; exit 2 ;;
+  *) sed -n '2,17p' "$0"; exit 2 ;;
 esac

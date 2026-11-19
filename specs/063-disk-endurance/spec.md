@@ -62,6 +62,14 @@ WAL comprimido, logs com rotação). Mas:
   a cada ciclo, contadores gravados em vez de mantidos em memória, expurgo
   linha a linha em vez de partição, índices que não pagam a escrita que
   custam, cópias que repetem o que não mudou.
+- **D10 — Janela de perda do arquivo de WAL é da instalação.** O
+  `archive_timeout` (de quanto em quanto tempo, havendo escrita, um segmento
+  de 16 MB vai para o arquivo) é a perda máxima aceitável (RPO) se o servidor
+  inteiro se perder, e troca durabilidade por escrita em disco. Cada cliente
+  escolhe: `install.sh --archive-minutes N` (1 a 60, padrão 5) e
+  `ana-ctl archive-minutes N` para mudar depois; o guia e o painel "Disco"
+  mostram o custo de cada escolha. Nunca é desligado (RNF-063-01). Decisão do
+  dono do produto em 19/11/2026.
 
 ## Requisitos funcionais
 - **RF-063-01** Medição de escrita por operação e com o sistema ocioso (D1),
@@ -71,7 +79,8 @@ WAL comprimido, logs com rotação). Mas:
 - **RF-063-04** Saúde do disco pelo `ana-ctl` quando disponível, e sugestões
   de configuração do servidor (D5).
 - **RF-063-05** Ajustes do banco, temporários em memória e logs (D6–D8),
-  na instalação padrão (compose, Kubernetes e instalador).
+  na instalação padrão (compose, Kubernetes e instalador), com a janela de
+  perda do arquivo de WAL como parâmetro da instalação (D10).
 - **RF-063-06** Revisão de todas as funcionalidades com relatório (D9).
 
 ## Requisitos não funcionais

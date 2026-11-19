@@ -17,6 +17,8 @@
 #   --db-port N --db-name NAME
 #   --timezone ZONE      default America/Sao_Paulo
 #   --image TAG          use an image already built/pulled instead of building from this package
+#   --archive-minutes N  maximum loss window if the whole server is lost (1-60, default 5): the WAL archive
+#                        copies a 16 MB segment at most this often while there are writes (spec 063, RPO)
 #   --no-cron            do not schedule backups (do it yourself: ana-ctl backup / restore-test)
 #   --non-interactive    never ask; fail on missing options
 set -euo pipefail
@@ -24,7 +26,7 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 DOMAIN=""; EMAIL=""; IP=""; CERT=""; KEY=""; NODES=2; DIR=/opt/ana-erp; PROJECT=ana-erp
 HTTP_PORT=80; HTTPS_PORT=443; DB_HOST=""; DB_PORT=5432; DB_NAME=ana; TZ_NAME=America/Sao_Paulo
-IMAGE=""; CRON=1; INTERACTIVE=1
+IMAGE=""; CRON=1; INTERACTIVE=1; ARCHIVE_MIN=""
 
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -43,6 +45,7 @@ while [ $# -gt 0 ]; do
     --db-name) DB_NAME="$2"; shift 2 ;;
     --timezone) TZ_NAME="$2"; shift 2 ;;
     --image) IMAGE="$2"; shift 2 ;;
+    --archive-minutes) ARCHIVE_MIN="$2"; shift 2 ;;
     --no-cron) CRON=0; shift ;;
     --non-interactive) INTERACTIVE=0; shift ;;
     -h|--help) sed -n '2,25p' "$0"; exit 0 ;;
@@ -82,6 +85,7 @@ for p in "$HTTP_PORT" "$HTTPS_PORT"; do
 done
 [ -f "$ROOT/Dockerfile" ] || [ -n "$IMAGE" ] || fail "rode o instalador a partir do pacote do ANA (Dockerfile não encontrado em $ROOT)"
 [ "$NODES" = 1 ] || [ "$NODES" = 2 ] || fail "--nodes deve ser 1 ou 2"
+case "$ARCHIVE_MIN" in ""|[1-9]|[1-5][0-9]|60) ;; *) fail "--archive-minutes deve ser um número de 1 a 60" ;; esac
 echo "  Linux, Docker $dv, ${mem_mb} MB, ${free_gb} GB livres: ok"
 
 # ---------------------------------------------------------------- 2. address and certificate
@@ -151,6 +155,8 @@ install -m 644 "$ROOT/deploy/Caddyfile" "$DIR/Caddyfile"
 install -m 644 "$ROOT/deploy/initdb.sql" "$DIR/initdb.sql"
 install -m 755 "$ROOT/deploy/ana-ctl" "$DIR/ana-ctl"
 umask 077
+# A reinstall keeps the window already chosen unless --archive-minutes is given.
+[ -n "$ARCHIVE_MIN" ] && ANA_PG_ARCHIVE_TIMEOUT=$((ARCHIVE_MIN * 60))
 cat > "$DIR/.env" <<ENV
 # ANA ERP — installation settings and secrets (spec 036). Keep a copy in a safe place:
 # without ANA_MASTER_KEY the connector secrets cannot be read.
@@ -171,6 +177,7 @@ ANA_TIMEZONE="$TZ_NAME"
 ANA_DB_HOST="$DBH"
 ANA_DB_PORT="$DB_PORT"
 ANA_DB_NAME="$DB_NAME"
+ANA_PG_ARCHIVE_TIMEOUT="${ANA_PG_ARCHIVE_TIMEOUT:-300}"
 POSTGRES_PASSWORD="$POSTGRES_PASSWORD"
 ANA_DB_PASSWORD="$ANA_DB_PASSWORD"
 ANA_DB_EXEC_PASSWORD="$ANA_DB_EXEC_PASSWORD"

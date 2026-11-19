@@ -72,9 +72,14 @@ nunca desliga proteções do banco (`fsync`, `full_page_writes`). No servidor,
 recomendamos montar o disco com `noatime`, deixar o TRIM periódico ligado
 (`systemctl enable --now fstrim.timer`), guardar as cópias em outro disco e,
 com dois discos, pôr o WAL num volume próprio. Com o arquivo de WAL ligado
-(produção), `archive_timeout` (padrão 5 min) troca de segmento sempre que houve
-escrita: cada troca copia 16 MB; um valor maior grava menos, ao custo de uma
-janela maior de perda se o servidor inteiro se perder.
+(produção), `archive_timeout` troca de segmento sempre que houve escrita: cada
+troca copia 16 MB. Esse intervalo é a **janela máxima de perda** (RPO) se o
+servidor inteiro se perder, escolhida na instalação com `--archive-minutes N`
+(1 a 60, padrão 5) e trocada depois com `ana-ctl archive-minutes N`, que
+reinicia só o banco (pausa de alguns segundos). Pior caso, com escrita o tempo
+todo: 1 min ≈ 23 GB/dia; 5 min ≈ 4,6 GB/dia; 15 min ≈ 1,5 GB/dia; 60 min ≈
+0,4 GB/dia. A janela só protege se as cópias ficarem fora do servidor; com uma
+réplica em streaming a perda já fica perto de zero e vale usar 15 min ou mais.
 
 ## A. Servidor próprio (on-premise)
 

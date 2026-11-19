@@ -365,7 +365,8 @@ suggestions(Ck) ->
     ++ [<<"Compressão do WAL desligada: use wal_compression = lz4."/utf8>> || maps:get(<<"wal_compression">>, Ck) =:= <<"off">>]
     ++ [<<"O arquivo de WAL troca de segmento a cada "/utf8, (maps:get(<<"archive_timeout">>, Ck))/binary,
           " quando houve qualquer escrita: cada troca copia um segmento inteiro (16 MB). Um intervalo maior grava menos, "
-          "ao custo de uma janela maior de perda se o servidor inteiro se perder (as transações confirmadas continuam no disco)."/utf8>>
+          "ao custo de uma janela maior de perda se o servidor inteiro se perder (as transações confirmadas continuam no disco). "
+          "A janela é escolhida na instalação (--archive-minutes, padrão 5) e muda com ana-ctl archive-minutes N (1 a 60)."/utf8>>
         || maps:get(<<"archive_mode">>, Ck) =/= <<"off">>, archive_short(maps:get(<<"archive_timeout">>, Ck))]
     ++ [<<"No servidor: monte o disco com noatime, deixe o TRIM periódico ligado (fstrim.timer), "
           "ponha o WAL num volume próprio quando houver dois discos e guarde as cópias em outro disco."/utf8>>].

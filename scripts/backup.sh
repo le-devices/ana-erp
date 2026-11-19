@@ -28,7 +28,7 @@ case "${1:-}" in
     $COMPOSE exec -T db psql -U postgres -v ON_ERROR_STOP=1 \
       -c "ALTER SYSTEM SET archive_mode = 'on'" \
       -c "ALTER SYSTEM SET archive_command = 'test ! -f $ARCHIVE/wal/%f && cp %p $ARCHIVE/wal/%f'" \
-      -c "ALTER SYSTEM SET archive_timeout = '300'"
+      -c "ALTER SYSTEM SET archive_timeout = '${ANA_PG_ARCHIVE_TIMEOUT:-300}'"
     $COMPOSE restart db
     echo "WAL archiving enabled; take a base backup now: scripts/backup.sh base"
     ;;

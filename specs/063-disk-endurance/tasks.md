@@ -47,6 +47,10 @@ Escrita medida antes e depois em cada um (CA-063-05):
   todos em cargas grandes (bateria e ensaios de cópia), que é o esperado com `max_wal_size=2GB`. A sugestão do painel
   "Disco" olhava o acumulado e acusaria para sempre uma configuração já corrigida: agora olha os últimos 7 dias
   (`ana_disk:recent_checkpoints/1`, eunit `checkpoint_advice_test_`).
-- (e) `archive_timeout=300` na produção: mantido; decisão de perda máxima aceitável (RPO) com o dono do produto.
+- (e) `archive_timeout`: decisão do dono do produto (19/11/2026) — 5 min continua o padrão, mas vira parâmetro da
+  instalação (D10): `install.sh --archive-minutes N` (1 a 60) grava `ANA_PG_ARCHIVE_TIMEOUT` no `.env`, o compose de
+  produção o repassa ao banco, `ana-ctl archive-minutes [N]` mostra ou troca (reinicia só o banco), o `doctor` e o
+  painel "Disco" mostram a janela e como mudar, e o guia traz o custo de cada escolha. Teste:
+  `test_b2_rf_063_05_archive_window_is_an_installation_parameter` (suíte de instalação).
 - De passagem: os testes de cluster e caos aceitam portas pelo ambiente (`ANA_PORT`, `ANA2_PORT`, `ANA_LB_PORT`),
   para rodar quando outro serviço da máquina ocupa 8080/8081/8090.
