@@ -11,6 +11,7 @@ import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 import collect
+import github
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 CACHE_S = 20
@@ -22,15 +23,17 @@ class State:
     at = 0.0
 
 
-def data(repo):
+def data(repo, token_file):
     with State.lock:
         if State.data is None or time.time() - State.at > CACHE_S:
-            State.data = json.dumps(collect.collect(repo), ensure_ascii=False).encode("utf-8")
+            d = collect.collect(repo)
+            d["ci"] = github.cached(repo, token_file)       # its own 60 s cache; never raises
+            State.data = json.dumps(d, ensure_ascii=False).encode("utf-8")
             State.at = time.time()
         return State.data
 
 
-def handler(repo):
+def handler(repo, token_file):
     class Handler(BaseHTTPRequestHandler):
         def send(self, status, body, ctype):
             self.send_response(status)
@@ -50,7 +53,7 @@ def handler(repo):
                     self.send(200, f.read(), "text/html; charset=utf-8")
             elif path == "/data.json":
                 try:
-                    self.send(200, data(repo), "application/json; charset=utf-8")
+                    self.send(200, data(repo, token_file), "application/json; charset=utf-8")
                 except Exception as e:                      # a broken read never takes the server down
                     self.send(500, json.dumps({"error": str(e)}).encode(), "application/json")
             else:
@@ -67,6 +70,8 @@ if __name__ == "__main__":
     p.add_argument("--repo", default=os.path.abspath(os.path.join(HERE, "..", "..")))
     p.add_argument("--port", type=int, default=int(os.environ.get("DASHBOARD_PORT", "8099")))
     p.add_argument("--bind", default=os.environ.get("DASHBOARD_BIND", "0.0.0.0"))
+    p.add_argument("--github-token-file", default=github.DEFAULT_TOKEN_FILE,
+                   help="token do GitHub só de leitura (Actions, Pull requests, Metadata)")
     a = p.parse_args()
     print(f"painel em http://{a.bind}:{a.port}/ (repositório {a.repo})", flush=True)
-    ThreadingHTTPServer((a.bind, a.port), handler(a.repo)).serve_forever()
+    ThreadingHTTPServer((a.bind, a.port), handler(a.repo, a.github_token_file)).serve_forever()
