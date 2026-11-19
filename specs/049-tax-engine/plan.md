@@ -1,108 +1,106 @@
-# 049 — Plano (fase 1, com o Simples Nacional — D10)
+# 049 — Plano (fase 1 com o Simples — D10; modelo genérico — D11, P21)
 
-## Visão geral
-O motor é uma **biblioteca Python** (`tax.engine`) executada no runtime isolado,
-com regras e tabelas no banco (esquema `tax`). Programas do produto chamam
-`engine.calculate(documento)`; outros sistemas chamam o serviço exposto
-`tax.calculate`. Cada cálculo de documento é guardado (`tax.calculation`) com a
-entrada, as regras usadas e o resultado.
+## Princípio
+O motor só conhece **mecanismos genéricos**: atributo com vigência, lista de
+códigos, tabela com vigência, faixa progressiva, indicador apurado da
+contabilidade, fórmula fechada, papel contábil. Nenhum nome de tributo,
+regime ou alíquota aparece no código (RNF-049-05). O Simples, o ISS, as
+retenções e, na fase 3, CBS/IBS/IS chegam como **pacotes de regras** (dados).
+Teste de aceite do desenho: a fase 3 entra sem migração e sem mudar programa.
 
 ## Dados (migração `064_tax_engine.sql`, esquema `tax`)
-- `tax.tax` — tributos: código (`iss`, `simples`, `irrf`, `pis_wh`,
-  `cofins_wh`, `csll_wh`, `inss_wh`), nome, ordem de cálculo, escopo (`item`
-  ou `document`), contas por papel (`expense_key`, `payable_key`,
-  `withheld_key`: chaves de `finance.default_account`).
-- `tax.rule` — regra com vigência: tributo, nome, `valid_from`/`valid_to`,
-  `criteria` (jsonb), `formulas` (jsonb: nome → expressão, em ordem),
-  `exception_program`, `status` (`draft`, `active`, `retired`), pacote de
-  origem, motivo, autor e datas. Regra ativa é imutável (gatilho); mudança =
-  cópia com nova data, que fecha a vigência da anterior.
+- `tax.tax` — tributo: código livre, nome, ordem de cálculo, escopo (`item` ou
+  `document`) e **papéis contábeis** (`roles` jsonb: `expense`, `payable`,
+  `withheld`, `credit` → chave de `finance.default_account` ou conta).
+- `tax.attribute` — definição de atributo fiscal: código, entidade
+  (`company`, `party`, `item`, `contract`), tipo (`text`, `number`, `boolean`,
+  `date`), lista de códigos opcional e **fonte** opcional (coluna do cadastro
+  já existente, ex.: o regime da spec 043 em `base.party.tax_regime`, numa
+  lista fechada de colunas permitidas).
+- `tax.attribute_value` — valor por entidade **com vigência** (`valid_from`,
+  `valid_to`): o regime da empresa num ano, o código de serviço de um
+  produto ou projeto, o NCM de um item, a classificação da reforma. Sobrepõe
+  a fonte do cadastro quando existe.
+- `tax.code` — listas de códigos com vigência (NCM, NBS, itens da lista de
+  serviços, CST, cClassTrib, regimes…): `list`, `code`, `description`.
 - `tax.table_row` — tabelas de apoio com vigência: `table_name`, `key`,
-  `valid_from`/`valid_to`, `value` (numeric) e `data` (jsonb). Ex.: faixas do
-  Simples (`simples_bracket`, chave `III/1`), ISS por município (`iss_city`,
-  chave `SP/sao paulo`), repartição do ISS no Simples.
-- `tax.test_case` — caso: nome, documento (jsonb), resultado esperado (jsonb),
-  data opcional.
-- `tax.calculation` — registro reproduzível (RF-049-11): tipo e referência do
-  documento, data do fato, entrada, regras (id e versão), resultado, hash.
-- `tax.change` — histórico de ativações (RNF-049-03): regra, autor, motivo,
-  casos executados e diferenças aceitas.
-- `tax.setting` — prefixo das contas de receita (RBT12), contas de folha
-  (fator R), limite do fator R (0,28) e margem de aviso (0,02).
-- `tax.state` — contador de versão das regras e tabelas, incrementado por
-  gatilho: a cache do motor é invalidada quando muda.
-- Classificação: `base.product` ganha `ncm`, `nbs`, `service_code` (item da
-  lista de serviços), `tax_group`; `projects.project` ganha `service_code`
-  e `nbs`; `base.company` ganha `activity_start` (início de atividade).
-- Contas novas no plano do produto: tributos retidos a compensar, Simples a
-  recolher, deduções da receita (tributos sobre a receita), salários e
-  encargos, pró-labore — com chaves em `finance.default_account`.
-- Grupo de acesso `tax` (responsáveis tributários): só ele e administradores
-  alteram regras, tabelas e casos.
+  `value` (numeric) e `data` (jsonb). Faixas progressivas usam `key` =
+  grupo/ordem, `value` = limite superior.
+- `tax.indicator` — indicador apurado: `account_sum` (contas por prefixo,
+  natureza credora ou devedora, janela de meses antes da data, regra de
+  início de atividade: anualizar a média) ou `formula` sobre outros
+  indicadores. Ex.: receita de 12 meses, folha de 12 meses, fator R.
+- `tax.rule` — regra com vigência: tributo, nome, `criteria` (jsonb: caminho
+  do documento → valor, lista ou `{"prefix": …}`), `formulas` (lista
+  ordenada de `[nome, expressão]`), `exception_program`, `status` (`draft`,
+  `active`, `retired`), pacote, motivo, autor. Ativa é imutável (gatilho);
+  mudança = cópia com nova data, que fecha a anterior.
+- `tax.test_case`, `tax.calculation` (registro reproduzível, RF-049-11),
+  `tax.change` (ativações com autor, motivo e casos — RNF-049-03),
+  `tax.package` (pacotes aplicados e hash) e `tax.state` (versão para a cache).
+- Empresa: `base.company.activity_start`. Contas novas no plano do produto
+  (tributos sobre a receita, a recolher, retidos a compensar, a recuperar,
+  salários e encargos, pró-labore) com chaves em `finance.default_account`.
+- Grupo de acesso `tax`: só ele e administradores alteram o cadastro.
+
+## Documento normalizado
+`doc.operation`, `doc.date`, `doc.total`, `emitter.*` (empresa),
+`recipient.*` (pessoa), `contract.*` (projeto) e, por item, `item.code`,
+`item.quantity`, `item.unit_price`, `item.amount`, `item.discount` e os
+atributos. Todos os atributos de cada entidade (fonte + valores vigentes na
+data do fato) entram pelo código do atributo: `emitter.regime`,
+`recipient.kind`, `item.service_code`… Derivados genéricos: `same_city`,
+`same_uf`.
 
 ## Linguagem de fórmulas (`tax.formula`, D4, CA-049-05)
-Expressões de Python **analisadas** (`ast`) e aceitas só com nós permitidos:
-números, textos, nomes conhecidos (`amount`, `quantity`, `rbt12`, `fator_r`,
-`emitter.regime`, `recipient.kind`… e fórmulas anteriores da mesma regra),
-`+ - * /`, comparações, `and/or/not`, `x if c else y` e as funções
-`round(x, n)`, `floor`, `ceil`, `min`, `max`, `abs`, `table(nome, chave)`,
-`field(nome, chave, campo)`, `simples_effective(anexo)`,
-`simples_share(anexo, tributo)`, `tax(código)`. Tudo em `Decimal`
-(RNF-049-02). Nada de atributo arbitrário, índice, chamada desconhecida,
-lambda ou compreensão: recusado **ao salvar**, com a posição e o motivo.
+Expressões analisadas por `ast`, aceitas só com nós permitidos: números,
+textos, nomes (`amount`, `quantity`, `total`, caminhos `emitter.regime`…,
+fórmulas anteriores da regra), `+ - * /`, comparações, `and/or/not`,
+`x if c else y`, e as funções genéricas `round`, `floor`, `ceil`, `min`, `max`,
+`abs`, `table(tabela, chave[, campo])`, `bracket(tabela, grupo, valor, campo)`,
+`indicator(código)`, `tax(código, campo)` (resultado de tributo anterior) e
+`has(caminho)`. Tudo em `Decimal`. Validação ao salvar com posição e motivo.
 
 ## Seleção (D3, CA-049-03)
-Critérios: `operation`, `purpose`, `ncm`/`nbs`/`service_code` (prefixo),
-`item_group`, `origin_uf`/`origin_city`, `dest_uf`/`dest_city`,
-`same_city`, `emitter_regime`, `dest_regime`, `dest_kind` (pessoa física,
-jurídica, órgão público), `dest_taxpayer`, `final_consumer`, `cfop`,
-`tax_class`, `party` (destinatário), `contract` (projeto). Especificidade =
-(número de critérios, comprimento do prefixo de código). Empate entre as
-melhores = conflito: **erro** no cálculo e **recusa** na ativação, mostrando
-as regras.
+Critério = caminho do documento → igual, um de vários, ou prefixo.
+Especificidade = (número de critérios, soma dos comprimentos de prefixo).
+Empate entre as melhores = conflito: erro no cálculo e recusa na ativação.
 
-## Motor (`tax.engine`, D1, RF-049-01, RNF-049-01)
-1. Normaliza o documento (emitente = empresa; destinatário pelo cadastro
-   fiscal da spec 043; itens com classificação).
-2. Contexto do Simples: RBT12 dos 12 meses anteriores pelas contas de receita
-   (início de atividade: média dos meses × 12; no primeiro mês, a receita do
-   próprio mês × 12), folha pelas contas de folha, fator R.
-3. Para cada tributo, na ordem: escolhe a regra por item (ou no documento),
-   avalia as fórmulas e acumula base, alíquota, valor, retenção e a
-   explicação (regra, critérios que casaram, valores das fórmulas).
-4. Regras e tabelas em cache por versão (`tax.state`).
-5. `record=True` grava em `tax.calculation`; recalcular um documento antigo
-   usa as regras vigentes na data do fato (CA-049-02).
+## Saídas e contabilização
+Saídas reconhecidas de cada regra: `base`, `rate`, `amount` (devido pelo
+emitente), `withheld` (retido pelo tomador), `credit` (a recuperar); qualquer
+outra saída (CST, código, texto para a nota) vai junto no resultado. O
+lançamento usa os papéis do tributo: `amount` → despesa × a recolher;
+`withheld` → retido × clientes (o título fica pelo líquido); `credit` →
+a recuperar × custo.
 
-## Casos de teste e ativação (D6, CA-049-04)
-`tax.activate_rule` valida as fórmulas, procura conflitos, roda **todos os
-casos** com e sem a mudança e mostra as diferenças; com diferença, exige
-`confirm` e motivo; sem diferença, ativa direto. Tudo fica em `tax.change`.
-`tax.simulate` calcula qualquer documento numa data escolhida.
+## Motor (`tax.engine`, RF-049-01, RNF-049-01/02)
+Normaliza, calcula indicadores pedidos pelas fórmulas, escolhe regras por
+item/documento, avalia na ordem dos tributos, acumula, explica; regras,
+tabelas e atributos em cache pela versão de `tax.state`; `record=True` grava
+`tax.calculation`. Data do fato decide as vigências (CA-049-02).
 
-## Pacotes de regras (D5, RF-049-06)
-O pacote do produto é uma biblioteca semente (`tax.package_br_services`) com
-os tributos, as regras e as tabelas de exemplo ("conferir com o contador").
-Ele chega pelas atualizações do produto (spec 028) como qualquer programa;
-`tax.apply_package` compara com o que está ativo, roda os casos e aplica.
-A rotina diária `tax.watch` avisa pacote não aplicado, vigência terminando
-sem sucessora e fator R perto do limite (tarefa para o grupo `tax`).
+## Programas
+`tax.calculate` (serviço exposto), `tax.save_rule`, `tax.copy_rule`,
+`tax.activate_rule` (valida, conflitos, roda casos, diferenças, confirmação),
+`tax.which_rule`, `tax.save_case`, `tax.run_cases`, `tax.simulate`,
+`tax.save_attribute`/`tax.set_attribute`, `tax.import_table` (CSV),
+`tax.apply_package`, `tax.watch` (rotina diária: pacote pendente, vigência
+terminando sem sucessora, indicador perto de limite declarado na regra) e
+o pacote de exemplo `tax.package_br_services` (Simples anexos III e V, ISS,
+retenções; "conferir com o contador").
 
-## Integração (D7, T-049-06)
-- `projects.invoice_project` chama o motor: Simples (despesa × a recolher),
-  ISS (próprio ou retido), retenções federais; o título a receber fica pelo
-  líquido; lançamentos nas contas por papel; cálculo registrado. O
-  cancelamento (`projects.cancel_invoice`) estorna pelo lançamento.
-- Migração do ISS por projeto: cada projeto com alíquota vira uma regra
-  `contract` com a mesma alíquota e retenção (CA-049-01, "mesmo ISS").
-- Vendas de mercadorias, compras, notas de fornecedor e devoluções entram com
-  a fase 2/3 (ICMS, IPI, CBS/IBS), quando o motor tiver esses tributos.
+## Integração (T-049-06)
+`projects.invoice_project` chama o motor e lança por papéis; título pelo
+líquido; cálculo registrado; o cancelamento estorna. As alíquotas de ISS já
+gravadas nos projetos viram regras com critério `contract.code` (mesmo ISS de
+antes, CA-049-01). Vendas, compras e notas de fornecedor entram nas fases 3/2.
 
-## Verificação de cálculo fora do motor (RNF-049-04)
-Teste que varre `priv/programs` procurando alíquota de tributo multiplicada
-fora dos programas `tax.*`.
+## Verificações (RNF-049-04, 05)
+Teste que varre `priv/programs` (fora do pacote) e `src` procurando nomes de
+tributo/regime e alíquota multiplicada.
 
 ## Testes
-- `tests/runtime/test_tax.py`: linguagem de fórmulas, seleção e cálculo puro,
-  Simples (faixas, início de atividade, fator R), sem banco.
-- Integração: CA-049-01..05 e 08, desempenho de 200 itens, reprodução.
+`tests/runtime/test_tax.py` (linguagem, seleção, cálculo, faixas, indicadores
+com início de atividade, sem banco); integração CA-049-01..05, 08, 09,
+desempenho de 200 itens e reprodução.

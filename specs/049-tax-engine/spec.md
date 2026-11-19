@@ -80,6 +80,17 @@ estados, atividades e benefícios próprios.
   após a fase 1, antes das demais; ICMS, ST, DIFAL e IPI ficam na fase 2,
   depois. A emissão de nota (spec 059) continua fora: o ANA calcula, registra
   e contabiliza.
+- **D11 — Qualquer empresa, qualquer regime; lei nova é só dado (P21,
+  19/11/2026).** O motor não conhece nenhum tributo nem regime pelo nome:
+  tributos, regimes e códigos são cadastros; atributos fiscais de empresa,
+  pessoas, itens e projetos ficam num cadastro de atributos **com vigência**
+  (sem colunas por lei); critérios de regra apontam para qualquer atributo do
+  documento; fórmulas usam só mecanismos genéricos (tabela, faixa
+  progressiva, indicador apurado, arredondamento); indicadores (RBT12, folha,
+  fator R…) são definidos como dado sobre a contabilidade; contabilização e
+  títulos seguem papéis declarados no tributo. O Simples, as retenções e a
+  reforma inteira chegam como pacotes de regras. Teste de aceite: a fase 3
+  (CBS, IBS, IS) entra sem migração e sem mudar programa.
 
 ## Requisitos funcionais
 - **RF-049-01** Serviço de cálculo (D1) com resultado por item e total e a
@@ -116,6 +127,9 @@ estados, atividades e benefícios próprios.
   alteração tem autor, motivo e casos de teste executados registrados.
 - **RNF-049-04** Nenhum cálculo de imposto fora do motor (verificação
   automática no código dos programas do produto).
+- **RNF-049-05** (D11, P21) O código do motor e dos programas não contém
+  nome de tributo, regime ou alíquota: verificação automática; tributos,
+  regimes, atributos, indicadores e regras são dados.
 
 ## Critérios de aceite
 - **CA-049-01** Fatura de serviço para tomador com retenção: ISS, IRRF e
@@ -135,6 +149,10 @@ estados, atividades e benefícios próprios.
   alíquota efetiva; nenhuma retenção federal; no primeiro ano a RBT12 segue a
   regra de início de atividade. Fator R a menos de 2 pontos do limite gera
   aviso.
+- **CA-049-09** (D11) Um tributo novo com regra, tabela de alíquotas por ano,
+  atributo novo de item e conta própria é criado e calculado numa fatura só
+  por cadastro (ou pacote), sem migração e sem mudar programa; uma empresa
+  que muda de regime numa data calcula pelo regime de cada data.
 - **CA-049-06** (fase 2) Venda interestadual para não contribuinte calcula
   ICMS com DIFAL e FCP conforme as tabelas da UF de destino.
 - **CA-049-07** (fase 3) Um documento de 2027 traz CBS e IBS nas alíquotas de
