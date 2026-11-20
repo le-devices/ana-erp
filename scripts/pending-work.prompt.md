@@ -54,7 +54,7 @@ Tarefas adiadas já concluídas (ordem acordada em out/2026): T-017-05b ✓, T-0
 8. ✓ 049 fase 1 (faltam T-049-07b/07c, no fim da fila) — motor de impostos: motor, vigência, fórmulas, casos de teste, ISS e retenções e **Simples Nacional com fator R** (T-049-01..07, 06b; D10 de 19/11/2026: o caso de referência é empresa do Simples) — antecipada: reforma tributária (`specs/049-tax-engine`)
 9. ✓ 049 fase 3 (faltam T-049-09b, alíquotas oficiais do Senado, e 09c, no fim da fila) — CBS, IBS e Imposto Seletivo na transição (T-049-09) — 2027 já tem CBS cheia
 10. ✓ 064 fase 1 — portão de qualidade dos programas: inspeção no editor, regras e isenções, portão assinado no transporte para a produção (`specs/064-program-quality-gate`)
-11. 056 — ensaio universal: toda rotina que grava pode ser ensaiada (`specs/056-universal-rehearsal`)
+11. ✓ 056 — ensaio universal: toda rotina que grava pode ser ensaiada (`specs/056-universal-rehearsal`)
 11a. 065 fase 1 — valores da empresa: valores nomeados com vigência, leitura por programas e SQL, expressões dinâmicas num só lugar, em memória em cada nó (`specs/065-company-values`) — antes da 045, que os usa
 12. 045 — variantes de execução (`specs/045-execution-variants`)
 12a. 065 fase 2 — valores da empresa nas variantes, agendamentos, regras, esteiras e impostos; valores mantidos por rotinas; onde é usado; transporte (T-065-07..11)

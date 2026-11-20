@@ -1,6 +1,6 @@
 # 056 — Ensaio universal: toda operação pode ser simulada
 
-Situação: especificada (nov/2026).
+Situação: implementada (nov/2026); falta T-056-03b (assistente e regras, quando as specs 052 e 051 existirem).
 
 ## Problema
 A simulação já existe (spec 020: parâmetro `simulate`, execução somente

@@ -86,7 +86,7 @@ inglês, como no código (constituição, P2a).
 | 053 | [Regressão automática do cliente](053-customer-regression/spec.md) | Trilhas do próprio cliente (gravadas fazendo) rodadas na instância de testes a cada atualização; relatório de impacto; liberação só com ensaio aceito | especificada |
 | 054 | [Chão de fábrica e rastreabilidade](054-shop-floor-traceability/spec.md) | Número de série e genealogia, coleta de bancadas e máquinas, qualidade automática, recall em segundos, painel em tempo real | especificada |
 | 055 | [Fechamento contínuo](055-continuous-close/spec.md) | Painel do fechamento com verificações automáticas diárias, fechar quando verde, pacote do período | especificada |
-| 056 | [Ensaio universal](056-universal-rehearsal/spec.md) | Toda rotina que grava pode ser ensaiada pelo núcleo, com efeitos externos retidos e resumo legível do efeito | especificada |
+| 056 | [Ensaio universal](056-universal-rehearsal/spec.md) | Toda rotina que grava pode ser ensaiada pelo núcleo, com efeitos externos retidos e resumo legível do efeito | implementada (falta assistente e regras) |
 | 057 | [Central de suporte e parceiros](057-support-center/spec.md) | "Pedir ajuda" com contexto, pacote de diagnóstico mascarado, acesso de suporte pelo acesso emergencial, painel do parceiro | especificada |
 | 058 | [Filiais sem internet](058-offline-branches/spec.md) | Nó de filial que opera desconectado e sincroniza sem duplicar | especificada (depende de decisão) |
 | 059 | [Documentos fiscais eletrônicos](059-electronic-invoices/spec.md) | NFS-e padrão nacional e NF-e a partir dos documentos e do motor de impostos; XML e DANFE no repositório, e-mail e portal; XML de entrada | especificada (depende de certificado e homologação) |
