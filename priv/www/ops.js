@@ -325,11 +325,43 @@
         simWhen.textContent = `simulado às ${new Date().toLocaleTimeString("pt-BR")} · nada foi gravado`;
       } catch (e) { simOut.replaceChildren(el("div", { class: "end error", text: errorText(e) })); }
     }
+    // Spec 056: every routine that writes can be rehearsed — it runs whole, everything is undone, and the effect
+    // (records, e-mails, calls held) is shown in business terms. A routine with its own simulation keeps it (D4).
+    async function rehearse() {
+      let params;
+      try { params = form.read(); } catch (e) { toast("Parâmetros: " + e.message, true); return; }
+      output.replaceChildren(el("p", { class: "muted", text: "Ensaiando… nada será gravado." }));
+      resultJson.textContent = "";
+      status.textContent = "ensaiando…";
+      status.className = "run-state busy";
+      try {
+        const res = await API.run(r.name, { params, rehearse: true });
+        output.replaceChildren();
+        const effects = res.rehearsal || (res.error && res.error.rehearsal) || null;
+        output.append(R.rehearsalCard(effects, res.error, ctx));
+        const events = res.events || (res.error && res.error.events) || [];
+        for (const ev of events) if (ev.type === "output") R.drawOutput(output, ev, { ...ctx, screen: "rehearsal:" + r.name });
+        if (!res.error) resultJson.textContent = JSON.stringify(res.result, null, 2);
+        status.textContent = res.error ? "ensaio parou num erro · nada foi gravado" : `ensaio em ${res.duration_ms} ms · nada foi gravado`;
+        status.className = "run-state " + (res.error ? "error" : "ok");
+        collapse();
+      } catch (e) {
+        status.textContent = "falhou";
+        status.className = "run-state error";
+        output.replaceChildren(el("div", { class: "end error", text: errorText(e) }));
+      }
+    }
     if (simName) {
       runSimulation = simulate;
       const btn = form.node.querySelector(".run-button");
       const simBtn = el("button", { type: "button", class: "sim-button", text: "Simular (F9)", onclick: simulate });
       if (btn) btn.before(simBtn); else form.node.append(simBtn);
+    } else if (r.writes) {
+      runSimulation = rehearse;
+      const btn = form.node.querySelector(".run-button");
+      const reBtn = el("button", { type: "button", class: "sim-button rehearse-button", text: "Ensaiar (F9)", onclick: rehearse,
+                                   title: "Executa tudo e desfaz no fim: mostra o que seria gravado e enviado, sem gravar nada" });
+      if (btn) btn.before(reBtn); else form.node.append(reBtn);
     } else runSimulation = null;
 
     async function loadHistory() {
@@ -369,7 +401,7 @@
             el("button", { type: "button", class: "quiet small copy-to-cat", title: "Copiar para uma categoria sua ou da empresa",
                            onclick: () => window.AnaCategories.copyDialog([r.name]) }, "Copiar para categoria…"))),
         el("div", { class: "page-meta" }, status,
-          el("span", { class: "muted small", text: `${r.command ? "comando " + r.command + " · " : ""}${r.exposed ? "integração · " : ""}F8 executa · F3 volta` }),
+          el("span", { class: "muted small", text: `${r.command ? "comando " + r.command + " · " : ""}${r.exposed ? "integração · " : ""}F8 executa${r.writes && !simName ? " · F9 ensaia" : ""} · F3 volta` }),
           window.AnaUI.pinnable(band, "routine." + r.name))),
       simName ? simSplit() : el("section", { class: "params-card filter-bar" },
         el("div", { class: "filter-head" }, I("filter", 16), el("strong", { text: "Filtros" })), form.node),

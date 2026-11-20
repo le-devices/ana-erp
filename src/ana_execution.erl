@@ -44,6 +44,11 @@
     origin :: binary(),
     debug = false :: boolean(),
     commit = false :: boolean(),
+    %% Spec 056: a rehearsal runs whole and is undone; external effects are held and listed.
+    rehearse = false :: boolean(),
+    held = [] :: [map()],
+    rehearsal = #{} :: map(),               % effects of the parts, joined at the end
+    stats_base = #{} :: map(),              % per-transaction statistics at the start of a rehearsal
     breakpoints = [] :: list(),
     stop_on_entry = false :: boolean(),
     timeout_ms :: pos_integer(),
@@ -264,7 +269,9 @@ init(#{id := Id, program := Program, params := Params, user := User,
              origin = maps:get(origin, Op, <<"api">>),
              debug = Debug,
              commit = maps:get(commit, Op, false) =:= true
-                      andalso ana_security:has_role(User, <<"developer">>),
+                      andalso ana_security:has_role(User, <<"developer">>)
+                      andalso maps:get(rehearse, Op, false) =/= true,
+             rehearse = maps:get(rehearse, Op, false) =:= true,
              breakpoints = [L || L <- maps:get(breakpoints, Op, []), is_integer(L)],
              stop_on_entry = maps:get(stop_on_entry, Op, false) =:= true,
              timeout_ms = ana_settings:get(exec_timeout_ms),
@@ -358,7 +365,12 @@ handle_info(audit_start, St = #st{status = Status}) when Status =/= finished ->
     ok = audit_start(St),
     {noreply, St};
 handle_info({part_done, H, Res}, St) ->
-    {noreply, part_done(H, Res, St)};
+    %% Spec 056: a rehearsed part brings its effects; they join the main execution's.
+    St2 = case Res of
+        {ok, #{rehearsal := E}} -> St#st{rehearsal = ana_rehearsal:merge(St#st.rehearsal, E)};
+        _ -> St
+    end,
+    {noreply, part_done(H, simplify(Res), St2)};
 handle_info({gather_timeout, Ref}, St = #st{par = #{gather := {_, _, _, Ref, _}}}) ->
     {noreply, gather_expired(St)};
 handle_info({'DOWN', Mon, process, _, _}, St = #st{parent_mon = Mon, status = S}) when S =/= finished ->
@@ -431,6 +443,8 @@ prepare_run(P, L, St) ->
             case lists:flatten([epgsql:squery(C, Begin)]) of
                 [{ok, [], []} | _] = Rs ->
                     case [E || {error, E} <- Rs] of
+                        [] when St2#st.rehearse ->
+                            open_frame(P, undefined, undefined, St2#st{in_tx = true, stats_base = ana_rehearsal:baseline(C)});
                         [] -> open_frame(P, undefined, undefined, St2#st{in_tx = true});
                         [E | _] -> {error, sql_error(E), St2}
                     end;
@@ -514,6 +528,7 @@ open_frame(P, RequestId, Savepoint, St = #st{stack = Stack}) ->
                                  public_url => ana_instance:public_url(),
                                  execution_id => St#st.id,
                                  origin => St#st.origin,
+                                 rehearsal => St#st.rehearse,
                                  depth => length(Stack)},
                     debug => Root andalso St#st.debug,
                     profile => Root andalso St#st.profile_req andalso not St#st.debug,
@@ -535,6 +550,16 @@ open_frame(P, RequestId, Savepoint, St = #st{stack = Stack}) ->
 %% Protocol
 %% ==========================================================================
 
+handle_message(#{<<"type">> := <<"request">>, <<"id">> := Id, <<"op">> := Op} = M, St = #st{rehearse = true}) ->
+    %% Spec 056 (D1): what would leave the transaction is held, answered as held and listed.
+    A = maps:get(<<"args">>, M, #{}),
+    case is_map(A) andalso ana_rehearsal:hold(Op, A) of
+        {hold, What} ->
+            respond(Id, {ok, ana_rehearsal:held_reply(What)}, St),
+            St#st{held = [What | St#st.held]};
+        {rewrite, A2} -> request(Op, Id, A2, St);
+        _ -> request(Op, Id, A, St)
+    end;
 handle_message(#{<<"type">> := <<"request">>, <<"id">> := Id, <<"op">> := Op} = M, St) ->
     request(Op, Id, maps:get(<<"args">>, M, #{}), St);
 handle_message(#{<<"type">> := <<"output">>} = M, St) ->
@@ -724,6 +749,11 @@ root_end2(#{<<"ok">> := true} = M, St0 = #st{conn = C}) ->
             finish(<<"error">>, err(<<"PARALLEL_ATOMIC_FAILED">>,
                                     io_lib:format("~b parte(s) atômica(s) falharam: nada foi gravado",
                                                   [length(AtomicFailed)])), St);
+        false when St#st.rehearse ->
+            %% Spec 056 (RF-056-02): the effect is read from the transaction itself, then everything is undone.
+            Effects = ana_rehearsal:merge(ana_rehearsal:effects(C, St#st.held, St#st.stats_base), St#st.rehearsal),
+            _ = epgsql:squery(C, "ROLLBACK"),
+            finish(<<"success">>, #{result => Result, rolled_back => true, rehearsal => Effects}, St#st{in_tx = false});
         false when St#st.debug, not St#st.commit ->
             %% RNF-004-01: debugging always rolls back unless explicitly committed.
             _ = epgsql:squery(C, "ROLLBACK"),
@@ -963,24 +993,26 @@ start_part(H, St = #st{par = Par}) ->
             end,
             ChildId = uuid(),
             Gid = case maps:get(mode, Part) of
+                _ when St#st.rehearse -> undefined;      % spec 056: a rehearsed part is undone by itself
                 <<"atomic">> -> ana_parallel:gid(St#st.id, H);
                 _ -> undefined
             end,
             Opts0 = #{id => ChildId, origin => St#st.origin, parent => St#st.id, parent_pid => self(),
-                      timeout_ms => Timeout},
+                      timeout_ms => Timeout, rehearse => St#st.rehearse},
             Opts1 = case Gid of undefined -> Opts0; _ -> Opts0#{prepare => Gid} end,
             Opts = case maps:get(snapshot, Part) of undefined -> Opts1; S -> Opts1#{snapshot => S} end,
             Self = self(),
             #{program := Program, params := Params} = Part,
             User = St#st.user,
             {_, Mon} = spawn_monitor(fun() ->
-                Self ! {part_done, H, simplify(run(Program, Params, User, Opts))}
+                Self ! {part_done, H, run(Program, Params, User, Opts)}
             end),
             Parts = maps:get(parts, Par),
             St#st{par = Par#{parts => Parts#{H => Part#{status => running, id => ChildId, mon => Mon, gid => Gid}}}}
     end.
 
 simplify({ok, #{result := R}}) -> {ok, R};
+simplify({ok, R}) -> {ok, R};
 simplify({error, E}) -> {error, maps:without([<<"events">>], E)}.
 
 part_done(H, Res, St) ->
@@ -1141,14 +1173,19 @@ finish(Status, Data, St00) ->
         _ -> {null, Data#{<<"execution_id">> => St#st.id}}
     end,
     RolledBack = maps:get(rolled_back, Data, false),
+    %% Spec 056: a rehearsal that stopped on an error still says what it had held up to there.
+    Rehearsal = case St#st.rehearse of
+        true -> maps:get(rehearsal, Data, ana_rehearsal:merge(#{held => lists:reverse(St#st.held)}, St#st.rehearsal));
+        false -> null
+    end,
     audit_end(St, Status, Duration, Result, Error),
     _ = (catch observe(Status, Duration, St)),
     Final = #{final_status => Status, result => Result, error => Error,
-              duration_ms => Duration, rolled_back => RolledBack,
+              duration_ms => Duration, rolled_back => RolledBack, rehearsal => Rehearsal,
               usage => usage(St), limits => St#st.limits},
     St2 = event(#{<<"status">> => Status, <<"result">> => Result, <<"error">> => Error,
-                  <<"duration_ms">> => Duration, <<"rolled_back">> => RolledBack,
-                  <<"usage">> => usage(St)},
+                  <<"duration_ms">> => Duration, <<"rolled_back">> => RolledBack orelse St#st.rehearse,
+                  <<"rehearsal">> => Rehearsal, <<"usage">> => usage(St)},
                 <<"end">>,
                 St#st{stack = [], pending = undefined, conn = undefined, in_tx = false, final = Final}),
     _ = St2#st.admitted andalso release(St2#st.debug) =:= ok,
@@ -1164,10 +1201,15 @@ finish(Status, Data, St00) ->
     St3.
 
 sync_reply(<<"success">>, Result, _, Duration, St) ->
-    {ok, #{id => St#st.id, result => Result, duration_ms => Duration, usage => usage(St),
-           events => lists:reverse(St#st.events)}};
+    R = #{id => St#st.id, result => Result, duration_ms => Duration, usage => usage(St),
+          events => lists:reverse(St#st.events)},
+    {ok, with_rehearsal(R, rehearsal, St)};
 sync_reply(_, _, Error, _, St) ->
-    {error, Error#{<<"events">> => lists:reverse(St#st.events)}}.
+    {error, with_rehearsal(Error#{<<"events">> => lists:reverse(St#st.events)}, <<"rehearsal">>, St)}.
+
+%% Spec 056: the answer of a rehearsal carries its effects (also when it stopped on an error).
+with_rehearsal(M, K, #st{rehearse = true, final = #{rehearsal := E}}) when is_map(E) -> M#{K => E};
+with_rehearsal(M, _, _) -> M.
 
 %% Returns the connection clean to the pool; if that is not possible, drops it.
 return_connection(#st{conn = undefined}) -> ok;
@@ -1213,10 +1255,10 @@ crash_trace(Class, Reason, Stack) ->
 audit_start(St) ->
     case ana_db:exec(
            "INSERT INTO ana_system.execution (id, program, version, username, origin, debug, status, params, "
-           "  client_ip, api_key_id, node, parent_execution_id) "
-           "VALUES ($1::text::uuid, $2, $3, $4, $5, $6, 'running', $7::text::jsonb, $8, $9, $10, $11::text::uuid)",
+           "  client_ip, api_key_id, node, parent_execution_id, rehearsal) "
+           "VALUES ($1::text::uuid, $2, $3, $4, $5, $6, 'running', $7::text::jsonb, $8, $9, $10, $11::text::uuid, $12)",
            [St#st.id, St#st.program, St#st.version, maps:get(username, St#st.user),
-            St#st.origin, St#st.debug, json_text(St#st.params)] ++ trace(St) ++ [parent(St)]) of
+            St#st.origin, St#st.debug, json_text(St#st.params)] ++ trace(St) ++ [parent(St), St#st.rehearse]) of
         {ok, _} -> ok;
         {error, E} -> logger:error("audit (start) failed: ~0p", [E]), ok
     end.
@@ -1225,10 +1267,10 @@ audit_end(St, Status, Duration, Result, Error) ->
     Sql = "INSERT INTO ana_system.execution (id, program, version, username, origin, debug, "
           "  status, params, finished_at, duration_ms, result, error, output, "
           "  cpu_ms, max_rss_kb, sql_count, rows_read, limits, client_ip, api_key_id, node, internal_trace, "
-          "  parent_execution_id) "
+          "  parent_execution_id, rehearsal) "
           "VALUES ($1::text::uuid, $2, $3, $4, $5, $6, $7, $8::text::jsonb, now(), $9, "
           "        $10::text::jsonb, $11::text::jsonb, $12, $13, $14, $15, $16, $17::text::jsonb, "
-          "        $18, $19, $20, $21, $22::text::uuid) "
+          "        $18, $19, $20, $21, $22::text::uuid, $23) "
           "ON CONFLICT (id) DO UPDATE SET status = EXCLUDED.status, finished_at = now(), "
           "  duration_ms = EXCLUDED.duration_ms, result = EXCLUDED.result, "
           "  error = EXCLUDED.error, output = EXCLUDED.output, cpu_ms = EXCLUDED.cpu_ms, "
@@ -1241,7 +1283,7 @@ audit_end(St, Status, Duration, Result, Error) ->
               unicode:characters_to_binary(St#st.output),
               St#st.cpu_ms, St#st.max_rss_kb, St#st.sql_count, St#st.rows_read,
               json_text(case St#st.limits of M when map_size(M) =:= 0 -> null; M -> M end)]
-             ++ trace(St) ++ [St#st.internal_trace, parent(St)],
+             ++ trace(St) ++ [St#st.internal_trace, parent(St), St#st.rehearse],
     case ana_db:exec(Sql, Params) of
         {ok, _} -> ok;
         {error, E} -> logger:error("audit (end) failed: ~0p", [E])

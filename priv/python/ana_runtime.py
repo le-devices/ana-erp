@@ -371,6 +371,8 @@ class Context:
         self.version = d.get("version")
         self.origin = d.get("origin")
         self.depth = d.get("depth", 0)
+        # Spec 056: a rehearsal — everything is undone at the end and external calls are held.
+        self.rehearsal = bool(d.get("rehearsal", False))
 
     def __repr__(self):
         return (f"Context(user={self.user!r}, program={self.program!r}, "
@@ -1423,7 +1425,89 @@ def inspect(channel, msg):
             except ValueError:
                 resp["error"] = {"line": node.lineno, "message": "PARAMS deve ser um literal"}
     resp["lint"] = lint_program(tree, source)
+    resp["writing"], resp["uses"] = program_effects(tree)
     channel.send(resp)
+
+
+# Spec 056 (RF-056-03): does the program write, and through what? Per top-level function: the ones that write by
+# themselves (SQL that changes data, e-mail, files, remote calls, HTTP other than reading) or call a local one that
+# does; and the edges "function>library:function" (or ">program" for ana.call) to what it uses. The catalog joins
+# the edges of all programs, so a report that only reads through a library is not taken for one that writes.
+WRITE_SQL_RE = re.compile(r"\b(INSERT\s+INTO|UPDATE\s+[\w.\"]+\s+SET|DELETE\s+FROM|MERGE\s+INTO|TRUNCATE)\b", re.I)
+WRITE_CALLS = {"sql_exec", "sql_batch", "send_email", "schedule_job", "remote"}
+READ_FILE_CALLS = {"get", "list", "folder"}
+DB_CALL_RE = re.compile(r"\b([a-z_][a-z0-9_]*\.[a-z_][a-z0-9_]*)\s*\(", re.I)
+
+
+def program_effects(tree):
+    """(writing functions — "*" for module-level code —, edges "src>target")."""
+    import ast
+
+    def is_ana(node, name=None):
+        if name is None:
+            return isinstance(node, ast.Name) and node.id == "ana"
+        return isinstance(node, ast.Attribute) and node.attr == name and is_ana(node.value)
+
+    modules, functions = {}, {}                       # alias → "lib.mod"; alias → ["lib.mod:func", …]
+    for node in ast.walk(tree):
+        if isinstance(node, ast.ImportFrom) and (node.module or "").startswith("ana_lib."):
+            rest = node.module[len("ana_lib."):]
+            for a in node.names:
+                alias = a.asname or a.name
+                modules[alias] = f"{rest}.{a.name}"                       # from ana_lib.x import mod
+                functions[alias] = [f"{rest}:{a.name}", f"{rest}.{a.name}:{a.name}"]   # from ana_lib.x.mod import f
+        elif isinstance(node, ast.Import):
+            for a in node.names:
+                if a.name.startswith("ana_lib.") and a.asname:
+                    modules[a.asname] = a.name[len("ana_lib."):]
+
+    def writes_here(node):
+        if isinstance(node, ast.Constant) and isinstance(node.value, str):
+            return bool(WRITE_SQL_RE.search(node.value))
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute):
+            f = node.func
+            if is_ana(f.value) and f.attr in WRITE_CALLS:
+                return True
+            if is_ana(f.value) and f.attr == "http":
+                method = node.args[1] if len(node.args) > 1 else next((k.value for k in node.keywords if k.arg == "method"), None)
+                return not (isinstance(method, ast.Constant) and str(method.value).upper() in ("GET", "HEAD"))
+            if is_ana(f.value, "files") and f.attr not in READ_FILE_CALLS:
+                return True
+        return False
+
+    tops = {}
+    for node in tree.body:
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            tops[node.name] = node
+    writing, calls, edges = set(), {}, set()
+    module_level = [n for n in tree.body if not isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef))]
+    for src, body in list(tops.items()) + [("*", module_level)]:
+        nodes = (x for n in body for x in ast.walk(n)) if isinstance(body, list) else ast.walk(body)
+        local = calls.setdefault(src, set())
+        for x in nodes:
+            if writes_here(x):
+                writing.add(src)
+            if isinstance(x, ast.Constant) and isinstance(x.value, str):
+                # Database functions the SQL calls ("SELECT flow.skip(…)"): the catalog reads whether they write.
+                edges.update(f"{src}>db:{m.lower()}" for m in DB_CALL_RE.findall(x.value))
+            if isinstance(x, ast.Name) and isinstance(x.ctx, ast.Load):
+                if x.id in tops and x.id != src:
+                    local.add(x.id)
+                for t in functions.get(x.id, []):
+                    edges.add(f"{src}>{t}")
+            elif isinstance(x, ast.Attribute) and isinstance(x.value, ast.Name) and x.value.id in modules:
+                edges.add(f"{src}>{modules[x.value.id]}:{x.attr}")
+            elif (isinstance(x, ast.Call) and isinstance(x.func, ast.Attribute) and is_ana(x.func.value)
+                  and x.func.attr in ("call", "spawn") and x.args and isinstance(x.args[0], ast.Constant)):
+                edges.add(f"{src}>{x.args[0].value}")
+    changed = True
+    while changed:                                    # a function that calls a local writing one writes too
+        changed = False
+        for src, called in calls.items():
+            if src not in writing and called & writing:
+                writing.add(src)
+                changed = True
+    return sorted(writing), sorted(edges)
 
 
 # ---------------------------------------------------------------------------

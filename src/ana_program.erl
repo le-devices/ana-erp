@@ -128,8 +128,10 @@ write(C, Name, Fields, Source, Insp, Who) ->
         undefined ->
             ok = exec(C,
                 "INSERT INTO ana_system.program (name, description, kind, exposed, restricted, min_role, "
-                "  active, version, source, params, docs, warning, updated_by, limits, in_menu, lint, portal, public) "
-                "VALUES ($1, $2, $3, $4, $5, $6, $7, 1, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)",
+                "  active, version, source, params, docs, warning, updated_by, limits, in_menu, lint, portal, public, "
+                "  writing, uses) "
+                "VALUES ($1, $2, $3, $4, $5, $6, $7, 1, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, "
+                "        COALESCE($18::text[], '{}'), COALESCE($19::text[], '{}'))",
                 [Name, maps:get(<<"description">>, Fields, <<>>),
                  maps:get(<<"kind">>, Fields, <<"program">>),
                  maps:get(<<"exposed">>, Fields, false),
@@ -139,7 +141,8 @@ write(C, Name, Fields, Source, Insp, Who) ->
                  Source, field(params, Insp), field(docs, Insp), field(warning, Insp), Who,
                  maps:get(<<"limits">>, Fields, #{}), maps:get(<<"in_menu">>, Fields, true), field(lint, Insp),
                  maps:get(<<"portal">>, Fields, false) =:= true,
-                 maps:get(<<"public">>, Fields, false) =:= true andalso maps:get(<<"exposed">>, Fields, false) =:= true]),
+                 maps:get(<<"public">>, Fields, false) =:= true andalso maps:get(<<"exposed">>, Fields, false) =:= true,
+                 field(writing, Insp), field(uses, Insp)]),
             ok = new_version(C, Name, 1, Source, Comment, Who),
             ok = set_category(C, Name, Source),
             notify(C, Name),
@@ -162,7 +165,10 @@ write(C, Name, Fields, Source, Insp, Who) ->
                         "  in_menu = COALESCE($15, in_menu), "
                         "  lint = CASE WHEN $9 IS NULL THEN lint ELSE $16 END, "
                         "  portal = COALESCE($17, portal), "
-                        "  public = CASE WHEN COALESCE($4, exposed) THEN COALESCE($18, public) ELSE false END "
+                        "  public = CASE WHEN COALESCE($4, exposed) THEN COALESCE($18, public) ELSE false END, "
+                        %% Spec 056: what the program writes and uses (catalog of "Ensaiar").
+                        "  writing = CASE WHEN $9 IS NULL THEN writing ELSE COALESCE($19::text[], '{}') END, "
+                        "  uses = CASE WHEN $9 IS NULL THEN uses ELSE COALESCE($20::text[], '{}') END "
                         "WHERE name = $1",
                         [Name, maps:get(<<"description">>, Fields, null),
                          maps:get(<<"kind">>, Fields, null),
@@ -173,7 +179,8 @@ write(C, Name, Fields, Source, Insp, Who) ->
                          null_if_undefined(Source), field(params, Insp), field(docs, Insp),
                          field(warning, Insp), Who, maps:get(<<"limits">>, Fields, null),
                          maps:get(<<"in_menu">>, Fields, null), field(lint, Insp),
-                         maps:get(<<"portal">>, Fields, null), maps:get(<<"public">>, Fields, null)]),
+                         maps:get(<<"portal">>, Fields, null), maps:get(<<"public">>, Fields, null),
+                         field(writing, Insp), field(uses, Insp)]),
                     _ = Changed andalso (ok =:= new_version(C, Name, NV, Source, Comment, Who)),
                     ok = set_category(C, Name, Source),
                     notify(C, Name),
@@ -230,12 +237,15 @@ refresh_params() ->
     %% Also refreshes the static SQL findings (spec 019): the rules evolve with the product.
     %% Written only when something changed (P15).
     N = length([ok || #{<<"name">> := Name, <<"source">> := Source, <<"kind">> := Kind} <- Rows,
-                      #{params := P, lint := L} <- [inspection(Source, Kind)],
+                      #{params := P, lint := L, writing := Wr, uses := Us} <- [inspection(Source, Kind)],
                       {ok, 1} <- [ana_db:exec("UPDATE ana_system.program SET params = COALESCE($2, params), "
-                                              "lint = COALESCE($3, '[]'::jsonb) WHERE name = $1 "
+                                              "lint = COALESCE($3, '[]'::jsonb), writing = COALESCE($4::text[], writing), "
+                                              "uses = COALESCE($5::text[], uses) WHERE name = $1 "
                                               "AND (params IS DISTINCT FROM COALESCE($2, params) "
-                                              "     OR lint IS DISTINCT FROM COALESCE($3, '[]'::jsonb))",
-                                              [Name, P, L])],
+                                              "     OR lint IS DISTINCT FROM COALESCE($3, '[]'::jsonb) "
+                                              "     OR writing IS DISTINCT FROM COALESCE($4::text[], writing) "
+                                              "     OR uses IS DISTINCT FROM COALESCE($5::text[], uses))",
+                                              [Name, P, L, Wr, Us])],
                       _ <- [invalidate(Name)]]),
     {ok, N}.
 
@@ -245,7 +255,7 @@ inspection(Source, Kind) ->
     case ana_py:inspect(Source) of
         {ok, #{<<"ok">> := false, <<"error">> := #{<<"line">> := L, <<"message">> := M}}} ->
             #{warning => unicode:characters_to_binary(io_lib:format("linha ~p: ~ts", [L, M])),
-              params => null, docs => null, lint => null};
+              params => null, docs => null, lint => null, writing => null, uses => null};
         {ok, #{<<"ok">> := true} = R} ->
             Warning = case R of
                 #{<<"error">> := #{<<"line">> := L, <<"message">> := M}} ->
@@ -257,10 +267,11 @@ inspection(Source, Kind) ->
             #{warning => Warning,
               params => maps:get(<<"params">>, R, null),
               docs => maps:get(<<"docs">>, R, null),
-              lint => maps:get(<<"lint">>, R, null)};
+              lint => maps:get(<<"lint">>, R, null),
+              writing => maps:get(<<"writing">>, R, null), uses => maps:get(<<"uses">>, R, null)};
         {error, Reason} ->
             logger:warning("inspection unavailable: ~0p", [Reason]),
-            #{warning => null, params => null, docs => null, lint => null}
+            #{warning => null, params => null, docs => null, lint => null, writing => null, uses => null}
     end.
 
 field(_, undefined) -> null;
