@@ -419,7 +419,8 @@
           el("section", { class: "card" }, historyBox),
           el("section", { class: "card" }, el("h2", { text: "Detalhe" }), detail))));
     output.append(el("div", { class: "empty-state" }, window.AnaUI.icon("chart", 40),
-      el("span", { text: "Defina os filtros e execute (F8) para ver o resultado." })));
+      el("span", { text: "Defina os filtros e execute (F8) para ver o resultado." }),
+      el("button", { type: "button", class: "quiet small icon-text", onclick: () => execute() }, I("play", 16), el("span", { text: "Executar (F8)" }))));
     loadHistory();
     // A definition opened with its values is simulated, never saved, until the person chooses Salvar.
     if (Object.keys(given).length && !formOnly) { if (simName) simulate(); else run(given); }

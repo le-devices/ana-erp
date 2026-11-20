@@ -58,13 +58,15 @@ table(C, #{<<"name">> := Name, <<"oid">> := Oid, <<"inserted">> := I, <<"updated
     #{table => Name, label => Label, doc_kind => Kind, order => Order,
       %% What is left: rows found (new or changed), and the deleted ones from the statistics.
       rows => case Partial of true -> I + U; false -> Rows end, deleted => D,
-      change => change(I, U), sample => Sample, documents => Docs, partial => Partial}.
+      change => change(I, U, case Partial of true -> I + U; false -> Rows end), sample => Sample,
+      documents => Docs, partial => Partial}.
 
-%% "created", "changed" or both, from the statistics (rows created and then changed count as created).
-change(I, 0) when I > 0 -> <<"created">>;
-change(0, U) when U > 0 -> <<"changed">>;
-change(0, 0) -> <<"deleted">>;
-change(_, _) -> <<"created_or_changed">>.
+%% "created", "changed" or both. A row created and then changed in the same transaction (a total filled after the
+%% items) is still a creation: when no more rows are left than were inserted, every one of them is new.
+change(0, 0, _) -> <<"deleted">>;
+change(I, _, Rows) when I > 0, Rows =< I -> <<"created">>;
+change(0, _, _) -> <<"changed">>;
+change(_, _, _) -> <<"created_or_changed">>.
 
 %% A big table could take long: each read has its own savepoint and time limit, so a slow or refused one only
 %% leaves that table with the counts.
