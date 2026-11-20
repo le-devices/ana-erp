@@ -515,12 +515,14 @@ shown(V) -> maps:filter(fun(_, X) -> X =/= null end, maps:with([content, express
 
 -spec decide(binary(), integer(), binary(), binary() | null, map()) -> {ok, map()} | {error, binary(), binary()}.
 decide(Name, Id, Decision, Note, User = #{username := Who}) when Decision =:= <<"approve">>; Decision =:= <<"refuse">> ->
-    case ana_db:one("SELECT id, valid_from::text AS valid_from, instance, company_id, content::text AS content, expression, requested_by "
+    case ana_db:one("SELECT id, valid_from::text AS valid_from, instance, company_id, content::text AS content, expression, requested_by, "
+                    "EXISTS (SELECT 1 FROM ana_system.company_value_version a WHERE a.name = $2 AND a.status = 'active') AS has_active "
                     "FROM ana_system.company_value_version WHERE id = $1 AND name = $2 AND status = 'pending'", [Id, Name]) of
         {ok, undefined} -> {error, <<"NOT_FOUND">>, <<"pedido não encontrado ou já decidido"/utf8>>};
         {ok, #{<<"requested_by">> := Who}} -> {error, <<"FOUR_EYES">>, <<"quatro olhos: quem pediu a mudança não pode decidi-la"/utf8>>};
         {ok, P = #{<<"valid_from">> := From}} ->
-            case {can_edit(User, Name), Decision =:= <<"refuse">> orelse date(From) >= today()} of
+            %% The same rule as the request: the past is not rewritten (only the first version of a value may start earlier).
+            case {can_edit(User, Name), Decision =:= <<"refuse">> orelse date(From) >= today() orelse not maps:get(<<"has_active">>, P)} of
                 {false, _} -> {error, <<"FORBIDDEN">>, <<"você não pode decidir mudanças desta área"/utf8>>};
                 {true, false} -> {error, <<"INVALID">>, <<"a vigência pedida já passou: recuse e peça de novo com outra data"/utf8>>};
                 {true, true} ->

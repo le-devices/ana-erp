@@ -2353,14 +2353,14 @@
       ], d.versions, { empty: "Nenhuma versão ainda: informe o primeiro valor abaixo." }),
       d.can_edit && !def.archived ? valueVersionForm(def, d) : null,
       d.can_edit ? el("details", { class: "value-def" }, el("summary", { text: "Definição" }), valueDefineForm(def)) : null,
-      el("details", { class: "value-history" }, el("summary", { text: `Histórico (${d.changes.length})` }),
+      !d.changes.length ? null : el("details", { class: "value-history" }, el("summary", { text: `Histórico (${d.changes.length})` }),
         table([
           { label: "Quando", value: (c) => fmtDate(c.at) },
           { label: "Quem", value: (c) => c.username },
           { label: "O quê", value: (c) => VALUE_ACTIONS[c.action] || c.action },
           { label: "Antes → depois", value: (c) => el("span", { class: "small" }, change(c.before), " → ", change(c.after)) },
           { label: "Motivo", value: (c) => c.reason || "" },
-        ], d.changes, { empty: "Sem mudanças." })));
+        ], d.changes)));
     function change(x) {
       if (!x) return "—";
       if (x.expression) return exprLabel(x.expression) + (x.from ? ` desde ${brDate(x.from)}` : "");
