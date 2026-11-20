@@ -293,13 +293,15 @@ generate_password() ->
 list_groups() ->
     ana_db:rows(
         "SELECT g.name, g.description, g.program_patterns, g.data_cost_centers, g.data_portfolio, g.data_own_projects, "
-        "       g.value_patterns, (SELECT count(*) FROM ana_system.user_group ug WHERE ug.group_name = g.name) AS members "
+        "       g.value_patterns, g.variant_patterns, (SELECT count(*) FROM ana_system.user_group ug WHERE ug.group_name = g.name) AS members "
         "FROM ana_system.access_group g ORDER BY g.name", []).
 
 save_group(Name, Fields, #{username := Who}) ->
     Patterns = maps:get(<<"program_patterns">>, Fields, []),
     %% Spec 065 (D9): company values the members may change (names or "area.*").
     Values = maps:get(<<"value_patterns">>, Fields, []),
+    %% Spec 045 (RF-045-02): programs whose company variants the members publish.
+    Variants = maps:get(<<"variant_patterns">>, Fields, []),
     %% Spec 009 (D10): data scope of the group (null/empty centers = no restriction by center).
     Centers = case maps:get(<<"data_cost_centers">>, Fields, null) of
         L when is_list(L), L =/= [] -> L;
@@ -307,21 +309,23 @@ save_group(Name, Fields, #{username := Who}) ->
     end,
     case is_list(Patterns) andalso lists:all(fun valid_pattern/1, Patterns)
          andalso is_list(Values) andalso lists:all(fun valid_pattern/1, Values)
+         andalso is_list(Variants) andalso lists:all(fun valid_pattern/1, Variants)
          andalso (Centers =:= null orelse lists:all(fun is_binary/1, Centers)) of
         false -> {error, <<"padrões inválidos: use nomes de programa ou prefixo.*"/utf8>>};
         true ->
             case ana_db:exec(
                    "INSERT INTO ana_system.access_group (name, description, program_patterns, data_cost_centers, "
-                   "  data_portfolio, data_own_projects, value_patterns) "
-                   "SELECT $1, $2, $3, $4, $5, $6, $7 WHERE $4::text[] IS NULL OR NOT EXISTS ("
+                   "  data_portfolio, data_own_projects, value_patterns, variant_patterns) "
+                   "SELECT $1, $2, $3, $4, $5, $6, $7, $8 WHERE $4::text[] IS NULL OR NOT EXISTS ("
                    "  SELECT 1 FROM unnest($4::text[]) c WHERE NOT EXISTS (SELECT 1 FROM finance.cost_center WHERE code = c)) "
                    "ON CONFLICT (name) DO UPDATE SET "
                    "description = EXCLUDED.description, program_patterns = EXCLUDED.program_patterns, "
                    "data_cost_centers = EXCLUDED.data_cost_centers, data_portfolio = EXCLUDED.data_portfolio, "
-                   "data_own_projects = EXCLUDED.data_own_projects, value_patterns = EXCLUDED.value_patterns",
+                   "data_own_projects = EXCLUDED.data_own_projects, value_patterns = EXCLUDED.value_patterns, "
+                   "variant_patterns = EXCLUDED.variant_patterns",
                    [Name, maps:get(<<"description">>, Fields, <<>>), Patterns, Centers,
                     maps:get(<<"data_portfolio">>, Fields, false) =:= true,
-                    maps:get(<<"data_own_projects">>, Fields, false) =:= true, Values]) of
+                    maps:get(<<"data_own_projects">>, Fields, false) =:= true, Values, Variants]) of
                 {ok, 0} -> {error, <<"centro de custo inexistente no escopo de dados"/utf8>>};
                 {ok, _} ->
                     ok = ana_access:invalidate(),

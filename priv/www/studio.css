@@ -1120,3 +1120,14 @@ dl.facts dd { margin: 0; }
 .value-side details { margin-top: 12px; }
 .value-side code, .value-area code { overflow-wrap: anywhere; }
 input.narrow { width: 6em; }
+
+/* Execution variants (spec 045) */
+.variant-bar { display: inline-flex; flex-wrap: wrap; gap: 6px; align-items: center; margin-left: auto; }
+.variant-bar .variant-select { max-width: 260px; }
+.variant-menu { position: relative; }
+.variant-menu > summary { list-style: none; cursor: pointer; padding: 2px 8px; border: 1px solid var(--border); border-radius: 6px; }
+.variant-menu-items { position: absolute; right: 0; z-index: 20; display: flex; flex-direction: column; min-width: 220px;
+  background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 4px; }
+.variant-panel { margin: 8px 0; }
+.variant-fields td { vertical-align: middle; }
+.locked-field { opacity: .75; }

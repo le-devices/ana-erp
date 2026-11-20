@@ -370,6 +370,8 @@ apply_items(Id, #{<<"items">> := Items, <<"title">> := Title}, Pre, #{username :
             case R of
                 {ok, N} ->
                     _ = [ana_program:invalidate(Nm) || #{<<"kind">> := <<"program">>, <<"name">> := Nm} <- Items],
+                    %% Spec 045 (D6): the variants of the programs that arrived follow their parameters.
+                    _ = [catch ana_variants:validate_program(Nm) || #{<<"kind">> := <<"program">>, <<"name">> := Nm} <- Items],
                     ana_admin:log(Who, <<"transport.import">>, Title, null, #{id => Id, items => N}),
                     {ok, #{id => Id, imported => N}};
                 E -> E
@@ -429,6 +431,8 @@ revert(Id, #{username := Who}) ->
             case R of
                 {ok, N} ->
                     _ = [ana_program:invalidate(Nm) || #{<<"kind">> := <<"program">>, <<"name">> := Nm} <- Items],
+                    %% Spec 045 (D6): the variants of the programs that arrived follow their parameters.
+                    _ = [catch ana_variants:validate_program(Nm) || #{<<"kind">> := <<"program">>, <<"name">> := Nm} <- Items],
                     ana_admin:log(Who, <<"transport.revert">>, Title, null, #{id => Id, items => N}),
                     {ok, #{id => Id, reverted => N}};
                 E -> E

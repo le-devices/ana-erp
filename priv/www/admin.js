@@ -255,6 +255,8 @@
     const ownProjects = el("input", { type: "checkbox" }); ownProjects.checked = !!(g && g.data_own_projects);
     const values = el("textarea", { rows: 3, placeholder: "um por linha, ex.:\nfinanceiro.*\nestoque.deposito_principal" });
     values.value = g ? (g.value_patterns || []).join("\n") : "";
+    const variantPats = el("textarea", { rows: 2, placeholder: "um por linha, ex.:\nfinance.*\nsales.order_report" });
+    variantPats.value = g ? (g.variant_patterns || []).join("\n") : "";
     return el("form", { class: "form-card", onsubmit: async (e) => {
       e.preventDefault();
       await guard(async () => {
@@ -265,6 +267,7 @@
           data_portfolio: portfolio.checked,
           data_own_projects: ownProjects.checked,
           value_patterns: values.value.split("\n").map((s) => s.trim()).filter(Boolean),
+          variant_patterns: variantPats.value.split("\n").map((s) => s.trim()).filter(Boolean),
         });
         toast("Grupo salvo.");
         await groups();
@@ -273,6 +276,7 @@
       el("h3", { text: isNew ? "Novo grupo" : `Editar ${g.name}` }),
       field("Nome", name), field("Descrição", description), field("Programas (nome ou prefixo.*)", patterns),
       field("Valores da empresa que alteram (nome ou área.*)", values),
+      field("Variantes da empresa que publicam (rotina ou prefixo.*)", variantPats),
       el("h4", { text: "Dados que os membros veem" }),
       field("Centros de custo", centers),
       check("Só os clientes da própria carteira (e seus pedidos e títulos)", portfolio),

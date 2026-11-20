@@ -113,6 +113,15 @@
     version: (n, v) => API.request("GET", `/api/programs/${enc(n)}/versions/${v}`),
     restore: (n, v) => API.request("POST", `/api/programs/${enc(n)}/versions/${v}/restore`, {}),
     run: (n, body) => API.request("POST", `/api/programs/${enc(n)}/run`, body, { accept: [422] }),
+    // Spec 045: execution variants of a routine.
+    runVariants: {
+      list: (n) => API.request("GET", `/api/programs/${enc(n)}/variants`),
+      save: (n, body) => API.request("POST", `/api/programs/${enc(n)}/variants`, body),
+      remove: (n, id) => API.request("DELETE", `/api/programs/${enc(n)}/variants/${id}`),
+      preview: (n, id) => API.request("GET", `/api/programs/${enc(n)}/variants/${id}/preview`),
+      act: (n, id, action) => API.request("POST", `/api/programs/${enc(n)}/variants/${id}/${action}`, {}),
+      clearDefault: (n) => API.request("POST", `/api/programs/${enc(n)}/variants/clear_default`, {}),
+    },
     /** Authenticated download saved as a file (spec 034: data copies). */
     async download(path, filename) {
       const headers = {};

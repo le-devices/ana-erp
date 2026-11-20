@@ -86,6 +86,27 @@ await go(w, "#/home");
 await until(() => text("#area-home").includes("Programa de demonstração"), "favorite in home", jsErrors);
 ok(true, "favorito aparece no Início (CA-020-05)");
 
+// Spec 045: the values on screen saved as a variant, chosen at once, with a locked field.
+await go(w, "#/ops/demo/demo.hello?name=Variante&_form=1");
+await until(() => [...d.querySelectorAll("#ops-main .variant-bar button")].some((b) => b.textContent === "Salvar como variante…"), "variant bar", jsErrors);
+[...d.querySelectorAll("#ops-main .variant-bar button")].find((b) => b.textContent === "Salvar como variante…").click();
+await until(() => d.querySelector("#ops-main .variant-panel form"), "variant panel", jsErrors);
+const vname = "Smoke " + Date.now().toString().slice(-6);
+const vf = d.querySelector("#ops-main .variant-panel form");
+vf.querySelector("input[aria-label='Nome da variante']").value = vname;
+vf.querySelector("input[aria-label^='Travar']").checked = true;
+submit(w, vf);
+await until(() => [...d.querySelectorAll("#ops-main .variant-select option")].some((o) => o.textContent.startsWith(vname) && o.selected), "variant saved", jsErrors);
+await until(() => d.querySelector("#ops-main form.params-form [name=name]") && d.querySelector("#ops-main form.params-form [name=name]").disabled, "variant applied", jsErrors);
+ok(d.querySelector("#ops-main form.params-form [name=name]").value === "Variante", "variante salva da tela, escolhida e com o campo travado (spec 045)");
+{
+  const tk = (await (await fetch(ANA_URL + "/api/session", { method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ username: "admin", password: PASSWORD }) })).json()).token;
+  const vs = await (await fetch(ANA_URL + "/api/programs/demo.hello/variants", { headers: { Authorization: "Bearer " + tk } })).json();
+  for (const v of vs.variants.filter((x) => x.name === vname))
+    await fetch(ANA_URL + `/api/programs/demo.hello/variants/${v.id}`, { method: "DELETE", headers: { Authorization: "Bearer " + tk } });
+}
+
 // A library opens for editing, but Executar/Depurar say it is not run by itself.
 await go(w, "#/dev/program/util.pdf");
 await until(() => text("#program-name") === "util.pdf", "library", jsErrors);
