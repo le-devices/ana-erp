@@ -1,6 +1,6 @@
 # 045 — Variantes de execução
 
-Situação: especificada (nov/2026).
+Situação: implementada (nov/2026); falta T-045-07b (paleta de comandos, painel e sugestão, quando as specs 050 fase 2, 048 e 051 existirem).
 
 ## Problema
 As tabelas já guardam variantes por usuário (colunas, filtros — spec 020,

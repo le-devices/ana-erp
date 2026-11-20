@@ -56,7 +56,7 @@ Tarefas adiadas já concluídas (ordem acordada em out/2026): T-017-05b ✓, T-0
 10. ✓ 064 fase 1 — portão de qualidade dos programas: inspeção no editor, regras e isenções, portão assinado no transporte para a produção (`specs/064-program-quality-gate`)
 11. ✓ 056 — ensaio universal: toda rotina que grava pode ser ensaiada (`specs/056-universal-rehearsal`)
 11a. ✓ 065 fase 1 — valores da empresa: valores nomeados com vigência, leitura por programas e SQL, expressões dinâmicas num só lugar, em memória em cada nó (`specs/065-company-values`) — antes da 045, que os usa
-12. 045 — variantes de execução (`specs/045-execution-variants`)
+12. ✓ 045 — variantes de execução (`specs/045-execution-variants`)
 12a. 065 fase 2 — valores da empresa nas variantes, agendamentos, regras, esteiras e impostos; valores mantidos por rotinas; onde é usado; transporte (T-065-07..11)
 13. 050 fase 2 — paleta de comandos, desfazer, valores padrão por contexto, câmera (T-050-05..08)
 14. 048 — painel inicial (`specs/048-home-panel`)
