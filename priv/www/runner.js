@@ -318,7 +318,11 @@
     for (const f of deferred) f();
     if (options.submitLabel) form.append(el("button", { class: "primary run-button", type: "submit", text: options.submitLabel }));
 
-    function read() {
+    // The values as they are, without asking for the required ones (saving a variant, spec 045).
+    function peek() {
+      try { return read(true); } catch (_) { return {}; }
+    }
+    function read(lenient) {
       if (freeJson) {
         const v = JSON.parse(json.value || "{}");
         if (typeof v !== "object" || Array.isArray(v) || v === null) throw new Error("parâmetros devem ser um objeto JSON");
@@ -336,7 +340,7 @@
         else if (type === "float") r[input.name] = parseFloat(input.value);
         else r[input.name] = input.value;
       }
-      if (missing.length) throw new Error("preencha " + missing.join(", "));
+      if (missing.length && !lenient) throw new Error("preencha " + missing.join(", "));
       return r;
     }
 
@@ -354,7 +358,23 @@
       }
       return parts.join(" · ") || "sem parâmetros";
     }
-    return { node: form, read, summary, focus: () => { const f = form.querySelector("input, select, textarea"); if (f) f.focus(); } };
+    // Spec 045 (D3): a variant locks fields (seen, not changed) or hides them; the core enforces it as well.
+    const box = (input) => input.closest(".rows-field") || input.closest("label") || input;
+    function lock(names) {
+      for (const n of names || []) {
+        const input = inputs[n];
+        if (!input) continue;
+        const b = box(input);
+        b.classList.add("locked-field");
+        b.title = "Travado pela variante";
+        for (const c of b.querySelectorAll("input, select, textarea, button")) c.disabled = true;
+        input.disabled = true;
+      }
+    }
+    function hide(names) {
+      for (const n of names || []) if (inputs[n]) box(inputs[n]).hidden = true;
+    }
+    return { node: form, read: () => read(false), peek, summary, lock, hide, focus: () => { const f = form.querySelector("input:not([disabled]), select:not([disabled]), textarea:not([disabled])"); if (f) f.focus(); } };
   }
 
   /** Appends one output event to a container. `ctx` (optional) runs actions:

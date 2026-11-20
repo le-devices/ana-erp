@@ -234,8 +234,26 @@
     const detail = el("pre", { class: "preview json" });
     // RF-020-13: a definition (rule, condition…) is edited on the left and simulated on the right, nothing saved.
     const simName = (Object.entries(r.params || {}).find(([, sp]) => sp && sp.simulate) || [])[0];
-    const form = R.paramsForm(r.params, { submitLabel: simName ? "Salvar (F8)" : "Executar (F8)", onSubmit: () => execute(), initial, lookup,
-                                          simulate: !!simName });
+    // Spec 045: the form is rebuilt when a variant is chosen (its values filled, locked and hidden fields applied).
+    let variant = null;
+    let form = null;
+    const formHost = el("div", { class: "form-host" });
+    function makeForm(init, v) {
+      form = R.paramsForm(r.params, { submitLabel: simName ? "Salvar (F8)" : "Executar (F8)", onSubmit: () => execute(), initial: init, lookup,
+                                      simulate: !!simName });
+      variant = v || null;
+      if (variant) { form.lock(variant.locked); form.hide(variant.hidden); }
+      addTestButtons();
+      formHost.replaceChildren(form.node);
+    }
+    // The values to send: the locked fields are the variant's, filled by the core.
+    const readParams = () => {
+      const p = form.read();
+      if (variant) for (const k of variant.locked || []) delete p[k];
+      return p;
+    };
+    const withVariant = (body) => (variant ? { ...body, variant: variant.id } : body);
+    makeForm(initial, null);
     const summaryText = el("span", { class: "summary-text" });
     const layout = el("div", { class: "routine-layout" });
     let lastRun = null;
@@ -249,11 +267,12 @@
     // Running from the form: the selection screen stays in history (Back returns to it, filled in).
     function execute() {
       let params;
-      try { params = form.read(); } catch (e) { toast("Parâmetros: " + e.message, true); return; }
+      try { params = readParams(); } catch (e) { toast("Parâmetros: " + e.message, true); return; }
       rememberParams(r.name, params);
-      const runHash = routineHash(r.name, params);
+      const vq = variant ? { _variant: variant.id } : {};
+      const runHash = routineHash(r.name, params, vq);
       if (location.hash !== runHash) {
-        window.history.replaceState(null, "", routineHash(r.name, params, { _form: "1" }));
+        window.history.replaceState(null, "", routineHash(r.name, params, { ...vq, _form: "1" }));
         window.history.pushState(null, "", runHash);
         window.AnaStudio.noteNav(runHash);
       }
@@ -278,8 +297,9 @@
       status.textContent = "executando…";
       status.className = "run-state busy";
       try {
-        const res = await API.run(r.name, { params });
+        const res = await API.run(r.name, withVariant({ params }));
         output.replaceChildren();
+        if (res.variant && res.variant.warnings && res.variant.warnings.length) toast(res.variant.warnings.join("; "));
         const events = res.events || (res.error && res.error.events) || [];
         for (const ev of events) if (ev.type === "output") R.drawOutput(output, ev, ctx);
         if (res.error) {
@@ -313,10 +333,10 @@
     const simWhen = el("span", { class: "muted small sim-when" });
     async function simulate() {
       let params;
-      try { params = form.read(); } catch (e) { toast("Parâmetros: " + e.message, true); return; }
+      try { params = readParams(); } catch (e) { toast("Parâmetros: " + e.message, true); return; }
       simOut.replaceChildren(el("p", { class: "muted", text: "Simulando…" }));
       try {
-        const res = await API.run(r.name, { params: { ...params, [simName]: true } });
+        const res = await API.run(r.name, withVariant({ params: { ...params, [simName]: true } }));
         simOut.replaceChildren();
         const events = res.events || (res.error && res.error.events) || [];
         for (const ev of events) if (ev.type === "output") R.drawOutput(simOut, ev, { ...ctx, screen: "sim:" + r.name });
@@ -329,13 +349,13 @@
     // (records, e-mails, calls held) is shown in business terms. A routine with its own simulation keeps it (D4).
     async function rehearse() {
       let params;
-      try { params = form.read(); } catch (e) { toast("Parâmetros: " + e.message, true); return; }
+      try { params = readParams(); } catch (e) { toast("Parâmetros: " + e.message, true); return; }
       output.replaceChildren(el("p", { class: "muted", text: "Ensaiando… nada será gravado." }));
       resultJson.textContent = "";
       status.textContent = "ensaiando…";
       status.className = "run-state busy";
       try {
-        const res = await API.run(r.name, { params, rehearse: true });
+        const res = await API.run(r.name, withVariant({ params, rehearse: true }));
         output.replaceChildren();
         const effects = res.rehearsal || (res.error && res.error.rehearsal) || null;
         output.append(R.rehearsalCard(effects, res.error, ctx));
@@ -351,18 +371,20 @@
         output.replaceChildren(el("div", { class: "end error", text: errorText(e) }));
       }
     }
-    if (simName) {
-      runSimulation = simulate;
-      const btn = form.node.querySelector(".run-button");
-      const simBtn = el("button", { type: "button", class: "sim-button", text: "Simular (F9)", onclick: simulate });
-      if (btn) btn.before(simBtn); else form.node.append(simBtn);
-    } else if (r.writes) {
-      runSimulation = rehearse;
-      const btn = form.node.querySelector(".run-button");
-      const reBtn = el("button", { type: "button", class: "sim-button rehearse-button", text: "Ensaiar (F9)", onclick: rehearse,
-                                   title: "Executa tudo e desfaz no fim: mostra o que seria gravado e enviado, sem gravar nada" });
-      if (btn) btn.before(reBtn); else form.node.append(reBtn);
-    } else runSimulation = null;
+    function addTestButtons() {
+      if (simName) {
+        runSimulation = simulate;
+        const btn = form.node.querySelector(".run-button");
+        const simBtn = el("button", { type: "button", class: "sim-button", text: "Simular (F9)", onclick: simulate });
+        if (btn) btn.before(simBtn); else form.node.append(simBtn);
+      } else if (r.writes) {
+        runSimulation = rehearse;
+        const btn = form.node.querySelector(".run-button");
+        const reBtn = el("button", { type: "button", class: "sim-button rehearse-button", text: "Ensaiar (F9)", onclick: rehearse,
+                                     title: "Executa tudo e desfaz no fim: mostra o que seria gravado e enviado, sem gravar nada" });
+        if (btn) btn.before(reBtn); else form.node.append(reBtn);
+      } else runSimulation = null;
+    }
 
     async function loadHistory() {
       const rows = await API.executions(r.name, true).catch(() => []);
@@ -382,11 +404,160 @@
         onRow: async (x) => { detail.textContent = JSON.stringify(await API.execution(x.id), null, 2); } }));
     }
 
+    // ---- Spec 045: variants — named parameters, chosen, saved, published and set as default right here.
+    const variantBar = el("div", { class: "variant-bar" });
+    const variantPanel = el("div", { class: "variant-panel", hidden: true });
+    let variants = { variants: [], default_id: null, my_default_id: null, can_publish: false };
+    const declared = Object.entries(r.params || {}).filter(([, sp]) => !(sp && sp.simulate));
+    const editableVariant = (v) => !!v && (v.owner !== null || variants.can_publish);
+    async function loadVariants() {
+      try { variants = await API.variants.list(r.name); } catch (_) { /* the routine still runs without them */ }
+      drawVariantBar();
+      return variants;
+    }
+    async function useVariant(id, over) {
+      if (!id) {
+        const keep = form.peek();
+        makeForm({ ...keep, ...(over || {}) }, null);
+        drawVariantBar();
+        return;
+      }
+      try {
+        const p = await API.variants.preview(r.name, id);
+        const free = Object.fromEntries(Object.entries(over || {}).filter(([k]) => !(p.locked || []).includes(k)));
+        makeForm({ ...p.params, ...free }, p);
+        if (p.warnings && p.warnings.length) toast(p.warnings.join("; "));
+      } catch (e) {
+        toast(errorText(e), true);
+        makeForm(form.peek(), null);
+      }
+      drawVariantBar();
+    }
+    function drawVariantBar() {
+      const list = variants.variants || [];
+      const current = variant && list.find((v) => v.id === variant.id);
+      const sel = el("select", { "aria-label": "Variante", class: "variant-select",
+                                 onchange: () => useVariant(sel.value ? Number(sel.value) : null) },
+        el("option", { value: "", text: list.length ? "— sem variante —" : "Sem variantes" }),
+        list.map((v) => el("option", { value: v.id, disabled: v.status === "invalid", title: v.status_reason || "",
+          text: v.name + (v.owner === null ? (v.published ? " · empresa" : " · empresa (rascunho)") : "")
+                + (v.id === variants.default_id ? " ★" : "") + (v.status === "invalid" ? " (inválida)" : "") })));
+      sel.value = variant ? String(variant.id) : "";
+      const act = (label, fn, cls) => el("button", { type: "button", class: "small quiet " + (cls || ""), text: label,
+        onclick: () => fn().then(() => loadVariants()).catch((e) => toast(errorText(e), true)) });
+      const items = [];
+      if (current) {
+        items.push(variants.my_default_id === current.id
+          ? act("Deixar de ser minha padrão", () => API.variants.clearDefault(r.name))
+          : act("Usar como minha padrão", () => API.variants.act(r.name, current.id, "default")));
+        if (editableVariant(current)) {
+          items.push(el("button", { type: "button", class: "small quiet", text: "Alterar…", onclick: () => variantDialog(current) }));
+          if (current.owner === null) {
+            items.push(current.published ? act("Despublicar", () => API.variants.act(r.name, current.id, "unpublish"))
+                                         : act("Publicar para a empresa", () => API.variants.act(r.name, current.id, "publish")));
+            if (current.published && !current.company_default) items.push(act("Tornar a padrão da empresa", () => API.variants.act(r.name, current.id, "company_default")));
+            if (current.has_previous) items.push(act("Restaurar versão anterior", async () => { await API.variants.act(r.name, current.id, "restore"); await useVariant(current.id); }));
+          }
+          items.push(act("Excluir", async () => {
+            if (!confirm(`Excluir a variante "${current.name}"?`)) return;
+            await API.variants.remove(r.name, current.id);
+            makeForm(form.peek(), null);
+          }, "danger"));
+        }
+      }
+      variantBar.replaceChildren(
+        declared.length || list.length ? sel : null,
+        declared.length ? el("button", { type: "button", class: "small", text: "Salvar como variante…", onclick: () => variantDialog(null) }) : null,
+        items.length ? el("details", { class: "variant-menu" }, el("summary", { "aria-label": "Mais ações da variante", text: "⋯" }),
+                          el("div", { class: "variant-menu-items" }, items)) : null,
+        variant && variant.locked && variant.locked.length ? el("span", { class: "muted small", text: `${variant.locked.length} campo(s) travado(s)` }) : null);
+    }
+    let valueMeta = null, companyValues = null;
+    async function variantDialog(existing) {
+      if (!valueMeta) valueMeta = await API.values.meta().catch(() => ({ expressions: [] }));
+      if (!companyValues) companyValues = await API.values.list().then((x) => x.values.map((v) => v.name)).catch(() => []);
+      const now = form.peek();
+      const entries = existing ? existing.entries || {} : {};
+      const name = el("input", { value: existing ? existing.name : "", "aria-label": "Nome da variante", placeholder: "ex.: Mês anterior, P&D" });
+      const scope = el("select", { "aria-label": "Quem vê", disabled: !!existing },
+        el("option", { value: "personal", text: "Só eu" }), variants.can_publish ? el("option", { value: "company", text: "A empresa (eu publico)" }) : null);
+      if (existing && existing.owner === null) scope.value = "company";
+      const listId = "cv-names-" + r.name.replace(/\W/g, "_");
+      const rows = declared.map(([n, sp]) => {
+        sp = sp || {};
+        const type = sp.type || "str";
+        const exprs = (valueMeta.expressions || []).filter((x) => type === "str" || (type === "date" && x.result_type === "date")
+                                                                  || (type === "datetime" && x.result_type === "datetime"));
+        const e = entries[n] || null;
+        const mode = el("select", { "aria-label": "Como guardar " + (sp.label || n) },
+          el("option", { value: "", text: "não guardar" }), el("option", { value: "value", text: "este valor" }),
+          exprs.map((x) => el("option", { value: "expr:" + x.token, text: x.label })),
+          el("option", { value: "company", text: "valor da empresa…" }));
+        const offset = el("input", { type: "number", step: "1", value: "0", class: "narrow", "aria-label": "Deslocamento", hidden: true });
+        const cv = el("input", { list: listId, placeholder: "nome do valor", "aria-label": "Valor da empresa", hidden: true });
+        const lock = el("input", { type: "checkbox", "aria-label": "Travar " + (sp.label || n) });
+        const hide = el("input", { type: "checkbox", "aria-label": "Ocultar " + (sp.label || n) });
+        if (e && e.expr) {
+          const m = /^([a-z_]+)([+-]\d+)?$/.exec(e.expr);
+          mode.value = "expr:" + (m ? m[1] : e.expr); if (m && m[2]) offset.value = String(Number(m[2]));
+        } else if (e && e.company_value) { mode.value = "company"; cv.value = e.company_value; }
+        else if (e || (!existing && now[n] !== undefined && now[n] !== "" && now[n] !== false && !(Array.isArray(now[n]) && !now[n].length))) mode.value = "value";
+        lock.checked = !!(existing && (existing.locked || []).includes(n));
+        hide.checked = !!(existing && (existing.hidden || []).includes(n));
+        const sync = () => {
+          const x = exprs.find((t) => "expr:" + t.token === mode.value);
+          offset.hidden = !(x && x.offset_unit);
+          cv.hidden = mode.value !== "company";
+          lock.disabled = hide.disabled = !mode.value;
+        };
+        mode.addEventListener("change", sync); sync();
+        return { n, sp, mode, offset, cv, lock, hide,
+                 entry: () => {
+                   if (!mode.value) return null;
+                   if (mode.value === "value") return { value: e && e.value !== undefined && now[n] === undefined ? e.value : (now[n] ?? null) };
+                   if (mode.value === "company") return cv.value.trim() ? { company_value: cv.value.trim() } : null;
+                   const off = Number(offset.value || 0);
+                   return { expr: mode.value.slice(5) + (off ? (off > 0 ? "+" : "") + off : "") };
+                 } };
+      });
+      const close = () => { variantPanel.hidden = true; variantPanel.replaceChildren(); };
+      variantPanel.replaceChildren(el("form", { class: "form-card", onsubmit: (ev) => { ev.preventDefault(); (async () => {
+        const body = { name: name.value.trim(), scope: scope.value, entries: {}, locked: [], hidden: [] };
+        if (existing) body.id = existing.id;
+        for (const x of rows) {
+          const en = x.entry();
+          if (!en) continue;
+          body.entries[x.n] = en;
+          if (x.lock.checked) body.locked.push(x.n);
+          if (x.hide.checked) body.hidden.push(x.n);
+        }
+        const res = await API.variants.save(r.name, body);
+        close();
+        toast(existing ? "Variante alterada." : "Variante salva.");
+        await loadVariants();
+        await useVariant(res.id);
+      })().catch((e) => toast(errorText(e), true)); } },
+        el("h4", { text: existing ? `Alterar a variante "${existing.name}"` : "Salvar como variante" }),
+        el("div", { class: "row-buttons" }, el("label", {}, "Nome", name), el("label", {}, "Quem vê", scope)),
+        el("datalist", { id: listId }, companyValues.map((v) => el("option", { value: v }))),
+        el("table", { class: "grid-table variant-fields" },
+          el("thead", {}, el("tr", {}, ["Campo", "Guardar como", "Travar", "Ocultar"].map((h) => el("th", { text: h })))),
+          el("tbody", {}, rows.map((x) => el("tr", {},
+            el("td", { text: x.sp.label || x.n }),
+            el("td", {}, x.mode, x.offset, x.cv),
+            el("td", {}, x.lock), el("td", {}, x.hide))))),
+        el("p", { class: "muted small", text: "Expressões e valores da empresa são resolvidos na hora de cada execução. Campo travado não muda na tela, na API nem no agendamento." }),
+        el("div", { class: "row-buttons" }, el("button", { class: "primary", type: "submit", text: "Salvar variante" }),
+          el("button", { type: "button", class: "quiet", text: "Cancelar", onclick: close }))));
+      variantPanel.hidden = false;
+      name.focus();
+    }
+
     const I = window.AnaUI.icon;
     function simSplit() {
       const split = el("div", { class: "sim-split" });
       const def = el("section", { class: "params-card def-card" },
-        el("div", { class: "filter-head" }, I("edit", 16), el("strong", { text: "Definição" })), form.node);
+        el("div", { class: "filter-head" }, I("edit", 16), el("strong", { text: "Definição" }), variantBar), variantPanel, formHost);
       const sim = el("section", { class: "sim-card", "aria-label": "Simulação" },
         el("div", { class: "filter-head" }, I("play", 16), el("strong", { text: "Simulação" }), simWhen), simOut);
       split.append(def, window.AnaUI.splitter(split, "--def-w", { min: 260, max: 1100, key: "sim." + r.name }), sim);
@@ -404,7 +575,7 @@
           el("span", { class: "muted small", text: `${r.command ? "comando " + r.command + " · " : ""}${r.exposed ? "integração · " : ""}F8 executa${r.writes && !simName ? " · F9 ensaia" : ""} · F3 volta` }),
           window.AnaUI.pinnable(band, "routine." + r.name))),
       simName ? simSplit() : el("section", { class: "params-card filter-bar" },
-        el("div", { class: "filter-head" }, I("filter", 16), el("strong", { text: "Filtros" })), form.node),
+        el("div", { class: "filter-head" }, I("filter", 16), el("strong", { text: "Filtros" }), variantBar), variantPanel, formHost),
       el("div", { class: "params-summary" },
         el("button", { type: "button", class: "quiet small icon-text", onclick: expand, title: "Alterar os filtros" }, I("edit", 16), el("span", { text: "Filtros" })),
         summaryText,
@@ -423,7 +594,13 @@
       el("button", { type: "button", class: "quiet small icon-text", onclick: () => execute() }, I("play", 16), el("span", { text: "Executar (F8)" }))));
     loadHistory();
     // A definition opened with its values is simulated, never saved, until the person chooses Salvar.
-    if (Object.keys(given).length && !formOnly) { if (simName) simulate(); else run(given); }
+    // Spec 045 (D4, D5): a variant asked in the address, or the user's default when nothing else was given.
+    await loadVariants();
+    const askedVariant = query._variant ? Number(query._variant) : null;
+    const valid = (id) => (variants.variants || []).some((v) => v.id === id && v.status !== "invalid");
+    const startVariant = askedVariant || (!Object.keys(given).length && !formOnly && valid(variants.default_id) ? variants.default_id : null);
+    if (startVariant) await useVariant(startVariant, given);
+    if (Object.keys(given).length && !formOnly) { if (simName) simulate(); else run(variant ? readParams() : given); }
     else form.focus();
   }
 

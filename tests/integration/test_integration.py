@@ -8540,3 +8540,170 @@ class TestCompanyValues(Base):
             return best
         none, many = wal(0), wal(500)
         self.assertLess(many - none, 4096, f"500 leituras escreveram {many - none} bytes a mais que nenhuma")
+
+
+# ---------------------------------------------------------------- spec 045
+class TestRunVariants(Base):
+    """Execution variants (spec 045): named parameters of a routine — personal or the company's — with dynamic values,
+    locked and hidden fields, defaults, and the same variant on screen, in the API and in schedules."""
+
+    SOURCE = ('PARAMS = {"start": {"type": "date", "label": "de"}, "end": {"type": "date", "label": "até"},\n'
+              '          "cc": {"type": "str", "label": "centro de custo"}, "n": {"type": "int", "label": "quantos"}}\n'
+              'def main(start=None, end=None, cc=None, n=None):\n'
+              '    return {"start": str(start) if start else None, "end": str(end) if end else None, "cc": cc, "n": n}\n')
+
+    @classmethod
+    def setUpClass(cls):
+        super().setUpClass()
+        cls.jobs = []
+        s, meta, _ = http("GET", "/api/values/meta", token=cls.token)
+        cls.today = datetime.date.fromisoformat(meta["today"])
+
+    @classmethod
+    def tearDownClass(cls):
+        for j in cls.jobs:
+            http("DELETE", f"/api/scheduler/jobs/{j}", token=cls.token)
+
+    def program(self, tag, source=None):
+        name = f"test.variant_{tag}_{SUFFIX}"
+        self.save(name, source or self.SOURCE)
+        return name
+
+    def variant(self, prog, token=None, expect=200, **body):
+        s, c, _ = http("POST", f"/api/programs/{prog}/variants", body, token or self.token)
+        self.assertEqual(s, expect, c)
+        return c
+
+    def run_v(self, prog, variant, params=None, token=None):
+        return http("POST", f"/api/programs/{prog}/run", {"params": params or {}, "variant": variant}, token or self.token)
+
+    def last_month(self, d):
+        end = d.replace(day=1) - datetime.timedelta(days=1)
+        return end.replace(day=1).isoformat(), end.isoformat()
+
+    def test_ca_045_01_previous_month_resolves_at_each_run_and_in_january(self):
+        prog = self.program("month")
+        v = self.variant(prog, name="Mês anterior", entries={"start": {"expr": "last_month_start"}, "end": {"expr": "last_month_end"},
+                                                             "n": {"value": 3}})
+        s, c, _ = self.run_v(prog, v["id"])
+        self.assertEqual(s, 200, c)
+        self.assertEqual((c["result"]["start"], c["result"]["end"], c["result"]["n"]), (*self.last_month(self.today), 3))
+        self.assertEqual(c["variant"]["name"], "Mês anterior")
+        # The same expressions in January give December of the year before.
+        for expr, want in (("last_month_start", "2026-12-01"), ("last_month_end", "2026-12-31")):
+            s, p, _ = http("POST", "/api/values/preview", {"expression": expr, "at": "2027-01-15"}, self.token)
+            self.assertEqual(p["value"], want)
+        # By name too, and the given values fill the free fields.
+        s, c, _ = self.run_v(prog, "Mês anterior", {"cc": "LIVRE"})
+        self.assertEqual((s, c["result"]["cc"]), (200, "LIVRE"), c)
+        # RF-045-06: the execution's record keeps the variant used.
+        if psql_available():
+            got = json.loads(psql(f"SELECT variant FROM ana_system.execution WHERE program = '{prog}' ORDER BY started_at DESC LIMIT 1"))
+            self.assertEqual((got["id"], got["version"]), (v["id"], 1), got)
+
+    def test_ca_045_02_locked_field_of_a_company_variant(self):
+        prog = self.program("locked")
+        _, user = new_user("user")
+        c = self.variant(prog, expect=403, token=user, name="Da empresa", scope="company", entries={"cc": {"value": "PD"}})
+        v = self.variant(prog, name="P&D", scope="company", entries={"cc": {"value": "PD"}, "n": {"value": 1}}, locked=["cc"], hidden=["n"])
+        s, lst, _ = http("GET", f"/api/programs/{prog}/variants", token=user)
+        self.assertEqual(lst["variants"], [], "rascunho da empresa não aparece para quem não publica")
+        s, c, _ = http("POST", f"/api/programs/{prog}/variants/{v['id']}/publish", {}, self.token)
+        self.assertEqual(s, 200, c)
+        s, lst, _ = http("GET", f"/api/programs/{prog}/variants", token=user)
+        self.assertEqual([x["name"] for x in lst["variants"]], ["P&D"])
+        s, c, _ = self.run_v(prog, v["id"], token=user)
+        self.assertEqual((s, c["result"]["cc"], c["result"]["n"]), (200, "PD", 1), c)
+        s, c, _ = self.run_v(prog, v["id"], {"cc": "OUTRO"}, token=user)
+        self.assertEqual((s, c["error"]["code"]), (422, "VARIANT_LOCKED"), c)
+        s, c, _ = self.run_v(prog, v["id"], {"n": 9}, token=user)                  # hidden means locked as well
+        self.assertEqual((s, c["error"]["code"]), (422, "VARIANT_LOCKED"), c)
+        s, c, _ = self.run_v(prog, v["id"], {"cc": "PD", "start": "2026-01-01"}, token=user)   # the same value is fine
+        self.assertEqual((s, c["result"]["start"]), (200, "2026-01-01"), c)
+        s, c, _ = http("DELETE", f"/api/programs/{prog}/variants/{v['id']}", token=user)
+        self.assertEqual(s, 403, c)
+
+    def test_rf_045_02_05_versions_and_defaults(self):
+        prog = self.program("defaults")
+        a = self.variant(prog, name="Empresa A", scope="company", entries={"cc": {"value": "A"}})
+        http("POST", f"/api/programs/{prog}/variants/{a['id']}/publish", {}, self.token)
+        s, c, _ = http("POST", f"/api/programs/{prog}/variants/{a['id']}/company_default", {}, self.token)
+        self.assertEqual(s, 200, c)
+        _, user = new_user("user")
+        s, lst, _ = http("GET", f"/api/programs/{prog}/variants", token=user)
+        self.assertEqual(lst["default_id"], a["id"])                                    # the company's default
+        mine = self.variant(prog, token=user, name="Minha", entries={"cc": {"value": "M"}})
+        http("POST", f"/api/programs/{prog}/variants/{mine['id']}/default", {}, user)
+        s, lst, _ = http("GET", f"/api/programs/{prog}/variants", token=user)
+        self.assertEqual((lst["default_id"], lst["company_default_id"]), (mine["id"], a["id"]))
+        s, other, _ = http("GET", f"/api/programs/{prog}/variants", token=self.token)
+        self.assertNotIn(mine["id"], [x["id"] for x in other["variants"]])            # personal: only its owner
+        s, c, _ = self.run_v(prog, mine["id"])
+        self.assertEqual((s, c["error"]["code"]), (404, "VARIANT_NOT_FOUND"), c)
+        # A change to a company variant keeps the version before; restoring brings it back.
+        self.variant(prog, id=a["id"], name="Empresa A", scope="company", entries={"cc": {"value": "B"}})
+        s, c, _ = self.run_v(prog, a["id"], token=user)
+        self.assertEqual(c["result"]["cc"], "B")
+        http("POST", f"/api/programs/{prog}/variants/{a['id']}/restore", {}, self.token)
+        s, c, _ = self.run_v(prog, a["id"], token=user)
+        self.assertEqual((c["result"]["cc"], c["variant"]["version"]), ("A", 3), c)
+
+    def test_ca_045_03_schedule_runs_with_the_variant_resolved_that_day(self):
+        prog = self.program("sched")
+        v = self.variant(prog, name="Ontem", entries={"start": {"expr": "yesterday"}, "cc": {"value": "AGENDA"}}, locked=["cc"])
+        body = {"name": f"t-variant-{SUFFIX}", "program": prog, "variant_id": v["id"], "params": {"cc": "TROCADO", "n": 5},
+                "triggers": [{"kind": "cron", "cron": "0 3 1 1 *"}]}
+        s, j, _ = http("POST", "/api/scheduler/jobs", body, self.token)
+        self.assertEqual(s, 200, j)
+        self.jobs.append(j["id"])
+        self.assertEqual(j["variant_id"], v["id"])
+        http("POST", f"/api/scheduler/jobs/{j['id']}/run", {}, self.token)
+        end, occ = time.time() + 30, []
+        while time.time() < end and not occ:
+            occ = [o for o in http("GET", f"/api/scheduler/jobs/{j['id']}/occurrences", token=self.token)[1]
+                   if o["status"] in ("success", "error")]
+            time.sleep(0.5)
+        self.assertTrue(occ)
+        # The job's own value for a locked field is refused, not silently replaced.
+        self.assertEqual(occ[0]["status"], "error", occ[0])
+        self.assertEqual(occ[0]["error"]["code"], "VARIANT_LOCKED")
+        body["params"] = {"n": 5}
+        s, j, _ = http("PUT", f"/api/scheduler/jobs/{j['id']}", body, self.token)
+        self.assertEqual(s, 200, j)
+        http("POST", f"/api/scheduler/jobs/{j['id']}/run", {}, self.token)
+        end, occ = time.time() + 30, []
+        while time.time() < end and not occ:
+            occ = [o for o in http("GET", f"/api/scheduler/jobs/{j['id']}/occurrences", token=self.token)[1] if o["status"] == "success"]
+            time.sleep(0.5)
+        self.assertTrue(occ)
+        self.assertEqual(occ[0]["result"], {"start": (self.today - datetime.timedelta(days=1)).isoformat(), "end": None,
+                                            "cc": "AGENDA", "n": 5})
+        s, c, _ = http("DELETE", f"/api/programs/{prog}/variants/{v['id']}", token=self.token)
+        self.assertEqual(s, 409, c)                                           # a schedule uses it
+
+    def test_ca_045_04_program_changed(self):
+        prog = self.program("changed")
+        v = self.variant(prog, name="Com n", entries={"cc": {"value": "X"}, "n": {"value": 2}})
+        self.save(prog, self.SOURCE.replace(', "n": {"type": "int", "label": "quantos"}', "").replace(", n=None", "").replace(', "n": n', ""))
+        s, c, _ = self.run_v(prog, v["id"])
+        self.assertEqual((s, c["result"]), (200, {"start": None, "end": None, "cc": "X"}), c)
+        self.assertTrue(any("quantos" in w or "n " in w for w in c["variant"]["warnings"]), c["variant"])
+        self.save(prog, self.SOURCE.replace('"cc": {"type": "str"', '"cc": {"type": "int"'))
+        s, lst, _ = http("GET", f"/api/programs/{prog}/variants", token=self.token)
+        self.assertEqual(lst["variants"][0]["status"], "invalid", lst)
+        self.assertIn("centro de custo", lst["variants"][0]["status_reason"])
+        s, c, _ = self.run_v(prog, v["id"])
+        self.assertEqual((s, c["error"]["code"]), (422, "VARIANT_INVALID"), c)
+        self.save(prog, self.SOURCE)                                          # back as it was: valid again
+        s, lst, _ = http("GET", f"/api/programs/{prog}/variants", token=self.token)
+        self.assertEqual(lst["variants"][0]["status"], "valid", lst)
+
+    def test_variant_rules(self):
+        prog = self.program("rules")
+        self.variant(prog, expect=400, name="Vazia", entries={})
+        self.variant(prog, expect=400, name="Tipo", entries={"n": {"value": "três"}})
+        self.variant(prog, expect=400, name="Desconhecido", entries={"zzz": {"value": 1}})
+        self.variant(prog, expect=400, name="Expressão", entries={"n": {"expr": "today"}})
+        self.variant(prog, expect=400, name="Trava", entries={"cc": {"value": "A"}}, locked=["n"])
+        self.variant(prog, name="Dupla", entries={"cc": {"value": "A"}})
+        self.variant(prog, expect=409, name="dupla", entries={"cc": {"value": "B"}})

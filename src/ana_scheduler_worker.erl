@@ -7,7 +7,7 @@
 
 run(OccId) ->
     {ok, O} = ana_db:one(
-        "SELECT o.id, o.job_id, o.attempt, o.scheduled_at, o.params AS override, j.name, j.program, j.params, "
+        "SELECT o.id, o.job_id, o.attempt, o.scheduled_at, o.params AS override, j.name, j.program, j.params, j.variant_id, "
         "  j.run_as, j.limits, j.retries, j.retry_backoff_s, j.on_exhausted, j.timezone, u.role "
         "FROM scheduler.occurrence o JOIN scheduler.job j ON j.id = o.job_id "
         "JOIN ana_system.app_user u ON u.username = j.run_as "
@@ -17,8 +17,18 @@ run(OccId) ->
                                case maps:get(<<"override">>, O) of M when is_map(M) -> M; _ -> #{} end),
                     maps:get(<<"timezone">>, O)),
     Started = erlang:monotonic_time(millisecond),
-    Result = ana_execution:run(maps:get(<<"program">>, O), Params, User,
-                               #{origin => <<"internal">>, limits => maps:get(<<"limits">>, O)}),
+    %% Spec 045 (CA-045-03): a job with a variant runs with its values resolved on the day of the run; the job's own
+    %% parameters fill the free fields only.
+    Result = case maps:get(<<"variant_id">>, O) of
+        null -> ana_execution:run(maps:get(<<"program">>, O), Params, User,
+                                  #{origin => <<"internal">>, limits => maps:get(<<"limits">>, O)});
+        V ->
+            case ana_variants:apply(maps:get(<<"program">>, O), V, Params, User) of
+                {ok, P2, Info} -> ana_execution:run(maps:get(<<"program">>, O), P2, User,
+                                                    #{origin => <<"internal">>, limits => maps:get(<<"limits">>, O), variant => Info});
+                {error, Code, Msg} -> {error, #{<<"code">> => Code, <<"message">> => Msg}}
+            end
+    end,
     Duration = erlang:monotonic_time(millisecond) - Started,
     finish(O, Result, Duration).
 

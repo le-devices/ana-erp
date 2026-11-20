@@ -315,6 +315,24 @@ route(<<"POST">>, [<<"programs">>, Name, <<"versions">>, V, <<"restore">>], Req)
     ana_http:require(Req, ?DEV, fun(U) -> transported(Req, fun() ->
         with_integer(V, Req, fun(N) -> save_reply(ana_program:restore(Name, N, U), Req) end)
     end) end);
+%% --- Execution variants (spec 045) -------------------------------------------
+route(<<"GET">>, [<<"programs">>, Name, <<"variants">>], Req) ->
+    ana_http:require(Req, ?USER, fun(U) -> values_reply(ana_variants:list(Name, U), Req) end);
+route(<<"POST">>, [<<"programs">>, Name, <<"variants">>], Req) ->
+    ana_http:require(Req, ?USER, fun(U) ->
+        with_body(Req, fun(B, R) when is_map(B) -> values_reply(ana_variants:save(Name, B, U), R); (_, R) -> invalid(R) end)
+    end);
+route(<<"DELETE">>, [<<"programs">>, Name, <<"variants">>, Id], Req) ->
+    ana_http:require(Req, ?USER, fun(U) -> with_integer(Id, Req, fun(I) -> values_reply(ana_variants:delete(Name, I, U), Req) end) end);
+route(<<"GET">>, [<<"programs">>, Name, <<"variants">>, Id, <<"preview">>], Req) ->
+    ana_http:require(Req, ?USER, fun(U) -> with_integer(Id, Req, fun(I) -> values_reply(ana_variants:preview(Name, I, U), Req) end) end);
+route(<<"POST">>, [<<"programs">>, Name, <<"variants">>, <<"clear_default">>], Req) ->
+    ana_http:require(Req, ?USER, fun(U) -> values_reply(ana_variants:act(Name, null, <<"clear_default">>, U), Req) end);
+route(<<"POST">>, [<<"programs">>, Name, <<"variants">>, Id, Action], Req)
+  when Action =:= <<"publish">>; Action =:= <<"unpublish">>; Action =:= <<"company_default">>; Action =:= <<"restore">>;
+       Action =:= <<"default">> ->
+    ana_http:require(Req, ?USER, fun(U) -> with_integer(Id, Req, fun(I) -> values_reply(ana_variants:act(Name, I, Action, U), Req) end) end);
+
 route(<<"POST">>, [<<"programs">>, Name, <<"run">>], Req) ->
     %% Spec 016: external portal accounts reach this route too; the execution only lets
     %% them run programs marked for the portal (ana_execution:load/2).
@@ -418,10 +436,14 @@ run(Name, U, Req) ->
         case Debug andalso not ana_security:has_role(U, ?DEV) of
             true -> ana_http:reply_error(403, <<"FORBIDDEN">>, <<"depuração exige papel developer"/utf8>>, R);
             false ->
-                Params = case maps:get(<<"params">>, B, #{}) of
+                Given = case maps:get(<<"params">>, B, #{}) of
                     P when is_map(P) -> P;
                     _ -> #{}
                 end,
+                %% Spec 045 (D5): "variant" (id or name) — its values resolved now, the given ones over the free fields.
+                case with_variant(Name, maps:get(<<"variant">>, B, null), Given, U) of
+                    {error, Code, Msg} -> ana_http:reply_error(case Code of <<"VARIANT_NOT_FOUND">> -> 404; _ -> 422 end, Code, Msg, R);
+                    {ok, Params, Variant} ->
                 External = maps:get(role, U) =:= <<"external">>,
                 Options = #{origin => <<"studio">>,
                             debug => Debug,
@@ -432,8 +454,10 @@ run(Name, U, Req) ->
                             %% Spec 056: rehearsal — runs whole, undone at the end, effects listed (any user who may run it).
                             rehearse => maps:get(<<"rehearse">>, B, false) =:= true,
                             timeout_ms => case External of true -> undefined; false -> maps:get(<<"timeout_ms">>, B, undefined) end,
-                            profile => not External andalso maps:get(<<"profile">>, B, false) =:= true},
+                            profile => not External andalso maps:get(<<"profile">>, B, false) =:= true,
+                            variant => Variant},
                 case developer_view(U, ana_execution:run(Name, Params, U, Options)) of
+                    {ok, Res} when Variant =/= null -> ana_http:json(200, Res#{variant => Variant}, R);
                     {ok, Res} -> ana_http:json(200, Res, R);
                     {error, #{<<"code">> := C} = E} when C =:= <<"OVERLOAD">>; C =:= <<"DRAINING">>;
                                                          C =:= <<"DB_UNAVAILABLE">> ->
@@ -446,9 +470,18 @@ run(Name, U, Req) ->
                     {error, #{<<"code">> := <<"FORBIDDEN">>} = E} -> ana_http:json(403, #{error => E}, R);
                     {error, E} -> ana_http:json(422, #{error => E}, R)
                 end
+                end
         end;
         (_, R) -> invalid(R)
     end).
+
+with_variant(_, null, Given, _) -> {ok, Given, null};
+with_variant(Program, Ref, Given, U) when is_integer(Ref); is_binary(Ref) ->
+    case ana_variants:apply(Program, Ref, Given, U) of
+        {ok, Params, Info} -> {ok, Params, Info};
+        E -> E
+    end;
+with_variant(_, _, _, _) -> {error, <<"INVALID">>, <<"variant: informe o id ou o nome da variante"/utf8>>}.
 
 list_executions(U = #{username := Username}, Req) ->
     Limit = max(1, min(200, ana_http:qs_int(<<"limit">>, Req, 50))),

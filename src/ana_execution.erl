@@ -51,6 +51,8 @@
     stats_base = #{} :: map(),              % per-transaction statistics at the start of a rehearsal
     %% Spec 065 (RNF-065-02): the company values this execution read, kept in its record.
     values_read = #{} :: map(),
+    %% Spec 045 (RF-045-06): the variant this run used (id, name, version, warnings), or null.
+    variant = null :: map() | null,
     breakpoints = [] :: list(),
     stop_on_entry = false :: boolean(),
     timeout_ms :: pos_integer(),
@@ -274,6 +276,7 @@ init(#{id := Id, program := Program, params := Params, user := User,
                       andalso ana_security:has_role(User, <<"developer">>)
                       andalso maps:get(rehearse, Op, false) =/= true,
              rehearse = maps:get(rehearse, Op, false) =:= true,
+             variant = maps:get(variant, Op, null),
              breakpoints = [L || L <- maps:get(breakpoints, Op, []), is_integer(L)],
              stop_on_entry = maps:get(stop_on_entry, Op, false) =:= true,
              timeout_ms = ana_settings:get(exec_timeout_ms),
@@ -1276,10 +1279,11 @@ crash_trace(Class, Reason, Stack) ->
 audit_start(St) ->
     case ana_db:exec(
            "INSERT INTO ana_system.execution (id, program, version, username, origin, debug, status, params, "
-           "  client_ip, api_key_id, node, parent_execution_id, rehearsal) "
-           "VALUES ($1::text::uuid, $2, $3, $4, $5, $6, 'running', $7::text::jsonb, $8, $9, $10, $11::text::uuid, $12)",
+           "  client_ip, api_key_id, node, parent_execution_id, rehearsal, variant) "
+           "VALUES ($1::text::uuid, $2, $3, $4, $5, $6, 'running', $7::text::jsonb, $8, $9, $10, $11::text::uuid, $12, $13::text::jsonb)",
            [St#st.id, St#st.program, St#st.version, maps:get(username, St#st.user),
-            St#st.origin, St#st.debug, json_text(St#st.params)] ++ trace(St) ++ [parent(St), St#st.rehearse]) of
+            St#st.origin, St#st.debug, json_text(St#st.params)] ++ trace(St) ++ [parent(St), St#st.rehearse,
+                                                                                json_text(St#st.variant)]) of
         {ok, _} -> ok;
         {error, E} -> logger:error("audit (start) failed: ~0p", [E]), ok
     end.
@@ -1288,10 +1292,10 @@ audit_end(St, Status, Duration, Result, Error) ->
     Sql = "INSERT INTO ana_system.execution (id, program, version, username, origin, debug, "
           "  status, params, finished_at, duration_ms, result, error, output, "
           "  cpu_ms, max_rss_kb, sql_count, rows_read, limits, client_ip, api_key_id, node, internal_trace, "
-          "  parent_execution_id, rehearsal, values_read) "
+          "  parent_execution_id, rehearsal, values_read, variant) "
           "VALUES ($1::text::uuid, $2, $3, $4, $5, $6, $7, $8::text::jsonb, now(), $9, "
           "        $10::text::jsonb, $11::text::jsonb, $12, $13, $14, $15, $16, $17::text::jsonb, "
-          "        $18, $19, $20, $21, $22::text::uuid, $23, $24::text::jsonb) "
+          "        $18, $19, $20, $21, $22::text::uuid, $23, $24::text::jsonb, $25::text::jsonb) "
           "ON CONFLICT (id) DO UPDATE SET status = EXCLUDED.status, finished_at = now(), "
           "  duration_ms = EXCLUDED.duration_ms, result = EXCLUDED.result, "
           "  error = EXCLUDED.error, output = EXCLUDED.output, cpu_ms = EXCLUDED.cpu_ms, "
@@ -1305,7 +1309,8 @@ audit_end(St, Status, Duration, Result, Error) ->
               St#st.cpu_ms, St#st.max_rss_kb, St#st.sql_count, St#st.rows_read,
               json_text(case St#st.limits of M when map_size(M) =:= 0 -> null; M -> M end)]
              ++ trace(St) ++ [St#st.internal_trace, parent(St), St#st.rehearse,
-                              json_text(case St#st.values_read of R when map_size(R) =:= 0 -> null; R -> R end)],
+                              json_text(case St#st.values_read of R when map_size(R) =:= 0 -> null; R -> R end),
+                              json_text(St#st.variant)],
     case ana_db:exec(Sql, Params) of
         {ok, _} -> ok;
         {error, E} -> logger:error("audit (end) failed: ~0p", [E])

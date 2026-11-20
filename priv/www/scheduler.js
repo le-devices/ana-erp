@@ -84,6 +84,20 @@
     const params = el("textarea", { rows: 3, spellcheck: "false" });
     params.value = JSON.stringify(v.params || {}, null, 1);
     const runAs = el("input", { value: v.run_as || window.AnaStudio.user().username });
+    // Spec 045 (D5): the job may run with a variant of the program (resolved on the day of each run).
+    const variantSel = el("select", { "aria-label": "Variante" }, el("option", { value: "", text: "— sem variante —" }));
+    const loadVariants = () => {
+      const prog = program.value.trim();
+      if (!prog) return;
+      API.variants.list(prog).then((x) => {
+        variantSel.replaceChildren(el("option", { value: "", text: "— sem variante —" }),
+          ...(x.variants || []).filter((w) => w.owner !== null || w.published)
+            .map((w) => el("option", { value: w.id, text: w.name + (w.owner === null ? " · empresa" : "") })));
+        variantSel.value = v.variant_id ? String(v.variant_id) : "";
+      }).catch(() => {});
+    };
+    program.addEventListener("change", loadVariants);
+    loadVariants();
     const kind = el("select", {}, [["cron", "expressão cron"], ["interval", "intervalo fixo"], ["once", "uma única vez"],
       ["calendar", "calendário de dias úteis"], ["after_job", "após outra rotina"]].map(([k, l]) => el("option", { value: k, text: l })));
     kind.value = t0.kind;
@@ -135,6 +149,7 @@
       if (kind.value === "after_job") Object.assign(trigger, { after_job: afterJob.value.trim(), after_condition: afterCond.value, result_param: resultParam.value.trim() || null });
       const body = {
         name: name.value.trim(), description: description.value, program: program.value.trim(), params: p,
+        variant_id: variantSel.value ? Number(variantSel.value) : null,
         run_as: runAs.value.trim(), triggers: [trigger], concurrency: concurrency.value, missed: missed.value,
         retries: parseInt(retries.value, 10), retry_backoff_s: parseInt(backoff.value, 10), on_exhausted: exhausted.value,
         window_start: winStart.value || null, window_end: winEnd.value || null, active: active.checked,
@@ -150,7 +165,8 @@
       el("h3", { text: isNew ? "Nova rotina agendada" : `Editar ${v.name}` }),
       el("label", {}, "Nome", name), el("label", {}, "Descrição", description),
       el("label", {}, "Programa", program),
-      el("label", {}, "Parâmetros (JSON; aceita {{today}}, {{yesterday}}, {{month_start}}, {{last_month_start}}, {{last_month_end}})", params),
+      el("label", {}, "Variante (valores resolvidos no dia de cada execução)", variantSel),
+      el("label", {}, "Parâmetros (JSON; aceita {{today}}, {{yesterday}}, {{month_end}}, {{last_month_start}}, {{today-7}} e as demais expressões dos valores da empresa)", params),
       el("label", {}, "Executar como (usuário técnico)", runAs),
       el("label", {}, "Quando", kind), ...Object.values(groups),
       el("details", {}, el("summary", { text: "Execução e falhas" }),

@@ -103,6 +103,8 @@ save(Name, Fields, #{username := Who}) ->
                 catch throw:{error, E} -> {error, E}
                 end,
             invalidate(Name),
+            %% Spec 045 (D6): the variants of the program follow its parameters (valid or invalid, with the reason).
+            _ = case R of {ok, _} -> catch ana_variants:validate_program(Name); _ -> ok end,
             R
     end.
 
@@ -246,7 +248,7 @@ refresh_params() ->
                                               "     OR writing IS DISTINCT FROM COALESCE($4::text[], writing) "
                                               "     OR uses IS DISTINCT FROM COALESCE($5::text[], uses))",
                                               [Name, P, L, Wr, Us])],
-                      _ <- [invalidate(Name)]]),
+                      _ <- [invalidate(Name)], _ <- [catch ana_variants:validate_program(Name)]]),
     {ok, N}.
 
 %% RF-005-08: inspection (syntax, PARAMS, docs) without running.
