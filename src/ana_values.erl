@@ -902,13 +902,13 @@ finding(Rule, Sev, Cat, Line, Text, Msg, Sugg) ->
 -spec daily_notices() -> ok.
 daily_notices() ->
     _ = ana_db:exec(
-          "INSERT INTO ana_system.notice (kind, severity, message, link) "
+          <<"INSERT INTO ana_system.notice (kind, severity, message, link) "
           "SELECT 'company_value', 'info', format('O valor da empresa %s muda em %s (vigência de uma nova versão).', v.name, "
           "       to_char(v.valid_from, 'DD/MM/YYYY')), '#/admin/values' "
           "FROM ana_system.company_value_version v JOIN ana_system.company_value d ON d.name = v.name AND NOT d.archived "
           "WHERE v.status = 'active' AND v.valid_from > current_date AND v.valid_from <= current_date + 7 "
           "AND NOT EXISTS (SELECT 1 FROM ana_system.notice n WHERE n.kind = 'company_value' AND n.message = "
-          "  format('O valor da empresa %s muda em %s (vigência de uma nova versão).', v.name, to_char(v.valid_from, 'DD/MM/YYYY')))", []),
+          "  format('O valor da empresa %s muda em %s (vigência de uma nova versão).', v.name, to_char(v.valid_from, 'DD/MM/YYYY')))"/utf8>>, []),
     ok.
 
 %% ======================================================================= phase 2: transport (D10, RF-065-10)
