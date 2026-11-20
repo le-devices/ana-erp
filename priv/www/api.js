@@ -114,7 +114,7 @@
     restore: (n, v) => API.request("POST", `/api/programs/${enc(n)}/versions/${v}/restore`, {}),
     run: (n, body) => API.request("POST", `/api/programs/${enc(n)}/run`, body, { accept: [422] }),
     // Spec 045: execution variants of a routine.
-    variants: {
+    runVariants: {
       list: (n) => API.request("GET", `/api/programs/${enc(n)}/variants`),
       save: (n, body) => API.request("POST", `/api/programs/${enc(n)}/variants`, body),
       remove: (n, id) => API.request("DELETE", `/api/programs/${enc(n)}/variants/${id}`),

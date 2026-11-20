@@ -274,7 +274,7 @@ write(C, Id, F, Who) ->
     end,
     JobId =:= undefined andalso throw({invalid, <<"rotina não encontrada"/utf8>>}),
     %% Spec 045 (D5): the job may run with a variant of its program (resolved at each run).
-    case maps:find(<<"variant_id">>, F) of
+    _ = case maps:find(<<"variant_id">>, F) of
         {ok, Vid} -> {ok, _} = ana_db:query(C, "UPDATE scheduler.job SET variant_id = $2 WHERE id = $1 "
                                                "AND variant_id IS DISTINCT FROM $2", [JobId, Vid]);
         error -> ok

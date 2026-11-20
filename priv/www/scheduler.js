@@ -89,7 +89,7 @@
     const loadVariants = () => {
       const prog = program.value.trim();
       if (!prog) return;
-      API.variants.list(prog).then((x) => {
+      API.runVariants.list(prog).then((x) => {
         variantSel.replaceChildren(el("option", { value: "", text: "— sem variante —" }),
           ...(x.variants || []).filter((w) => w.owner !== null || w.published)
             .map((w) => el("option", { value: w.id, text: w.name + (w.owner === null ? " · empresa" : "") })));

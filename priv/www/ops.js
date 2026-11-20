@@ -411,7 +411,7 @@
     const declared = Object.entries(r.params || {}).filter(([, sp]) => !(sp && sp.simulate));
     const editableVariant = (v) => !!v && (v.owner !== null || variants.can_publish);
     async function loadVariants() {
-      try { variants = await API.variants.list(r.name); } catch (_) { /* the routine still runs without them */ }
+      try { variants = await API.runVariants.list(r.name); } catch (_) { /* the routine still runs without them */ }
       drawVariantBar();
       return variants;
     }
@@ -423,7 +423,7 @@
         return;
       }
       try {
-        const p = await API.variants.preview(r.name, id);
+        const p = await API.runVariants.preview(r.name, id);
         const free = Object.fromEntries(Object.entries(over || {}).filter(([k]) => !(p.locked || []).includes(k)));
         makeForm({ ...p.params, ...free }, p);
         if (p.warnings && p.warnings.length) toast(p.warnings.join("; "));
@@ -448,19 +448,19 @@
       const items = [];
       if (current) {
         items.push(variants.my_default_id === current.id
-          ? act("Deixar de ser minha padrão", () => API.variants.clearDefault(r.name))
-          : act("Usar como minha padrão", () => API.variants.act(r.name, current.id, "default")));
+          ? act("Deixar de ser minha padrão", () => API.runVariants.clearDefault(r.name))
+          : act("Usar como minha padrão", () => API.runVariants.act(r.name, current.id, "default")));
         if (editableVariant(current)) {
           items.push(el("button", { type: "button", class: "small quiet", text: "Alterar…", onclick: () => variantDialog(current) }));
           if (current.owner === null) {
-            items.push(current.published ? act("Despublicar", () => API.variants.act(r.name, current.id, "unpublish"))
-                                         : act("Publicar para a empresa", () => API.variants.act(r.name, current.id, "publish")));
-            if (current.published && !current.company_default) items.push(act("Tornar a padrão da empresa", () => API.variants.act(r.name, current.id, "company_default")));
-            if (current.has_previous) items.push(act("Restaurar versão anterior", async () => { await API.variants.act(r.name, current.id, "restore"); await useVariant(current.id); }));
+            items.push(current.published ? act("Despublicar", () => API.runVariants.act(r.name, current.id, "unpublish"))
+                                         : act("Publicar para a empresa", () => API.runVariants.act(r.name, current.id, "publish")));
+            if (current.published && !current.company_default) items.push(act("Tornar a padrão da empresa", () => API.runVariants.act(r.name, current.id, "company_default")));
+            if (current.has_previous) items.push(act("Restaurar versão anterior", async () => { await API.runVariants.act(r.name, current.id, "restore"); await useVariant(current.id); }));
           }
           items.push(act("Excluir", async () => {
             if (!confirm(`Excluir a variante "${current.name}"?`)) return;
-            await API.variants.remove(r.name, current.id);
+            await API.runVariants.remove(r.name, current.id);
             makeForm(form.peek(), null);
           }, "danger"));
         }
@@ -531,7 +531,7 @@
           if (x.lock.checked) body.locked.push(x.n);
           if (x.hide.checked) body.hidden.push(x.n);
         }
-        const res = await API.variants.save(r.name, body);
+        const res = await API.runVariants.save(r.name, body);
         close();
         toast(existing ? "Variante alterada." : "Variante salva.");
         await loadVariants();
