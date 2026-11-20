@@ -410,8 +410,7 @@ webhook(Event, R, Target, Node, Msg) ->
     end.
 
 num(V) when is_integer(V) -> integer_to_binary(V);
-num(V) when is_float(V) -> float_to_binary(V, [{decimals, 2}, compact]);
-num(V) -> fmt("~0p", [V]).
+num(V) when is_float(V) -> float_to_binary(V, [{decimals, 2}, compact]).
 
 sample() ->
     _ = ana_db:exec("INSERT INTO ana_system.metric_sample (node, metrics) VALUES ($1, $2) ON CONFLICT DO NOTHING",

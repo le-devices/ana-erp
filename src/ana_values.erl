@@ -11,7 +11,7 @@
 
 -export([init_cache/0, load/0, reload/1, on_notify/2, read/2, today/0]).
 -export([check_set/4, apply_sets/2, names_in/1, usage/1, quality_findings/1, daily_notices/0,
-         transport_items/1, transport_status/1, transport_apply/3, transport_undo/2, missing_in_package/2]).
+         transport_items/1, item_sha/1, transport_status/1, transport_apply/3, transport_undo/2, missing_in_package/2]).
 -export([meta/0, list/2, detail/2, define/2, redefine/3, propose/3, decide/5, withdraw/3, preview/2,
          can_edit/2, secret/1]).
 
