@@ -1,6 +1,7 @@
 # Test battery on GitHub-hosted runners (private repository: billed minutes, free monthly quota).
 # Each suite runs on its own clean runner, in parallel; the whole battery takes as long as the slowest one.
-# Runs on pull requests to dev/qa/master and on demand (Actions → Bateria → Run workflow).
+# Runs on pull requests to dev/qa/master and on demand (Actions → Bateria → Run workflow). The plan job picks only the
+# suites a change can break (pull requests to qa and master always run everything).
 name: Bateria
 
 on:
@@ -16,7 +17,9 @@ on:
 
 permissions:
   contents: read
-  actions: read            # plan: was the previous commit of the pull request already green?
+  pull-requests: read      # plan: the files of the pull request
+  actions: read            # plan: the jobs of the previous run
+  checks: read             # plan: the suites the previous run chose (its notice)
 
 # A new push to the same pull request cancels the run in progress (saves minutes).
 concurrency:
@@ -26,46 +29,87 @@ concurrency:
 jobs:
   plan:
     runs-on: ubuntu-latest
-    timeout-minutes: 2
+    timeout-minutes: 3
     outputs:
       static: ${{ steps.p.outputs.static }}
       suites: ${{ steps.p.outputs.suites }}
     steps:
+      - uses: actions/checkout@v4
+        with:
+          sparse-checkout: .github
       - id: p
         env:
           WANT: ${{ github.event.inputs.suites || 'all' }}
           EVENT: ${{ github.event_name }}
           ACTION: ${{ github.event.action }}
-          BEFORE: ${{ github.event.before }}
-          AFTER: ${{ github.event.after }}
+          BASE_REF: ${{ github.event.pull_request.base.ref }}
+          HEAD_REF: ${{ github.event.pull_request.head.ref }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          PR: ${{ github.event.pull_request.number }}
+          RUN_ID: ${{ github.run_id }}
           REPO: ${{ github.repository }}
           GH_TOKEN: ${{ github.token }}
         run: |
-          # A new push to an open pull request that only changes documentation (specs/, *.md) on top of a commit that
-          # already passed the battery skips the suites: the code under test is the same. Anything else runs.
-          if [ "$EVENT" = pull_request ] && [ "$ACTION" = synchronize ] && [ -n "$BEFORE" ]; then
-            files=$(gh api "repos/$REPO/compare/$BEFORE...$AFTER" --jq '.files[].filename' 2>/dev/null || true)
-            code=$(printf '%s\n' "$files" | grep -Ev '^specs/|\.md$' || true)       # files that are not documentation
-            if [ -n "$files" ] && [ -z "$code" ]; then
-              green=$(gh api "repos/$REPO/actions/workflows/battery.yml/runs?head_sha=$BEFORE&status=success" \
-                        --jq '.total_count' 2>/dev/null || echo 0)
-              if [ "${green:-0}" -gt 0 ]; then
-                echo "::notice::só documentação desde ${BEFORE:0:7}, que já passou na bateria: suítes puladas"
-                echo "static=false" >> "$GITHUB_OUTPUT"
-                echo "suites=[]" >> "$GITHUB_OUTPUT"
+          # Minutes are billed: each run takes only the suites the change can break (.github/battery-plan.sh).
+          #  - pull request to qa or master: the whole battery (the gate before a release);
+          #  - first run of a pull request to dev: the suites the files of the pull request touch;
+          #  - a new push: the suites that did not pass in the previous run, plus the ones the files changed since then
+          #    touch. Documentation alone on top of a green run runs nothing.
+          #  - by hand (Actions → Bateria → Run workflow): the suites asked.
+          all="integration trails studio cluster chaos pgha install"
+          emit() {
+            local static=false sel="" s
+            for s in $1; do
+              case " static $all " in *" $s "*) ;; *) echo "::error::suíte desconhecida: $s"; exit 1 ;; esac
+              if [ "$s" = static ]; then static=true; else sel="$sel\"$s\","; fi
+            done
+            echo "static=$static" >> "$GITHUB_OUTPUT"
+            echo "suites=[${sel%,}]" >> "$GITHUB_OUTPUT"
+            echo "::notice::suítes desta execução: ${1:-nenhuma} — $2"
+          }
+          if [ "$EVENT" != pull_request ]; then
+            [ "$WANT" = all ] && emit "static $all" "pedidas à mão" || emit "$WANT" "pedidas à mão"
+            exit 0
+          fi
+          if [ "$BASE_REF" != dev ]; then
+            emit "static $all" "pull request para $BASE_REF: bateria inteira"
+            exit 0
+          fi
+          pr_files() { gh api "repos/$REPO/pulls/$PR/files?per_page=100" --paginate --jq '.[].filename'; }
+          # The previous run of this pull request (any result), and the commit it tested.
+          prev=$(gh api "repos/$REPO/actions/workflows/battery.yml/runs?branch=$HEAD_REF&event=pull_request&per_page=10" \
+                   --jq "[.workflow_runs[] | select(.id != $RUN_ID)][0] | \"\(.id) \(.head_sha)\"" 2>/dev/null || true)
+          prev_id=${prev%% *}; prev_sha=${prev##* }
+          if [ "$ACTION" = synchronize ] && [ -n "$prev_id" ] && [ "$prev_id" != null ]; then
+            jobs=$(gh api "repos/$REPO/actions/runs/$prev_id/jobs?per_page=100" \
+                     --jq '.jobs[] | "\(.name)|\(.conclusion)|\(.id)"' 2>/dev/null || true)
+            plan_id=$(printf '%s\n' "$jobs" | awk -F'|' '$1 == "plan" && $2 == "success" {print $3}')
+            # What the previous run chose is in the notice of its plan; what passed, in its jobs.
+            chosen=""
+            if [ -n "$plan_id" ]; then
+              chosen=$(gh api "repos/$REPO/check-runs/$plan_id/annotations" --jq '.[].message' 2>/dev/null \
+                         | sed -nE 's/^suítes desta execução: (.*) — .*/\1/p' | head -1 || true)
+            fi
+            if [ -n "$chosen" ]; then
+              passed=$(printf '%s\n' "$jobs" | awk -F'|' '$2 == "success" {print $1}' \
+                         | sed -E 's/^suite \(([a-z]+)\)$/\1/' | tr '\n' ' ')
+              redo=""
+              for s in $chosen; do
+                [ "$s" = nenhuma ] && continue
+                case " $passed " in *" $s "*) ;; *) redo="$redo $s" ;; esac
+              done
+              files=$(gh api "repos/$REPO/compare/$prev_sha...$HEAD_SHA" --jq '.files[].filename' 2>/dev/null || echo "?")
+              if [ "$files" = "?" ] || [ "$(printf '%s\n' "$files" | wc -l)" -ge 300 ]; then
+                emit "static $all" "mudança grande ou histórico reescrito desde ${prev_sha:0:7}"
                 exit 0
               fi
+              touched=$(printf '%s\n' "$files" | .github/battery-plan.sh select)
+              emit "$(printf '%s %s\n' "$redo" "$touched" | tr ' ' '\n' | sed '/^$/d' | sort -u | tr '\n' ' ')" \
+                   "repetidas da execução anterior:${redo:- nenhuma}; tocadas desde ${prev_sha:0:7}: ${touched:-nenhuma}"
+              exit 0
             fi
           fi
-          all="integration trails studio cluster chaos pgha install"
-          [ "$WANT" = all ] && want="static $all" || want="$WANT"
-          sel=""; static=false
-          for s in $want; do
-            case " static $all " in *" $s "*) ;; *) echo "::error::suíte desconhecida: $s"; exit 1 ;; esac
-            if [ "$s" = static ]; then static=true; else sel="$sel\"$s\","; fi
-          done
-          echo "static=$static" >> "$GITHUB_OUTPUT"
-          echo "suites=[${sel%,}]" >> "$GITHUB_OUTPUT"
+          emit "$(pr_files | .github/battery-plan.sh select)" "pelos arquivos do pull request"
 
   # Compilation, dialyzer, eunit and the isolated Python runtime: no database needed.
   static:
@@ -93,9 +137,12 @@ jobs:
         if: always()
         run: sudo chown -R "$(id -u):$(id -g)" "$HOME/.cache/rebar3" || true
 
+  # The suites only start after "static" passed (one minute): a compile or dialyzer error does not spend an hour.
   suite:
-    needs: plan
-    if: needs.plan.outputs.suites != '[]'
+    needs: [plan, static]
+    if: >-
+      always() && needs.plan.result == 'success' && needs.plan.outputs.suites != '[]' &&
+      (needs.static.result == 'success' || needs.static.result == 'skipped')
     runs-on: ubuntu-latest
     timeout-minutes: 90
     strategy:
