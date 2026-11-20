@@ -49,6 +49,8 @@
     held = [] :: [map()],
     rehearsal = #{} :: map(),               % effects of the parts, joined at the end
     stats_base = #{} :: map(),              % per-transaction statistics at the start of a rehearsal
+    %% Spec 065 (RNF-065-02): the company values this execution read, kept in its record.
+    values_read = #{} :: map(),
     breakpoints = [] :: list(),
     stop_on_entry = false :: boolean(),
     timeout_ms :: pos_integer(),
@@ -437,9 +439,11 @@ prepare_run(P, L, St) ->
             Scope = iolist_to_binary(ana_access:scope_sql(St1#st.user)),
             Begin = io_lib:format(
                 "~s~s~sSET LOCAL statement_timeout = ~b; SET LOCAL lock_timeout = ~b; SET LOCAL ana.username = '~ts'; "
-                "SET LOCAL ana.origin = '~ts'; SET LOCAL ana.execution_id = '~ts'",
+                "SET LOCAL ana.origin = '~ts'; SET LOCAL ana.execution_id = '~ts'; SET LOCAL ana.instance = '~ts'; "
+                "SET LOCAL ana.timezone = '~ts'",
                 [Snap, ReadOnly, Scope, maps:get(<<"sql_timeout_ms">>, L), maps:get(<<"lock_timeout_ms">>, L),
-                 Q(maps:get(username, St1#st.user)), Q(St1#st.origin), Q(St1#st.id)]),
+                 Q(maps:get(username, St1#st.user)), Q(St1#st.origin), Q(St1#st.id),
+                 ana_instance:role(), Q(ana_config:timezone())]),
             case lists:flatten([epgsql:squery(C, Begin)]) of
                 [{ok, [], []} | _] = Rs ->
                     case [E || {error, E} <- Rs] of
@@ -616,6 +620,23 @@ request(<<"schedule">>, Id, #{<<"name">> := Name} = A, St = #st{program = Prog, 
     end,
     respond(Id, Reply, St),
     St;
+request(<<"value">>, Id, #{<<"name">> := Name} = A, St = #st{user = User}) when is_binary(Name) ->
+    %% Spec 065 (D6, D7): from the memory of this node; an expression is one read-only query. Nothing is written.
+    Opts = #{at => maps:get(<<"at">>, A, null), company => maps:get(<<"company">>, A, null), user => maps:get(username, User, null)},
+    case ana_values:read(Name, Opts) of
+        {ok, R} ->
+            respond(Id, {ok, R}, St),
+            Key = case Opts of #{at := null, company := null} -> Name;
+                               #{at := At, company := Co} -> iolist_to_binary([Name, "@", json:encode([At, Co])]) end,
+            Read = St#st.values_read,
+            case map_size(Read) < 200 orelse maps:is_key(Key, Read) of
+                true -> St#st{values_read = Read#{Key => maps:with([value, version, valid_from, expression], R)}};
+                false -> St
+            end;
+        {error, Code, M} ->
+            respond(Id, {error, err(Code, M)}, St),
+            St
+    end;
 request(<<"savepoint">>, Id, A, St) ->
     savepoint(Id, A, St);
 request(<<"call">>, Id, #{<<"program">> := Name} = A, St) ->
@@ -1267,23 +1288,24 @@ audit_end(St, Status, Duration, Result, Error) ->
     Sql = "INSERT INTO ana_system.execution (id, program, version, username, origin, debug, "
           "  status, params, finished_at, duration_ms, result, error, output, "
           "  cpu_ms, max_rss_kb, sql_count, rows_read, limits, client_ip, api_key_id, node, internal_trace, "
-          "  parent_execution_id, rehearsal) "
+          "  parent_execution_id, rehearsal, values_read) "
           "VALUES ($1::text::uuid, $2, $3, $4, $5, $6, $7, $8::text::jsonb, now(), $9, "
           "        $10::text::jsonb, $11::text::jsonb, $12, $13, $14, $15, $16, $17::text::jsonb, "
-          "        $18, $19, $20, $21, $22::text::uuid, $23) "
+          "        $18, $19, $20, $21, $22::text::uuid, $23, $24::text::jsonb) "
           "ON CONFLICT (id) DO UPDATE SET status = EXCLUDED.status, finished_at = now(), "
           "  duration_ms = EXCLUDED.duration_ms, result = EXCLUDED.result, "
           "  error = EXCLUDED.error, output = EXCLUDED.output, cpu_ms = EXCLUDED.cpu_ms, "
           "  max_rss_kb = EXCLUDED.max_rss_kb, sql_count = EXCLUDED.sql_count, "
           "  rows_read = EXCLUDED.rows_read, limits = EXCLUDED.limits, "
-          "  internal_trace = EXCLUDED.internal_trace",
+          "  internal_trace = EXCLUDED.internal_trace, values_read = EXCLUDED.values_read",
     Params = [St#st.id, St#st.program, St#st.version, maps:get(username, St#st.user),
               St#st.origin, St#st.debug, Status, json_text(St#st.params),
               Duration, json_text(Result), json_text(Error),
               unicode:characters_to_binary(St#st.output),
               St#st.cpu_ms, St#st.max_rss_kb, St#st.sql_count, St#st.rows_read,
               json_text(case St#st.limits of M when map_size(M) =:= 0 -> null; M -> M end)]
-             ++ trace(St) ++ [St#st.internal_trace, parent(St), St#st.rehearse],
+             ++ trace(St) ++ [St#st.internal_trace, parent(St), St#st.rehearse,
+                              json_text(case St#st.values_read of R when map_size(R) =:= 0 -> null; R -> R end)],
     case ana_db:exec(Sql, Params) of
         {ok, _} -> ok;
         {error, E} -> logger:error("audit (end) failed: ~0p", [E])

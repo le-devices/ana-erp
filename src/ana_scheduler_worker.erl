@@ -119,18 +119,28 @@ notify(Job, Kind, Message, OccId) ->
         _ -> ok
     end.
 
-%% Date templates in string parameters, in the job's time zone.
+%% Date templates in string parameters, in the job's time zone. Spec 065 (RF-065-11): "{{today}}" and the others
+%% are cases of the closed list of expressions, resolved by its only implementation in the database; what is not
+%% in the list stays as it was.
 render(Params, Tz) ->
-    case ana_db:one(
-           "SELECT (now() AT TIME ZONE $1)::date::text AS today, "
-           "  ((now() AT TIME ZONE $1)::date - 1)::text AS yesterday, "
-           "  to_char(now() AT TIME ZONE $1, 'YYYY-MM-DD\"T\"HH24:MI:SS') AS now, "
-           "  date_trunc('month', now() AT TIME ZONE $1)::date::text AS month_start, "
-           "  (date_trunc('month', now() AT TIME ZONE $1) - interval '1 month')::date::text AS last_month_start, "
-           "  (date_trunc('month', now() AT TIME ZONE $1)::date - 1)::text AS last_month_end", [Tz]) of
-        {ok, #{} = Vars} -> subst(Params, Vars);
-        _ -> Params
+    case lists:usort(tokens(Params)) of
+        [] -> Params;
+        Tokens ->
+            case ana_db:rows("SELECT t, ana_system.value_expression(t, NULL, $2, false, NULL) AS v FROM unnest($1::text[]) t",
+                             [Tokens, Tz]) of
+                {ok, Rows} -> subst(Params, maps:from_list([{T, V} || #{<<"t">> := T, <<"v">> := V} <- Rows, V =/= null]));
+                _ -> Params
+            end
     end.
+
+tokens(M) when is_map(M) -> lists:append([tokens(V) || V <- maps:values(M)]);
+tokens(L) when is_list(L) -> lists:append([tokens(V) || V <- L]);
+tokens(B) when is_binary(B) ->
+    case re:run(B, <<"\\{\\{([a-z_]+(?:[+-][0-9]{1,4})?)\\}\\}">>, [global, {capture, all_but_first, binary}]) of
+        {match, Ms} -> [T || [T] <- Ms];
+        nomatch -> []
+    end;
+tokens(_) -> [].
 
 subst(M, Vars) when is_map(M) -> maps:map(fun(_, V) -> subst(V, Vars) end, M);
 subst(L, Vars) when is_list(L) -> [subst(V, Vars) || V <- L];

@@ -1,7 +1,7 @@
 %% Cross-node cache invalidation via PostgreSQL LISTEN/NOTIFY.
 %%
 %% Channels and handlers: ana_program → ana_program, ana_setting → ana_settings,
-%% ana_access → ana_access, ana_wake → ana_events (spec 062). On (re)connection every handler gets `all`, since
+%% ana_access → ana_access, ana_wake → ana_events (spec 062), ana_value → ana_values (spec 065). On (re)connection every handler gets `all`, since
 %% notifications may have been missed while disconnected.
 -module(ana_listener).
 -behaviour(gen_server).
@@ -14,6 +14,7 @@
                    {<<"ana_flow">>, ana_bpm}, {<<"ana_bpm">>, ana_bpm},
                    {<<"ana_api">>, ana_api}, {<<"ana_license">>, ana_license},
                    {<<"ana_extension">>, ana_extensions},
+                   {<<"ana_value">>, ana_values},                  % spec 065: company values
                    {<<"ana_wake">>, ana_events}]).                % spec 062: events instead of polling
 
 start_link() ->

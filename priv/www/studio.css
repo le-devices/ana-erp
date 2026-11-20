@@ -1110,3 +1110,13 @@ dl.facts dd { margin: 0; }
 .rehearsal-list li { margin: 3px 0; }
 .rehearsal-docs { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 2px; }
 .grid-table.compact td, .grid-table.compact th { padding: 2px 6px; font-size: 0.85em; }
+
+/* Company values (spec 065) */
+.value-area h3 { margin: 18px 0 6px; text-transform: capitalize; }
+.value-now { border: 1px solid var(--border); border-radius: 8px; padding: 10px 12px; margin: 8px 0; }
+.value-big { font-size: 1.35rem; font-weight: 600; overflow-wrap: anywhere; }
+.value-preview { margin: 6px 0 12px; flex-wrap: wrap; align-items: center; }
+.value-selection { display: grid; gap: 6px; }
+.value-side details { margin-top: 12px; }
+.value-side code, .value-area code { overflow-wrap: anywhere; }
+input.narrow { width: 6em; }

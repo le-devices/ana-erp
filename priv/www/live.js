@@ -27,6 +27,8 @@
         while ((i = buf.indexOf("\n\n")) >= 0) {
           const block = buf.slice(0, i); buf = buf.slice(i + 2);
           if (/^event: (notices|tasks)$/m.test(block)) changed();
+          // Spec 065: a company value changed somewhere — the screens showing values read again.
+          if (/^event: values$/m.test(block)) document.dispatchEvent(new CustomEvent("ana:values"));
         }
       }
     } catch (_) { /* reconnect below */ }

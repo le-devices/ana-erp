@@ -192,6 +192,44 @@ route(<<"DELETE">>, [<<"me">>, <<"favorites">>, Program], Req) ->
                                  [Who, Program]), Req)
     end);
 
+%% --- Company values (spec 065) ---------------------------------------------
+%% Everyone in the company sees them; who changes is decided per value (administrators and groups, D9).
+route(<<"GET">>, [<<"values">>], Req) ->
+    ana_http:require(Req, ?USER, fun(U) -> values_reply(ana_values:list(ana_http:qs_map(Req), U), Req) end);
+route(<<"GET">>, [<<"values">>, <<"meta">>], Req) ->
+    ana_http:require(Req, ?USER, fun(_) -> values_reply(ana_values:meta(), Req) end);
+route(<<"POST">>, [<<"values">>, <<"preview">>], Req) ->
+    ana_http:require(Req, ?USER, fun(U) ->
+        with_body(Req, fun(B, R) when is_map(B) -> values_reply(ana_values:preview(B, U), R); (_, R) -> invalid(R) end)
+    end);
+route(<<"POST">>, [<<"values">>], Req) ->
+    ana_http:require(Req, ?USER, fun(U) ->
+        with_body(Req, fun(B, R) when is_map(B) -> values_reply(ana_values:define(B, U), R); (_, R) -> invalid(R) end)
+    end);
+route(<<"GET">>, [<<"values">>, Name], Req) ->
+    ana_http:require(Req, ?USER, fun(U) -> values_reply(ana_values:detail(Name, U), Req) end);
+route(<<"PUT">>, [<<"values">>, Name], Req) ->
+    ana_http:require(Req, ?USER, fun(U) ->
+        with_body(Req, fun(B, R) when is_map(B) -> values_reply(ana_values:redefine(Name, B, U), R); (_, R) -> invalid(R) end)
+    end);
+route(<<"POST">>, [<<"values">>, Name, <<"versions">>], Req) ->
+    ana_http:require(Req, ?USER, fun(U) ->
+        with_body(Req, fun(B, R) when is_map(B) -> values_reply(ana_values:propose(Name, B, U), R); (_, R) -> invalid(R) end)
+    end);
+route(<<"POST">>, [<<"values">>, Name, <<"versions">>, Id, Action], Req)
+  when Action =:= <<"approve">>; Action =:= <<"refuse">>; Action =:= <<"withdraw">> ->
+    ana_http:require(Req, ?USER, fun(U) ->
+        with_body(Req, fun(B, R) ->
+            Note = case B of #{<<"note">> := N} when is_binary(N), N =/= <<>> -> N; _ -> null end,
+            with_integer(Id, R, fun(I) ->
+                values_reply(case Action of
+                                 <<"withdraw">> -> ana_values:withdraw(Name, I, U);
+                                 _ -> ana_values:decide(Name, I, Action, Note, U)
+                             end, R)
+            end)
+        end)
+    end);
+
 %% --- Programs (spec 002, RF-011-10) ---------------------------------------
 %% --- Quality gate (spec 064) ------------------------------------------------
 route(<<"POST">>, [<<"programs">>, <<"inspect">>], Req) ->
@@ -603,6 +641,18 @@ invalid(Req) -> ana_http:reply_error(400, <<"INVALID">>, <<"requisição inváli
 
 as_list(L) when is_list(L) -> L;
 as_list(_) -> [].
+
+values_reply({ok, V}, Req) -> ana_http:json(200, V, Req);
+values_reply({error, Code, M}, Req) ->
+    Status = case Code of
+        <<"NOT_FOUND">> -> 404;
+        <<"VALUE_NOT_FOUND">> -> 404;
+        <<"FORBIDDEN">> -> 403;
+        <<"FOUR_EYES">> -> 403;
+        <<"CONFLICT">> -> 409;
+        _ -> 400
+    end,
+    ana_http:reply_error(Status, Code, M, Req).
 
 quality_reply({ok, V}, Req) -> ana_http:json(200, V, Req);
 quality_reply({error, M}, Req) when is_binary(M) -> ana_http:reply_error(400, <<"INVALID">>, M, Req).

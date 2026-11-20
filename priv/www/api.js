@@ -171,6 +171,18 @@
     table: (s, t) => API.request("GET", `/api/catalog/${enc(s)}/${enc(t)}`),
     sql: (sql) => API.request("POST", "/api/sql", { sql }),
 
+    // Spec 065: company values.
+    values: {
+      list: (filters) => API.request("GET", "/api/values" + query(filters || {})),
+      meta: () => API.request("GET", "/api/values/meta"),
+      get: (n) => API.request("GET", `/api/values/${enc(n)}`),
+      define: (body) => API.request("POST", "/api/values", body),
+      redefine: (n, body) => API.request("PUT", `/api/values/${enc(n)}`, body),
+      propose: (n, body) => API.request("POST", `/api/values/${enc(n)}/versions`, body),
+      act: (n, id, action, note) => API.request("POST", `/api/values/${enc(n)}/versions/${id}/${action}`, { note: note || null }),
+      preview: (body) => API.request("POST", "/api/values/preview", body),
+    },
+
     scheduler: {
       jobs: (program) => API.request("GET", "/api/scheduler/jobs" + query({ program })),
       job: (id) => API.request("GET", `/api/scheduler/jobs/${id}`),

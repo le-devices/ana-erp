@@ -253,6 +253,8 @@
                                   placeholder: "vazio = todos; ex.: COMERCIAL, FILIAL-SP (inclui os centros filhos)" });
     const portfolio = el("input", { type: "checkbox" }); portfolio.checked = !!(g && g.data_portfolio);
     const ownProjects = el("input", { type: "checkbox" }); ownProjects.checked = !!(g && g.data_own_projects);
+    const values = el("textarea", { rows: 3, placeholder: "um por linha, ex.:\nfinanceiro.*\nestoque.deposito_principal" });
+    values.value = g ? (g.value_patterns || []).join("\n") : "";
     return el("form", { class: "form-card", onsubmit: async (e) => {
       e.preventDefault();
       await guard(async () => {
@@ -262,6 +264,7 @@
           data_cost_centers: centers.value.split(",").map((s) => s.trim().toUpperCase()).filter(Boolean),
           data_portfolio: portfolio.checked,
           data_own_projects: ownProjects.checked,
+          value_patterns: values.value.split("\n").map((s) => s.trim()).filter(Boolean),
         });
         toast("Grupo salvo.");
         await groups();
@@ -269,6 +272,7 @@
     } },
       el("h3", { text: isNew ? "Novo grupo" : `Editar ${g.name}` }),
       field("Nome", name), field("Descrição", description), field("Programas (nome ou prefixo.*)", patterns),
+      field("Valores da empresa que alteram (nome ou área.*)", values),
       el("h4", { text: "Dados que os membros veem" }),
       field("Centros de custo", centers),
       check("Só os clientes da própria carteira (e seus pedidos e títulos)", portfolio),
@@ -2202,7 +2206,296 @@
                        window.AnaScheduler.holidays(hol)]);
   }
 
-  const SECTIONS = { users, groups, settings, company, commands, remote, accounts, limits, consumption, scheduler, monitor, audit, retention, health, alerts, core, disk, uiperf, sqlperf, advice, updates, integrations, checks, transports, datacopy, publicapi, license, extensions, telemetry };
+  // ------------------------------------------------------------------ company values (spec 065)
+  const VALUE_TYPES = { text: "texto", integer: "número inteiro", decimal: "decimal", date: "data", boolean: "sim/não",
+                        month: "mês", reference: "cadastro" };
+  const VALUE_SHAPES = { single: "simples", list: "lista", selection: "seleção" };
+  const VALUE_STATUS = { pending: ["aguarda aprovação", "warn"], active: ["em uso", "ok"], refused: ["recusada", "off"],
+                         withdrawn: ["retirada", "off"], replaced: ["substituída", ""] };
+  const VALUE_ACTIONS = { defined: "criou", redefined: "mudou a definição", requested: "pediu mudança", activated: "mudou",
+                          approved: "aprovou", refused: "recusou", withdrawn: "retirou", archived: "arquivou", restored: "restaurou" };
+  const INSTANCES = { development: "desenvolvimento", test: "teste", production: "produção" };
+  let valuesMeta = null, valuesState = { q: "", area: "", archived: false, open: null };
+
+  const brDate = (s) => (s && /^\d{4}-\d{2}-\d{2}$/.test(s) ? s.slice(8, 10) + "/" + s.slice(5, 7) + "/" + s.slice(0, 4) : s);
+  function valueText(v, type, labels) {
+    if (v === null || v === undefined) return "—";
+    const one = (x) => {
+      if (x === null || x === undefined) return "—";
+      if (type === "boolean") return x ? "sim" : "não";
+      if (type === "decimal") return String(x).replace(".", ",");
+      if (type === "date") return brDate(String(x));
+      if (type === "month" && /^\d{4}-\d{2}$/.test(x)) return x.slice(5) + "/" + x.slice(0, 4);
+      if (type === "reference" && labels && labels[String(x)]) return `${x} — ${labels[String(x)]}`;
+      return String(x);
+    };
+    if (Array.isArray(v)) return v.length ? v.map(one).join(", ") : "(lista vazia)";
+    if (typeof v === "object") {
+      const parts = [];
+      if ((v.include || []).length) parts.push(v.include.map(one).join(", "));
+      for (const [a, b] of v.ranges || []) parts.push(`de ${one(a)} a ${one(b)}`);
+      for (const p of v.prefixes || []) parts.push(`começa com ${p}`);
+      if (!parts.length) parts.push("todos");
+      if ((v.exclude || []).length) parts.push("exceto " + v.exclude.map(one).join(", "));
+      return parts.join("; ");
+    }
+    return one(v);
+  }
+  const exprLabel = (e) => {
+    if (!e) return "";
+    const m = /^([a-z_]+)([+-]\d+)?$/.exec(e);
+    const x = valuesMeta && valuesMeta.expressions.find((t) => t.token === (m ? m[1] : e));
+    if (!x) return e;
+    const unit = { day: "dia(s)", month: "mês(es)" }[x.offset_unit] || "";
+    return x.label.replace(/ \(± N .*\)$/, "") + (m && m[2] ? ` ${m[2][0]} ${m[2].slice(1)} ${unit}` : "");
+  };
+  function currentText(c, d) {
+    if (!c) return el("span", { class: "muted", text: "sem valor em vigor" });
+    return el("span", {}, el("strong", { text: valueText(c.value, d.value_type) }),
+      c.expression ? el("span", { class: "muted small", text: ` (${exprLabel(c.expression)})` }) : null);
+  }
+
+  async function values() {
+    if (!valuesMeta) valuesMeta = await API.values.meta();
+    const st = valuesState;
+    const r = await API.values.list({ q: st.q || undefined, area: st.area || undefined, archived: st.archived ? "1" : undefined });
+    if (current !== "values") return;
+    const side = el("div", { class: "value-side" });
+    const search = el("input", { type: "search", value: st.q, placeholder: "Buscar por nome ou descrição…", "aria-label": "Buscar valores" });
+    search.addEventListener("keydown", (e) => { if (e.key === "Enter") { st.q = search.value.trim(); values(); } });
+    const area = el("select", { "aria-label": "Área", onchange: () => { st.area = area.value; values(); } },
+      el("option", { value: "", text: "Todas as áreas" }), r.areas.map((a) => el("option", { value: a, text: a })));
+    area.value = st.area;
+    const arch = el("input", { type: "checkbox", onchange: () => { st.archived = arch.checked; values(); } });
+    arch.checked = st.archived;
+    const open = (n) => { st.open = n; valueDetail(n, side); };
+    const groups = {};
+    for (const v of r.values) (groups[v.area] = groups[v.area] || []).push(v);
+    const lists = Object.keys(groups).sort().map((a) => el("section", { class: "value-area" },
+      el("h3", { text: a }),
+      table([
+        { label: "Valor", value: (v) => el("span", {}, el("code", { text: v.name }), el("div", { class: "muted small", text: v.description })) },
+        { label: "Hoje", value: (v) => currentText(v.current, v) },
+        { label: "Próxima vigência", value: (v) => v.next ? `${brDate(v.next.valid_from)}: ${valueText(v.next.value, v.value_type)}${v.next.expression ? " (" + exprLabel(v.next.expression) + ")" : ""}` : "—" },
+        { label: "", value: (v) => el("span", {}, v.sensitive ? pill("sensível", "warn") : null,
+                                       v.pending ? pill(`${v.pending} aguardando aprovação`, "warn") : null,
+                                       v.archived ? pill("arquivado", "off") : null) },
+      ], groups[a], { onRow: (v) => open(v.name) })));
+    main().replaceChildren(
+      ...header("Valores da empresa", "Valores de negócio com nome — período aberto, margem mínima, depósito principal, centros de custo de P&D — que as rotinas leem pelo nome (ana.value no Python, base.company_value no SQL). Mude aqui, com vigência, sem tocar em código."),
+      el("div", { class: "admin-toolbar" }, search, area,
+        el("button", { text: "Buscar", onclick: () => { st.q = search.value.trim(); values(); } }),
+        el("label", { class: "check" }, arch, "Mostrar arquivados"),
+        el("button", { class: "primary", text: "+ Novo valor", onclick: () => { st.open = null; side.replaceChildren(valueDefineForm(null)); } })),
+      el("div", { class: "admin-columns" },
+        el("div", {}, lists.length ? lists : el("p", { class: "empty-state muted" },
+          el("span", { text: st.q || st.area ? "Nenhum valor com esse filtro. " : "Nenhum valor cadastrado. " }),
+          el("button", { type: "button", class: "small", text: st.q || st.area ? "Limpar filtro" : "+ Novo valor",
+            onclick: () => { if (st.q || st.area) { st.q = ""; st.area = ""; values(); } else side.replaceChildren(valueDefineForm(null)); } }))),
+        side));
+    if (st.open) valueDetail(st.open, side);
+    else side.replaceChildren(el("p", { class: "muted", text: `Hoje é ${brDate(r.today)}; esta instância é de ${INSTANCES[r.instance] || r.instance}. Escolha um valor para ver a linha do tempo, mudar ou aprovar.` }));
+  }
+
+  // Live (spec 062): a value changed in another session or node — read again, keeping what is open.
+  let valuesTimer = null;
+  document.addEventListener("ana:values", () => {
+    clearTimeout(valuesTimer);
+    valuesTimer = setTimeout(() => {
+      const area = document.querySelector("#area-admin");
+      const editing = document.activeElement && document.activeElement.closest && document.activeElement.closest(".value-side form");
+      if (current === "values" && area && !area.hidden && !editing) guard(values);
+    }, 400);
+  });
+
+  async function valueDetail(name, side) {
+    const d = await API.values.get(name);
+    const def = d.definition;
+    const actions = (v) => {
+      const out = [];
+      const act = (label, action, cls, ask) => el("button", { type: "button", class: "small " + (cls || ""), text: label, onclick: () => guard(async () => {
+        let note = null;
+        if (ask) { note = prompt(ask, ""); if (note === null) return; }
+        await API.values.act(name, v.id, action, note);
+        toast({ approve: "Mudança aprovada.", refuse: "Mudança recusada.", withdraw: "Versão retirada." }[action]);
+        await values();
+      }) });
+      if (v.status === "pending" && d.can_edit && v.requested_by !== d.me) out.push(act("Aprovar", "approve", "primary"), act("Recusar", "refuse", "danger", "Motivo da recusa (opcional):"));
+      if (v.status === "pending" && v.requested_by === d.me) out.push(el("span", { class: "muted small", text: "aguarda outra pessoa " }));
+      if ((v.status === "pending" && (v.requested_by === d.me || d.can_edit)) || (v.status === "active" && v.valid_from > valuesMeta.today && d.can_edit))
+        out.push(act("Retirar", "withdraw", "quiet"));
+      return el("span", { class: "row-buttons" }, out);
+    };
+    const where = (v) => [v.instance ? INSTANCES[v.instance] : null, v.company || null].filter(Boolean).join(" · ") || "todas";
+    const now = d.current || {};
+    side.replaceChildren(
+      el("h3", {}, el("code", { text: def.name })),
+      el("p", { text: def.description }),
+      el("p", {}, pill(VALUE_TYPES[def.value_type] || def.value_type), " ", pill(VALUE_SHAPES[def.shape] || def.shape),
+        def.ref_kind ? pill((valuesMeta.reference_kinds.find((k) => k.kind === def.ref_kind) || {}).label || def.ref_kind) : null,
+        def.sensitive ? pill("sensível: quatro olhos", "warn") : null, def.archived ? pill("arquivado", "off") : null),
+      el("div", { class: "value-now" },
+        el("div", { class: "muted small", text: "Em vigor hoje" }),
+        now.error ? el("span", { class: "error", text: now.error })
+          : el("div", { class: "value-big", text: valueText(now.value, def.value_type, (d.versions.find((v) => v.id === now.version) || {}).labels) }),
+        now.expression ? el("div", { class: "muted small", text: `${exprLabel(now.expression)}, desde ${brDate(now.valid_from)}` })
+          : now.valid_from ? el("div", { class: "muted small", text: `desde ${brDate(now.valid_from)}` }) : null),
+      valuePreviewAt(name, def),
+      el("h4", { text: "Linha do tempo" }),
+      table([
+        { label: "Vigência", value: (v) => brDate(v.valid_from) },
+        { label: "Onde", value: (v) => where(v) },
+        { label: "Valor", value: (v) => v.expression ? exprLabel(v.expression) : valueText(v.content, def.value_type, v.labels) },
+        { label: "Situação", value: (v) => pill(...(VALUE_STATUS[v.status] || [v.status])) },
+        { label: "Quem", value: (v) => el("span", { class: "small" }, v.requested_by, v.decided_by ? ` → ${v.decided_by}` : "",
+                                          v.reason ? el("div", { class: "muted", text: v.reason }) : null) },
+        { label: "", value: actions },
+      ], d.versions, { empty: "Nenhuma versão ainda: informe o primeiro valor abaixo." }),
+      d.can_edit && !def.archived ? valueVersionForm(def, d) : null,
+      d.can_edit ? el("details", { class: "value-def" }, el("summary", { text: "Definição" }), valueDefineForm(def)) : null,
+      !d.changes.length ? null : el("details", { class: "value-history" }, el("summary", { text: `Histórico (${d.changes.length})` }),
+        table([
+          { label: "Quando", value: (c) => fmtDate(c.at) },
+          { label: "Quem", value: (c) => c.username },
+          { label: "O quê", value: (c) => VALUE_ACTIONS[c.action] || c.action },
+          { label: "Antes → depois", value: (c) => el("span", { class: "small" }, change(c.before), " → ", change(c.after)) },
+          { label: "Motivo", value: (c) => c.reason || "" },
+        ], d.changes)));
+    function change(x) {
+      if (!x) return "—";
+      if (x.expression) return exprLabel(x.expression) + (x.from ? ` desde ${brDate(x.from)}` : "");
+      if ("content" in x) return valueText(x.content, def.value_type) + (x.from ? ` desde ${brDate(x.from)}` : "");
+      if (x.status) return (VALUE_STATUS[x.status] || [x.status])[0];
+      return Object.keys(x).filter((k) => k !== "name").map((k) => `${k}: ${x[k]}`).join(", ");
+    }
+  }
+
+  function valuePreviewAt(name, def) {
+    const at = el("input", { type: "date", "aria-label": "Data de referência" });
+    const out = el("span", { class: "muted", "aria-live": "polite" });
+    return el("div", { class: "row-buttons value-preview" }, el("span", { class: "small", text: "Valor em outra data:" }), at,
+      el("button", { type: "button", class: "small", text: "Ver", onclick: () => guard(async () => {
+        if (!at.value) { at.focus(); return; }
+        const r = await API.values.preview({ name, at: at.value });
+        out.textContent = `${brDate(at.value)}: ${valueText(r.value, def.value_type)}${r.expression ? " (" + exprLabel(r.expression) + ")" : ""}`;
+      }) }), out);
+  }
+
+  // The input for the content, by type and form (D1).
+  function valueInput(def) {
+    const t = def.value_type;
+    const single = () => {
+      if (t === "boolean") { const c = el("input", { type: "checkbox" }); return { node: el("label", { class: "check" }, c, "sim"), read: () => c.checked }; }
+      const i = el("input", { "aria-label": "Valor", type: { date: "date", month: "month", integer: "number", decimal: "text" }[t] || "text",
+        inputmode: t === "decimal" ? "decimal" : undefined, placeholder: t === "reference" ? "código do cadastro" : t === "decimal" ? "ex.: 18,5" : "" });
+      return { node: i, read: () => (t === "integer" ? (i.value === "" ? null : Number(i.value)) : i.value.trim()) };
+    };
+    const items = (s) => s.split(/[\n,;]/).map((x) => x.trim()).filter(Boolean).map((x) => (t === "integer" ? Number(x) : x));
+    if (def.shape === "list") {
+      const a = el("textarea", { rows: 4, placeholder: "um por linha", "aria-label": "Itens da lista" });
+      return { node: a, read: () => items(a.value) };
+    }
+    if (def.shape === "selection") {
+      const inc = el("input", { placeholder: "ex.: 4100, 4200" }), rng = el("textarea", { rows: 2, placeholder: "uma faixa por linha, ex.: 4000 a 4999" });
+      const pre = el("input", { placeholder: "ex.: 3.1" }), exc = el("input", { placeholder: "ex.: 4500" });
+      return { node: el("div", { class: "value-selection" }, field("Incluir", inc), field("Faixas", rng),
+                        t === "integer" ? null : field("Começa com", pre), field("Exceto", exc)),
+               read: () => ({ include: items(inc.value), exclude: items(exc.value), prefixes: t === "integer" ? [] : items(pre.value),
+                              ranges: rng.value.split("\n").map((l) => l.split(/\s+a\s+|\s*-\s*|\s*\.\.\s*/).map((x) => x.trim()))
+                                .filter((p) => p.length === 2 && p[0] && p[1]).map((p) => (t === "integer" ? p.map(Number) : p)) }) };
+    }
+    return single();
+  }
+
+  function valueVersionForm(def, d) {
+    const input = valueInput(def);
+    const exprs = valuesMeta.expressions.filter((x) => ({ date: ["date"], month: ["month"], text: ["text", "datetime", "cost_center"],
+      reference: def.ref_kind === "cost_center" ? ["cost_center"] : [] }[def.value_type] || []).includes(x.result_type));
+    const mode = el("select", { "aria-label": "Forma do valor" }, el("option", { value: "fixed", text: "Valor fixo" }),
+      def.shape === "single" && exprs.length ? el("option", { value: "expr", text: "Calculado (expressão)" }) : null);
+    const expr = el("select", { "aria-label": "Expressão" }, exprs.map((x) => el("option", { value: x.token, text: x.label })));
+    const offset = el("input", { type: "number", value: "0", step: "1", "aria-label": "Deslocamento", class: "narrow" });
+    const exprBox = el("div", { class: "row-buttons", hidden: true }, expr, offset);
+    const preview = el("span", { class: "muted small", "aria-live": "polite" });
+    const exprValue = () => expr.value + (Number(offset.value) ? (Number(offset.value) > 0 ? "+" : "") + Number(offset.value) : "");
+    const syncOffset = () => { const x = exprs.find((e) => e.token === expr.value); offset.hidden = !(x && x.offset_unit); if (offset.hidden) offset.value = "0"; };
+    expr.addEventListener("change", syncOffset); syncOffset();
+    mode.addEventListener("change", () => { exprBox.hidden = mode.value !== "expr"; input.node.hidden = mode.value === "expr"; });
+    const from = el("input", { type: "date", value: valuesMeta.today, "aria-label": "Vigência a partir de" });
+    const inst = el("select", { "aria-label": "Instância" }, el("option", { value: "", text: "todas as instâncias" }),
+      Object.entries(INSTANCES).map(([k, l]) => el("option", { value: k, text: "só em " + l })));
+    const co = el("select", { "aria-label": "Empresa" }, el("option", { value: "", text: "todas as empresas" }),
+      valuesMeta.companies.map((c) => el("option", { value: c.id, text: c.legal_name })));
+    const reason = el("textarea", { rows: 2, placeholder: def.reason_required ? "obrigatório" : "opcional" });
+    return el("form", { class: "form-card", onsubmit: (e) => { e.preventDefault(); guard(async () => {
+      const body = { valid_from: from.value || null, instance: inst.value || null, company_id: co.value ? Number(co.value) : null,
+                     reason: reason.value.trim() || null };
+      if (mode.value === "expr") body.expression = exprValue(); else body.content = input.read();
+      const r = await API.values.propose(def.name, body);
+      toast(r.status === "pending" ? "Pedido registrado: aguarda a aprovação de outra pessoa." : "Valor mudado.");
+      await values();
+    }); } },
+      el("h4", { text: "Mudar o valor" }),
+      def.sensitive ? el("p", { class: "muted small", text: "Valor sensível: a mudança fica pendente até outra pessoa com permissão aprovar." }) : null,
+      field("Valor", el("div", {}, mode, input.node, exprBox,
+        el("button", { type: "button", class: "small quiet", text: "Prévia", onclick: () => guard(async () => {
+          if (mode.value !== "expr") { preview.textContent = valueText(input.read(), def.value_type); return; }
+          const r = await API.values.preview({ expression: exprValue() });
+          preview.textContent = "hoje: " + valueText(r.value, def.value_type);
+        }) }), preview)),
+      field("A partir de", from), field("Onde", el("div", { class: "row-buttons" }, inst, co)),
+      field("Motivo", reason),
+      el("div", { class: "row-buttons" }, el("button", { class: "primary", type: "submit", text: def.sensitive ? "Pedir aprovação" : "Salvar" })));
+  }
+
+  function valueDefineForm(def) {
+    const isNew = !def;
+    const name = el("input", { value: def ? def.name : "", disabled: !isNew, placeholder: "ex.: financeiro.margem_minima" });
+    const description = el("input", { value: def ? def.description : "" });
+    const area = el("input", { value: def ? def.area : "", placeholder: "vazio = a primeira parte do nome" });
+    const type = el("select", {}, Object.entries(VALUE_TYPES).map(([k, l]) => el("option", { value: k, text: l })));
+    const shape = el("select", {}, Object.entries(VALUE_SHAPES).map(([k, l]) => el("option", { value: k, text: l })));
+    const ref = el("select", {}, valuesMeta.reference_kinds.map((k) => el("option", { value: k.kind, text: k.label })));
+    type.value = def ? def.value_type : "text"; shape.value = def ? def.shape : "single"; if (def && def.ref_kind) ref.value = def.ref_kind;
+    const refField = field("Cadastro", ref);
+    const sync = () => { refField.hidden = type.value !== "reference"; };
+    type.addEventListener("change", sync); sync();
+    const box = (label, on) => { const c = el("input", { type: "checkbox" }); c.checked = !!on; return [c, check(label, c)]; };
+    const [sens, sensL] = box("Sensível: mudança só com aprovação de outra pessoa", def && def.sensitive);
+    const [reas, reasL] = box("Exige motivo em cada mudança", def && def.reason_required);
+    const [same, sameL] = box("Igual em todos os ambientes (o conteúdo viaja nos transportes)", def && def.same_everywhere);
+    const body = () => ({ description: description.value.trim(), area: area.value.trim() || null, value_type: type.value, shape: shape.value,
+                          ref_kind: type.value === "reference" ? ref.value : null, sensitive: sens.checked, reason_required: reas.checked,
+                          same_everywhere: same.checked });
+    return el("form", { class: "form-card", onsubmit: (e) => { e.preventDefault(); guard(async () => {
+      if (isNew) {
+        const n = name.value.trim();
+        await API.values.define({ name: n, ...body() });
+        toast("Valor criado: informe agora o conteúdo.");
+        valuesState.open = n;
+      } else {
+        const b = body(); if (!b.area) b.area = def.area;
+        await API.values.redefine(def.name, b);
+        toast("Definição salva.");
+      }
+      await values();
+    }); } },
+      el("h4", { text: isNew ? "Novo valor da empresa" : "Definição" }),
+      field("Nome", name), field("Descrição", description), field("Área responsável", area),
+      el("div", { class: "row-buttons" }, field("Tipo", type), field("Forma", shape), refField),
+      sensL, reasL, sameL,
+      isNew ? el("p", { class: "muted small", text: "Senhas, tokens e chaves não são valores da empresa: vão para o cofre dos conectores." }) : null,
+      el("div", { class: "row-buttons" }, el("button", { class: "primary", type: "submit", text: isNew ? "Criar" : "Salvar definição" }),
+        isNew ? null : el("button", { type: "button", class: def.archived ? "" : "danger", text: def.archived ? "Restaurar" : "Arquivar",
+          onclick: () => guard(async () => {
+            if (!def.archived && !confirm(`Arquivar ${def.name}? As rotinas que o lerem passam a receber "valor arquivado". O histórico fica.`)) return;
+            await API.values.redefine(def.name, { archived: !def.archived });
+            toast(def.archived ? "Valor restaurado." : "Valor arquivado.");
+            await values();
+          }) })));
+  }
+
+  const SECTIONS = { users, groups, settings, company, values, commands, remote, accounts, limits, consumption, scheduler, monitor, audit, retention, health, alerts, core, disk, uiperf, sqlperf, advice, updates, integrations, checks, transports, datacopy, publicapi, license, extensions, telemetry };
 
   function show(section) {
     refreshUpdatesCount();

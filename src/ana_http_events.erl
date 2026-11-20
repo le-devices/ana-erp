@@ -21,6 +21,7 @@ init(Req, _) ->
                     try
                         ok = ana_events:subscribe(<<"user:", U/binary>>),
                         ok = ana_events:subscribe(<<"notices">>),
+                        ok = ana_events:subscribe(<<"values">>),        % spec 065: company values changed
                         Req2 = cowboy_req:stream_reply(200, #{<<"content-type">> => <<"text/event-stream">>,
                                                               <<"cache-control">> => <<"no-store">>,
                                                               <<"x-accel-buffering">> => <<"no">>}, Req),
@@ -38,6 +39,9 @@ init(Req, _) ->
 
 info({ana_event, <<"notices">>, _}, Req, S) ->
     ok = cowboy_req:stream_events(#{event => <<"notices">>, data => <<"{}">>}, nofin, Req),
+    {ok, Req, S, hibernate};
+info({ana_event, <<"values">>, _}, Req, S) ->
+    ok = cowboy_req:stream_events(#{event => <<"values">>, data => <<"{}">>}, nofin, Req),
     {ok, Req, S, hibernate};
 info({ana_event, <<"user:", _/binary>>, _}, Req, S) ->
     ok = cowboy_req:stream_events(#{event => <<"tasks">>, data => <<"{}">>}, nofin, Req),
