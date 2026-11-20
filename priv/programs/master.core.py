@@ -280,6 +280,7 @@ def search(name, q=None, filters=None, active="true", offset=0, limit=50):
             where.append(f"({expr(by_name[k])})::text = ${len(args)}")
     w = " AND ".join(where)
     total = ana.sql_value(f"SELECT count(*) FROM {d['table']} t WHERE {w}", *args)
+    # ana:lint-ok dynamic_sql — nomes de tabela e coluna vêm da definição fixa da entidade; valores do usuário vão em $n
     rows = ana.sql(f"SELECT t.{d['id']} AS _id, t.{d['key']} AS _key, {d['title']} AS _title, t.active AS _active"
                    f"{', ' + cols if cols else ''} FROM {d['table']} t WHERE {w} ORDER BY {d['order']}, t.{d['id']} "
                    f"LIMIT {limit} OFFSET {offset}", *args)
@@ -307,6 +308,7 @@ def options(name, q=None, limit=2000, by="key", filter_sql=None):
     if filter_sql:
         where.append(f"({filter_sql})")
     col = d["id"] if by == "id" else d["key"]
+    # ana:lint-ok dynamic_sql — nomes de tabela e coluna vêm da definição fixa da entidade; valores do usuário vão em $n
     rows = ana.sql(f"SELECT t.{col} AS v, {d['title']} AS label FROM {d['table']} t WHERE {' AND '.join(where)} "
                    f"ORDER BY {d['order']} LIMIT {max(1, min(int(limit), 5000))}", *args)
     return [{"value": r["v"], "label": r["label"]} for r in rows]
@@ -317,6 +319,7 @@ def current_values(d, ids):
     if not ids:
         return {}
     cols = ", ".join(f"{expr(f)} AS f_{f['name']}" for f in d["fields"])
+    # ana:lint-ok dynamic_sql — nomes de tabela e coluna vêm da definição fixa da entidade; valores do usuário vão em $n
     rows = ana.sql(f"SELECT t.{d['id']}::text AS _id, t.{d['key']} AS _key, {cols} FROM {d['table']} t "
                    f"WHERE t.{d['id']}::text = ANY($1::text[])", [str(i) for i in ids])
     return {r["_id"]: {"key": r["_key"], "values": {f["name"]: r[f"f_{f['name']}"] for f in d["fields"]}} for r in rows}
@@ -326,6 +329,7 @@ def read_main(d, key, lock=False):
     fields = [f for f in d["fields"]]
     cols = ", ".join(f"{expr(f)} AS f_{f['name']}" for f in fields)
     raw = ", ".join(f"{f['unchanged_expr']} AS r_{f['name']}" for f in fields if f.get("unchanged_expr"))
+    # ana:lint-ok dynamic_sql — nomes de tabela e coluna vêm da definição fixa da entidade; valores do usuário vão em $n
     row = ana.sql_one(f"SELECT t.{d['id']} AS _id, t.{d['key']} AS _key, {d['title']} AS _title, t.active AS _active, "
                       f"t.xmin::text AS _version, {cols}{', ' + raw if raw else ''} FROM {d['table']} t "
                       f"WHERE t.{d['key']} = $1{' FOR UPDATE OF t' if lock else ''}", key_value(d, key))
@@ -340,6 +344,7 @@ def read_tab(d, t, main_id):
         after = ana.sql(t["after"], main_id) if t.get("after") else []
         return {"rows": rows, "after": after}
     cols = ", ".join(f"{expr(f)} AS {f['name']}" for f in t["fields"])
+    # ana:lint-ok dynamic_sql — nomes de tabela e coluna vêm da definição fixa da entidade; valores do usuário vão em $n
     rows = ana.sql(f"SELECT {cols} FROM {t['table']} t WHERE t.{t['fk']} = $1 ORDER BY 1", main_id)
     if t["kind"] == "one":
         return rows[0] if rows else {}
@@ -731,5 +736,6 @@ def quality_rows(name, label, limit=200):
     q = next((x for x in d.get("quality", []) if x["label"] == label), None)
     if not q:
         raise ana.Error("NOT_FOUND", f"indicador {label} não existe")
+    # ana:lint-ok dynamic_sql — nomes de tabela e coluna vêm da definição fixa da entidade; valores do usuário vão em $n
     return ana.sql(f"SELECT t.{d['key']} AS key, {d['title']} AS title FROM {d['table']} t WHERE t.active AND ({q['where']}) "
                    f"ORDER BY {d['order']} LIMIT {int(limit)}")

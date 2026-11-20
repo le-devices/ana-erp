@@ -124,6 +124,13 @@ definitions() ->
       <<"Produção: programas só mudam por pacote de transporte (1 = sim)"/utf8>>},
      {transport_four_eyes, integer, 0, 1, "ANA_TRANSPORT_FOUR_EYES", 0,
       <<"Transporte: quem recebeu o pacote não pode importá-lo (1 = sim)"/utf8>>},
+     %% Spec 064: quality gate of programs.
+     {quality_gate_level, integer, 0, 3, "ANA_QUALITY_GATE_LEVEL", 2,
+      <<"Portão de qualidade: severidade que bloqueia o transporte (0 informação, 1 atenção, 2 sério, 3 crítico)"/utf8>>},
+     {quality_gate_required, integer, 0, 1, "ANA_QUALITY_GATE_REQUIRED", 0,
+      <<"Portão de qualidade: recusar pacote de programas sem relatório do portão verde (1 = sim)"/utf8>>},
+     {quality_exemption_max_days, integer, 1, 365, "ANA_QUALITY_EXEMPTION_MAX_DAYS", 90,
+      <<"Portão de qualidade: prazo máximo de uma isenção (dias)"/utf8>>},
      {outbound_blocked, integer, 0, 1, "ANA_OUTBOUND_BLOCKED", 0,
       <<"Bloquear chamadas a sistemas externos (instância de testes com dados copiados)"/utf8>>},
      {api_breaker_failures, integer, 1, 100000, "ANA_API_BREAKER_FAILURES", 20,

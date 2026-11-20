@@ -1422,7 +1422,7 @@ def inspect(channel, msg):
                 resp["params"] = with_order(ast.literal_eval(node.value))
             except ValueError:
                 resp["error"] = {"line": node.lineno, "message": "PARAMS deve ser um literal"}
-    resp["lint"] = lint_sql(tree, source)
+    resp["lint"] = lint_program(tree, source)
     channel.send(resp)
 
 
@@ -1582,6 +1582,150 @@ def lint_sql(tree, source=""):
 
     visit(tree, False)
     return sorted(findings, key=lambda f: (f["line"], f["rule"]))
+
+
+# ---------------------------------------------------------------------------
+# Quality gate inspection (spec 064, RF-064-01): security, performance, robustness, product standards and
+# disk, on top of the SQL analysis. Every finding has a category and a fingerprint (rule + the text of its
+# line), stable when lines move: the baseline and the exemptions refer to it.
+# ---------------------------------------------------------------------------
+
+CATEGORY = {"dynamic_sql": "security", "hardcoded_secret": "security", "eval_exec": "security",
+            "dynamic_import": "security", "forbidden_import": "security", "file_access": "security",
+            "sensitive_output": "security",
+            "no_where": "robustness", "swallowed_exception": "robustness", "generic_error": "robustness",
+            "endless_loop": "robustness",
+            "error_code": "standards", "param_label": "standards", "foreign_terms": "standards",
+            "write_in_loop": "disk"}
+SEVERITY_ORDER = {"info": 0, "warning": 1, "serious": 2, "critical": 3}
+SECRET_NAME_RE = re.compile(r"(passw|passwd|senha|secret|segredo|token|api_?key|private_?key|credential)", re.I)
+FORBIDDEN_MODULES = {"os", "subprocess", "socket", "shutil", "urllib", "http", "requests", "ctypes", "multiprocessing",
+                     "pickle", "marshal", "ftplib", "smtplib", "telnetlib", "paramiko", "pathlib", "tempfile", "signal",
+                     "threading", "asyncio", "importlib", "sys", "builtins"}
+EXTERNAL_CALLS = {"http", "remote", "send_email"}
+ERROR_CODE_RE = re.compile(r"^[A-Z][A-Z0-9_]*$")
+# P2: the product never uses another vendor's nomenclature (identifiers, texts, comments).
+FOREIGN_TERMS_RE = re.compile(r"\b(ABAP|BAPI|IDoc|mandante|LUW|transaction code|business partner)\b", re.I)
+
+
+def fingerprint(rule, line_text):
+    import hashlib
+    return hashlib.sha1((rule + "|" + " ".join(line_text.split())).encode()).hexdigest()[:16]
+
+
+def lint_program(tree, source=""):
+    """All findings of a program: [{line, rule, category, severity, message, suggestion, fingerprint, ...}]."""
+    import ast
+    lines = source.splitlines()
+    findings = lint_sql(tree, source)
+    for f in findings:
+        if f["rule"] == "sql_in_loop" and f.get("sql", "").split(" ", 1)[0].upper() in ("INSERT", "UPDATE", "DELETE"):
+            f.update(rule="write_in_loop", message="Gravação dentro de laço: uma escrita por item gasta disco e tempo (P15).",
+                     suggestion="Grave em lote com ana.sql_batch, ou num só comando com unnest($1::…[]).")
+    accepted = {}
+    for n, text in enumerate(lines, start=1):
+        m = LINT_OK_RE.search(text)
+        if m:
+            accepted[n] = {r.strip() for r in m.group(1).split(",") if r.strip()}
+    extra = []
+
+    def add(node, rule, severity, message, suggestion):
+        line = getattr(node, "lineno", 1)
+        span = range(line - 1, (getattr(node, "end_lineno", None) or line) + 1)
+        if any(rule in accepted.get(n, ()) for n in span):
+            return
+        extra.append({"line": line, "rule": rule, "severity": severity, "message": message, "suggestion": suggestion,
+                      "sql": "", "tables": []})
+
+    def is_ana(node, names):
+        return isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute) and node.func.attr in names \
+            and isinstance(node.func.value, ast.Name) and node.func.value.id == "ana"
+
+    def in_loops(tree):
+        """Calls inside for/while bodies (comprehension sources excluded, like the SQL rule)."""
+        out = set()
+        for loop in ast.walk(tree):
+            if isinstance(loop, (ast.For, ast.AsyncFor, ast.While)):
+                for part in loop.body:
+                    for n in ast.walk(part):
+                        out.add(id(n))
+        return out
+    looped = in_loops(tree)
+
+    for node in ast.walk(tree):
+        # ---------------- security
+        if isinstance(node, ast.Assign) and isinstance(node.value, ast.Constant) and isinstance(node.value.value, str) \
+                and len(node.value.value) >= 8:
+            for t in node.targets:
+                name = t.id if isinstance(t, ast.Name) else (t.attr if isinstance(t, ast.Attribute) else "")
+                if SECRET_NAME_RE.search(name) and not node.value.value.isupper():
+                    add(node, "hardcoded_secret", "critical", "Segredo ou senha escrito no código: vaza em versões, pacotes e cópias.",
+                        "Guarde no cofre (conector com segredo, spec 017) e leia em tempo de execução.")
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Name):
+            if node.func.id in ("eval", "exec", "compile", "__import__"):
+                add(node, "eval_exec", "critical", f"{node.func.id}() executa texto como código: porta para injeção e impossível de revisar.",
+                    "Use estruturas de dados e funções conhecidas; para expressões de negócio, a linguagem fechada do ANA.")
+            elif node.func.id == "open":
+                add(node, "file_access", "serious", "Arquivo aberto direto no disco do servidor: fora do controle de acesso e da auditoria.",
+                    "Use ana.files (repositório de arquivos, spec 016).")
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute) and node.func.attr == "import_module" \
+                and node.args and not isinstance(node.args[0], ast.Constant):
+            add(node, "dynamic_import", "serious", "Importação com nome calculado: o código que roda depende de um texto.",
+                "Importe pelo nome fixo; se precisar escolher, use uma lista fechada de módulos.")
+        if isinstance(node, (ast.Import, ast.ImportFrom)):
+            mods = [a.name for a in node.names] if isinstance(node, ast.Import) else [node.module or ""]
+            bad = sorted({m.split(".")[0] for m in mods if m.split(".")[0] in FORBIDDEN_MODULES})
+            if bad:
+                add(node, "forbidden_import", "serious",
+                    f"Acesso a rede, arquivos ou processos fora das APIs do ANA ({', '.join(bad)}).",
+                    "Use as APIs do ANA: ana.http/ana.remote (conectores), ana.files, ana.spawn.")
+        if (is_ana(node, {"log"}) or isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id == "print") \
+                and any(isinstance(n, ast.Name) and SECRET_NAME_RE.search(n.id) for a in node.args for n in ast.walk(a)):
+            add(node, "sensitive_output", "serious", "Senha, token ou segredo vai para o log ou para a saída.",
+                "Não registre o valor; registre só que existe (ex.: 'token definido').")
+        # ---------------- performance: external calls in loops
+        if is_ana(node, EXTERNAL_CALLS) and id(node) in looped:
+            add(node, "external_in_loop", "warning", "Chamada externa dentro de laço: uma ida e volta por item.",
+                "Junte os itens numa chamada só, ou enfileire (ana.call com fila) e processe em lote.")
+        # ---------------- robustness
+        if isinstance(node, ast.ExceptHandler) and all(isinstance(b, (ast.Pass, ast.Continue)) or
+                                                       isinstance(b, ast.Expr) and isinstance(b.value, ast.Constant)
+                                                       for b in node.body):
+            broad = node.type is None or isinstance(node.type, ast.Name) and node.type.id in ("Exception", "BaseException")
+            add(node, "swallowed_exception", "serious" if broad else "warning",
+                "Exceção engolida: o erro some e o resultado fica errado sem ninguém saber.",
+                "Trate o caso esperado, registre com ana.log ou deixe o erro subir com ana.Error(código, mensagem).")
+        if isinstance(node, ast.Raise) and isinstance(node.exc, ast.Call) and isinstance(node.exc.func, ast.Name) \
+                and node.exc.func.id in ("Exception", "ValueError", "RuntimeError", "KeyError", "TypeError", "AssertionError"):
+            add(node, "generic_error", "warning", "Erro sem código de negócio: a tela e a API não sabem o que aconteceu nem como resolver.",
+                "Use ana.Error(\"CODIGO\", \"mensagem que diz como resolver\").")
+        if isinstance(node, ast.While) and isinstance(node.test, ast.Constant) and node.test.value is True:
+            exits = [n for part in node.body for n in ast.walk(part) if isinstance(n, (ast.Break, ast.Return, ast.Raise))]
+            if not exits:
+                add(node, "endless_loop", "serious", "Laço sem condição de parada: a execução só termina pelo limite de tempo.",
+                    "Dê uma condição ao while ou um break/return alcançável.")
+        # ---------------- product standards (P2, P2a)
+        if is_ana(node, {"Error"}) and node.args and isinstance(node.args[0], ast.Constant) \
+                and isinstance(node.args[0].value, str) and not ERROR_CODE_RE.match(node.args[0].value):
+            add(node, "error_code", "warning", "Código de erro fora do padrão: códigos são em inglês, maiúsculas e sublinhado.",
+                "Ex.: ana.Error(\"ORDER_NOT_FOUND\", \"pedido 12 não encontrado\").")
+        if isinstance(node, ast.Assign) and any(isinstance(t, ast.Name) and t.id == "PARAMS" for t in node.targets) \
+                and isinstance(node.value, ast.Dict):
+            for k, v in zip(node.value.keys, node.value.values):
+                if isinstance(v, ast.Dict) and not any(isinstance(x, ast.Constant) and x.value == "label" for x in v.keys):
+                    add(k or node, "param_label", "info", "Parâmetro sem rótulo: a tela mostra o nome técnico.",
+                        "Inclua \"label\": \"texto para a pessoa\".")
+    for n, text in enumerate(lines, start=1):
+        if FOREIGN_TERMS_RE.search(text) and "foreign_terms" not in accepted.get(n, ()) and "foreign_terms" not in accepted.get(n - 1, ()):
+            extra.append({"line": n, "rule": "foreign_terms", "severity": "warning",
+                          "message": "Nomenclatura de outro fornecedor: o ANA usa os próprios termos (P2).",
+                          "suggestion": "Troque pelo termo do ANA (ex.: empresa, pessoa, rotina).", "sql": "", "tables": []})
+    out = findings + extra
+    for f in out:
+        f["category"] = CATEGORY.get(f["rule"], "performance")
+        text = lines[f["line"] - 1] if 0 < f["line"] <= len(lines) else ""
+        f["fingerprint"] = fingerprint(f["rule"], text)
+    return sorted(out, key=lambda f: (f["line"], f["rule"]))
 
 
 def _all_literal(node):

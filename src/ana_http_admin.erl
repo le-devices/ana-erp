@@ -315,6 +315,11 @@ route(<<"POST">>, [<<"checks">>, <<"vulnerabilities">>], U, Req) ->
 %% --- Transports and data copies (spec 034) --------------------------------
 route(<<"GET">>, [<<"instance">>], _U, Req) ->
     reply({ok, ana_instance:info()}, Req);
+route(<<"POST">>, [<<"quality">>, <<"baseline">>], U, Req) ->              %% spec 064 (D3)
+    with_body(Req, fun(B, R) ->
+        Which = case B of #{<<"programs">> := L} when is_list(L), L =/= [] -> L; _ -> all end,
+        reply(ana_quality:set_baseline(Which, U), R)
+    end);
 route(<<"GET">>, [<<"transports">>], _U, Req) ->
     reply(ana_transport:list(), Req);
 route(<<"GET">>, [<<"transports">>, <<"key">>], U, Req) ->

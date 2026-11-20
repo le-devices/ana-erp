@@ -190,6 +190,40 @@ route(<<"DELETE">>, [<<"me">>, <<"favorites">>, Program], Req) ->
     end);
 
 %% --- Programs (spec 002, RF-011-10) ---------------------------------------
+%% --- Quality gate (spec 064) ------------------------------------------------
+route(<<"POST">>, [<<"programs">>, <<"inspect">>], Req) ->
+    ana_http:require(Req, ?DEV, fun(_) ->
+        with_body(Req, fun(#{<<"source">> := S}, R) when is_binary(S) -> quality_reply(ana_quality:inspect(S), R);
+                          (_, R) -> invalid(R)
+                       end)
+    end);
+route(<<"GET">>, [<<"quality">>, <<"gate">>], Req) ->
+    ana_http:require(Req, ?DEV, fun(_) ->
+        Names = [N || N <- binary:split(maps:get(<<"programs">>, ana_http:qs_map(Req), <<>>), <<",">>, [global]), N =/= <<>>],
+        quality_reply(ana_quality:gate(Names), Req)
+    end);
+route(<<"GET">>, [<<"quality">>, <<"exemptions">>], Req) ->
+    ana_http:require(Req, ?DEV, fun(_) ->
+        F = maps:with([<<"program">>, <<"status">>], ana_http:qs_map(Req)),
+        quality_reply(ana_quality:exemptions(F), Req)
+    end);
+route(<<"POST">>, [<<"quality">>, <<"exemptions">>], Req) ->
+    ana_http:require(Req, ?DEV, fun(U) ->
+        with_body(Req, fun(B, R) when is_map(B) -> quality_reply(ana_quality:request_exemption(B, U), R); (_, R) -> invalid(R) end)
+    end);
+route(<<"POST">>, [<<"quality">>, <<"exemptions">>, Id, Decision], Req) when Decision =:= <<"approve">>; Decision =:= <<"refuse">> ->
+    ana_http:require(Req, ?DEV, fun(U) ->
+        with_body(Req, fun(B, R) ->
+            Note = case B of #{<<"note">> := N} when is_binary(N) -> N; _ -> null end,
+            case catch binary_to_integer(Id) of
+                I when is_integer(I) ->
+                    quality_reply(ana_quality:decide_exemption(I, case Decision of <<"approve">> -> <<"approved">>;
+                                                                                      _ -> <<"refused">> end, Note, U), R);
+                _ -> invalid(R)
+            end
+        end)
+    end);
+
 route(<<"GET">>, [<<"programs">>], Req) ->
     ana_http:require(Req, ?DEV, fun(_) ->
         ok_json(ana_program:list(ana_http:qs_int(<<"inactive">>, Req, 0) =:= 1), Req)
@@ -564,3 +598,6 @@ invalid(Req) -> ana_http:reply_error(400, <<"INVALID">>, <<"requisição inváli
 
 as_list(L) when is_list(L) -> L;
 as_list(_) -> [].
+
+quality_reply({ok, V}, Req) -> ana_http:json(200, V, Req);
+quality_reply({error, M}, Req) when is_binary(M) -> ana_http:reply_error(400, <<"INVALID">>, M, Req).

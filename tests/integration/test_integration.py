@@ -2015,7 +2015,8 @@ class TestObservability(Base):
         s, p, _ = http("GET", f"/api/programs/{name}/performance", token=self.token)
         self.assertEqual(s, 200, p)
         got = {(f["line"], f["rule"]) for f in p["lint"]}
-        self.assertTrue({(2, "select_star"), (3, "leading_wildcard"), (4, "dynamic_sql"), (6, "sql_in_loop")} <= got, got)
+        # Spec 064 (RF-064-01): a write inside a loop is the disk rule write_in_loop (reads in loops stay sql_in_loop).
+        self.assertTrue({(2, "select_star"), (3, "leading_wildcard"), (4, "dynamic_sql"), (6, "write_in_loop")} <= got, got)
         self.assertEqual([f["severity"] for f in p["lint"] if f["rule"] == "dynamic_sql"], ["serious"])
 
 
@@ -8088,3 +8089,102 @@ class TestTaxEngine(Base):
             self.assertTrue(self.run_program("finance.trial_balance")[1]["result"]["balanced"])
         finally:
             self.client.call("supply.settings", supplier_invoice=before)
+
+
+# ---------------------------------------------------------------- spec 064
+class TestQualityGate(Base):
+    """Quality gate of programs, phase 1: inspection while typing, exemptions with four eyes, gate in the package."""
+
+    @classmethod
+    def setUpClass(cls):
+        super().setUpClass()
+        s, k, _ = http("GET", "/api/admin/transports/key", token=cls.token)
+        assert s == 200, k
+        cls.key = k
+        s, c, _ = http("PUT", f"/api/admin/transports/origins/{k['name']}", {"public_key": k["public_key"]}, cls.token)
+        assert s == 200, c
+
+    BAD = "def main(name):\n    return ana.sql(f\"SELECT id FROM base.party WHERE name = '{name}' LIMIT 1\")\n"
+
+    def export(self, programs):
+        return http("POST", "/api/admin/transports/export", {"title": f"Portão {SUFFIX}", "programs": programs}, self.token)
+
+    def setting(self, key, value):
+        s, c, _ = http("PUT", f"/api/admin/settings/{key}", {"value": value}, self.token)
+        self.assertEqual(s, 200, c)
+
+    def test_ca_064_01_finding_while_typing_and_package_refused(self):
+        s, c, _ = http("POST", "/api/programs/inspect", {"source": self.BAD}, self.token)
+        self.assertEqual(s, 200, c)
+        f = next(x for x in c["lint"] if x["rule"] == "dynamic_sql")
+        self.assertEqual((f["line"], f["severity"], f["category"]), (2, "serious", "security"))
+        self.assertIn("$1", f["suggestion"])
+        s, c, _ = http("POST", "/api/programs/inspect", {"source": "def main(:\n"}, self.token)
+        self.assertEqual((c["ok"], c["syntax"]["line"]), (False, 1))
+        name = f"test.qg_bad_{SUFFIX}"
+        self.save(name, self.BAD)
+        s, c, _ = self.export([name])
+        self.assertEqual(s, 400, c)
+        self.assertEqual(c["error"]["code"], "QUALITY_GATE")
+        rep = c["error"]["report"]
+        self.assertFalse(rep["ok"])
+        self.assertEqual([b["rule"] for b in rep["programs"][0]["blocking"]], ["dynamic_sql"])
+
+    def test_ca_064_02_exemption_needs_another_person(self):
+        name = f"test.qg_ex_{SUFFIX}"
+        self.save(name, self.BAD)
+        s, c, _ = http("POST", "/api/programs/inspect", {"source": self.BAD}, self.token)
+        fp = next(x for x in c["lint"] if x["rule"] == "dynamic_sql")["fingerprint"]
+        dev, dev_token = new_user("developer")
+        until = str(datetime.date.today() + datetime.timedelta(days=10))
+        s, c, _ = http("POST", "/api/quality/exemptions", {"program": name, "fingerprint": fp, "reason": "curto", "valid_until": until}, dev_token)
+        self.assertEqual(s, 400, c)                                                          # reason too short
+        s, c, _ = http("POST", "/api/quality/exemptions", {"program": name, "fingerprint": fp, "valid_until": until,
+                                                           "reason": "nome vem de lista fixa revisada, nunca do usuário"}, dev_token)
+        self.assertEqual(s, 200, c)
+        ex = c["id"]
+        s, c, _ = http("POST", f"/api/quality/exemptions/{ex}/approve", {}, dev_token)
+        self.assertEqual(s, 400, c)
+        self.assertIn("quatro olhos", c["error"]["message"])                                 # the same person cannot approve
+        self.assertEqual(self.export([name])[0], 400)                                        # still blocked
+        s, c, _ = http("POST", f"/api/quality/exemptions/{ex}/approve", {"note": "conferido"}, self.token)
+        self.assertEqual(s, 200, c)
+        s, c, _ = self.export([name])
+        self.assertEqual(s, 200, c)
+        manifest = json.loads(base64.b64decode(c["package"]["manifest_b64"]))
+        gate = manifest["quality_gate"]
+        self.assertTrue(gate["ok"])
+        self.assertEqual([e["exemption"]["approved_by"] for e in gate["programs"][0]["exempted"]], ["admin"])
+
+    def test_ca_064_04_production_refuses_package_without_gate(self):
+        from cryptography.hazmat.primitives import serialization
+        from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+        good = f"test.qg_ok_{SUFFIX}"
+        self.save(good, "def main():\n    return 1\n")
+        s, pkg_ok, _ = self.export([good])
+        self.assertEqual(s, 200, pkg_ok)
+        priv = Ed25519PrivateKey.generate()
+        pub = priv.public_key().public_bytes(serialization.Encoding.Raw, serialization.PublicFormat.Raw)
+        origin = f"antiga-{SUFFIX}"
+        s, c, _ = http("PUT", f"/api/admin/transports/origins/{origin}", {"public_key": base64.b64encode(pub).decode()}, self.token)
+        self.assertEqual(s, 200, c)
+        src = "def main():\n    return 2\n"
+        manifest = {"format": "ana-transport/1", "title": "Pacote sem portão", "description": "", "tests": "", "author": "alguém",
+                    "origin": origin, "instance": "development", "product_version": self.key["product_version"],
+                    "created_at": "2026-11-19T00:00:00Z",
+                    "items": [{"kind": "program", "name": f"test.qg_old_{SUFFIX}", "program_kind": "program", "source": src,
+                               "sha256": hashlib.sha256(src.encode()).hexdigest()}]}
+        raw = json.dumps(manifest).encode()
+        package = {"format": "ana-transport/1", "origin": origin, "manifest_b64": base64.b64encode(raw).decode(),
+                   "signature": base64.b64encode(priv.sign(raw)).decode()}
+        self.setting("quality_gate_required", 1)
+        try:
+            s, c, _ = http("POST", "/api/admin/transports/receive", token=self.token, raw=json.dumps(package).encode())
+            self.assertEqual(s, 400, c)
+            self.assertIn("portão de qualidade", c["error"]["message"])                       # CA-064-04
+            s, c, _ = http("POST", "/api/admin/transports/receive", token=self.token, raw=json.dumps(pkg_ok["package"]).encode())
+            self.assertEqual(s, 200, c)                                                       # signed green report: accepted
+        finally:
+            self.setting("quality_gate_required", 0)
+        s, c, _ = http("POST", "/api/admin/transports/receive", token=self.token, raw=json.dumps(package).encode())
+        self.assertEqual(s, 200, c)                                                           # policy off: old packages still come in
