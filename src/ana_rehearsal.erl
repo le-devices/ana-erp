@@ -2,7 +2,7 @@
 %%
 %% A rehearsal runs the routine whole in its own transaction and undoes it at the end. Before the ROLLBACK, the
 %% effect is read from what the transaction itself left (RF-056-02, D2): the database's per-transaction statistics
-%% say which tables were written and how; ana_system.rehearsal_rows/2 gives the rows (only this transaction's) for
+%% say which tables were written and how; rehearsal.table_rows/2 gives the rows (only this transaction's) for
 %% the names of business and the documents to open (spec 035). Nothing here knows any routine.
 %% External effects (connectors, remote systems, files, scheduler) are held by the execution and listed (D1).
 -module(ana_rehearsal).
@@ -70,7 +70,7 @@ change(_, _) -> <<"created_or_changed">>.
 %% leaves that table with the counts.
 rows(C, Oid) ->
     _ = epgsql:squery(C, ["SAVEPOINT ana_rehearsal; SET LOCAL statement_timeout = ", integer_to_list(?TABLE_TIMEOUT_MS)]),
-    case ana_db:query(C, "SELECT total, sample FROM ana_system.rehearsal_rows($1::bigint::oid::regclass, $2)", [Oid, ?SAMPLE]) of
+    case ana_db:query(C, "SELECT total, sample FROM rehearsal.table_rows($1::bigint::oid::regclass, $2)", [Oid, ?SAMPLE]) of
         {ok, #{rows := [[Total, Sample]]}} ->
             _ = epgsql:squery(C, "RELEASE SAVEPOINT ana_rehearsal"),
             {Total, decode(Sample), false};

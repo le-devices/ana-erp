@@ -316,11 +316,9 @@ await until(() => [...d.querySelectorAll("#ops-main button")].some((b) => b.text
 ok(d.querySelector("#ops-main select[name=mode]") && !d.querySelector("#ops-main input[name=simulate]"),
    "pedido: modo de atendimento conforme a política e simulação antes de confirmar");
 // Spec 056: a routine that writes offers "Ensaiar (F9)": it runs whole, is undone, and the effect is shown.
-await go(w, "#/ops/sales/sales.invoice_order?_form=1");
+await go(w, "#/ops/sales/sales.release_held?_form=1");
 await until(() => [...d.querySelectorAll("#ops-main button")].some((b) => b.textContent === "Ensaiar (F9)"), "rehearse button", jsErrors);
 {
-  const num = d.querySelector("#ops-main [name=number]");
-  if (num) { num.value = "999999"; num.dispatchEvent(new w.Event("input", { bubbles: true })); }
   [...d.querySelectorAll("#ops-main button")].find((b) => b.textContent === "Ensaiar (F9)").click();
   await until(() => d.querySelector("#ops-main .rehearsal-card"), "rehearsal card", jsErrors);
   ok(text("#ops-main .rehearsal-card").includes("nada foi gravado nem enviado"), "ensaio: mostra o efeito e diz que nada foi gravado");

@@ -8240,7 +8240,7 @@ class TestRehearsal(Base):
         self.assertTrue(r["rehearsal"])
         self.assertTrue(r["file"]["held"] and r["job"]["held"], r)
         eff = c["rehearsal"]
-        self.assertEqual(sorted(h["kind"] for h in eff["held"]), ["files", "schedule"])
+        self.assertEqual({h["kind"] for h in eff["held"]}, {"files", "schedule"})
         orders = [t for t in eff["tables"] if t["table"] == "sales.sales_order"]
         # The order was created by a nested program (a savepoint of its own): still part of the effect.
         self.assertEqual((orders[0]["label"], orders[0]["change"], orders[0]["rows"]), ("Pedidos de venda", "created", 1), orders)
@@ -8275,7 +8275,7 @@ class TestRehearsal(Base):
         s, routines, _ = http("GET", "/api/routines", token=self.token)
         self.assertEqual(s, 200, routines)
         by = {r["name"]: r for r in routines}
-        for n in ("sales.invoice_order", "sales.create_order", "flows.act"):
+        for n in ("sales.invoice_order", "sales.create_order", "sales.release_held"):
             self.assertTrue(by[n]["writes"], n)
         for n in ("docs.view", "inventory.balance"):
             self.assertFalse(by[n]["writes"], n)

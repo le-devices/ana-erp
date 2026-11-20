@@ -40,8 +40,11 @@ INSERT INTO ana_system.business_table (table_name, label, doc_kind, show_order) 
 -- still there: visible rows whose xmin is a transaction in progress can only be ours, because rows of other
 -- transactions in progress are invisible. Read as the owner so the summary also shows what the routine wrote
 -- through the database's own functions (e-mail outbox); only rows this transaction wrote, never anything else.
--- System tables are refused and columns that look like secrets are dropped.
-CREATE FUNCTION ana_system.rehearsal_rows(p_table regclass, p_limit int)
+-- System tables are refused and columns that look like secrets are dropped. Its own schema: the execution's role
+-- reaches it without reaching ana_system (P10).
+CREATE SCHEMA rehearsal;
+GRANT USAGE ON SCHEMA rehearsal TO ana_exec;
+CREATE FUNCTION rehearsal.table_rows(p_table regclass, p_limit int)
 RETURNS TABLE (total bigint, sample jsonb) LANGUAGE plpgsql VOLATILE SECURITY DEFINER
 SET search_path = pg_catalog AS $$
 DECLARE
@@ -64,8 +67,8 @@ BEGIN
                    p_table, v_where, greatest(0, least(p_limit, 20))) INTO sample;
     RETURN NEXT;
 END $$;
-REVOKE ALL ON FUNCTION ana_system.rehearsal_rows(regclass, int) FROM PUBLIC;
-GRANT EXECUTE ON FUNCTION ana_system.rehearsal_rows(regclass, int) TO ana_exec;
+REVOKE ALL ON FUNCTION rehearsal.table_rows(regclass, int) FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION rehearsal.table_rows(regclass, int) TO ana_exec;
 
 -- The audit tells a rehearsal from a real run (nothing of it was kept).
 ALTER TABLE ana_system.execution ADD COLUMN rehearsal boolean NOT NULL DEFAULT false;

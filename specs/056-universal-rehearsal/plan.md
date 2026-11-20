@@ -6,7 +6,7 @@ cada rotina. O núcleo roda a rotina inteira na sua transação e, no fim, em ve
 
 1. lê o efeito **da própria transação** (D2), sem código de rotina nenhuma:
    - `pg_stat_xact_user_tables` diz quais tabelas a transação gravou e como (criou, alterou, excluiu);
-   - `ana_system.rehearsal_rows(tabela, n)` devolve as linhas que a transação deixou — linhas visíveis cujo
+   - `rehearsal.table_rows(tabela, n)` devolve as linhas que a transação deixou — linhas visíveis cujo
      `xmin` é uma transação em andamento só podem ser desta (as de outras transações em andamento são
      invisíveis), inclusive as gravadas em savepoints e programas chamados;
    - `ana_system.business_table` (dado, não código) dá o nome de negócio de cada tabela e o documento que
