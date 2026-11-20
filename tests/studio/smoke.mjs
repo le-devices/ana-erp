@@ -596,6 +596,13 @@ ok(text("#admin-main").includes("Origens aceitas aqui"), "transportes: chave da 
 [...d.querySelectorAll("#admin-main .sub-tabs button")].find((b) => b.textContent === "Montar pacote").click();
 await until(() => d.querySelectorAll("#admin-main .pick-list input[type=checkbox]").length > 5, "transport send", jsErrors);
 ok(true, "transportes: montar pacote com escolha de programas");
+// Spec 065: company values — grouped by area, what is in effect today, the timeline and the change form.
+await go(w, "#/admin/values");
+await until(() => text("#admin-main").includes("financeiro.periodo_aberto"), "company values", jsErrors);
+[...d.querySelectorAll("#admin-main tbody tr")].find((tr) => tr.textContent.includes("financeiro.periodo_aberto")).click();
+await until(() => text("#admin-main").includes("Linha do tempo"), "value timeline", jsErrors);
+ok(/\d{2}\/\d{4}/.test(text("#admin-main .value-big")) && text("#admin-main").includes("Mês atual") && text("#admin-main").includes("Mudar o valor"),
+   "valores da empresa: vigente hoje, linha do tempo e mudança com vigência (spec 065)");
 await go(w, "#/admin/datacopy");
 await until(() => text("#admin-main").includes("Exportar dados mascarados"), "datacopy", jsErrors);
 [...d.querySelectorAll("#admin-main .sub-tabs button")].find((b) => b.textContent === "Máscaras").click();

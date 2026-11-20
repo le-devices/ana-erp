@@ -379,6 +379,72 @@ class Context:
                 f"version={self.version!r}, origin={self.origin!r})")
 
 
+class Selection:
+    """A company value of the "seleção" form (spec 065, D1): include, ranges, prefixes and exclude. `x in sel` tells
+    whether x is selected; numbers are compared as numbers, the rest as text. Nothing to include = all but the
+    excluded. The same rule as base.company_value_matches() in SQL."""
+
+    _NUM = re.compile(r"^-?[0-9]+(\.[0-9]+)?$")
+
+    def __init__(self, d):
+        d = d or {}
+        self.include = list(d.get("include") or [])
+        self.exclude = list(d.get("exclude") or [])
+        self.ranges = [tuple(r) for r in (d.get("ranges") or [])]
+        self.prefixes = list(d.get("prefixes") or [])
+
+    def __contains__(self, x):
+        if x is None:
+            return False
+        s = str(x)
+        if s in (str(e) for e in self.exclude):
+            return False
+        if not (self.include or self.ranges or self.prefixes):
+            return True
+        if s in (str(i) for i in self.include) or any(s.startswith(p) for p in self.prefixes):
+            return True
+        for lo, hi in self.ranges:
+            lo, hi = str(lo), str(hi)
+            if self._NUM.match(s) and self._NUM.match(lo) and self._NUM.match(hi):
+                if decimal.Decimal(lo) <= decimal.Decimal(s) <= decimal.Decimal(hi):
+                    return True
+            elif lo.encode() <= s.encode() <= hi.encode():
+                return True
+        return False
+
+    matches = __contains__
+
+    def __repr__(self):
+        return (f"Selection(include={self.include!r}, ranges={self.ranges!r}, prefixes={self.prefixes!r}, "
+                f"exclude={self.exclude!r})")
+
+
+def company_value(reply):
+    """The value of ana.value() in its type: int, Decimal, date, bool, text, month "AAAA-MM", list or Selection."""
+    v, kind, shape = reply.get("value"), reply.get("type"), reply.get("shape")
+    if v is None:
+        return None
+
+    def one(x):
+        if x is None:
+            return None
+        if kind == "integer":
+            return int(x)
+        if kind == "decimal":
+            return decimal.Decimal(str(x))
+        if kind == "date" and isinstance(x, str) and len(x) == 10:
+            return datetime.date.fromisoformat(x)
+        return x
+
+    if shape == "selection" and isinstance(v, dict):
+        return Selection({k: [one(i) for i in v.get(k) or []] if k != "ranges" else
+                          [(one(a), one(b)) for a, b in v.get(k) or []] for k in ("include", "exclude", "ranges")} |
+                         {"prefixes": v.get("prefixes") or []})
+    if isinstance(v, list):
+        return [one(x) for x in v]
+    return one(v)
+
+
 class Part:
     """Handle of a parallel part (spec 022)."""
     __slots__ = ("handle", "program")
@@ -504,6 +570,16 @@ def make_ana_module(channel, output, context):
             if point.startswith("before_") and isinstance(r, dict):
                 data.update({k: v for k, v in r.items() if k in (reg.get("adjust") or [])})
         return data
+
+    def value(name, at=None, company=None):
+        """A company value by name (spec 065): in effect today in the company's time zone, or on `at` (a date or
+        "AAAA-MM-DD") to reprocess the past; `company` for a value that differs per company of the group. Comes in
+        its type (int, Decimal, date, bool, text, list, ana.Selection); None when nothing is in effect. Kept in the
+        execution's record. An unknown name raises VALUE_NOT_FOUND."""
+        if isinstance(at, (datetime.date, datetime.datetime)):
+            at = at.isoformat()[:10]
+        return company_value(channel.request("value", {"name": str(name), "at": at,
+                                                       "company": int(company) if company is not None else None}))
 
     def remote(system, function, **params):
         """Call an exposed program on a registered remote system (RF-003-08)."""
@@ -861,6 +937,8 @@ def make_ana_module(channel, output, context):
     m.grid = grid
     m.extend = extend
     m.schedule_job = schedule_job
+    m.value = value
+    m.Selection = Selection
     m.remote = remote
     m.http = http
     m.send = send

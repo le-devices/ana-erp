@@ -8295,3 +8295,248 @@ class TestRehearsal(Base):
         self.assertEqual(broken, [])
         self.assertEqual(hidden, [])                                     # writes but the catalog does not know it
         self.assertEqual({t: psql(f"SELECT count(*) FROM {t}") for t in watched}, before)
+
+
+# ---------------------------------------------------------------- spec 065
+class TestCompanyValues(Base):
+    """Company values (spec 065, phase 1): named, typed values with validity, per instance and company, read by
+    routines (ana.value, base.company_value) from memory, kept on screen with four eyes and a trail."""
+
+    @classmethod
+    def setUpClass(cls):
+        super().setUpClass()
+        cls.area = f"t{SUFFIX}"
+        cls.names = []
+        cls.groups = []
+        cls.jobs = []
+        s, cls.meta, _ = http("GET", "/api/values/meta", token=cls.token)
+        assert s == 200, cls.meta
+        cls.today = datetime.date.fromisoformat(cls.meta["today"])
+
+    @classmethod
+    def tearDownClass(cls):
+        for n in cls.names:
+            http("PUT", f"/api/values/{n}", {"archived": True}, cls.token)
+        for g in cls.groups:
+            http("DELETE", f"/api/admin/groups/{g}", token=cls.token)
+        for j in cls.jobs:
+            http("DELETE", f"/api/scheduler/jobs/{j}", token=cls.token)
+
+    def define(self, short, value_type="text", token=None, expect=200, **kw):
+        name = f"{self.area}.{short}"
+        s, c, _ = http("POST", "/api/values", {"name": name, "description": f"Teste {short}", "value_type": value_type, **kw},
+                       token or self.token)
+        self.assertEqual(s, expect, c)
+        if s == 200:
+            self.names.append(name)
+        return name
+
+    def propose(self, name, token=None, expect=200, **body):
+        s, c, _ = http("POST", f"/api/values/{name}/versions", body, token or self.token)
+        self.assertEqual(s, expect, c)
+        return c
+
+    def reader(self, name):
+        prog = f"test.cv_{SUFFIX}_{len(self.names)}_{abs(hash(name)) % 10000}"
+        self.save(prog, "def main(name, at=None):\n"
+                        "    v = ana.value(name, at=at)\n"
+                        "    return {'v': v if isinstance(v, (int, bool, list, type(None))) else str(v), 't': type(v).__name__,\n"
+                        "            'sql': ana.sql_value('SELECT base.company_value($1, $2::date)', name, at),\n"
+                        "            'exec': ana.context.execution_id}\n")
+        return prog
+
+    def read(self, prog, name, at=None):
+        s, c, _ = self.run_program(prog, {"name": name, "at": at})
+        self.assertEqual(s, 200, c)
+        self.assertNotIn("error", c, c)
+        return c["result"]
+
+    def test_ca_065_01_validity_without_editing_the_routine(self):
+        name = self.define("margem_minima", "decimal")
+        self.propose(name, content="18", valid_from="2020-01-01")         # the first version may start in the past
+        tomorrow = (self.today + datetime.timedelta(days=1)).isoformat()
+        yesterday = (self.today - datetime.timedelta(days=1)).isoformat()
+        self.propose(name, content="20,5", valid_from=tomorrow)
+        prog = self.reader(name)
+        r = self.read(prog, name)
+        self.assertEqual((r["v"], r["t"], r["sql"]), ("18", "Decimal", "18"))
+        self.assertEqual(self.read(prog, name, tomorrow)["v"], "20.5")
+        self.assertEqual(self.read(prog, name, yesterday)["v"], "18")     # reprocessing yesterday keeps 18
+        c = self.propose(name, expect=400, content="19", valid_from=yesterday)
+        self.assertIn("passado", c["error"]["message"])
+        # RNF-065-02: the value read stays in the execution's record.
+        if psql_available():
+            got = json.loads(psql(f"SELECT values_read FROM ana_system.execution WHERE id = '{r['exec']}'"))
+            self.assertEqual(got[name]["value"], "18", got)
+        s, d, _ = http("GET", f"/api/values/{name}", token=self.token)
+        self.assertEqual([v["valid_from"] for v in d["versions"]], [tomorrow, "2020-01-01"])
+        self.assertEqual([c["action"] for c in d["changes"]][-1], "defined")
+        s, lst, _ = http("GET", f"/api/values?q={self.area}.margem", token=self.token)
+        row = [v for v in lst["values"] if v["name"] == name][0]
+        self.assertEqual((row["current"]["value"], row["next"]["value"]), ("18", "20.5"))
+
+    def test_rf_065_03_instance_beats_general(self):
+        name = self.define("banco", "text")
+        here = self.meta["instance"]
+        other = "test" if here != "test" else "production"
+        self.propose(name, content="geral", valid_from="2020-01-01")
+        self.propose(name, content="de outro ambiente", valid_from=self.today.isoformat(), instance=other)
+        prog = self.reader(name)
+        self.assertEqual(self.read(prog, name)["v"], "geral")
+        self.propose(name, content="desta instância", valid_from=self.today.isoformat(), instance=here)
+        self.propose(name, content="geral novo", valid_from=(self.today + datetime.timedelta(days=2)).isoformat())
+        self.assertEqual(self.read(prog, name)["v"], "desta instância")
+        self.assertEqual(self.read(prog, name, (self.today + datetime.timedelta(days=3)).isoformat())["v"], "desta instância")
+
+    def test_rf_065_04_expressions_closed_list_and_preview(self):
+        s, p, _ = http("POST", "/api/values/preview", {"expression": "month_end", "at": "2026-02-10"}, self.token)
+        self.assertEqual((s, p["value"]), (200, "2026-02-28"), p)
+        s, p, _ = http("POST", "/api/values/preview", {"expression": "next_business_day", "at": "2026-11-20"}, self.token)
+        self.assertEqual(p["value"], "2026-11-23")                       # Friday → Monday
+        s, p, _ = http("POST", "/api/values/preview", {"expression": "__import__"}, self.token)
+        self.assertEqual(s, 400, p)
+        name = self.define("corte", "date")
+        self.propose(name, expression="today-1", valid_from="2020-01-01")
+        r = self.read(self.reader(name), name)
+        self.assertEqual((r["v"], r["t"]), ((self.today - datetime.timedelta(days=1)).isoformat(), "date"))
+        self.assertEqual(r["sql"], r["v"])
+        self.propose(name, expect=400, expression="month_end+1")          # offsets only where the list says
+        n2 = self.define("limite", "decimal")
+        c = self.propose(n2, expect=400, expression="today")
+        self.assertIn("tipo", c["error"]["message"])
+
+    def test_rf_065_11_schedule_templates_are_the_same_list(self):
+        utc = datetime.datetime.now(datetime.timezone.utc).date()
+        body = {"name": f"t-cv-{SUFFIX}", "program": "demo.hello",
+                "params": {"name": "{{today}} {{last_month_end}} {{today-1}} {{desconhecido}}"},
+                "triggers": [{"kind": "cron", "cron": "0 3 1 1 *"}]}
+        s, j, _ = http("POST", "/api/scheduler/jobs", body, self.token)
+        self.assertEqual(s, 200, j)
+        self.jobs.append(j["id"])
+        http("POST", f"/api/scheduler/jobs/{j['id']}/run", {}, self.token)
+        end, occ = time.time() + 30, []
+        while time.time() < end and not occ:
+            occ = [o for o in http("GET", f"/api/scheduler/jobs/{j['id']}/occurrences", token=self.token)[1] if o["status"] == "success"]
+            time.sleep(0.5)
+        self.assertTrue(occ)
+        lme = utc.replace(day=1) - datetime.timedelta(days=1)
+        self.assertEqual(occ[0]["result"]["message"],
+                         f"Olá, {utc.isoformat()} {lme.isoformat()} {(utc - datetime.timedelta(days=1)).isoformat()} {{{{desconhecido}}}}!")
+
+    def test_ca_065_03_list_filters_report_and_guards_the_catalog(self):
+        if not psql_available():
+            self.skipTest("psql no contêiner indisponível")
+        a, b, c3 = f"T{SUFFIX}A", f"T{SUFFIX}B", f"T{SUFFIX}C"
+        psql(f"INSERT INTO finance.cost_center (code, name) VALUES ('{a}', 'PD A'), ('{b}', 'PD B'), ('{c3}', 'PD C')")
+        name = self.define("centros", "reference", shape="list", ref_kind="cost_center")
+        c = self.propose(name, expect=400, content=[a, "NAO-EXISTE"], valid_from="2020-01-01")
+        self.assertIn("NAO-EXISTE", c["error"]["message"])
+        self.propose(name, content=[a, b], valid_from="2020-01-01")
+        prog = f"test.cv_report_{SUFFIX}"
+        self.save(prog, "def main(name):\n"
+                        "    rows = ana.sql('SELECT code FROM finance.cost_center WHERE code = ANY(base.company_value_list($1)) ORDER BY code', name)\n"
+                        "    return {'sql': [r['code'] for r in rows], 'py': ana.value(name)}\n")
+        s, r, _ = self.run_program(prog, {"name": name})
+        self.assertEqual(r["result"], {"sql": [a, b], "py": [a, b]}, r)
+        with self.assertRaises(RuntimeError) as e:
+            psql(f"DELETE FROM finance.cost_center WHERE code = '{a}'")
+        self.assertIn("VALUE_IN_USE", str(e.exception))
+        self.assertIn(name, str(e.exception))
+        self.propose(name, content=[a, b, c3], valid_from=self.today.isoformat())
+        s, r, _ = self.run_program(prog, {"name": name})
+        self.assertEqual(r["result"]["sql"], [a, b, c3])
+
+    def test_selection_in_python_and_sql_agree(self):
+        name = self.define("contas", "text", shape="selection")
+        self.propose(name, content={"ranges": [["4000", "4999"]], "exclude": ["4500"], "prefixes": ["3.1"]}, valid_from="2020-01-01")
+        prog = f"test.cv_sel_{SUFFIX}"
+        self.save(prog, "def main(name, xs):\n"
+                        "    s = ana.value(name)\n"
+                        "    return {'py': [x in s for x in xs],\n"
+                        "            'sql': [ana.sql_value('SELECT base.company_value_matches($1, $2)', name, x) for x in xs]}\n")
+        xs = ["4000", "4500", "4999", "5000", "3.1.2", "3.2"]
+        s, r, _ = self.run_program(prog, {"name": name, "xs": xs})
+        expected = [True, False, True, False, True, False]
+        self.assertEqual(r["result"], {"py": expected, "sql": expected}, r)
+
+    def test_ca_065_05_four_eyes_for_sensitive_values(self):
+        name = self.define("alcada", "integer", sensitive=True, reason_required=True)
+        self.propose(name, expect=400, content=1000, valid_from="2020-01-01")         # no reason
+        v = self.propose(name, content=1000, valid_from="2020-01-01", reason="limite inicial de alçada")
+        self.assertEqual(v["status"], "pending")
+        prog = self.reader(name)
+        self.assertIsNone(self.read(prog, name)["v"])                   # nothing in effect until approved
+        s, c, _ = http("POST", f"/api/values/{name}/versions/{v['id']}/approve", {}, self.token)
+        self.assertEqual((s, c["error"]["code"]), (403, "FOUR_EYES"), c)
+        _, other = new_user("admin")
+        s, c, _ = http("POST", f"/api/values/{name}/versions/{v['id']}/approve", {}, other)
+        self.assertEqual(s, 200, c)
+        self.assertEqual(self.read(prog, name)["v"], 1000)
+        v2 = self.propose(name, content=5000, valid_from=self.today.isoformat(), reason="aumentar a alçada")
+        s, c, _ = http("POST", f"/api/values/{name}/versions/{v2['id']}/refuse", {"note": "não agora"}, other)
+        self.assertEqual(s, 200, c)
+        self.assertEqual(self.read(prog, name)["v"], 1000)
+        s, d, _ = http("GET", f"/api/values/{name}", token=self.token)
+        self.assertEqual([c["action"] for c in d["changes"]][:4], ["refused", "requested", "approved", "requested"])
+
+    def test_rf_065_09_permission_by_area(self):
+        _, outsider = new_user("user")
+        self.define("restrito", "text", token=outsider, expect=403)
+        name = self.define("aberto", "text")
+        self.propose(name, token=outsider, expect=403, content="x", valid_from="2020-01-01")
+        group = f"cv{SUFFIX}"
+        s, c, _ = http("PUT", f"/api/admin/groups/{group}", {"description": "valores", "program_patterns": [],
+                                                             "value_patterns": [f"{self.area}.*"]}, self.token)
+        self.assertEqual(s, 200, c)
+        self.groups.append(group)
+        _, tok = new_user("user", groups=[group])
+        self.propose(name, token=tok, content="pela área", valid_from="2020-01-01")
+        s, d, _ = http("GET", f"/api/values/{name}", token=tok)
+        self.assertTrue(d["can_edit"])
+        self.assertEqual(d["current"]["value"], "pela área")
+
+    def test_ca_065_06_credentials_are_refused(self):
+        self.define("api_token", "text", expect=400)
+        name = self.define("observacao", "text")
+        for secret in ("sk_live_abcdefgh12345678", "aB3dE5fG7hJ9kL1mN3pQ5rS7tU9vW", "-----BEGIN PRIVATE KEY-----\nabc"):
+            c = self.propose(name, expect=400, content=secret, valid_from="2020-01-01")
+            self.assertEqual(c["error"]["code"], "VALUE_SECRET", c)
+            self.assertIn("cofre", c["error"]["message"])
+        self.propose(name, content="Filial São Paulo — atendimento das 8h às 18h", valid_from="2020-01-01")
+
+    def test_unknown_and_archived_values_explain_themselves(self):
+        prog = self.reader("x")
+        s, c, _ = self.run_program(prog, {"name": f"{self.area}.nao_existe"})
+        self.assertEqual(c["error"]["code"], "VALUE_NOT_FOUND", c)
+        name = self.define("velho", "text")
+        self.propose(name, content="a", valid_from="2020-01-01")
+        http("PUT", f"/api/values/{name}", {"archived": True}, self.token)
+        s, c, _ = self.run_program(prog, {"name": name})
+        self.assertIn("arquivado", c["error"]["message"], c)
+        http("PUT", f"/api/values/{name}", {"archived": False}, self.token)
+        self.assertEqual(self.read(prog, name)["v"], "a")
+
+    def test_rnf_065_01_reading_is_fast_and_writes_nothing(self):
+        name = self.define("rapido", "integer")
+        self.propose(name, content=7, valid_from="2020-01-01")
+        prog = f"test.cv_fast_{SUFFIX}"
+        self.save(prog, "import time\ndef main(name, n):\n"
+                        "    t = time.perf_counter()\n"
+                        "    s = sum(ana.value(name) for _ in range(n))\n"
+                        "    return {'sum': s, 'us': (time.perf_counter() - t) * 1e6 / max(n, 1)}\n")
+        s, r, _ = self.run_program(prog, {"name": name, "n": 500})
+        self.assertEqual(r["result"]["sum"], 3500, r)
+        self.assertLess(r["result"]["us"], 5000, r)                     # a round trip to memory, not to the disk
+        if not psql_available():
+            return
+        def wal(n):
+            best = None
+            for _ in range(3):
+                a = wal_bytes()
+                self.run_program(prog, {"name": name, "n": n})
+                time.sleep(1.5)                                     # the access log is written in batches
+                got = wal_bytes() - a
+                best = got if best is None else min(best, got)
+            return best
+        none, many = wal(0), wal(500)
+        self.assertLess(many - none, 4096, f"500 leituras escreveram {many - none} bytes a mais que nenhuma")
