@@ -16,6 +16,7 @@ on:
 
 permissions:
   contents: read
+  actions: read            # plan: was the previous commit of the pull request already green?
 
 # A new push to the same pull request cancels the run in progress (saves minutes).
 concurrency:
@@ -33,7 +34,29 @@ jobs:
       - id: p
         env:
           WANT: ${{ github.event.inputs.suites || 'all' }}
+          EVENT: ${{ github.event_name }}
+          ACTION: ${{ github.event.action }}
+          BEFORE: ${{ github.event.before }}
+          AFTER: ${{ github.event.after }}
+          REPO: ${{ github.repository }}
+          GH_TOKEN: ${{ github.token }}
         run: |
+          # A new push to an open pull request that only changes documentation (specs/, *.md) on top of a commit that
+          # already passed the battery skips the suites: the code under test is the same. Anything else runs.
+          if [ "$EVENT" = pull_request ] && [ "$ACTION" = synchronize ] && [ -n "$BEFORE" ]; then
+            files=$(gh api "repos/$REPO/compare/$BEFORE...$AFTER" --jq '.files[].filename' 2>/dev/null || true)
+            code=$(printf '%s\n' "$files" | grep -Ev '^specs/|\.md$' || true)       # files that are not documentation
+            if [ -n "$files" ] && [ -z "$code" ]; then
+              green=$(gh api "repos/$REPO/actions/workflows/battery.yml/runs?head_sha=$BEFORE&status=success" \
+                        --jq '.total_count' 2>/dev/null || echo 0)
+              if [ "${green:-0}" -gt 0 ]; then
+                echo "::notice::só documentação desde ${BEFORE:0:7}, que já passou na bateria: suítes puladas"
+                echo "static=false" >> "$GITHUB_OUTPUT"
+                echo "suites=[]" >> "$GITHUB_OUTPUT"
+                exit 0
+              fi
+            fi
+          fi
           all="integration trails studio cluster chaos pgha install"
           [ "$WANT" = all ] && want="static $all" || want="$WANT"
           sel=""; static=false
