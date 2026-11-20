@@ -125,8 +125,11 @@ route(<<"GET">>, [<<"routines">>], Req) ->
         {ok, Rows} = ana_db:rows(
             "SELECT p.name, p.description, p.docs, p.params, p.min_role, p.restricted, p.exposed, p.category, "
             "  (SELECT c.code FROM ana_system.command c WHERE c.program = p.name ORDER BY c.code LIMIT 1) AS command, "
-            "  EXISTS (SELECT 1 FROM ana_system.user_favorite f WHERE f.program = p.name AND f.username = $1) AS favorite "
-            "FROM ana_system.program p WHERE p.active AND p.kind = 'program' AND p.in_menu ORDER BY p.name", [Who]),
+            "  EXISTS (SELECT 1 FROM ana_system.user_favorite f WHERE f.program = p.name AND f.username = $1) AS favorite, "
+            %% Spec 056 (RF-056-03): routines that write offer "Ensaiar".
+            "  (w.name IS NOT NULL) AS writes "
+            "FROM ana_system.program p LEFT JOIN (SELECT ana_system.writing_programs() AS name) w ON w.name = p.name "
+            "WHERE p.active AND p.kind = 'program' AND p.in_menu ORDER BY p.name", [Who]),
         ana_http:json(200, [maps:without([<<"min_role">>, <<"restricted">>], R)
                             || R = #{<<"min_role">> := M, <<"name">> := N} <- Rows,
                                ana_security:has_role(U, M), ana_access:allowed(U, R),
@@ -388,6 +391,8 @@ run(Name, U, Req) ->
                             breakpoints => as_list(maps:get(<<"breakpoints">>, B, [])),
                             stop_on_entry => maps:get(<<"stop_on_entry">>, B, false) =:= true,
                             commit => maps:get(<<"commit">>, B, false) =:= true,
+                            %% Spec 056: rehearsal — runs whole, undone at the end, effects listed (any user who may run it).
+                            rehearse => maps:get(<<"rehearse">>, B, false) =:= true,
                             timeout_ms => case External of true -> undefined; false -> maps:get(<<"timeout_ms">>, B, undefined) end,
                             profile => not External andalso maps:get(<<"profile">>, B, false) =:= true},
                 case developer_view(U, ana_execution:run(Name, Params, U, Options)) of

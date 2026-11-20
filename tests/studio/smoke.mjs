@@ -315,6 +315,17 @@ await go(w, "#/ops/sales/sales.create_order?_form=1");
 await until(() => [...d.querySelectorAll("#ops-main button")].some((b) => b.textContent === "Simular (F9)"), "order simulate", jsErrors);
 ok(d.querySelector("#ops-main select[name=mode]") && !d.querySelector("#ops-main input[name=simulate]"),
    "pedido: modo de atendimento conforme a política e simulação antes de confirmar");
+// Spec 056: a routine that writes offers "Ensaiar (F9)": it runs whole, is undone, and the effect is shown.
+await go(w, "#/ops/sales/sales.release_held?_form=1");
+await until(() => [...d.querySelectorAll("#ops-main button")].some((b) => b.textContent === "Ensaiar (F9)"), "rehearse button", jsErrors);
+{
+  [...d.querySelectorAll("#ops-main button")].find((b) => b.textContent === "Ensaiar (F9)").click();
+  await until(() => d.querySelector("#ops-main .rehearsal-card"), "rehearsal card", jsErrors);
+  ok(text("#ops-main .rehearsal-card").includes("nada foi gravado nem enviado"), "ensaio: mostra o efeito e diz que nada foi gravado");
+}
+await go(w, "#/ops/inventory/inventory.balance?_form=1");
+await until(() => d.querySelector("#ops-main form"), "balance form", jsErrors);
+ok(![...d.querySelectorAll("#ops-main button")].some((b) => b.textContent === "Ensaiar (F9)"), "rotina que só lê não oferece ensaio");
 await go(w, "#/ops/sales/sales.shortages");
 await until(() => d.querySelector("#ops-main form select[name=situation]"), "shortages form", jsErrors);
 submit(w, d.querySelector("#ops-main form"));

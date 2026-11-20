@@ -542,5 +542,73 @@
     return ` · CPU ${u.cpu_ms} ms · memória ${Math.round((u.max_rss_kb || 0) / 1024)} MiB · ${u.sql_count} SQL`;
   }
 
-  window.AnaRunner = { paramsForm, drawOutput, usageText, moduleOf, moduleLabel, areaOf, categoryOf, areaRank };
+  // Spec 056 (RF-056-02): the effect of a rehearsal in business terms — records that would be created, changed or
+  // deleted, e-mails that would leave, calls and files held. Nothing of it was kept.
+  const CHANGE = { created: "seriam criados", changed: "seriam alterados", created_or_changed: "seriam criados ou alterados",
+                   deleted: "seriam excluídos" };
+  function heldText(h) {
+    switch (h.kind) {
+      case "http": return `chamaria o conector ${h.connector} (${h.method} ${h.path || "/"})`;
+      case "remote": return `chamaria ${h.function} no sistema ${h.system}`;
+      case "files": return `${h.action === "put" ? "gravaria o arquivo" : "faria “" + h.action + "” no arquivo"} ${h.name || h.file || ""}`.trim();
+      case "schedule": return `${h.active === false ? "pararia" : "agendaria"} a rotina ${h.name}${h.cron ? " (" + h.cron + ")" : ""}`;
+      default: return "efeito externo retido";
+    }
+  }
+  function sampleTable(rows) {
+    const keys = [...new Set(rows.flatMap((x) => Object.keys(x)))].filter((k) => !/^(created|updated)_(at|by)$/.test(k)).slice(0, 7);
+    const fmt = (v) => v === null || v === undefined ? "" : typeof v === "object" ? JSON.stringify(v).slice(0, 60) : String(v);
+    const t = el("table", { class: "grid-table compact" });
+    t.append(el("thead", {}, el("tr", {}, keys.map((k) => el("th", { text: k.replace(/_/g, " ") })))));
+    t.append(el("tbody", {}, rows.map((x) => el("tr", {}, keys.map((k) => el("td", { text: fmt(x[k]) }))))));
+    return t;
+  }
+  function rehearsalCard(effects, error, ctx) {
+    const box = el("section", { class: "rehearsal-card", role: "status", "aria-label": "Resultado do ensaio" });
+    box.append(el("div", { class: "rehearsal-head" }, el("strong", { text: error ? "Ensaio parou num erro" : "Ensaio" }),
+      el("span", { class: "muted small", text: "nada foi gravado nem enviado" })));
+    if (error) {
+      const why = window.AnaErrors ? window.AnaErrors.describe(error) : { title: error.message };
+      box.append(el("div", { class: "end error" }, el("strong", { text: why.title }), why.action ? el("div", { text: why.action }) : null));
+    }
+    const e = effects || {};
+    const tables = e.tables || [], messages = e.messages || [], held = e.held || [];
+    if (!tables.length && !messages.length && !held.length) {
+      box.append(el("p", { class: "muted", text: error ? "Até o erro, nada teria sido gravado." : "Esta execução não gravaria nada." }));
+      return box;
+    }
+    if (messages.length) {
+      box.append(el("h3", { text: "Mensagens que seriam enviadas" }),
+        el("ul", { class: "rehearsal-list" }, messages.map((m) => el("li", {},
+          el("strong", { text: m.kind === "email" ? "E-mail" : (m.kind || "Mensagem") }),
+          ` para ${[].concat(m.to || []).join(", ") || "—"}${m.subject ? ": " + m.subject : ""}`))));
+    }
+    if (held.length) {
+      box.append(el("h3", { text: "Chamadas externas retidas" }),
+        el("ul", { class: "rehearsal-list" }, held.map((h) => el("li", { text: heldText(h) }))));
+    }
+    if (tables.length) {
+      box.append(el("h3", { text: "Registros" }));
+      const list = el("ul", { class: "rehearsal-list" });
+      for (const t of tables) {
+        const li = el("li");
+        const n = t.change === "deleted" ? t.deleted : t.rows;
+        li.append(el("strong", { text: t.label }), ` — ${n} ${CHANGE[t.change] || "seriam gravados"}`);
+        if (t.deleted && t.change !== "deleted") li.append(`; ${t.deleted} seriam excluídos`);
+        if (t.partial) li.append(el("span", { class: "muted small", text: " (só a contagem: tabela grande ou fora do ensaio)" }));
+        // Documents that already exist (changed) open in the viewer; new ones exist only in the rehearsal.
+        if ((t.documents || []).length) {
+          li.append(el("div", { class: "rehearsal-docs" }, t.documents.map((d) => t.change === "changed" && ctx && ctx.open
+            ? el("button", { type: "button", class: "quiet small", text: `${t.label} ${d.key}`, onclick: () => ctx.open("docs.view", { kind: d.kind, key: d.key }) })
+            : el("span", { class: "pill", text: `nº ${d.key}` }))));
+        }
+        if ((t.sample || []).length) li.append(el("details", {}, el("summary", { text: "ver os registros" }), sampleTable(t.sample)));
+        list.append(li);
+      }
+      box.append(list);
+    }
+    return box;
+  }
+
+  window.AnaRunner = { paramsForm, drawOutput, usageText, moduleOf, moduleLabel, areaOf, categoryOf, areaRank, rehearsalCard };
 })();

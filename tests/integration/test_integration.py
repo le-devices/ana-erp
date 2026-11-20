@@ -7499,6 +7499,37 @@ class TestOutboundEmail(Base):
             psql(f"DELETE FROM ana_system.vulnerability WHERE osv_id IN ('{feed_id}', '{query_id}')")
             http("POST", "/api/admin/checks/run", {"category": "dependencies"}, self.token)    # resolves the test findings
 
+    def test_ca_056_01_rehearsing_an_invoice_shows_bill_entry_and_email(self):
+        """Spec 056 (CA-056-01): rehearsing an invoice shows the bill, the accounting entry and the e-mail that would be
+        generated — and nothing is written nor sent."""
+        name = f"t{SUFFIX}_smtprh"
+        self.assertEqual(self.connector(name, default=True)[0], 200)
+        o = self.client.call("sales.create_order", customer=1, items=[{"product": "FEIJAO-1", "quantity": 1}])
+        to = f"fatura.{SUFFIX}@exemplo.test"
+        prog = f"test.invoice_mail_{SUFFIX}"
+        self.save(prog, "def main(number, to):\n"
+                        "    inv = ana.call('sales.invoice_order', number=number)\n"
+                        "    ana.send_email(to, f'Fatura do pedido {number}', text='Segue a fatura.')\n"
+                        "    return inv\n")
+        tables = ("finance.bill", "finance.journal_entry", "integration.outbox", "sales.sales_order")
+        before = {t: psql(f"SELECT count(*) FROM {t}") for t in tables}
+        status_before = psql(f"SELECT status FROM sales.sales_order WHERE id = {int(str(o['number']).split('-')[-1])}")
+        s, c, _ = self.run_program(prog, {"number": o["number"], "to": to}, rehearse=True)
+        self.assertEqual(s, 200, c)
+        eff = c["rehearsal"]
+        got = {t["table"]: t for t in eff["tables"]}
+        self.assertEqual(got["finance.bill"]["label"], "Títulos (contas a receber e a pagar)")
+        self.assertGreaterEqual(got["finance.bill"]["rows"], 1)
+        self.assertGreaterEqual(got["finance.journal_entry"]["rows"], 1)
+        self.assertTrue(any(d["kind"] == "bill" for d in eff["documents"]), eff["documents"])
+        self.assertTrue(any(m.get("kind") == "email" and to in json.dumps(m) for m in eff["messages"]), eff["messages"])
+        # Nothing was kept: same counts, the order still open, no e-mail delivered; the audit says it was a rehearsal.
+        self.assertEqual({t: psql(f"SELECT count(*) FROM {t}") for t in tables}, before)
+        self.assertEqual(psql(f"SELECT status FROM sales.sales_order WHERE id = {int(str(o['number']).split('-')[-1])}"), status_before)
+        time.sleep(3)
+        self.assertEqual(self.mails(to), [])
+        self.assertEqual(psql(f"SELECT rehearsal FROM ana_system.execution WHERE id = '{c['id']}'"), "t")
+
 
 # ---------------------------------------------------------------- spec 050
 class TestPremiumExperience(Base):
@@ -8188,3 +8219,79 @@ class TestQualityGate(Base):
             self.setting("quality_gate_required", 0)
         s, c, _ = http("POST", "/api/admin/transports/receive", token=self.token, raw=json.dumps(package).encode())
         self.assertEqual(s, 200, c)                                                           # policy off: old packages still come in
+
+
+# ---------------------------------------------------------------- spec 056
+class TestRehearsal(Base):
+    """Universal rehearsal: any routine that writes runs whole and is undone; external effects are held and listed."""
+
+    def test_rf_056_01_held_effects_nested_calls_and_context(self):
+        prog = f"test.rh_{SUFFIX}"
+        job = f"test.rh_job_{SUFFIX}"
+        s, folder, _ = http("POST", "/api/files/folders", {"parent": None, "name": f"Ensaio {SUFFIX}"}, self.token)
+        self.assertEqual(s, 200, folder)
+        self.save(prog, "def main(folder):\n"
+                        "    o = ana.call('sales.create_order', customer=1, items=[{'product': 'FEIJAO-1', 'quantity': 1}])\n"
+                        "    f = ana.files.put('ensaio.txt', 'conteúdo do ensaio', folder=folder)\n"
+                        f"    j = ana.schedule_job('{job}', '{prog}', cron='0 3 * * *')\n"
+                        "    return {'rehearsal': ana.context.rehearsal, 'file': f, 'job': j, 'order': o['number']}\n")
+        before = {t: psql(f"SELECT count(*) FROM {t}") for t in ("sales.sales_order", "sales.sales_order_item", "files.file")}
+        s, c, _ = self.run_program(prog, {"folder": folder["id"]}, rehearse=True)
+        self.assertEqual(s, 200, c)
+        r = c["result"]
+        self.assertTrue(r["rehearsal"])
+        self.assertTrue(r["file"]["held"] and r["job"]["held"], r)
+        eff = c["rehearsal"]
+        self.assertEqual({h["kind"] for h in eff["held"]}, {"files", "schedule"})
+        orders = [t for t in eff["tables"] if t["table"] == "sales.sales_order"]
+        # The order was created by a nested program (a savepoint of its own): still part of the effect.
+        self.assertEqual((orders[0]["label"], orders[0]["change"], orders[0]["rows"]), ("Pedidos de venda", "created", 1), orders)
+        self.assertEqual([d["kind"] for d in orders[0]["documents"]], ["order"])
+        self.assertEqual({t: psql(f"SELECT count(*) FROM {t}") for t in before}, before)
+        self.assertEqual(psql(f"SELECT count(*) FROM scheduler.job WHERE name = '{job}'"), "0")
+        # The same program, run for real, keeps everything (rehearsal is only an option of the run).
+        s, c, _ = self.run_program(prog, {"folder": folder["id"]})
+        self.assertEqual(s, 200, c)
+        self.assertFalse(c["result"]["rehearsal"])
+        self.assertNotIn("rehearsal", c)
+        self.assertEqual(int(psql("SELECT count(*) FROM sales.sales_order")), int(before["sales.sales_order"]) + 1)
+        http("DELETE", f"/api/scheduler/jobs/{c['result']['job']['job']}", token=self.token)
+
+    def test_rehearsal_that_stops_on_an_error_still_lists_what_it_held(self):
+        prog = f"test.rh_err_{SUFFIX}"
+        self.save(prog, "def main():\n"
+                        "    ana.files.put('antes.txt', 'x')\n"
+                        "    raise ana.Error('PAROU', 'falhou depois de gravar o arquivo')\n")
+        s, c, _ = self.run_program(prog, rehearse=True)
+        self.assertEqual(c["error"]["code"], "PAROU", c)
+        self.assertEqual([h["kind"] for h in c["error"]["rehearsal"]["held"]], ["files"])
+
+    def test_a_routine_that_only_reads_would_write_nothing(self):
+        s, c, _ = self.run_program("inventory.balance", {"product": "FEIJAO-1"}, rehearse=True)
+        self.assertEqual(s, 200, c)
+        self.assertEqual((c["rehearsal"]["tables"], c["rehearsal"]["held"]), ([], []))
+
+    def test_ca_056_02_catalog_offers_rehearsal_where_routines_write(self):
+        """CA-056-02 and RF-056-04: every routine of the catalog accepts a rehearsal, nothing is kept, and a routine
+        that the rehearsal shows writing but the catalog takes for a reader is pointed out (the verifier)."""
+        s, routines, _ = http("GET", "/api/routines", token=self.token)
+        self.assertEqual(s, 200, routines)
+        by = {r["name"]: r for r in routines}
+        for n in ("sales.invoice_order", "sales.create_order", "sales.release_held"):
+            self.assertTrue(by[n]["writes"], n)
+        for n in ("docs.view", "inventory.balance"):
+            self.assertFalse(by[n]["writes"], n)
+        watched = ("sales.sales_order", "finance.bill", "finance.journal_entry", "integration.outbox", "scheduler.job", "files.file")
+        before = {t: psql(f"SELECT count(*) FROM {t}") for t in watched}
+        hidden, broken = [], []
+        for r in routines:
+            if not r["name"].split(".")[0] in ("test",) and not r["name"].startswith("demo."):
+                s, c, _ = self.run_program(r["name"], rehearse=True)
+                eff = c.get("rehearsal") or (c.get("error") or {}).get("rehearsal")
+                if eff is None:
+                    broken.append(f"{r['name']}: {s} {json.dumps(c, ensure_ascii=False)[:200]}")
+                elif (eff["tables"] or eff["held"]) and not r["writes"]:
+                    hidden.append(f"{r['name']}: {[t['table'] for t in eff['tables']] + [h['kind'] for h in eff['held']]}")
+        self.assertEqual(broken, [])
+        self.assertEqual(hidden, [])                                     # writes but the catalog does not know it
+        self.assertEqual({t: psql(f"SELECT count(*) FROM {t}") for t in watched}, before)
