@@ -83,7 +83,8 @@ def run_case(case, data):
         day = engine.as_date(doc["date"])
         total = sum((i["amount"] for i in doc["items"]), Decimal(0))
         fixed = {k: fx.dec(v) for k, v in (doc_in.get("indicators") or {}).items()}
-        r = engine.compute(doc, data, lambda c: fixed[c] if c in fixed else engine.indicator_value(data, c, day, total))
+        r = engine.compute(doc, data, lambda c: fixed[c] if c in fixed else engine.indicator_value(data, c, day, total),
+                           company_value=lambda name, at: ana.value(name, at=at))
         return {"ok": True, "taxes": {t["tax"]: {k: str(t[k]) for k in ("base", "rate", "amount", "withheld", "credit", "charged") if k in t}
                                       for t in r["taxes"]}, "totals": {k: str(v) for k, v in r["totals"].items()}}
     except (engine.TaxError, fx.FormulaError) as e:

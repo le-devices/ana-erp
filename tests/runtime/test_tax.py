@@ -68,6 +68,14 @@ def run(document, data=None, indicators=None):
 class FormulaLanguage(unittest.TestCase):
     """RF-049-04, CA-049-05: closed language, validated when saved."""
 
+    def test_company_value_in_a_formula(self):
+        """Spec 065 (T-065-07): company_value('nome') reads a company value on the date of the fact."""
+        c = fx.validate([["rate", "company_value('financeiro.aliquota_extra') / 100"], ["amount", "1000 * rate"]])
+        out = fx.evaluate(c, {}, {"company_value": lambda name: D("5") if name == "financeiro.aliquota_extra" else None})
+        self.assertEqual(out["amount"], D("50"))
+        with self.assertRaises(fx.FormulaError):
+            fx.validate([["amount", "company_value(rate)"], ["rate", "1"]])           # the name goes between quotes
+
     def test_ca_049_05_free_code_and_unknown_functions_are_refused(self):
         for bad, why in [("__import__('os').system('x')", "função desconhecida"),
                          ("open('/etc/passwd')", "função desconhecida"),

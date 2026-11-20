@@ -22,6 +22,7 @@ SHORT = ("amount", "quantity", "unit_price", "discount", "total")
 FUNCTIONS = {
     "round": (1, 2), "floor": (1, 2), "ceil": (1, 2), "min": (2, 20), "max": (2, 20), "abs": (1, 1),
     "has": (1, 1), "table": (2, 3), "bracket": (4, 4), "indicator": (1, 1), "tax": (2, 2),
+    "company_value": (1, 1),              # spec 065: a company value on the date of the fact, company_value('financeiro.x')
 }
 OUTPUTS = ("base", "rate", "amount", "withheld", "credit", "charged")
 MAX_LENGTH = 2000
@@ -140,6 +141,8 @@ class _Checker(ast.NodeVisitor):
             self.fail(node, f"{node.func.id} recebe de {lo} a {hi} argumento(s)")
         if node.func.id == "has" and not (isinstance(node.args[0], ast.Constant) and isinstance(node.args[0].value, str)):
             self.fail(node, "has recebe o caminho entre aspas, ex.: has('item.ncm')")
+        if node.func.id == "company_value" and not (isinstance(node.args[0], ast.Constant) and isinstance(node.args[0].value, str)):
+            self.fail(node, "company_value recebe o nome do valor da empresa entre aspas, ex.: company_value('financeiro.margem_minima')")
         for a in node.args:
             if isinstance(a, ast.Starred):
                 self.fail(a, "construção não permitida")

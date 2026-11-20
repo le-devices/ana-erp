@@ -7,6 +7,7 @@ With lines: preview of the differences at the average cost; confirm=True writes 
 movements (document INV-n), which the database values and posts (D inventory / C inventory gains
 for leftovers, D inventory losses / C inventory for shortages)."""
 
+import datetime
 from decimal import Decimal
 
 from ana_lib.util import validation as v
@@ -73,6 +74,8 @@ def main(warehouse="CENTRAL", lines=None, note=None, confirm=False):
         else:
             ana.log("contagem igual ao saldo: nada a ajustar")
         return {"preview": True, "differences": len(diffs), "gains": gain, "losses": loss}
+    # Spec 065 (RF-065-07): the date of the last physical inventory, kept by this routine.
+    ana.set_value("estoque.ultimo_inventario", datetime.date.today(), reason=f"contagem do depósito {w['code']}")
     if not diffs:
         return {"document": None, "differences": 0}
     doc = "INV-%s" % ana.sql_value("SELECT nextval('inventory.count_number_seq')")

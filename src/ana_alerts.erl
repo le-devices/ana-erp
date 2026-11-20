@@ -7,7 +7,7 @@
 -define(EMAIL, "^[^@\\s]{1,64}@[^@\\s]{1,190}\\.[^@\\s]{2,}$").
 
 overview() ->
-    {ok, Rules} = ana_db:rows("SELECT id, name, source, target, level, op, threshold::float8 AS threshold, window_s, "
+    {ok, Rules} = ana_db:rows("SELECT id, name, source, target, level, op, threshold::float8 AS threshold, threshold_value, window_s, "
                               "  severity, notify_studio, connector, recipients, active, updated_by, updated_at, "
                               "  (SELECT count(*) FROM ana_system.incident i WHERE i.rule_id = r.id AND i.closed_at IS NULL) AS open "
                               "FROM ana_system.alert_rule r ORDER BY name", []),
@@ -26,18 +26,18 @@ save_rule(Body, #{username := Who}) ->
         {error, _} = E -> E;
         {ok, R} ->
             Args = [maps:get(K, R) || K <- [name, source, target, level, op, threshold, window_s, severity,
-                                            notify_studio, connector, recipients, active]] ++ [Who],
+                                            notify_studio, connector, recipients, active]] ++ [Who, maps:get(threshold_value, R)],
             Result = case maps:get(<<"id">>, Body, null) of
                 null ->
                     ana_db:one("INSERT INTO ana_system.alert_rule (name, source, target, level, op, threshold, window_s, "
-                               "  severity, notify_studio, connector, recipients, active, updated_by) "
-                               "VALUES ($1, $2, $3, $4, $5, $6::text::numeric, $7, $8, $9, $10, $11, $12, $13) "
+                               "  severity, notify_studio, connector, recipients, active, updated_by, threshold_value) "
+                               "VALUES ($1, $2, $3, $4, $5, $6::text::numeric, $7, $8, $9, $10, $11, $12, $13, $14) "
                                "RETURNING id", Args);
                 Id when is_integer(Id) ->
                     ana_db:one("UPDATE ana_system.alert_rule SET name = $1, source = $2, target = $3, level = $4, op = $5, "
                                "  threshold = $6::text::numeric, window_s = $7, severity = $8, notify_studio = $9, "
-                               "  connector = $10, recipients = $11, active = $12, updated_by = $13, updated_at = now() "
-                               "WHERE id = $14 RETURNING id", Args ++ [Id]);
+                               "  connector = $10, recipients = $11, active = $12, updated_by = $13, updated_at = now(), "
+                               "  threshold_value = $14 WHERE id = $15 RETURNING id", Args ++ [Id]);
                 _ -> {error, <<"id inválido"/utf8>>}
             end,
             case Result of
@@ -65,6 +65,12 @@ validate_rule(B) ->
     Source = maps:get(<<"source">>, B, null),
     Target = maps:get(<<"target">>, B, null),
     Threshold = maps:get(<<"threshold">>, B, null),
+    %% Spec 065 (T-065-07): the limit may be a company value, read at each check ("{{valor:nome}}" or the name).
+    TValue = case maps:get(<<"threshold_value">>, B, null) of
+        <<"{{valor:", Rest/binary>> -> hd(binary:split(Rest, <<"}}">>));
+        <<>> -> null;
+        X -> X
+    end,
     Recipients = maps:get(<<"recipients">>, B, []),
     Connector = case maps:get(<<"connector">>, B, null) of <<>> -> null; C -> C end,
     Checks = [
@@ -79,7 +85,8 @@ validate_rule(B) ->
         {Source =/= <<"metric">> orelse lists:member(Target, ana_health:metric_names()), <<"métrica desconhecida"/utf8>>},
         {Source =/= <<"metric">> orelse lists:member(maps:get(<<"op">>, B, null), [<<">">>, <<">=">>, <<"<">>, <<"<=">>]),
          <<"comparação inválida"/utf8>>},
-        {Source =/= <<"metric">> orelse is_number(Threshold), <<"informe o limiar (número)"/utf8>>},
+        {Source =/= <<"metric">> orelse is_number(Threshold) orelse TValue =/= null, <<"informe o limiar (número ou valor da empresa)"/utf8>>},
+        {TValue =:= null orelse numeric_value(TValue), <<"o limiar deve ser um valor da empresa numérico (inteiro ou decimal) que exista"/utf8>>},
         {is_integer(maps:get(<<"window_s">>, B, 0)) andalso maps:get(<<"window_s">>, B, 0) >= 0
              andalso maps:get(<<"window_s">>, B, 0) =< 86400, <<"janela deve ficar entre 0 e 86400 s"/utf8>>},
         {lists:member(maps:get(<<"severity">>, B, <<"warning">>), [<<"info">>, <<"warning">>, <<"serious">>, <<"critical">>]),
@@ -99,13 +106,21 @@ validate_rule(B) ->
             {ok, #{name => string:trim(maps:get(<<"name">>, B)), source => Source, target => Target,
                    level => case Health of true -> maps:get(<<"level">>, B); false -> null end,
                    op => case Health of true -> null; false -> maps:get(<<"op">>, B) end,
-                   threshold => case Health of true -> null; false -> number_text(Threshold) end,
+                   threshold => case Health orelse not is_number(Threshold) of true -> null; false -> number_text(Threshold) end,
+                   threshold_value => case Health of true -> null; false -> TValue end,
                    window_s => maps:get(<<"window_s">>, B, 0),
                    severity => maps:get(<<"severity">>, B, <<"warning">>),
                    notify_studio => maps:get(<<"notify_studio">>, B, true) =/= false,
                    connector => Connector, recipients => Recipients,
                    active => maps:get(<<"active">>, B, true) =/= false}}
     end.
+
+numeric_value(N) when is_binary(N) ->
+    case ana_db:one("SELECT value_type, shape FROM ana_system.company_value WHERE name = $1 AND NOT archived", [N]) of
+        {ok, #{<<"value_type">> := T, <<"shape">> := <<"single">>}} -> T =:= <<"integer">> orelse T =:= <<"decimal">>;
+        _ -> false
+    end;
+numeric_value(_) -> false.
 
 %% smtp (spec 044: the core sends the e-mail), http (a delivery program) or false.
 delivers(Name) when is_binary(Name) ->

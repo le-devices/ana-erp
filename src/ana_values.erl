@@ -9,7 +9,9 @@
 %% woken up. Sensitive values wait for a second person (four eyes, enforced by the database too).
 -module(ana_values).
 
--export([init_cache/0, load/0, on_notify/2, read/2, today/0]).
+-export([init_cache/0, load/0, reload/1, on_notify/2, read/2, today/0]).
+-export([check_set/4, apply_sets/2, names_in/1, usage/1, quality_findings/1, daily_notices/0,
+         transport_items/1, transport_status/1, transport_apply/3, transport_undo/2, missing_in_package/2]).
 -export([meta/0, list/2, detail/2, define/2, redefine/3, propose/3, decide/5, withdraw/3, preview/2,
          can_edit/2, secret/1]).
 
@@ -208,7 +210,10 @@ list(Filters, User) ->
                          pending => maps:get(N, Pending, 0), can_edit => Editable(N)})
             || {{N, Def, Vs}, {N, V}} <- lists:zip(Entries, Cur)],
     Areas = lists:usort([A || {N, #{<<"area">> := A}, _} <- ets:tab2list(?TAB), is_binary(N)]),
-    {ok, #{values => Rows, areas => Areas, today => iso(Today), instance => Inst}}.
+    %% T-065-11: values nobody reads for 180 days are suggested for archiving.
+    Unused = unused([N || #{<<"name">> := N} <- Rows]),
+    {ok, #{values => [R#{unused => lists:member(N, Unused)} || R = #{<<"name">> := N} <- Rows],
+           areas => Areas, today => iso(Today), instance => Inst}}.
 
 current(none, _) -> null;
 current(#{expression := null} = V, _) -> #{value => maps:get(content, V), version => maps:get(id, V), valid_from => maps:get(valid_from_text, V)};
@@ -233,7 +238,7 @@ resolve_many(Exprs, User) ->
 -spec detail(binary(), map()) -> {ok, map()} | {error, binary(), binary()}.
 detail(Name, User) ->
     case ana_db:one("SELECT name, description, area, value_type, shape, ref_kind, sensitive, reason_required, same_everywhere, "
-                    "archived, created_by, created_at FROM ana_system.company_value WHERE name = $1", [Name]) of
+                    "archived, maintained_by, created_by, created_at FROM ana_system.company_value WHERE name = $1", [Name]) of
         {ok, undefined} -> {error, <<"NOT_FOUND">>, <<"valor da empresa inexistente"/utf8>>};
         {ok, Def} ->
             {ok, Vs} = ana_db:rows(
@@ -241,7 +246,7 @@ detail(Name, User) ->
                 "v.content, v.expression, v.status, v.reason, v.requested_by, v.requested_at, v.decided_by, v.decided_at, "
                 "v.decision_note FROM ana_system.company_value_version v LEFT JOIN base.company c ON c.id = v.company_id "
                 "WHERE v.name = $1 ORDER BY v.valid_from DESC, v.id DESC LIMIT 500", [Name]),
-            {ok, Ch} = ana_db:rows("SELECT at, action, username, version_id, before, after, reason FROM ana_system.company_value_change "
+            {ok, Ch} = ana_db:rows("SELECT at, action, username, version_id, before, after, reason, program FROM ana_system.company_value_change "
                                    "WHERE name = $1 ORDER BY at DESC, id DESC LIMIT 200", [Name]),
             Now = case read(Name, #{user => maps:get(username, User, null)}) of
                 {ok, R} -> R;
@@ -249,6 +254,7 @@ detail(Name, User) ->
             end,
             Labels = labels(maps:get(<<"ref_kind">>, Def), Vs),
             {ok, #{definition => Def, versions => [decoded(V, Labels) || V <- Vs], changes => [decoded(C, #{}) || C <- Ch],
+                   usage => usage(Name),
                    current => Now, can_edit => (editable(User))(Name), me => maps:get(username, User, null)}}
     end.
 
@@ -371,12 +377,14 @@ define(#{<<"name">> := Name} = B, User = #{username := Who}) when is_binary(Name
                             value_type => Type, shape => Shape, ref_kind => Ref,
                             sensitive => maps:get(<<"sensitive">>, B, false) =:= true,
                             reason_required => maps:get(<<"reason_required">>, B, false) =:= true,
-                            same_everywhere => maps:get(<<"same_everywhere">>, B, false) =:= true},
+                            same_everywhere => maps:get(<<"same_everywhere">>, B, false) =:= true,
+                            maintained_by => keepers(maps:get(<<"maintained_by">>, B, []))},
                     tx(fun(C) ->
                         case ana_db:query(C, "INSERT INTO ana_system.company_value (name, description, area, value_type, shape, ref_kind, "
-                                             "sensitive, reason_required, same_everywhere, created_by) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)",
+                                             "sensitive, reason_required, same_everywhere, created_by, maintained_by) "
+                                             "VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)",
                                           [Name, maps:get(description, Row), Area, Type, Shape, Ref, maps:get(sensitive, Row),
-                                           maps:get(reason_required, Row), maps:get(same_everywhere, Row), Who]) of
+                                           maps:get(reason_required, Row), maps:get(same_everywhere, Row), Who, maps:get(maintained_by, Row)]) of
                             {ok, _} ->
                                 change(C, Name, <<"defined">>, Who, null, null, Row, null),
                                 {ok, Row};
@@ -394,13 +402,14 @@ define(_, _) -> {error, <<"INVALID">>, <<"informe o nome do valor"/utf8>>}.
 -spec redefine(binary(), map(), map()) -> {ok, map()} | {error, binary(), binary()}.
 redefine(Name, B, User = #{username := Who}) ->
     case ana_db:one("SELECT name, description, area, value_type, shape, ref_kind, sensitive, reason_required, same_everywhere, archived, "
-                    "EXISTS (SELECT 1 FROM ana_system.company_value_version v WHERE v.name = d.name) AS used "
+                    "maintained_by, EXISTS (SELECT 1 FROM ana_system.company_value_version v WHERE v.name = d.name) AS used "
                     "FROM ana_system.company_value d WHERE name = $1", [Name]) of
         {ok, undefined} -> {error, <<"NOT_FOUND">>, <<"valor da empresa inexistente"/utf8>>};
         {ok, Old} ->
             New = maps:merge(maps:remove(<<"used">>, Old),
-                             maps:with([<<"description">>, <<"area">>, <<"value_type">>, <<"shape">>, <<"ref_kind">>, <<"sensitive">>,
-                                        <<"reason_required">>, <<"same_everywhere">>, <<"archived">>], B)),
+                             (maps:with([<<"description">>, <<"area">>, <<"value_type">>, <<"shape">>, <<"ref_kind">>, <<"sensitive">>,
+                                         <<"reason_required">>, <<"same_everywhere">>, <<"archived">>], B))
+                             #{<<"maintained_by">> => keepers(maps:get(<<"maintained_by">>, B, maps:get(<<"maintained_by">>, Old)))}),
             Shape = [maps:get(K, New) || K <- [<<"value_type">>, <<"shape">>, <<"ref_kind">>]],
             Checks = [{can_edit(User, Name), forbidden},
                       {not maps:get(<<"used">>, Old) orelse Shape =:= [maps:get(K, Old) || K <- [<<"value_type">>, <<"shape">>, <<"ref_kind">>]],
@@ -423,11 +432,11 @@ redefine(Name, B, User = #{username := Who}) ->
                     Before = maps:remove(<<"used">>, Old),
                     tx(fun(C) ->
                         case ana_db:query(C, "UPDATE ana_system.company_value SET description = $2, area = $3, value_type = $4, shape = $5, "
-                                             "ref_kind = $6, sensitive = $7, reason_required = $8, same_everywhere = $9, archived = $10 "
-                                             "WHERE name = $1",
+                                             "ref_kind = $6, sensitive = $7, reason_required = $8, same_everywhere = $9, archived = $10, "
+                                             "maintained_by = $11 WHERE name = $1",
                                           [Name | [maps:get(K, New) || K <- [<<"description">>, <<"area">>, <<"value_type">>, <<"shape">>,
                                                                              <<"ref_kind">>, <<"sensitive">>, <<"reason_required">>,
-                                                                             <<"same_everywhere">>, <<"archived">>]]]) of
+                                                                             <<"same_everywhere">>, <<"archived">>, <<"maintained_by">>]]]) of
                             {ok, _} ->
                                 change(C, Name, Action, Who, null, Before, New, null),
                                 {ok, New};
@@ -706,6 +715,327 @@ typed(<<"reference">>, V) when is_integer(V) -> {ok, integer_to_binary(V)};
 typed(<<"reference">>, V) when is_binary(V), V =/= <<>>, byte_size(V) =< 100 -> {ok, string:trim(V)};
 typed(T, _) -> {error, <<"valor não é do tipo "/utf8, T/binary>>}.
 
+%% ======================================================================= phase 2: kept by routines (D4, RF-065-07)
+
+%% ana.set_value: checked now (the routine may keep it, the content fits), written right after the routine's COMMIT —
+%% a routine that fails changes nothing. Returns the change to apply later.
+-spec check_set(binary(), map(), binary(), map()) -> {ok, map()} | {error, binary(), binary()}.
+check_set(Name, A, Program, User) when is_binary(Name) ->
+    case ana_db:one("SELECT name, value_type, shape, ref_kind, archived, maintained_by FROM ana_system.company_value WHERE name = $1",
+                    [Name]) of
+        {ok, undefined} -> {error, <<"VALUE_NOT_FOUND">>, <<"valor da empresa inexistente: "/utf8, Name/binary>>};
+        {ok, #{<<"archived">> := true}} -> {error, <<"VALUE_NOT_FOUND">>, <<"valor da empresa arquivado: "/utf8, Name/binary>>};
+        {ok, Def = #{<<"maintained_by">> := Keepers}} ->
+            case lists:member(Program, Keepers) of
+                false -> {error, <<"FORBIDDEN">>, iolist_to_binary([<<"o programa "/utf8>>, Program, <<" não mantém o valor "/utf8>>, Name,
+                                                                   <<" (veja \"Mantido pelas rotinas\" na definição do valor)"/utf8>>])};
+                true ->
+                    Today = today(),
+                    From = case maps:get(<<"valid_from">>, A, null) of null -> iso(Today); F -> F end,
+                    case {date(From), content(Def#{<<"name">> => Name}, #{<<"content">> => maps:get(<<"value">>, A, null)}, User)} of
+                        {bad, _} -> {error, <<"INVALID">>, <<"vigência: data inválida (AAAA-MM-DD)"/utf8>>};
+                        {D, _} when D < Today -> {error, <<"INVALID">>, <<"o passado não se reescreve: a vigência começa hoje ou depois"/utf8>>};
+                        {_, {ok, Norm, _}} ->
+                            Before = case read(Name, #{user => maps:get(username, User, null)}) of {ok, #{value := V}} -> V; _ -> null end,
+                            {ok, #{name => Name, value => Norm, from => From, before => Before, program => Program,
+                                   reason => maps:get(<<"reason">>, A, null)}};
+                        {_, {error, C, M}} -> {error, C, M}
+                    end
+            end;
+        {error, #{message := M}} -> {error, <<"INVALID">>, M}
+    end;
+check_set(_, _, _, _) -> {error, <<"INVALID">>, <<"informe o nome do valor"/utf8>>}.
+
+%% After the COMMIT of the routine: one version each, recorded as kept by the routine for its user.
+-spec apply_sets([map()], map()) -> ok.
+apply_sets([], _) -> ok;
+apply_sets(Sets, #{username := Who}) ->
+    _ = [case ana_db:transaction(fun(C) ->
+                 Old = replace(C, N, F, null, null),
+                 {ok, #{rows := [[Id]]}} = ana_db:query(C,
+                     "INSERT INTO ana_system.company_value_version (name, valid_from, content, status, reason, requested_by) "
+                     "VALUES ($1, $2::date, $3::jsonb, 'active', $4, $5) RETURNING id", [N, F, json_text(V), R, Who]),
+                 {ok, _} = ana_db:query(C, "INSERT INTO ana_system.company_value_change (name, action, username, version_id, before, after, "
+                                           "reason, program) VALUES ($1, 'kept', $2, $3, $4::jsonb, $5::jsonb, $6, $7)",
+                                        [N, Who, Id, json_text(case Old of null -> #{value => B}; _ -> Old end),
+                                         json_text(#{content => V, from => F}), R, P]),
+                 {ok, Id}
+             end) of
+             {ok, _} -> reload(N);
+             E -> logger:error("company value ~ts not kept after the routine ~ts: ~0p", [N, P, E])
+         end || #{name := N, value := V, from := F, before := B, program := P, reason := R} <- Sets],
+    ok.
+
+%% ======================================================================= phase 2: where it is used (D8, RF-065-08)
+
+%% Names of company values written literally in a program: ana.value("x"), ana.set_value("x"), base.company_value('x')
+%% in SQL and {{valor:x}} in templates — with the line of the first use.
+-spec names_in(binary()) -> [{binary(), pos_integer()}].
+names_in(Source) when is_binary(Source) ->
+    N = <<"([a-z][a-z0-9_]*(?:\\.[a-z][a-z0-9_]*){1,3})">>,
+    Pats = [<<"ana\\.(?:set_)?value\\(\\s*[\"']", N/binary, "[\"']">>,
+            <<"company_value(?:_list|_matches)?\\(\\s*\\\\?[\"']", N/binary, "\\\\?[\"']">>,
+            <<"\\{\\{valor:", N/binary, "\\}\\}">>],
+    Hits = lists:append([case re:run(Source, P, [global, {capture, [1], index}]) of
+                             {match, L} -> [{binary:part(Source, Pos, Len), Pos} || [{Pos, Len}] <- L];
+                             nomatch -> []
+                         end || P <- Pats]),
+    First = lists:foldl(fun({Nm, Pos}, Acc) -> maps:update_with(Nm, fun(P0) -> min(P0, Pos) end, Pos, Acc) end, #{}, Hits),
+    lists:sort([{Nm, line_of(Source, Pos)} || {Nm, Pos} <- maps:to_list(First)]);
+names_in(_) -> [].
+
+line_of(Source, Pos) -> length(binary:matches(binary:part(Source, 0, Pos), <<"\n">>)) + 1.
+
+%% Who reads or keeps the value: programs, variants, schedules, alert rules, processes and tax rules; and the reads
+%% recorded by the executions of the last 180 days. Shown before changing or archiving it.
+-spec usage(binary()) -> map().
+usage(Name) ->
+    Like = <<"%", Name/binary, "%">>,
+    Tpl = <<"%{{valor:", Name/binary, "}}%">>,
+    Rows = fun(Sql, P) -> case ana_db:rows(Sql, P) of {ok, R} -> R; _ -> [] end end,
+    Progs = [#{name => P, line => L, keeps => binary:match(S, <<"set_value">>) =/= nomatch andalso keeps(S, Name)}
+             || #{<<"name">> := P, <<"source">> := S} <- Rows("SELECT name, source FROM ana_system.program WHERE active AND kind = 'program' "
+                                                          "AND source LIKE $1 ORDER BY name", [Like]),
+                {Nm, L} <- names_in(S), Nm =:= Name],
+    Libs = [#{name => P, line => L}
+            || #{<<"name">> := P, <<"source">> := S} <- Rows("SELECT name, source FROM ana_system.program WHERE active AND kind = 'library' "
+                                                          "AND source LIKE $1 ORDER BY name", [Like]),
+               {Nm, L} <- names_in(S), Nm =:= Name],
+    Reads = case ana_db:one("SELECT count(*)::int AS n, max(started_at) AS last FROM ana_system.execution "
+                            "WHERE values_read IS NOT NULL AND started_at > now() - interval '180 days' "
+                            "AND EXISTS (SELECT 1 FROM jsonb_object_keys(values_read) k WHERE k = $1 OR k LIKE $1 || '@%')", [Name]) of
+        {ok, R} -> R;
+        _ -> #{}
+    end,
+    #{programs => Progs, libraries => Libs,
+      maintained_by => case ana_db:one("SELECT maintained_by FROM ana_system.company_value WHERE name = $1", [Name]) of
+                           {ok, #{<<"maintained_by">> := M}} -> M; _ -> [] end,
+      variants => Rows("SELECT id, program, name, owner IS NULL AS company FROM ana_system.run_variant "
+                       "WHERE jsonb_path_exists(entries, '$.*.company_value ? (@ == $n)', jsonb_build_object('n', $1::text)) "
+                       "ORDER BY program, name", [Name]),
+      schedules => Rows("SELECT id, name, program FROM scheduler.job WHERE params::text LIKE $1 ORDER BY name", [Tpl]),
+      alert_rules => Rows("SELECT id, name FROM ana_system.alert_rule WHERE threshold_value = $1 ORDER BY name", [Name]),
+      processes => Rows("SELECT DISTINCT p.code, p.name FROM bpm.version v JOIN bpm.process p ON p.code = v.process_code "
+                        "WHERE v.status = 'published' AND v.model::text LIKE $1 ORDER BY p.name", [Tpl]),
+      flows => Rows("SELECT DISTINCT d.code, d.name FROM flow.step s JOIN flow.definition d ON d.code = s.flow_code "
+                    "WHERE s.condition::text LIKE $1 OR s.params::text LIKE $1 ORDER BY d.name", [Tpl]),
+      tax_rules => Rows("SELECT id, name FROM tax.rule WHERE status = 'active' AND formulas::text LIKE $1 ORDER BY name",
+                        [<<"%company_value(%", Name/binary, "%">>]),
+      reads => Reads}.
+
+keeps(Source, Name) ->
+    re:run(Source, <<"ana\\.set_value\\(\\s*[\"']", Name/binary, "[\"']">>, [{capture, none}]) =:= match.
+
+%% Values nobody reads (no program, variant, schedule or rule names it, no execution read it in 180 days) and that
+%% exist for that long: suggested for archiving (T-065-11).
+unused(Names) ->
+    {ok, Old} = ana_db:rows("SELECT name FROM ana_system.company_value WHERE NOT archived AND created_at < now() - interval '180 days' "
+                            "AND name = ANY($1::text[])", [Names]),
+    Cands = [N || #{<<"name">> := N} <- Old],
+    case Cands of
+        [] -> [];
+        _ ->
+            {ok, Read} = ana_db:rows("SELECT DISTINCT split_part(k, '@', 1) AS n FROM ana_system.execution, jsonb_object_keys(values_read) k "
+                                     "WHERE values_read IS NOT NULL AND started_at > now() - interval '180 days'", []),
+            R = [N || #{<<"n">> := N} <- Read],
+            [N || N <- Cands, not lists:member(N, R), static_unused(N)]
+    end.
+
+static_unused(N) ->
+    U = usage(N),
+    lists:all(fun(K) -> maps:get(K, U) =:= [] end, [programs, libraries, maintained_by, variants, schedules, alert_rules,
+                                                     processes, flows, tax_rules]).
+
+%% ======================================================================= phase 2: quality gate and editor (D8, T-065-11)
+
+%% Findings for the editor and the gate (spec 064): a name that does not exist (blocks: the routine would fail in
+%% production) and a constant written in the code that is already a company value (a suggestion).
+-spec quality_findings(binary()) -> [map()].
+quality_findings(Source) when is_binary(Source) ->
+    loaded(),
+    Lines = binary:split(Source, <<"\n">>, [global]),
+    LineText = fun(L) -> case L =< length(Lines) of true -> string:trim(lists:nth(L, Lines)); false -> <<>> end end,
+    Unknown = [finding(<<"company_value_unknown">>, <<"serious">>, <<"robustness">>, L, LineText(L),
+                       <<"valor da empresa inexistente: "/utf8, N/binary>>,
+                       <<"crie-o em Administração → Valores da empresa ou corrija o nome"/utf8>>)
+               || {N, L} <- names_in(Source), ets:lookup(?TAB, N) =:= []],
+    Known = constants(),
+    Const = case map_size(Known) of
+        0 -> [];
+        _ ->
+            Lits = case re:run(Source, <<"([\"'])([^\"'\\\\\\n]{3,60})\\1|\\b([0-9]+\\.[0-9]+)\\b">>,
+                               [global, {capture, all, index}]) of
+                {match, Ms} -> Ms;
+                nomatch -> []
+            end,
+            lists:usort([{L, Txt, maps:get(Txt, Known)} ||
+                         M <- Lits, {Pos, Txt} <- [literal(Source, M)], maps:is_key(Txt, Known),
+                         L <- [line_of(Source, Pos)],
+                         binary:match(LineText(L), [<<"ana.value">>, <<"company_value">>, <<"ana:">>, <<"PARAMS">>]) =:= nomatch])
+    end,
+    Unknown ++ [finding(<<"company_value_constant">>, <<"info">>, <<"standards">>, L, LineText(L),
+                        iolist_to_binary([<<"constante \""/utf8>>, Txt, <<"\" já é o valor da empresa "/utf8>>, N]),
+                        iolist_to_binary([<<"use ana.value(\""/utf8>>, N, <<"\"): quando a empresa mudar o valor, a rotina acompanha"/utf8>>]))
+                || {L, Txt, N} <- Const];
+quality_findings(_) -> [].
+
+literal(Source, [{_, _}, _, {P, Len}]) when P >= 0 -> {P, binary:part(Source, P, Len)};
+literal(Source, [{_, _}, _, _, {P, Len}]) when P >= 0 -> {P, binary:part(Source, P, Len)};
+literal(_, _) -> {0, <<>>}.
+
+%% Text and number contents in effect today of simple values (three characters or more): content → name.
+constants() ->
+    Today = today(),
+    Inst = ana_instance:role(),
+    maps:from_list([{T, N} || {N, #{<<"shape">> := <<"single">>, <<"archived">> := false}, Vs} <- ets:tab2list(?TAB), is_binary(N),
+                              #{content := C} <- [pick(Vs, Today, null, Inst)],
+                              T <- [case C of B when is_binary(B) -> B; _ -> <<>> end], byte_size(T) >= 3]).
+
+finding(Rule, Sev, Cat, Line, Text, Msg, Sugg) ->
+    <<FP:8/binary, _/binary>> = binary:encode_hex(crypto:hash(sha256, [Rule, 0, Text]), lowercase),
+    #{<<"line">> => Line, <<"rule">> => Rule, <<"severity">> => Sev, <<"category">> => Cat, <<"message">> => Msg,
+      <<"suggestion">> => Sugg, <<"fingerprint">> => FP}.
+
+%% ======================================================================= phase 2: notices (T-065-11)
+
+%% Once a day (the cluster's daily task): a version that starts in the next 7 days becomes a notice — once.
+-spec daily_notices() -> ok.
+daily_notices() ->
+    _ = ana_db:exec(
+          "INSERT INTO ana_system.notice (kind, severity, message, link) "
+          "SELECT 'company_value', 'info', format('O valor da empresa %s muda em %s (vigência de uma nova versão).', v.name, "
+          "       to_char(v.valid_from, 'DD/MM/YYYY')), '#/admin/values' "
+          "FROM ana_system.company_value_version v JOIN ana_system.company_value d ON d.name = v.name AND NOT d.archived "
+          "WHERE v.status = 'active' AND v.valid_from > current_date AND v.valid_from <= current_date + 7 "
+          "AND NOT EXISTS (SELECT 1 FROM ana_system.notice n WHERE n.kind = 'company_value' AND n.message = "
+          "  format('O valor da empresa %s muda em %s (vigência de uma nova versão).', v.name, to_char(v.valid_from, 'DD/MM/YYYY')))", []),
+    ok.
+
+%% ======================================================================= phase 2: transport (D10, RF-065-10)
+
+%% The definitions of the values the programs of a package read; the content only of the values marked "igual em
+%% todos os ambientes" (their general versions).
+-spec transport_items([binary()]) -> [map()].
+transport_items(Sources) ->
+    Names = lists:usort([N || S <- Sources, {N, _} <- names_in(S)]),
+    case Names of
+        [] -> [];
+        _ ->
+            {ok, Defs} = ana_db:rows("SELECT name, description, area, value_type, shape, ref_kind, sensitive, reason_required, "
+                                     "same_everywhere, maintained_by FROM ana_system.company_value WHERE name = ANY($1::text[]) ORDER BY name",
+                                     [Names]),
+            [begin
+                 Versions = case maps:get(<<"same_everywhere">>, D) of
+                     true ->
+                         {ok, Vs} = ana_db:rows("SELECT valid_from::text AS valid_from, content::text AS content, expression "
+                                                "FROM ana_system.company_value_version WHERE name = $1 AND status = 'active' "
+                                                "AND instance IS NULL AND company_id IS NULL ORDER BY valid_from", [maps:get(<<"name">>, D)]),
+                         [maps:filter(fun(_, X) -> X =/= null end,
+                                      V#{<<"content">> => case maps:get(<<"content">>, V) of null -> null; B -> json:decode(B) end})
+                          || V <- Vs];
+                     false -> null
+                 end,
+                 I = #{<<"kind">> => <<"value">>, <<"name">> => maps:get(<<"name">>, D),
+                       <<"definition">> => maps:remove(<<"name">>, D), <<"versions">> => Versions},
+                 I#{<<"sha256">> => item_sha(I)}
+             end || D <- Defs]
+    end.
+
+-spec item_sha(map()) -> binary().
+item_sha(#{<<"name">> := N, <<"definition">> := D, <<"versions">> := V}) ->
+    binary:encode_hex(crypto:hash(sha256, json:encode([N, D, V])), lowercase).
+
+%% new | unchanged | update
+-spec transport_status(map()) -> binary().
+transport_status(#{<<"name">> := N} = I) ->
+    Archived = case ana_db:one("SELECT archived FROM ana_system.company_value WHERE name = $1", [N]) of
+        {ok, #{<<"archived">> := A}} -> A;
+        _ -> false
+    end,
+    case transport_items_here(N) of
+        undefined -> <<"new">>;
+        _ when Archived -> <<"update">>;                  % the import brings it back
+        Here -> case maps:get(<<"definition">>, Here) =:= maps:get(<<"definition">>, I) andalso
+                     (maps:get(<<"versions">>, I) =:= null orelse maps:get(<<"versions">>, Here) =:= maps:get(<<"versions">>, I)) of
+                    true -> <<"unchanged">>;
+                    false -> <<"update">>
+                end
+    end.
+
+%% The same item as this installation would export it (to compare with the one that arrives).
+transport_items_here(N) ->
+    case transport_items([<<"ana.value('", N/binary, "')">>]) of
+        [Item] -> Item;
+        [] -> undefined
+    end.
+
+%% Inside the import's transaction: the definition created or brought up to date (the content of a value marked the
+%% same everywhere too). Returns what it was before, for the undo.
+-spec transport_apply(pid(), map(), binary()) -> map() | null.
+transport_apply(C, #{<<"name">> := N, <<"definition">> := D} = I, Who) ->
+    Prev = case ana_db:rows(C, "SELECT description, area, value_type, shape, ref_kind, sensitive, reason_required, same_everywhere, "
+                               "maintained_by, archived FROM ana_system.company_value WHERE name = $1 FOR UPDATE", [N]) of
+        {ok, [P]} -> P;
+        _ -> null
+    end,
+    Get = fun(K) -> maps:get(K, D, null) end,
+    {ok, _} = ana_db:query(C, "INSERT INTO ana_system.company_value (name, description, area, value_type, shape, ref_kind, sensitive, "
+                              "reason_required, same_everywhere, maintained_by, created_by) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, "
+                              "COALESCE($10::text[], '{}'), $11) ON CONFLICT (name) DO UPDATE SET description = EXCLUDED.description, "
+                              "area = EXCLUDED.area, sensitive = EXCLUDED.sensitive, reason_required = EXCLUDED.reason_required, "
+                              "same_everywhere = EXCLUDED.same_everywhere, maintained_by = EXCLUDED.maintained_by, archived = false",
+                           [N, Get(<<"description">>), Get(<<"area">>), Get(<<"value_type">>), Get(<<"shape">>), Get(<<"ref_kind">>),
+                            Get(<<"sensitive">>) =:= true, Get(<<"reason_required">>) =:= true, Get(<<"same_everywhere">>) =:= true,
+                            Get(<<"maintained_by">>), Who]),
+    Added = case maps:get(<<"versions">>, I, null) of
+        Vs when is_list(Vs) ->
+            [Id || V <- Vs,
+                   {ok, #{rows := [[Id]]}} <- [ana_db:query(C,
+                       "INSERT INTO ana_system.company_value_version (name, valid_from, content, expression, status, reason, requested_by) "
+                       "SELECT $1, $2::date, $3::jsonb, $4, 'active', 'transporte', $5 WHERE NOT EXISTS ("
+                       "  SELECT 1 FROM ana_system.company_value_version x WHERE x.name = $1 AND x.status = 'active' AND x.valid_from = $2::date "
+                       "  AND x.instance IS NULL AND x.company_id IS NULL AND x.content IS NOT DISTINCT FROM $3::jsonb "
+                       "  AND x.expression IS NOT DISTINCT FROM $4) RETURNING id",
+                       [N, maps:get(<<"valid_from">>, V), json_text(maps:get(<<"content">>, V, null)), maps:get(<<"expression">>, V, null), Who])]];
+        _ -> []
+    end,
+    {ok, _} = ana_db:query(C, "INSERT INTO ana_system.company_value_change (name, action, username, before, after, reason) "
+                              "VALUES ($1, 'transported', $2, $3::jsonb, $4::jsonb, 'transporte')",
+                           [N, Who, json_text(Prev), json_text(D#{<<"versions">> => length(Added)})]),
+    #{<<"definition">> => Prev, <<"added">> => Added}.
+
+%% Undo of an import: the versions it added are withdrawn; the definition goes back as it was (archived if it was new).
+-spec transport_undo(pid(), map()) -> ok.
+transport_undo(C, #{<<"name">> := N, <<"previous">> := Prev}) ->
+    Added = case Prev of #{<<"added">> := A} -> A; _ -> [] end,
+    {ok, _} = ana_db:query(C, "UPDATE ana_system.company_value_version SET status = 'withdrawn' WHERE id = ANY($1::bigint[])", [Added]),
+    {ok, _} = case Prev of
+        #{<<"definition">> := null} -> ana_db:query(C, "UPDATE ana_system.company_value SET archived = true WHERE name = $1", [N]);
+        #{<<"definition">> := D} ->
+            ana_db:query(C, "UPDATE ana_system.company_value SET description = $2, area = $3, sensitive = $4, reason_required = $5, "
+                            "same_everywhere = $6, maintained_by = $7, archived = $8 WHERE name = $1",
+                         [N | [maps:get(K, D) || K <- [<<"description">>, <<"area">>, <<"sensitive">>, <<"reason_required">>,
+                                                       <<"same_everywhere">>, <<"maintained_by">>, <<"archived">>]]]);
+        _ -> {ok, ok}
+    end,
+    ok.
+
+%% Values the programs of a package read that neither the package nor this installation has (warned before the import).
+-spec missing_in_package([binary()], [binary()]) -> [binary()].
+missing_in_package(Sources, InPackage) ->
+    Names = lists:usort([N || S <- Sources, {N, _} <- names_in(S)]) -- InPackage,
+    case Names of
+        [] -> [];
+        _ ->
+            {ok, Here} = ana_db:rows("SELECT name FROM ana_system.company_value WHERE name = ANY($1::text[])", [Names]),
+            Names -- [N || #{<<"name">> := N} <- Here]
+    end.
+
+%% Program names that may keep a value (invalid entries are dropped).
+keepers(L) when is_list(L) ->
+    lists:usort([string:trim(P) || P <- L, is_binary(P), ana_program:valid_name(string:trim(P))]);
+keepers(_) -> [].
+
 %% ======================================================================= helpers
 
 text_ok(B, Min, Max) when is_binary(B) -> L = string:length(string:trim(B)), L >= Min andalso L =< Max;
@@ -720,6 +1050,7 @@ tx(Fun, Who, Name, Action) ->
              end
          end) of
         {ok, R} ->
+            reload(Name),                    % this node at once; the others by the notice (after COMMIT)
             ana_admin:log(Who, Action, Name, null, R),
             {ok, R};
         {error, {Code, M}} -> {error, Code, M};

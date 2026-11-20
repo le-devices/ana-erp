@@ -581,6 +581,18 @@ def make_ana_module(channel, output, context):
         return company_value(channel.request("value", {"name": str(name), "at": at,
                                                        "company": int(company) if company is not None else None}))
 
+    def set_value(name, value, reason=None, valid_from=None):
+        """Keeps a company value (spec 065, D4) — only a routine listed in "Mantido pelas rotinas" of the value may.
+        Checked now (type, credentials) and written right after this execution's COMMIT, as a new version from today
+        (or `valid_from`), recorded with the routine and the user it ran for. A rehearsal only lists it."""
+        if isinstance(valid_from, (datetime.date, datetime.datetime)):
+            valid_from = valid_from.isoformat()[:10]
+        if isinstance(value, (datetime.date, datetime.datetime)):
+            value = value.isoformat()[:10]
+        if isinstance(value, decimal.Decimal):
+            value = str(value)
+        return channel.request("set_value", {"name": str(name), "value": value, "reason": reason, "valid_from": valid_from})
+
     def remote(system, function, **params):
         """Call an exposed program on a registered remote system (RF-003-08)."""
         return channel.request("remote", {"system": system, "function": function, "params": params})
@@ -938,6 +950,7 @@ def make_ana_module(channel, output, context):
     m.extend = extend
     m.schedule_job = schedule_job
     m.value = value
+    m.set_value = set_value
     m.Selection = Selection
     m.remote = remote
     m.http = http
@@ -1512,7 +1525,7 @@ def inspect(channel, msg):
 # does; and the edges "function>library:function" (or ">program" for ana.call) to what it uses. The catalog joins
 # the edges of all programs, so a report that only reads through a library is not taken for one that writes.
 WRITE_SQL_RE = re.compile(r"\b(INSERT\s+INTO|UPDATE\s+[\w.\"]+\s+SET|DELETE\s+FROM|MERGE\s+INTO|TRUNCATE)\b", re.I)
-WRITE_CALLS = {"sql_exec", "sql_batch", "send_email", "schedule_job", "remote"}
+WRITE_CALLS = {"sql_exec", "sql_batch", "send_email", "schedule_job", "remote", "set_value"}
 READ_FILE_CALLS = {"get", "list", "folder"}
 DB_CALL_RE = re.compile(r"\b([a-z_][a-z0-9_]*\.[a-z_][a-z0-9_]*)\s*\(", re.I)
 

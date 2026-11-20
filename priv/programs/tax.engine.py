@@ -284,8 +284,9 @@ def _env(prefix, attrs):
     return {f"{prefix}.{k}": v for k, v in attrs.items()}
 
 
-def compute(doc, data, indicator=None):
-    """doc: normalized document (see normalize()). Returns the result with explanation. Pure function."""
+def compute(doc, data, indicator=None, company_value=None):
+    """doc: normalized document (see normalize()). Returns the result with explanation. Pure function: the indicators
+    and the company values (spec 065, formula `company_value('nome')` on the date of the fact) come from the caller."""
     day = as_date(doc["date"])
     base_env = {}
     base_env.update(_env("doc", doc.get("doc", {})))
@@ -322,7 +323,15 @@ def compute(doc, data, indicator=None):
                 return Decimal(0) if field in MONEY or field == "rate" else None
             v = src.get(field, (src.get("outputs") or {}).get(field))
             return Decimal(0) if v is None and field in MONEY else v
+        def cvalue(name):
+            if company_value is None:
+                raise fx.FormulaError(f"valor da empresa indisponível aqui: {name}")
+            v = company_value(name, day)
+            if isinstance(v, (int, float)) and not isinstance(v, bool):
+                return fx.dec(v)
+            return v
         funcs = {
+            "company_value": cvalue,
             "table": lambda name, key, field=None: data.table(name, key, day, field),
             "bracket": lambda name, group, value, field: data.bracket(name, group, value, field, day),
             "indicator": ind,
@@ -570,7 +579,8 @@ def calculate(document, record=None):
     total = sum((i["amount"] for i in doc["items"]), Decimal(0))
     day = as_date(doc["date"])
     fixed = {k: fx.dec(v) for k, v in (document.get("indicators") or {}).items()}   # simulations and test cases
-    result = compute(doc, data, lambda code: fixed[code] if code in fixed else indicator_value(data, code, day, total))
+    result = compute(doc, data, lambda code: fixed[code] if code in fixed else indicator_value(data, code, day, total),
+                     company_value=lambda name, at: ana.value(name, at=at))
     result["postings"] = [{"account": a, "debit": d, "credit": c, "tax": t} for a, d, c, t in postings(result, data)]
     result["input"] = doc
     result["elapsed_ms"] = round((time.perf_counter() - started) * 1000, 1)

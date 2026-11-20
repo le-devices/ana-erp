@@ -105,7 +105,10 @@ export(B, User = #{username := Who}) ->
                         {false, _} -> {error, #{code => <<"QUALITY_GATE">>, report => Gate,
                                                 message => <<"portão de qualidade: há achados que bloqueiam o transporte "
                                                              "(corrija, ou peça isenção a outra pessoa)"/utf8>>}};
-                        {true, {ok, _Pub, Priv}} -> sign_and_store(Title, B#{quality_gate => Gate}, P ++ C ++ S, Priv, Who);
+                        {true, {ok, _Pub, Priv}} ->
+                            %% Spec 065 (D10): the definitions of the company values the programs read travel with them.
+                            Values = ana_values:transport_items([Src || #{<<"source">> := Src} <- P]),
+                            sign_and_store(Title, B#{quality_gate => Gate}, P ++ C ++ S ++ Values, Priv, Who);
                         {true, E} -> E
                     end
             end
@@ -175,6 +178,7 @@ item_with_sha(I) -> I#{<<"sha256">> => item_sha(I)}.
 %% What each item's hash covers (recomputed by the destination).
 -spec item_sha(map()) -> binary().
 item_sha(#{<<"kind">> := <<"program">>, <<"source">> := S}) -> sha(S);
+item_sha(#{<<"kind">> := <<"value">>} = I) -> ana_values:item_sha(I);
 item_sha(#{<<"kind">> := <<"command">>, <<"name">> := C, <<"program">> := P, <<"description">> := D}) ->
     sha([C, 0, P, 0, text(D)]);
 item_sha(#{<<"kind">> := <<"setting">>, <<"name">> := K, <<"value">> := V}) ->
@@ -259,6 +263,9 @@ valid_item(#{<<"kind">> := <<"command">>, <<"name">> := C, <<"program">> := P, <
     item_sha(I) =:= H;
 valid_item(#{<<"kind">> := <<"setting">>, <<"name">> := K, <<"value">> := V, <<"sha256">> := H} = I) when is_binary(K) ->
     item_sha(I) =:= H andalso ana_settings:valid(K, V);
+valid_item(#{<<"kind">> := <<"value">>, <<"name">> := N, <<"definition">> := D, <<"sha256">> := H} = I)
+  when is_binary(N), is_map(D), is_binary(H) ->
+    item_sha(I) =:= H;
 valid_item(_) -> false.
 
 %% ---------------------------------------------------------------- preflight
@@ -285,7 +292,12 @@ preflight(#{<<"items">> := Items}) ->
     Missing = Deps -- (InPackage ++ [N || #{<<"name">> := N} <- Existing]),
     All = PStatus ++ Others,
     Conflicts = [N || #{name := N, status := <<"conflict">>} <- All],
-    #{items => All, conflicts => Conflicts, missing => Missing, ok => Conflicts =:= [] andalso Missing =:= []}.
+    %% Spec 065 (D10): values the programs read that neither the package nor this installation has — warned, with the
+    %% offer to create them in "Valores da empresa".
+    MissingValues = ana_values:missing_in_package([S || #{<<"source">> := S} <- Programs],
+                                                  [N || #{<<"kind">> := <<"value">>, <<"name">> := N} <- Items]),
+    #{items => All, conflicts => Conflicts, missing => Missing, missing_values => MissingValues,
+      ok => Conflicts =:= [] andalso Missing =:= []}.
 
 other_status(#{<<"kind">> := <<"command">>, <<"name">> := C} = I) ->
     case ana_db:one("SELECT code, program, description FROM ana_system.command WHERE code = $1", [C]) of
@@ -296,6 +308,7 @@ other_status(#{<<"kind">> := <<"command">>, <<"name">> := C} = I) ->
                 false -> <<"update">>
             end
     end;
+other_status(#{<<"kind">> := <<"value">>} = I) -> ana_values:transport_status(I);
 other_status(#{<<"kind">> := <<"setting">>, <<"name">> := K, <<"value">> := V}) ->
     case ana_settings:get(binary_to_existing_atom(K)) =:= V of
         true -> <<"unchanged">>;
@@ -372,6 +385,7 @@ apply_items(Id, #{<<"items">> := Items, <<"title">> := Title}, Pre, #{username :
                     _ = [ana_program:invalidate(Nm) || #{<<"kind">> := <<"program">>, <<"name">> := Nm} <- Items],
                     %% Spec 045 (D6): the variants of the programs that arrived follow their parameters.
                     _ = [catch ana_variants:validate_program(Nm) || #{<<"kind">> := <<"program">>, <<"name">> := Nm} <- Items],
+                    _ = [catch ana_values:reload(Nm) || #{<<"kind">> := <<"value">>, <<"name">> := Nm} <- Items],
                     ana_admin:log(Who, <<"transport.import">>, Title, null, #{id => Id, items => N}),
                     {ok, #{id => Id, imported => N}};
                 E -> E
@@ -399,6 +413,8 @@ apply_item(C, Seq, #{<<"kind">> := <<"command">>, <<"name">> := Code, <<"program
         {ok, _} -> {Seq, Prev, null};
         {error, #{message := M}} -> throw({abort, <<"comando "/utf8, Code/binary, ": ", M/binary>>})
     end;
+apply_item(C, Seq, #{<<"kind">> := <<"value">>} = I, _, _, Who) ->
+    {Seq, ana_values:transport_apply(C, I, Who), null};
 apply_item(C, Seq, #{<<"kind">> := <<"setting">>, <<"name">> := K, <<"value">> := V}, _, _, Who) ->
     Prev = #{<<"value">> => ana_settings:get(binary_to_existing_atom(K))},
     ok = set_setting(C, K, V, Who),
@@ -433,6 +449,7 @@ revert(Id, #{username := Who}) ->
                     _ = [ana_program:invalidate(Nm) || #{<<"kind">> := <<"program">>, <<"name">> := Nm} <- Items],
                     %% Spec 045 (D6): the variants of the programs that arrived follow their parameters.
                     _ = [catch ana_variants:validate_program(Nm) || #{<<"kind">> := <<"program">>, <<"name">> := Nm} <- Items],
+                    _ = [catch ana_values:reload(Nm) || #{<<"kind">> := <<"value">>, <<"name">> := Nm} <- Items],
                     ana_admin:log(Who, <<"transport.revert">>, Title, null, #{id => Id, items => N}),
                     {ok, #{id => Id, reverted => N}};
                 E -> E
@@ -459,6 +476,8 @@ undo_item(C, #{<<"kind">> := <<"command">>, <<"name">> := Code, <<"previous">> :
     {ok, _} = ana_db:query(C, "DELETE FROM ana_system.command WHERE code = $1", [Code]), ok;
 undo_item(C, #{<<"kind">> := <<"command">>, <<"name">> := Code, <<"previous">> := #{<<"program">> := P, <<"description">> := D}}, _, _) ->
     {ok, _} = ana_db:query(C, "UPDATE ana_system.command SET program = $2, description = $3 WHERE code = $1", [Code, P, D]), ok;
+undo_item(C, #{<<"kind">> := <<"value">>} = I, _, _) ->
+    ana_values:transport_undo(C, I);
 undo_item(C, #{<<"kind">> := <<"setting">>, <<"name">> := K, <<"previous">> := #{<<"value">> := V}}, _, Who) ->
     set_setting(C, K, V, Who).
 

@@ -81,7 +81,7 @@ check(S = #{states := Old}) ->
 %% the last ones known keep working (the database being down is exactly when
 %% alerts matter). Open incidents of this node are taken back once after a restart.
 load(S = #{resumed := Resumed, firing := Firing}, Node) ->
-    S1 = case {catch ana_db:rows("SELECT r.id, r.name, r.source, r.target, r.level, r.op, r.threshold::float8 AS threshold, "
+    S1 = case {catch ana_db:rows("SELECT r.id, r.name, r.source, r.target, r.level, r.op, r.threshold::float8 AS threshold, r.threshold_value, "
                                 "  r.window_s, r.severity, r.notify_studio, r.connector, r.recipients, c.kind AS connector_kind "
                                 "FROM ana_system.alert_rule r LEFT JOIN integration.connector c ON c.name = r.connector "
                                 "WHERE r.active ORDER BY r.id", []),
@@ -194,9 +194,18 @@ holding(R = #{<<"source">> := <<"health">>, <<"target">> := T, <<"level">> := Le
     Id = maps:get(<<"id">>, R),
     [{{Id, C}, Msg} || {C, #{state := St, message := Msg}} <- maps:to_list(States),
                        T =:= <<"*">> orelse T =:= C, holds(health, St, Level)];
-holding(R = #{<<"source">> := <<"metric">>, <<"target">> := T, <<"op">> := Op, <<"threshold">> := Limit}, _S, M) ->
+holding(R = #{<<"source">> := <<"metric">>, <<"target">> := T, <<"op">> := Op, <<"threshold">> := Limit0}, _S, M) ->
+    %% Spec 065: a limit taken from a company value is read from memory at each check.
+    Limit = case maps:get(<<"threshold_value">>, R, null) of
+        null -> Limit0;
+        Name -> case ana_values:read(Name, #{}) of
+                    {ok, #{value := X}} when is_number(X) -> X;
+                    {ok, #{value := X}} when is_binary(X) -> try binary_to_float(X) catch _:_ -> try binary_to_integer(X) catch _:_ -> Limit0 end end;
+                    _ -> Limit0
+                end
+    end,
     case maps:get(T, M, undefined) of
-        V when is_number(V) ->
+        V when is_number(V), is_number(Limit) ->
             case holds(Op, V, Limit) of
                 true -> [{{maps:get(<<"id">>, R), T}, fmt("~ts = ~ts (regra: ~ts ~ts)~ts", [T, num(V), Op, num(Limit), who(T)])}];
                 false -> []

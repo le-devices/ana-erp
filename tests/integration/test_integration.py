@@ -8707,3 +8707,208 @@ class TestRunVariants(Base):
         self.variant(prog, expect=400, name="Trava", entries={"cc": {"value": "A"}}, locked=["n"])
         self.variant(prog, name="Dupla", entries={"cc": {"value": "A"}})
         self.variant(prog, expect=409, name="dupla", entries={"cc": {"value": "B"}})
+
+
+class TestCompanyValuesPhase2(Base):
+    """Company values, phase 2 (spec 065): kept by routines, read by variants, schedules, rules and alerts; where they
+    are used; checked by the quality gate; carried by transports; announced before they change."""
+
+    @classmethod
+    def setUpClass(cls):
+        super().setUpClass()
+        cls.area = f"u{SUFFIX}"
+        cls.names, cls.jobs, cls.rules = [], [], []
+        s, meta, _ = http("GET", "/api/values/meta", token=cls.token)
+        cls.today = datetime.date.fromisoformat(meta["today"])
+
+    @classmethod
+    def tearDownClass(cls):
+        for j in cls.jobs:
+            http("DELETE", f"/api/scheduler/jobs/{j}", token=cls.token)
+        for r in cls.rules:
+            http("DELETE", f"/api/admin/observability/alerts/rules/{r}", token=cls.token)
+        for n in cls.names:
+            http("PUT", f"/api/values/{n}", {"archived": True}, cls.token)
+
+    def define(self, short, value_type="text", **kw):
+        name = f"{self.area}.{short}"
+        s, c, _ = http("POST", "/api/values", {"name": name, "description": f"Teste {short}", "value_type": value_type, **kw}, self.token)
+        self.assertEqual(s, 200, c)
+        self.names.append(name)
+        return name
+
+    def propose(self, name, **body):
+        s, c, _ = http("POST", f"/api/values/{name}/versions", body, self.token)
+        self.assertEqual(s, 200, c)
+        return c
+
+    def now(self, name):
+        s, c, _ = http("POST", "/api/values/preview", {"name": name}, self.token)
+        self.assertEqual(s, 200, c)
+        return c["value"]
+
+    def wait_job(self, job_id):
+        end, occ = time.time() + 30, []
+        while time.time() < end and not occ:
+            occ = [o for o in http("GET", f"/api/scheduler/jobs/{job_id}/occurrences", token=self.token)[1]
+                   if o["status"] in ("success", "error")]
+            time.sleep(0.5)
+        self.assertTrue(occ)
+        return occ[0]
+
+    def test_rf_065_07_kept_by_a_routine_after_its_commit(self):
+        keeper, other = f"test.cv2_keeper_{SUFFIX}", f"test.cv2_other_{SUFFIX}"
+        name = self.define("contador", "integer", maintained_by=[keeper])
+        self.propose(name, content=1, valid_from="2020-01-01")
+        src = ("def main(name, n, fail=False):\n"
+               "    r = ana.set_value(name, n, reason='teste')\n"
+               "    if fail:\n        raise ana.Error('PAROU', 'falhou depois de mudar o valor')\n"
+               "    return r\n")
+        self.save(keeper, src)
+        self.save(other, src)
+        s, c, _ = self.run_program(keeper, {"name": name, "n": 5})
+        self.assertEqual((s, c["result"]["before"], c["result"]["value"]), (200, 1, 5), c)
+        self.assertEqual(self.now(name), 5)
+        s, c, _ = self.run_program(keeper, {"name": name, "n": 9, "fail": True})       # the routine failed: nothing kept
+        self.assertEqual(c["error"]["code"], "PAROU", c)
+        self.assertEqual(self.now(name), 5)
+        s, c, _ = self.run_program(keeper, {"name": name, "n": 7}, rehearse=True)      # a rehearsal only lists it
+        self.assertEqual([(h["kind"], h["name"]) for h in c["rehearsal"]["held"]], [("value", name)], c)
+        self.assertEqual(self.now(name), 5)
+        s, c, _ = self.run_program(other, {"name": name, "n": 3})
+        self.assertEqual(c["error"]["code"], "FORBIDDEN", c)
+        s, c, _ = self.run_program(keeper, {"name": name, "n": "três"})
+        self.assertEqual(c["error"]["code"], "INVALID", c)
+        s, d, _ = http("GET", f"/api/values/{name}", token=self.token)
+        kept = [x for x in d["changes"] if x["action"] == "kept"]
+        self.assertEqual((len(kept), kept[0]["program"], kept[0]["username"]), (1, keeper, "admin"), kept)
+        self.assertEqual(d["usage"]["maintained_by"], [keeper])
+
+    def test_ca_065_02_closing_moves_the_open_period_and_what_reads_it_follows(self):
+        old = datetime.date.today() - datetime.timedelta(days=3650)
+        s, c, _ = self.run_program("finance.close_period", {})
+        current = None
+        if psql_available():
+            v = psql("SELECT finance.closed_until()")
+            current = datetime.date.fromisoformat(v) if v else None
+        if current:
+            old = max(old, current + datetime.timedelta(days=1))
+        prog = f"test.cv2_period_{SUFFIX}"
+        self.save(prog, 'PARAMS = {"period": {"type": "str", "label": "período"}}\ndef main(period=None):\n    return period\n')
+        s, v, _ = http("POST", f"/api/programs/{prog}/variants",
+                       {"name": "Período aberto", "entries": {"period": {"company_value": "financeiro.periodo_aberto"}}}, self.token)
+        self.assertEqual(s, 200, v)
+        s, j, _ = http("POST", "/api/scheduler/jobs", {"name": f"t-cv2-{SUFFIX}", "program": "demo.hello",
+                                                       "params": {"name": "{{valor:financeiro.periodo_aberto}}"},
+                                                       "triggers": [{"kind": "cron", "cron": "0 3 1 1 *"}]}, self.token)
+        self.assertEqual(s, 200, j)
+        self.jobs.append(j["id"])
+        s, c, _ = self.run_program("finance.close_period", {"action": "close", "until": old.isoformat()})
+        self.assertEqual(s, 200, c)
+        try:
+            want = (old + datetime.timedelta(days=1)).strftime("%Y-%m")
+            self.assertEqual(self.now("financeiro.periodo_aberto"), want)
+            s, c, _ = http("POST", f"/api/programs/{prog}/run", {"params": {}, "variant": v["id"]}, self.token)
+            self.assertEqual(c["result"], want, c)
+            http("POST", f"/api/scheduler/jobs/{j['id']}/run", {}, self.token)
+            self.assertEqual(self.wait_job(j["id"])["result"]["message"], f"Olá, {want}!")
+            s, d, _ = http("GET", "/api/values/financeiro.periodo_aberto", token=self.token)
+            kept = [x for x in d["changes"] if x["action"] == "kept"][0]
+            self.assertEqual((kept["program"], kept["username"]), ("finance.close_period", "admin"))
+            self.assertIn(prog, [x["program"] for x in d["usage"]["variants"]])
+            self.assertIn(j["name"], [x["name"] for x in d["usage"]["schedules"]])
+        finally:
+            self.run_program("finance.close_period", {"action": "reopen", "until": (old - datetime.timedelta(days=1)).isoformat(),
+                                                      "reason": "teste automatizado dos valores da empresa"})
+
+    def test_rf_065_07_last_inventory_kept_by_the_count(self):
+        if not psql_available():
+            self.skipTest("psql no contêiner indisponível")
+        bal = psql("SELECT COALESCE(sum(m.quantity), 0) FROM inventory.stock_movement m JOIN base.product p ON p.id = m.product_id "
+                   "JOIN inventory.warehouse w ON w.id = m.warehouse_id WHERE p.code = 'FEIJAO-1' AND w.code = 'CENTRAL'")
+        s, c, _ = self.run_program("inventory.count", {"warehouse": "CENTRAL", "confirm": True,
+                                                        "lines": [{"product": "FEIJAO-1", "counted": bal}]})
+        self.assertEqual(s, 200, c)
+        self.assertEqual(self.now("estoque.ultimo_inventario"), self.today.isoformat())
+
+    def test_t_065_07_alert_limit_from_a_company_value(self):
+        s, a, _ = http("GET", "/api/admin/observability/alerts", token=self.token)
+        metric = a["metrics"][0]
+        limit = self.define("limite_alerta", "decimal")
+        self.propose(limit, content="-1", valid_from="2020-01-01")
+        texto = self.define("texto_alerta", "text")
+        body = {"name": f"Limite por valor {SUFFIX}", "source": "metric", "target": metric, "op": ">", "threshold": None,
+                "threshold_value": "{{valor:" + texto + "}}", "window_s": 0, "severity": "info", "notify_studio": False}
+        s, c, _ = http("POST", "/api/admin/observability/alerts/rules", body, self.token)
+        self.assertEqual(s, 400, c)                                            # a text value is no limit
+        body["threshold_value"] = limit
+        s, c, _ = http("POST", "/api/admin/observability/alerts/rules", body, self.token)
+        self.assertEqual(s, 200, c)
+        self.rules.append(c["id"])
+        end, opened = time.time() + 40, 0
+        while time.time() < end and not opened:
+            rule = [r for r in http("GET", "/api/admin/observability/alerts", token=self.token)[1]["rules"] if r["id"] == c["id"]][0]
+            opened = int(rule["open"] or 0)
+            time.sleep(2)
+        self.assertGreater(opened, 0, "a métrica acima de -1 (valor da empresa) devia abrir um incidente")
+        self.assertEqual(rule["threshold_value"], limit)
+        s, d, _ = http("GET", f"/api/values/{limit}", token=self.token)
+        self.assertEqual([r["name"] for r in d["usage"]["alert_rules"]], [body["name"]])
+
+    def test_ca_065_08_quality_gate_points_unknown_names_and_suggests_values(self):
+        s, r, _ = http("POST", "/api/programs/inspect", {"source": f"def main():\n    return ana.value('{self.area}.nao_existe')\n"}, self.token)
+        self.assertEqual(s, 200, r)
+        bad = [f for f in r["lint"] if f["rule"] == "company_value_unknown"]
+        self.assertEqual((len(bad), bad[0]["severity"], bad[0]["line"]), (1, "serious", 2), r["lint"])
+        name = self.define("deposito", "text")
+        code = f"DEP{SUFFIX}"
+        self.propose(name, content=code, valid_from="2020-01-01")
+        s, r, _ = http("POST", "/api/programs/inspect", {"source": f"def main():\n    w = '{code}'\n    return w\n"}, self.token)
+        hint = [f for f in r["lint"] if f["rule"] == "company_value_constant"]
+        self.assertEqual(len(hint), 1, r["lint"])
+        self.assertEqual(hint[0]["severity"], "info")
+        self.assertIn(name, hint[0]["message"])
+
+    def test_rf_065_10_transport_carries_the_definition_and_the_same_everywhere_content(self):
+        s, k, _ = http("GET", "/api/admin/transports/key", token=self.token)
+        http("PUT", f"/api/admin/transports/origins/{k['name']}", {"public_key": k["public_key"]}, self.token)
+        name = self.define("igual", "text", same_everywhere=True)
+        self.propose(name, content="mesmo em todo lugar", valid_from="2020-01-01")
+        local = self.define("local", "text")
+        self.propose(local, content="só aqui", valid_from="2020-01-01")
+        prog = f"test.cv2_tr_{SUFFIX}"
+        self.save(prog, f"def main():\n    return [ana.value('{name}'), ana.value('{local}')]\n")
+        s, c, _ = http("POST", "/api/admin/transports/export", {"title": f"Valores {SUFFIX}", "programs": [prog]}, self.token)
+        self.assertEqual(s, 200, c)
+        manifest = json.loads(base64.b64decode(c["package"]["manifest_b64"]))
+        items = {i["name"]: i for i in manifest["items"] if i["kind"] == "value"}
+        self.assertEqual(sorted(items), sorted([name, local]))
+        self.assertEqual([v["content"] for v in items[name]["versions"]], ["mesmo em todo lugar"])
+        self.assertIsNone(items[local]["versions"])                          # the content stays where it is
+        http("PUT", f"/api/values/{name}", {"archived": True}, self.token)
+        s, r, _ = http("POST", "/api/admin/transports/receive", token=self.token, raw=json.dumps(c["package"]).encode())
+        self.assertEqual(s, 200, r)
+        st = {i["name"]: i["status"] for i in r["preflight"]["items"]}
+        self.assertEqual((st[name], st[local]), ("update", "unchanged"), r["preflight"])
+        s, i, _ = http("POST", f"/api/admin/transports/{r['id']}/import", {}, self.token)
+        self.assertEqual(s, 200, i)
+        self.assertEqual(self.now(name), "mesmo em todo lugar")             # back, with its content
+        s, u, _ = http("POST", f"/api/admin/transports/{r['id']}/revert", {}, self.token)
+        self.assertEqual(s, 200, u)
+        s, c2, _ = http("POST", "/api/values/preview", {"name": name}, self.token)
+        self.assertEqual(c2["error"]["code"], "VALUE_NOT_FOUND", c2)        # archived again, as before the import
+
+    def test_t_065_11_upcoming_change_is_announced_and_unused_values_are_pointed(self):
+        name = self.define("aviso", "integer")
+        self.propose(name, content=1, valid_from="2020-01-01")
+        self.propose(name, content=2, valid_from=(self.today + datetime.timedelta(days=3)).isoformat())
+        s, c, _ = http("POST", "/api/admin/retention/purge", {}, self.token)
+        self.assertEqual(s, 200, c)
+        s, notes, _ = http("GET", "/api/admin/checks/notices", token=self.token)
+        self.assertTrue(any(name in n["message"] for n in notes), notes[:5])
+        if psql_available():
+            quiet = self.define("esquecido", "text")
+            psql(f"UPDATE ana_system.company_value SET created_at = now() - interval '200 days' WHERE name = '{quiet}'")
+            s, lst, _ = http("GET", f"/api/values?q={self.area}", token=self.token)
+            flags = {v["name"]: v["unused"] for v in lst["values"]}
+            self.assertEqual((flags[quiet], flags[name]), (True, False))

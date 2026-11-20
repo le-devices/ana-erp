@@ -35,6 +35,9 @@ def main(action=None, until=None, reason=None):
         ana.sql_exec("INSERT INTO finance.period_close (closed_until, action, reason, done_by) VALUES ($1, $2, $3, $4)",
                      until, action, (reason or "").strip() or None, ana.context.user)
         current = until
+        # Spec 065 (CA-065-02): the open period follows the closing; variants and schedules that read it move with it.
+        ana.set_value("financeiro.periodo_aberto", f"{current + datetime.timedelta(days=1):%Y-%m}",
+                      reason=("fechamento" if action == "close" else "reabertura") + f" até {current:%d/%m/%Y}")
     hist = ana.sql("SELECT closed_until, action, reason, done_by, done_at FROM finance.period_close ORDER BY id DESC LIMIT 50")
     ana.metrics([{"label": "Fechado até", "value": f"{current:%d/%m/%Y}" if current else "nada fechado",
                   "status": "ok" if current else "warn"}])

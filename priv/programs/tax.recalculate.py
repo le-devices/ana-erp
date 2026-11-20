@@ -22,7 +22,7 @@ def main(calculation):
         for k in ("amount", "quantity", "unit_price", "discount"):
             it[k] = Decimal(str(it[k]))
     fixed = {k: Decimal(str(v)) for k, v in (old.get("indicators") or {}).items()}
-    new = engine.compute(inp, engine.load(), lambda code: fixed[code])
+    new = engine.compute(inp, engine.load(), lambda code: fixed[code], company_value=lambda name, at: ana.value(name, at=at))
     key = lambda r: [(t["tax"], str(t.get("amount", "0")), str(t.get("withheld", "0")), str(t.get("credit", "0")))
                      for t in r["taxes"]]
     same = engine.canonical(key(old)) == engine.canonical(key(new))

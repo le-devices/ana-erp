@@ -176,6 +176,8 @@ claim_today() ->
 purge() ->
     Counts = maps:from_list([{K, purge_category(C)} || C = {K, _, _, _, _, _} <- categories()]),
     _ = ana_db:exec("DELETE FROM ana_system.retention_day WHERE day < current_date - 400", []),
+    %% Spec 065 (T-065-11): the daily task of the cluster also announces company values that change within a week.
+    _ = (catch ana_values:daily_notices()),
     {ok, iolist_to_binary(json:encode(Counts))}.
 
 %% RF-025-02: whole partitions past the cutoff are dropped; only the default
