@@ -8228,13 +8228,15 @@ class TestRehearsal(Base):
     def test_rf_056_01_held_effects_nested_calls_and_context(self):
         prog = f"test.rh_{SUFFIX}"
         job = f"test.rh_job_{SUFFIX}"
-        self.save(prog, "def main():\n"
+        s, folder, _ = http("POST", "/api/files/folders", {"parent": None, "name": f"Ensaio {SUFFIX}"}, self.token)
+        self.assertEqual(s, 200, folder)
+        self.save(prog, "def main(folder):\n"
                         "    o = ana.call('sales.create_order', customer=1, items=[{'product': 'FEIJAO-1', 'quantity': 1}])\n"
-                        "    f = ana.files.put('ensaio.txt', 'conteúdo do ensaio')\n"
+                        "    f = ana.files.put('ensaio.txt', 'conteúdo do ensaio', folder=folder)\n"
                         f"    j = ana.schedule_job('{job}', '{prog}', cron='0 3 * * *')\n"
                         "    return {'rehearsal': ana.context.rehearsal, 'file': f, 'job': j, 'order': o['number']}\n")
         before = {t: psql(f"SELECT count(*) FROM {t}") for t in ("sales.sales_order", "sales.sales_order_item", "files.file")}
-        s, c, _ = self.run_program(prog, rehearse=True)
+        s, c, _ = self.run_program(prog, {"folder": folder["id"]}, rehearse=True)
         self.assertEqual(s, 200, c)
         r = c["result"]
         self.assertTrue(r["rehearsal"])
@@ -8248,7 +8250,7 @@ class TestRehearsal(Base):
         self.assertEqual({t: psql(f"SELECT count(*) FROM {t}") for t in before}, before)
         self.assertEqual(psql(f"SELECT count(*) FROM scheduler.job WHERE name = '{job}'"), "0")
         # The same program, run for real, keeps everything (rehearsal is only an option of the run).
-        s, c, _ = self.run_program(prog)
+        s, c, _ = self.run_program(prog, {"folder": folder["id"]})
         self.assertEqual(s, 200, c)
         self.assertFalse(c["result"]["rehearsal"])
         self.assertNotIn("rehearsal", c)
