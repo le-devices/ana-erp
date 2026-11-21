@@ -59,7 +59,7 @@ Tarefas adiadas já concluídas (ordem acordada em out/2026): T-017-05b ✓, T-0
 12. ✓ 045 — variantes de execução (`specs/045-execution-variants`)
 12a. ✓ 065 fase 2 — valores da empresa nas variantes, agendamentos, regras, esteiras e impostos; valores mantidos por rotinas; onde é usado; transporte (T-065-07..11)
 13. ✓ 050 fase 2 — paleta de comandos, desfazer, valores padrão por contexto, câmera (T-050-05..08)
-13a. 066 fase 1 — publicar o repositório em AGPL-3.0: LICENSE/NOTICE, SPDX, CONTRIBUTING/SECURITY, CLA, licenças das dependências e segredos na bateria (T-066-01..06; a publicação em si é ação do dono do produto). Fases 2 e 3 (núcleo sem trava, assinatura, premium, pacotes fiscais oficiais) entram depois na fila (`specs/066-open-core`)
+13a. ✓ 066 fase 1 — publicar o repositório em AGPL-3.0: LICENSE/NOTICE, SPDX, CONTRIBUTING/SECURITY, CLA, licenças das dependências e segredos na bateria (T-066-01..06; a publicação em si é ação do dono do produto). Fases 2 e 3 (núcleo sem trava, assinatura, premium, pacotes fiscais oficiais) entram depois na fila (`specs/066-open-core`)
 14. 048 — painel inicial (`specs/048-home-panel`)
 15. 052 — assistente que executa com segurança (`specs/052-safe-assistant`)
 16. 064 fase 2 — testes dos programas e cobertura, desempenho comparado com a versão anterior, falhas ligadas à versão, tela "Qualidade" com o assistente (T-064-06..09)

@@ -1,6 +1,6 @@
 # 066 — Núcleo aberto (AGPL-3.0) e edição comercial
 
-Situação: especificada (nov/2026). Modelo decidido pelo dono do produto em 21/11/2026: **núcleo aberto em
+Situação: fase 1 implementada (nov/2026) — falta T-066-06, a publicação pelo dono do produto (checklist em plan.md); fases 2 e 3 na fila. Modelo decidido pelo dono do produto em 21/11/2026: **núcleo aberto em
 AGPL-3.0, licença comercial para quem não quer as obrigações da AGPL, módulos premium num repositório privado**.
 
 ## Problema
