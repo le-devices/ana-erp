@@ -8923,7 +8923,8 @@ class TestPremiumExperiencePhase2(Base):
         super().setUpClass()
         c = cls.client
         cls.sfx = SUFFIX[-6:]
-        cls.tax_id = cnpj(f"{int(SUFFIX) % 10**8:08d}0001")
+        import random
+        cls.tax_id = cnpj(f"{random.randrange(10**7, 10**8)}0009")      # never the root another test derives from SUFFIX
         cls.customer = c.call("base.save_party", name=f"Cliente Paleta {SUFFIX}", state="SP", tax_id=cls.tax_id)["id"]
         cls.supplier = c.call("base.save_party", name=f"Fornecedor Paleta {SUFFIX}", kind="supplier", state="SP")["id"]
 

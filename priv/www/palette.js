@@ -33,15 +33,19 @@
     const seen = new Set();
     const out = [];
     // The screen's own content first (its main buttons), then the area's menus.
-    const main = area.querySelector("main, .page-main, [id$='-main']");
-    const nodes = main ? [...$$("button, a[href]", main), ...$$("button, a[href]", area).filter((n) => !main.contains(n))] : $$("button, a[href]", area);
-    for (const n of nodes) {
+    // The screen's own content (all of it), then up to 60 of the area's menus (a long menu never hides the content).
+    const main = area.querySelector("[id$='-main']") || area.querySelector("main, .page-main");
+    const own = main ? $$("button, a[href]", main) : [];
+    const menus = $$("button, a[href]", area).filter((n) => !main || !main.contains(n));
+    let fromMenus = 0;
+    for (const n of [...own, ...menus]) {
       if (!visible(n)) continue;
       const label = nameOf(n);
       if (!label || label.length < 2 || seen.has(label)) continue;
+      const isMenu = !main || !main.contains(n);
+      if (isMenu && ++fromMenus > 60) break;
       seen.add(label);
       out.push({ group: "Nesta tela", label, detail: n.getAttribute("aria-keyshortcuts") || "", run: () => n.click() });
-      if (out.length >= 60) break;
     }
     return out;
   }

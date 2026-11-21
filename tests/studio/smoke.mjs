@@ -717,7 +717,9 @@ ok(true, "API pública: clientes, novo cliente e chamadas (spec 010)");
   await until(() => d.querySelector(".palette-dialog"), "palette 2", jsErrors);
   typeIn(d.querySelector(".palette-dialog .palette-input"), "executar");
   ok([...d.querySelectorAll(".palette-dialog .palette-group")].some((g) => g.textContent === "Nesta tela") &&
-     items().some((i) => i.textContent.includes("Executar (F8)")), "a paleta traz as ações da tela aberta");
+     items().some((i) => i.textContent.includes("Executar (F8)")), "a paleta traz as ações da tela aberta" +
+     ` (tela ${w.location.hash}; vistas: ${JSON.stringify(w.AnaPalette.screenActions().map((a) => a.label).slice(0, 25))}; ` +
+     `botão: ${(d.querySelector("#ops-main .run-button") || {}).textContent}, desabilitado ${!!(d.querySelector("#ops-main .run-button") || {}).disabled})`);
   typeIn(d.querySelector(".palette-dialog .palette-input"), String(num));
   await until(() => items().some((i) => i.textContent.startsWith(`Pedido de venda ${num}`)), "palette order", jsErrors);
   items().find((i) => i.textContent.startsWith(`Pedido de venda ${num}`)).click();
