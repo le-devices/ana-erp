@@ -1,3 +1,5 @@
+%% SPDX-FileCopyrightText: 2026 André Luis Pereira dos Santos
+%% SPDX-License-Identifier: AGPL-3.0-or-later
 %% Scheduler engine (spec 018).
 %%
 %% One process per node. Only the leader (session advisory lock on a dedicated

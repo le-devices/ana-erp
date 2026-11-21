@@ -1,3 +1,5 @@
+%% SPDX-FileCopyrightText: 2026 André Luis Pereira dos Santos
+%% SPDX-License-Identifier: AGPL-3.0-or-later
 %% Outbound e-mail over SMTP (spec 044). A small client of our own (no dependency):
 %% EHLO, STARTTLS, AUTH PLAIN/LOGIN, MAIL/RCPT/DATA, QUIT; MIME with text, HTML and
 %% attachments; TLS always verified (system chain or the connector's own CA). Credentials

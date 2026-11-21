@@ -1,3 +1,5 @@
+%% SPDX-FileCopyrightText: 2026 André Luis Pereira dos Santos
+%% SPDX-License-Identifier: AGPL-3.0-or-later
 %% Bounded fire-and-forget messages (spec 062, D7): a record sent to a process that is behind (a slow
 %% database, a burst) is dropped and counted instead of growing its mailbox — and the memory — without
 %% end. Only for records whose loss is tolerable (statistics, access log batches): never for business facts.

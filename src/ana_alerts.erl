@@ -1,3 +1,5 @@
+%% SPDX-FileCopyrightText: 2026 André Luis Pereira dos Santos
+%% SPDX-License-Identifier: AGPL-3.0-or-later
 %% Alert rules and silences (spec 019, RF-019-08, T-019-08b): what the
 %% administrator configures; ana_health evaluates them every 10 s.
 -module(ana_alerts).

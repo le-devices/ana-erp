@@ -1,3 +1,5 @@
+%% SPDX-FileCopyrightText: 2026 André Luis Pereira dos Santos
+%% SPDX-License-Identifier: AGPL-3.0-or-later
 %% Spec 050 (D5, RF-050-05): the standard undo of reversible routines.
 %%
 %% A routine offers its undo with ana.offer_undo(program, params, label, seconds). The offer is written only once

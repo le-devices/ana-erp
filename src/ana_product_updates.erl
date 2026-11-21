@@ -1,3 +1,5 @@
+%% SPDX-FileCopyrightText: 2026 André Luis Pereira dos Santos
+%% SPDX-License-Identifier: AGPL-3.0-or-later
 %% Product program updates offered to existing installations (spec 028).
 %%
 %% Seeds never overwrite an installed program. Each program records the hash of

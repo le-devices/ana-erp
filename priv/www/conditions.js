@@ -1,3 +1,5 @@
+// SPDX-FileCopyrightText: 2026 André Luis Pereira dos Santos
+// SPDX-License-Identifier: AGPL-3.0-or-later
 // Condition builder (spec 020, RF-020-14): lines "campo · operador · valor" with value help and the operators
 // of the field's type; criteria in tabs (lines of a criterion hold together — E; between criteria one is
 // enough — OU) and separate exceptions ("exceto…"). The result is the restricted rule the core evaluates

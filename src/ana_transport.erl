@@ -1,3 +1,5 @@
+%% SPDX-FileCopyrightText: 2026 André Luis Pereira dos Santos
+%% SPDX-License-Identifier: AGPL-3.0-or-later
 %% Transport packages between instances (spec 034, RF-034-02..05).
 %%
 %% A package carries definitions — programs (source and properties), commands and parameters —

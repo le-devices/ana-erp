@@ -1,3 +1,5 @@
+%% SPDX-FileCopyrightText: 2026 André Luis Pereira dos Santos
+%% SPDX-License-Identifier: AGPL-3.0-or-later
 %% REST API for the studio (specs 001, 002, 004, 005, 007, 011).
 -module(ana_http_api).
 -export([init/2]).

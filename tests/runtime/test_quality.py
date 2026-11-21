@@ -1,3 +1,5 @@
+# SPDX-FileCopyrightText: 2026 André Luis Pereira dos Santos
+# SPDX-License-Identifier: AGPL-3.0-or-later
 """Quality gate inspection (spec 064, phase 1) without a database: rules by category, acceptance in the code,
 fingerprints, and the product's own programs through the gate (RF-064-09, CA-064-06).
 

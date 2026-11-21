@@ -1,3 +1,5 @@
+%% SPDX-FileCopyrightText: 2026 André Luis Pereira dos Santos
+%% SPDX-License-Identifier: AGPL-3.0-or-later
 %% Optional, consented telemetry for the vendor's support (spec 009, D13).
 %%
 %% Off by default. When an administrator turns it on, the leader sends once a day, through the connector

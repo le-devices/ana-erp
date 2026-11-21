@@ -1,3 +1,5 @@
+%% SPDX-FileCopyrightText: 2026 André Luis Pereira dos Santos
+%% SPDX-License-Identifier: AGPL-3.0-or-later
 %% Event bus of the core (spec 062, D2; constitution P20): what happens is told by message instead of
 %% being asked again and again. Process groups of OTP (pg, scope ana_events): subscribers join a topic;
 %% publish/2 reaches every member in the cluster when the Erlang distribution is on (pg spans nodes).

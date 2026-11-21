@@ -1,3 +1,5 @@
+// SPDX-FileCopyrightText: 2026 André Luis Pereira dos Santos
+// SPDX-License-Identifier: AGPL-3.0-or-later
 // Processes (spec 039): the company's process map, the modeler, simulation, cases, monitoring and
 // discovery — and "Minhas tarefas". The diagram itself is drawn by bpm-diagram.js.
 "use strict";

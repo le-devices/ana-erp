@@ -1,3 +1,5 @@
+%% SPDX-FileCopyrightText: 2026 André Luis Pereira dos Santos
+%% SPDX-License-Identifier: AGPL-3.0-or-later
 %% Disk endurance (spec 063, T-063-01..03; constitution P15): how much the database writes, who
 %% wrote it and how long the disk lasts at this pace.
 %%

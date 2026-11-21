@@ -1,3 +1,5 @@
+%% SPDX-FileCopyrightText: 2026 André Luis Pereira dos Santos
+%% SPDX-License-Identifier: AGPL-3.0-or-later
 %% Real content type of an upload (spec 016, RF-016-07, CA-016-04).
 %%
 %% The extension says what the file claims to be; the first bytes say what it is.

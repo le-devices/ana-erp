@@ -1,3 +1,5 @@
+%% SPDX-FileCopyrightText: 2026 André Luis Pereira dos Santos
+%% SPDX-License-Identifier: AGPL-3.0-or-later
 %% Cross-node cache invalidation via PostgreSQL LISTEN/NOTIFY.
 %%
 %% Channels and handlers: ana_program → ana_program, ana_setting → ana_settings,

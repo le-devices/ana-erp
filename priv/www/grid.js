@@ -1,3 +1,5 @@
+// SPDX-FileCopyrightText: 2026 André Luis Pereira dos Santos
+// SPDX-License-Identifier: AGPL-3.0-or-later
 // Planning grid by period (spec 020, RF-020-15) and the chart that follows it (RF-020-16). Rows are
 // combinations of dimensions, fixed on the left; one column per period (horizontal scroll); totals per
 // period and per row; in-place editing with Brazilian numbers (negatives refused where they make no sense);

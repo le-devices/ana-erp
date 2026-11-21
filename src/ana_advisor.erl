@@ -1,3 +1,5 @@
+%% SPDX-FileCopyrightText: 2026 André Luis Pereira dos Santos
+%% SPDX-License-Identifier: AGPL-3.0-or-later
 %% Optimization advice (spec 019, RF-019-07, 07b, 07c).
 %%
 %% Runs every 15 min on the scheduler leader (once per cluster) and on demand.

@@ -1,3 +1,5 @@
+// SPDX-FileCopyrightText: 2026 André Luis Pereira dos Santos
+// SPDX-License-Identifier: AGPL-3.0-or-later
 // Premium-experience verifier (spec 050, T-050-02; constitution P18).
 // Runs on every screen the Studio test visits. Violations already known are listed in
 // ux_baseline.json (they are fixed area by area in phase 3, T-050-09..16); anything NEW fails the battery.

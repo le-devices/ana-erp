@@ -1,3 +1,5 @@
+%% SPDX-FileCopyrightText: 2026 André Luis Pereira dos Santos
+%% SPDX-License-Identifier: AGPL-3.0-or-later
 %% Reliable messaging (spec 017, RF-017-05, RNF-017-02; spec 062, D2/D4/D5).
 %%
 %% A committed write to the outbox or the inbox wakes this coordinator on every node at once (NOTIFY

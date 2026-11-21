@@ -1,3 +1,5 @@
+# SPDX-FileCopyrightText: 2026 André Luis Pereira dos Santos
+# SPDX-License-Identifier: AGPL-3.0-or-later
 """Chaos tests (spec 023, CA-023-01..06, RF-023-06).
 
 Two core nodes behind HAProxy (tests/chaos/run.sh). Each test injects a

@@ -1,3 +1,5 @@
+%% SPDX-FileCopyrightText: 2026 André Luis Pereira dos Santos
+%% SPDX-License-Identifier: AGPL-3.0-or-later
 %% Navigation in a BPM model (spec 039, RF-039-11) — pure functions, no database.
 %%
 %% Model (canonical JSON, BPMN meaning): nodes [{id, type, name, lane, props}], edges [{id, from, to,

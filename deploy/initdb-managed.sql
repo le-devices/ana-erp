@@ -1,3 +1,5 @@
+-- SPDX-FileCopyrightText: 2026 André Luis Pereira dos Santos
+-- SPDX-License-Identifier: AGPL-3.0-or-later
 -- ANA ERP on a managed PostgreSQL (spec 036). Run once as the administrator user of the
 -- database service (RDS, Cloud SQL, Azure Database…). The core never uses a superuser (P10):
 -- role "ana" owns the database and creates only the roles it administers (ana_exec, ana_read).

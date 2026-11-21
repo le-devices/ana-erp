@@ -1,3 +1,5 @@
+%% SPDX-FileCopyrightText: 2026 André Luis Pereira dos Santos
+%% SPDX-License-Identifier: AGPL-3.0-or-later
 %% Universal rehearsal (spec 056, T-056-01/02).
 %%
 %% A rehearsal runs the routine whole in its own transaction and undoes it at the end. Before the ROLLBACK, the

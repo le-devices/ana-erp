@@ -1,3 +1,5 @@
+# SPDX-FileCopyrightText: 2026 André Luis Pereira dos Santos
+# SPDX-License-Identifier: AGPL-3.0-or-later
 """Project dashboard server (internal tool): GET / (the page) and GET /data.json (fresh numbers).
 
 Read-only: it only reads the repository (files and git history) and answers two fixed paths.

@@ -1,3 +1,5 @@
+%% SPDX-FileCopyrightText: 2026 André Luis Pereira dos Santos
+%% SPDX-License-Identifier: AGPL-3.0-or-later
 %% Deterministic masking of personal data for copies to test instances (spec 034, RF-034-06).
 %%
 %% Same value + same copy key → same mask in every table (joins and duplicates survive);

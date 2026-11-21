@@ -1,3 +1,5 @@
+%% SPDX-FileCopyrightText: 2026 André Luis Pereira dos Santos
+%% SPDX-License-Identifier: AGPL-3.0-or-later
 %% Inventory of the installation's components and integrity of the shipped files (spec 033,
 %% RF-033-01, RF-033-04).
 %%

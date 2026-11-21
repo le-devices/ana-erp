@@ -1,3 +1,5 @@
+// SPDX-FileCopyrightText: 2026 André Luis Pereira dos Santos
+// SPDX-License-Identifier: AGPL-3.0-or-later
 // Home (RF-020-02) and Operation (RF-020-03): routines grouped by module, each
 // with its form, result and the user's history on the same page.
 "use strict";

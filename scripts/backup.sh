@@ -1,4 +1,6 @@
 #!/bin/sh
+# SPDX-FileCopyrightText: 2026 André Luis Pereira dos Santos
+# SPDX-License-Identifier: AGPL-3.0-or-later
 # Continuous backup of the database (spec 023, RF-023-06).
 #
 #   scripts/backup.sh enable   turns on WAL archiving (restarts the database once)

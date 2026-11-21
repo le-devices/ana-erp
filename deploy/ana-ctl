@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# SPDX-FileCopyrightText: 2026 André Luis Pereira dos Santos
+# SPDX-License-Identifier: AGPL-3.0-or-later
 # ANA ERP — operation of an installation made by install.sh (spec 036).
 #
 #   ana-ctl status                 containers and health

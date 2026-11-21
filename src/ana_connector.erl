@@ -1,3 +1,5 @@
+%% SPDX-FileCopyrightText: 2026 André Luis Pereira dos Santos
+%% SPDX-License-Identifier: AGPL-3.0-or-later
 %% Outbound HTTP through connectors (spec 017, RF-017-03, RNF-017-01).
 %%
 %% Programs name a connector and a path; the core builds the URL from the

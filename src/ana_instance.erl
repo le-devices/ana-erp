@@ -1,3 +1,5 @@
+%% SPDX-FileCopyrightText: 2026 André Luis Pereira dos Santos
+%% SPDX-License-Identifier: AGPL-3.0-or-later
 %% Role of this installation (spec 034, RF-034-01): production (default), test or development.
 %% Shown on screen outside production; production can require transports for program changes.
 -module(ana_instance).

@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# SPDX-FileCopyrightText: 2026 André Luis Pereira dos Santos
+# SPDX-License-Identifier: AGPL-3.0-or-later
 # ANA ERP — installer for production, on-premise or cloud VM (spec 036). Guide: deploy/INSTALL.md
 #
 #   sudo ./deploy/install.sh --domain erp.empresa.com.br --email ti@empresa.com.br

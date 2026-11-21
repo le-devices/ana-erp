@@ -1,3 +1,5 @@
+// SPDX-FileCopyrightText: 2026 André Luis Pereira dos Santos
+// SPDX-License-Identifier: AGPL-3.0-or-later
 // Categories of routines (spec 020, RF-020-20..23): personal and company categories holding shortcuts,
 // "Copiar para categoria…" for one or more routines, sections on Início and Operação, drag to reorder and move.
 "use strict";

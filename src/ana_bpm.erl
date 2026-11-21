@@ -1,3 +1,5 @@
+%% SPDX-FileCopyrightText: 2026 André Luis Pereira dos Santos
+%% SPDX-License-Identifier: AGPL-3.0-or-later
 %% The single process engine (spec 039, RF-039-11..14; runs the esteiras of spec 030 too).
 %%
 %% Only the scheduler leader works. Each cycle:

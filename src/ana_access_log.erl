@@ -1,3 +1,5 @@
+%% SPDX-FileCopyrightText: 2026 André Luis Pereira dos Santos
+%% SPDX-License-Identifier: AGPL-3.0-or-later
 %% Access log (spec 024, RF-024-01..03, RNF-024-01).
 %%
 %% Requests are recorded through cowboy_metrics_h: the HTTP handlers attach

@@ -1,3 +1,5 @@
+# SPDX-FileCopyrightText: 2026 André Luis Pereira dos Santos
+# SPDX-License-Identifier: AGPL-3.0-or-later
 """ANA program runtime (specs 002 and 004).
 
 Isolated process started by the Erlang core as a {packet, 4} port. It speaks

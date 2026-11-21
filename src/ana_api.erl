@@ -1,3 +1,5 @@
+%% SPDX-FileCopyrightText: 2026 André Luis Pereira dos Santos
+%% SPDX-License-Identifier: AGPL-3.0-or-later
 %% Public API (spec 010): API clients, signed access tokens, limits, quotas, idempotency,
 %% signed requests and the audit of public calls.
 %%

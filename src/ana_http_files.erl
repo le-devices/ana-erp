@@ -1,3 +1,5 @@
+%% SPDX-FileCopyrightText: 2026 André Luis Pereira dos Santos
+%% SPDX-License-Identifier: AGPL-3.0-or-later
 %% HTTP of the file repository (spec 016).
 %%
 %% /api/files/...   session (internal users and external portal accounts; what one

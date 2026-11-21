@@ -1,3 +1,5 @@
+// SPDX-FileCopyrightText: 2026 André Luis Pereira dos Santos
+// SPDX-License-Identifier: AGPL-3.0-or-later
 // Development area (RF-020-04, RF-020-05): everything about a program lives in
 // the program (code, properties and limits, versions, executions); data
 // (catalog + SQL console) lives together.

@@ -1,3 +1,5 @@
+%% SPDX-FileCopyrightText: 2026 André Luis Pereira dos Santos
+%% SPDX-License-Identifier: AGPL-3.0-or-later
 %% Day-to-day administration (spec 011).
 %%
 %% Users (RF-011-02), groups (RF-011-04), company (RF-011-06), default accounts

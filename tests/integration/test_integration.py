@@ -1,3 +1,5 @@
+# SPDX-FileCopyrightText: 2026 André Luis Pereira dos Santos
+# SPDX-License-Identifier: AGPL-3.0-or-later
 """Integration tests against a running ANA (docker compose up, ANA_DEMO=true).
 
 Each test cites the acceptance criterion (CA-xxx-nn) it verifies. Every program

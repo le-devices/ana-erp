@@ -1,3 +1,5 @@
+%% SPDX-FileCopyrightText: 2026 André Luis Pereira dos Santos
+%% SPDX-License-Identifier: AGPL-3.0-or-later
 %% Program execution: one execution transaction per run (specs 002 and 004).
 %%
 %% One supervised (temporary) process per execution. It:

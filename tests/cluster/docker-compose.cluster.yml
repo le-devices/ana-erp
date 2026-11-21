@@ -1,3 +1,5 @@
+# SPDX-FileCopyrightText: 2026 André Luis Pereira dos Santos
+# SPDX-License-Identifier: AGPL-3.0-or-later
 # Two-node cluster for tests (spec 018 CA-018-01, spec 003 T-003-06).
 # Usage: tests/cluster/run.sh
 x-cluster-env: &cluster-env

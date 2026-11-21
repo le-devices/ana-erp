@@ -1,3 +1,5 @@
+%% SPDX-FileCopyrightText: 2026 André Luis Pereira dos Santos
+%% SPDX-License-Identifier: AGPL-3.0-or-later
 {application, ana, [
     {description, "ANA ERP core"},
     {vsn, "0.1.0"},
@@ -5,5 +7,6 @@
     {mod, {ana_app, []}},
     {applications, [kernel, stdlib, crypto, public_key, ssl, inets, epgsql, cowboy]},
     {env, []},
-    {licenses, ["Apache-2.0"]}
+    {licenses, ["AGPL-3.0-or-later"]},
+    {links, [{"GitHub", "https://github.com/le-devices/ana-erp"}]}
 ]}.

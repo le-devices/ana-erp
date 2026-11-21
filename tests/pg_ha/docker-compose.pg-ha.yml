@@ -1,3 +1,5 @@
+# SPDX-FileCopyrightText: 2026 André Luis Pereira dos Santos
+# SPDX-License-Identifier: AGPL-3.0-or-later
 # Real primary failover (spec 023, T-023-09): db (primary) + db2 (streaming replica),
 # on top of the cluster and chaos compose files. Usage: tests/pg_ha/run.sh
 services:

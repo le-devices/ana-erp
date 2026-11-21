@@ -1,3 +1,5 @@
+# SPDX-FileCopyrightText: 2026 André Luis Pereira dos Santos
+# SPDX-License-Identifier: AGPL-3.0-or-later
 # ---- build -------------------------------------------------------------------
 FROM erlang:27 AS build
 WORKDIR /app

@@ -3,8 +3,16 @@
 ERP com núcleo em **Erlang/OTP**, dados em **PostgreSQL** (com armazenamento
 **colunar** para análise) e regras de negócio em **Python** — guardadas,
 versionadas, executadas e **depuradas dentro do próprio ERP**, e chamáveis
-remotamente por JSON-RPC. Pensado como **produto licenciável** para muitos
-clientes.
+remotamente por JSON-RPC. Software livre sob a **GNU AGPL-3.0** (spec 066), com
+[permissão adicional para os programas do cliente](NOTICE) — programas próprios do
+cliente (fora dos namespaces do produto) e os pontos de extensão não obrigam a abrir o
+código; alterar os programas do produto, sim — e licença comercial, suporte, módulos premium e SaaS
+oferecidos pelo titular (André Luis Pereira dos Santos; a LE Devices,
+quando constituída).
+
+**Licença:** [LICENSE](LICENSE) (AGPL-3.0-or-later) · [NOTICE](NOTICE) ·
+[Como contribuir](CONTRIBUTING.md) e [Termo de contribuição](CLA.md) ·
+[Segurança](SECURITY.md) · [Código de conduta](CODE_OF_CONDUCT.md) · [Marca](TRADEMARKS.md).
 
 Desenvolvido com **Spec Driven Development**: tudo começa em
 [`specs/`](specs/README.md). Código em inglês; telas e documentação em português.
@@ -301,6 +309,7 @@ make teste-cluster     # dois nós: agendamento exatamente uma vez, troca de lí
 make teste-pg-ha       # PostgreSQL primário + réplica: promoção com carga, console na réplica, primário antigo recusado
 make teste-caos        # dois nós + HAProxy: programas que falham, nó derrubado, desligamento
                        # gracioso, atualização rolling, banco reiniciado, restauração a um instante
+make licencas          # linhas SPDX em todo arquivo de código, licenças das dependências, credenciais
 ```
 
 ## Estrutura

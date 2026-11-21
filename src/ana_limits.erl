@@ -1,3 +1,5 @@
+%% SPDX-FileCopyrightText: 2026 André Luis Pereira dos Santos
+%% SPDX-License-Identifier: AGPL-3.0-or-later
 %% Execution governance (spec 012): effective limits, limit profiles and quotas.
 %%
 %% Effective limit for each key (RF-012-02):

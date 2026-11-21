@@ -1,3 +1,5 @@
+%% SPDX-FileCopyrightText: 2026 André Luis Pereira dos Santos
+%% SPDX-License-Identifier: AGPL-3.0-or-later
 -module(ana_utf8_literals_tests).
 -include_lib("eunit/include/eunit.hrl").
 

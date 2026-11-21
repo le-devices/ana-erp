@@ -1,3 +1,5 @@
+%% SPDX-FileCopyrightText: 2026 André Luis Pereira dos Santos
+%% SPDX-License-Identifier: AGPL-3.0-or-later
 %% Spec 044: MIME pieces of the SMTP client.
 -module(ana_smtp_tests).
 -include_lib("eunit/include/eunit.hrl").

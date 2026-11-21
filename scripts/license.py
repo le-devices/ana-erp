@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# SPDX-FileCopyrightText: 2026 André Luis Pereira dos Santos
+# SPDX-License-Identifier: AGPL-3.0-or-later
 """ANA license tool for the vendor (spec 009, RF-009-10).
 
   license.py keygen --out DIR --kid KID       Ed25519 pair: DIR/KID.key (private, keep it safe, never

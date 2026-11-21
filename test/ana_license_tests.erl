@@ -1,3 +1,5 @@
+%% SPDX-FileCopyrightText: 2026 André Luis Pereira dos Santos
+%% SPDX-License-Identifier: AGPL-3.0-or-later
 %% Spec 009: license verification and state (pure functions).
 -module(ana_license_tests).
 -include_lib("eunit/include/eunit.hrl").

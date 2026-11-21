@@ -1,3 +1,5 @@
+# SPDX-FileCopyrightText: 2026 André Luis Pereira dos Santos
+# SPDX-License-Identifier: AGPL-3.0-or-later
 # File repository (spec 016), shared by every core pod: needs ReadWriteMany
 # (NFS, EFS, Azure Files, Filestore…). Adjust storageClassName to your cluster.
 apiVersion: v1

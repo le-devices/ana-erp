@@ -1,3 +1,5 @@
+%% SPDX-FileCopyrightText: 2026 André Luis Pereira dos Santos
+%% SPDX-License-Identifier: AGPL-3.0-or-later
 %% Component health, alert rules and incidents (spec 019, RF-019-01, RF-019-08).
 %%
 %% Every 10 s each component is checked; only state changes are written

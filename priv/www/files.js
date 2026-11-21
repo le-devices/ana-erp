@@ -1,3 +1,5 @@
+// SPDX-FileCopyrightText: 2026 André Luis Pereira dos Santos
+// SPDX-License-Identifier: AGPL-3.0-or-later
 // File repository (spec 016) and the external portal (RF-016-04).
 // Content is never handled by this page: downloads go through short-lived signed
 // URLs issued by the core after the permission check.

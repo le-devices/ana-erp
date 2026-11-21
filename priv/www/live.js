@@ -1,3 +1,5 @@
+// SPDX-FileCopyrightText: 2026 André Luis Pereira dos Santos
+// SPDX-License-Identifier: AGPL-3.0-or-later
 // Live screens (spec 062, D3): one event stream per signed-in screen; "something changed" events make
 // the bell and "Minhas tarefas" read again. Reconnects by itself; never blocks the screen.
 (function () {
