@@ -112,7 +112,12 @@
     limits: (n) => API.request("GET", `/api/programs/${enc(n)}/limits`),
     version: (n, v) => API.request("GET", `/api/programs/${enc(n)}/versions/${v}`),
     restore: (n, v) => API.request("POST", `/api/programs/${enc(n)}/versions/${v}/restore`, {}),
-    run: (n, body) => API.request("POST", `/api/programs/${enc(n)}/run`, body, { accept: [422] }),
+    // Spec 050 (D5): any run that offers its undo shows "Desfazer", on whatever screen ran it.
+    run: (n, body) => API.request("POST", `/api/programs/${enc(n)}/run`, body, { accept: [422] }).then((r) => {
+      if (r && r.undo && window.AnaUI && window.AnaUI.offerUndo) window.AnaUI.offerUndo(r.undo);
+      return r;
+    }),
+    undo: (id) => API.request("POST", `/api/undo/${enc(id)}`, {}, { accept: [422] }),
     // Spec 045: execution variants of a routine.
     runVariants: {
       list: (n) => API.request("GET", `/api/programs/${enc(n)}/variants`),

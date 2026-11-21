@@ -29,6 +29,10 @@
     NOT_FOUND: ["Não encontrado", "Pode ter sido removido ou você não tem acesso; atualize a tela."],
     PROGRAM_NOT_FOUND: ["Rotina não encontrada", "Pode ter sido removida ou desativada; atualize a tela."],
     INTERNAL_DOCUMENT: ["Este documento é interno", "Só documentos para clientes e fornecedores podem sair da empresa."],
+    // Spec 050 (D5): the standard undo.
+    UNDO_EXPIRED: ["O prazo para desfazer terminou", "Use a rotina que reverte o documento (por exemplo, reabrir ou estornar)."],
+    UNDO_USED: ["Isto já foi desfeito", "Atualize a tela para ver a situação atual."],
+    UNDO_NOT_FOUND: ["Nada a desfazer", "Atualize a tela para ver a situação atual."],
   };
   // Codes whose server message is already written for people: shown as is, with the action.
   const KEEP_MESSAGE = { DATA_SCOPE: "Peça ao administrador para ampliar os dados que você vê.",

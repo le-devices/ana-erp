@@ -178,6 +178,8 @@ purge() ->
     _ = ana_db:exec("DELETE FROM ana_system.retention_day WHERE day < current_date - 400", []),
     %% Spec 065 (T-065-11): the daily task of the cluster also announces company values that change within a week.
     _ = (catch ana_values:daily_notices()),
+    %% Spec 050 (D5): undo offers long past their time are kept for a month (who undid what), then go.
+    _ = ana_db:exec("DELETE FROM ana_system.undo_offer WHERE expires_at < now() - interval '30 days'", []),
     {ok, iolist_to_binary(json:encode(Counts))}.
 
 %% RF-025-02: whole partitions past the cutoff are dropped; only the default

@@ -2,6 +2,7 @@
 # ana:exposed yes
 # ana:command baixa_estoque
 # ana:category Estoque/Movimentações
+# ana:confirm A mercadoria sai do estoque como perda ou descarte, com o lançamento contábil. Não há desfazer: a correção é uma nova entrada de estoque.
 """Spec 038 (RF-038-02). Loss (theft, damage, expiry) or scrap: the item leaves at the average cost
 and the database posts D inventory losses / C inventory, with the warehouse's cost center."""
 

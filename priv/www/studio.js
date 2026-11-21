@@ -313,6 +313,8 @@
     $("#password-cancel").addEventListener("click", () => showScreen("#app-screen"));
     $("#change-password").addEventListener("click", () => showPassword(false));
     $("#back").addEventListener("click", back);
+    $("#back").setAttribute("aria-keyshortcuts", "F3");
+    $("#palette-btn").addEventListener("click", () => window.AnaPalette.open());
     document.addEventListener("keydown", (e) => {
       if (e.key === "F3" && !$("#app-screen").hidden) { e.preventDefault(); back(); }
     });
@@ -343,7 +345,8 @@
     });
   }
 
-  window.AnaStudio = { go, replace, back, noteNav, refreshTitle, user: () => state.user, refreshTargets: buildTargets, canSee, refreshNotices };
+  window.AnaStudio = { go, replace, back, noteNav, refreshTitle, user: () => state.user, refreshTargets: buildTargets, canSee, refreshNotices,
+                       targets: () => state.targets };
 
   document.addEventListener("DOMContentLoaded", () => {
     wire();

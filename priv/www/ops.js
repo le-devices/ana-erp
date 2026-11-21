@@ -197,6 +197,19 @@
   function rememberParams(name, params) {
     try { localStorage.setItem(lastKey(name), JSON.stringify(params)); } catch (_) { /* storage blocked */ }
   }
+  // Spec 050 (T-050-07, D6): fields declared "default_from": "last" follow the user to any computer (kept on the
+  // server with the screen preferences, written only when they change — P15).
+  const lastFields = (r) => Object.entries(r.params || {}).filter(([, sp]) => sp && sp.default_from === "last").map(([k]) => k);
+  function lastUsed(r) {
+    const v = window.AnaPrefs.get("last." + r.name);
+    return v && typeof v === "object" && !Array.isArray(v) ? v : {};
+  }
+  function rememberLast(r, params) {
+    const keep = {};
+    for (const k of lastFields(r)) if (params[k] !== undefined && params[k] !== null && params[k] !== "") keep[k] = params[k];
+    if (!Object.keys(keep).length || JSON.stringify(keep) === JSON.stringify(lastUsed(r))) return;
+    window.AnaPrefs.set("last." + r.name, keep);
+  }
 
   // Options of fields with "lookup" (cached while the screen is open).
   const lookupCache = new Map();
@@ -209,6 +222,8 @@
     return lookupCache.get(key);
   }
 
+  let onUndone = null;         // spec 050 (D5): what the routine on screen does after an undo
+  document.addEventListener("ana:undone", (e) => { if (onUndone && !$("#area-ops").hidden) onUndone(e.detail || {}); });
   let runCurrent = null;       // F8 runs the routine on screen
   let runSimulation = null;    // F9 simulates a definition (RF-020-13)
 
@@ -217,7 +232,7 @@
     lookupCache.clear();
     const formOnly = query._form === "1";
     const given = Object.fromEntries(Object.entries(query).filter(([k]) => !k.startsWith("_")));
-    const initial = Object.keys(given).length ? given : lastParams(r.name);
+    const initial = Object.keys(given).length ? { ...lastUsed(r), ...given } : { ...lastUsed(r), ...lastParams(r.name) };
     const fav = el("button", { class: "quiet star", title: "Fixar nos favoritos", text: state.favorites.has(r.name) ? "★" : "☆" });
     fav.addEventListener("click", async () => {
       try {
@@ -243,6 +258,8 @@
                                       simulate: !!simName });
       variant = v || null;
       if (variant) { form.lock(variant.locked); form.hide(variant.hidden); }
+      const runBtn = form.node.querySelector(".run-button");
+      if (runBtn) runBtn.setAttribute("aria-keyshortcuts", "F8");
       addTestButtons();
       formHost.replaceChildren(form.node);
     }
@@ -269,6 +286,7 @@
       let params;
       try { params = readParams(); } catch (e) { toast("Parâmetros: " + e.message, true); return; }
       rememberParams(r.name, params);
+      rememberLast(r, params);
       const vq = variant ? { _variant: variant.id } : {};
       const runHash = routineHash(r.name, params, vq);
       if (location.hash !== runHash) {
@@ -288,6 +306,8 @@
     };
 
     async function run(params, quiet) {
+      // Spec 050 (D5): a routine that cannot be undone says its consequence and asks first.
+      if (!quiet && r.confirm && !(await window.AnaUI.confirmDialog(r.confirm, { title: r.description || r.name, ok: "Executar" }))) return;
       lastRun = params;
       const scroll = quiet && document.scrollingElement ? document.scrollingElement.scrollTop : null;
       const button = form.node.querySelector(".run-button");
@@ -327,6 +347,15 @@
       loadHistory();
     }
     runCurrent = execute;
+    // After an undo: a routine that only reads (a document, a list) shows the state again; one that writes is not run
+    // again — its result says it was undone.
+    onUndone = ({ offer }) => {
+      if (!lastRun) return;
+      if (!r.writes) { run(lastRun, true); return; }
+      output.prepend(el("div", { class: "end undone", role: "status", text: `Desfeito: ${(offer && offer.label) || "a última ação"}. O que está abaixo é de antes.` }));
+      status.textContent = "desfeito";
+      status.className = "run-state";
+    };
 
     const simOut = el("div", { class: "output sim-output" },
       el("p", { class: "muted", text: "“Simular” mostra aqui o que a definição pega, sem gravar nada." }));
@@ -375,12 +404,12 @@
       if (simName) {
         runSimulation = simulate;
         const btn = form.node.querySelector(".run-button");
-        const simBtn = el("button", { type: "button", class: "sim-button", text: "Simular (F9)", onclick: simulate });
+        const simBtn = el("button", { type: "button", class: "sim-button", text: "Simular (F9)", onclick: simulate, "aria-keyshortcuts": "F9" });
         if (btn) btn.before(simBtn); else form.node.append(simBtn);
       } else if (r.writes) {
         runSimulation = rehearse;
         const btn = form.node.querySelector(".run-button");
-        const reBtn = el("button", { type: "button", class: "sim-button rehearse-button", text: "Ensaiar (F9)", onclick: rehearse,
+        const reBtn = el("button", { type: "button", class: "sim-button rehearse-button", text: "Ensaiar (F9)", onclick: rehearse, "aria-keyshortcuts": "F9",
                                      title: "Executa tudo e desfaz no fim: mostra o que seria gravado e enviado, sem gravar nada" });
         if (btn) btn.before(reBtn); else form.node.append(reBtn);
       } else runSimulation = null;

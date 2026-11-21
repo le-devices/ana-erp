@@ -34,12 +34,15 @@ NEXT = [{"label": "Faturar este pedido", "program": "sales.invoice_order", "para
 PARAMS = {
     "customer": {"type": "int", "required": True, "label": "cliente", "order": 1,
                  "lookup": {"program": "sales.lookup", "params": {"kind": "customers"}}},
+    # Spec 050 (D6): warehouse, payment term and cost center come from the customer when it is chosen.
     "warehouse": {"type": "str", "default": "CENTRAL", "label": "depósito que atende", "order": 2,
-                  "lookup": {"program": "sales.lookup", "params": {"kind": "warehouses"}}},
+                  "lookup": {"program": "sales.lookup", "params": {"kind": "warehouses"}},
+                  "default_from": {"program": "sales.lookup", "params": {"kind": "customer_defaults"}, "depends": ["customer"], "field": "warehouse"}},
     "payment_term": {"type": "str", "label": "condição de pagamento", "empty": "a do cliente", "order": 3,
-                     "lookup": {"program": "finance.lookup", "params": {"kind": "payment_terms"}}},
+                     "lookup": {"program": "finance.lookup", "params": {"kind": "payment_terms"}},
+                     "default_from": {"program": "sales.lookup", "params": {"kind": "customer_defaults"}, "depends": ["customer"], "field": "payment_term"}},
     "items": {"type": "list", "required": True, "label": "itens", "order": 4, "add_label": "Adicionar item", "columns": {
-        "product": {"type": "str", "required": True, "label": "item",
+        "product": {"type": "str", "required": True, "label": "item", "scan": True,
                     "lookup": {"program": "sales.lookup", "params": {"kind": "products"}, "depends": ["warehouse"]}},
         "quantity": {"type": "decimal", "required": True, "default": 1, "label": "quantidade"},
         "price": {"type": "decimal", "label": "preço unitário (vazio = tabela)"}}},
@@ -48,7 +51,8 @@ PARAMS = {
                 "choices": [["warn", "Conforme a política"], ["transfer", "Transferir de outro depósito"], ["refuse", "Recusar o pedido"]]},
     "notes": {"type": "str", "label": "observações", "order": 6},
     "cost_center": {"type": "str", "label": "centro de custo", "empty": "o do depósito", "order": 7,
-                    "lookup": {"program": "finance.lookup", "params": {"kind": "cost_centers"}}},
+                    "lookup": {"program": "finance.lookup", "params": {"kind": "cost_centers"}},
+                    "default_from": {"program": "sales.lookup", "params": {"kind": "customer_defaults"}, "depends": ["customer"], "field": "cost_center"}},
     "simulate": {"type": "bool", "simulate": True, "label": "simular o atendimento (não grava)", "order": 8},
 }
 NON_SALEABLE = ("TRANSITO", "QUARENTENA")

@@ -23,7 +23,7 @@ PARAMS = {
              "lookup": {"program": "supply.lookup", "params": {"kind": "order_lines"}, "depends": ["order"]}},
     "quantity": {"type": "decimal", "label": "quantidade recebida", "order": 3},
     "price": {"type": "decimal", "label": "preço na nota (vazio = o da ordem)", "order": 4},
-    "document": {"type": "str", "label": "nota fiscal / documento", "order": 5},
+    "document": {"type": "str", "label": "nota fiscal / documento", "order": 5, "scan": True},
     "note": {"type": "str", "label": "observação (aceite de serviço)", "order": 6},
     "lines": {"type": "list", "label": "várias linhas de uma vez", "order": 7, "columns": {
         "line": {"type": "int", "required": True, "label": "linha",

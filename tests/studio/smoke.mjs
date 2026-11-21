@@ -684,6 +684,108 @@ await until(() => text("#admin-main").includes("Executa como (robô)"), "public 
 [...d.querySelectorAll("#admin-main .sub-tabs button")].find((b) => b.textContent === "Chamadas").click();
 await until(() => d.querySelector("#admin-main table"), "public api calls", jsErrors);
 ok(true, "API pública: clientes, novo cliente e chamadas (spec 010)");
+// ---------------------------------------------------------------- spec 050, phase 2: palette, undo, confirmation, context, camera
+{
+  const key = (k, extra = {}) => d.dispatchEvent(new w.KeyboardEvent("keydown", { key: k, bubbles: true, cancelable: true, ...extra }));
+  const typeIn = (input, v) => { input.value = v; input.dispatchEvent(new w.Event("input", { bubbles: true })); };
+  const items = () => [...d.querySelectorAll(".palette-dialog .palette-item")];
+  const cnpjOf = (base12) => {
+    const dg = [...base12].map(Number);
+    const wt = [6, 5, 4, 3, 2, 9, 8, 7, 6, 5, 4, 3, 2];
+    for (const n of [12, 13]) { let r = 0; for (let i = 0; i < n; i++) r += dg[i] * wt[i + 13 - n]; r %= 11; dg.push(r < 2 ? 0 : 11 - r); }
+    const t = dg.join("");
+    return `${t.slice(0, 2)}.${t.slice(2, 5)}.${t.slice(5, 8)}/${t.slice(8, 12)}-${t.slice(12)}`;
+  };
+  const stamp = Date.now().toString().slice(-8);
+  const taxId = cnpjOf(stamp + "0001");
+  const party = (await rpc("base.save_party", { name: `Cliente Paleta ${stamp}`, state: "SP", tax_id: taxId })).id;
+  await rpc("finance.save_credit_profile", { customer: party, default_term: "D30" });
+  const num = (await rpc("sales.create_order", { customer: 1, items: [{ product: "FEIJAO-1", quantity: 1 }] })).number;
+
+  // CA-050-02: a routine, an order by its number and a customer by CNPJ, and the chosen one is opened.
+  await go(w, "#/home");
+  await until(() => !d.querySelector("#area-home").hidden && d.querySelector("#area-ops").hidden, "home shown", jsErrors);
+  key("k", { ctrlKey: true });
+  await until(() => d.querySelector(".palette-dialog .palette-input"), "palette", jsErrors);
+  const pin = d.querySelector(".palette-dialog .palette-input");
+  typeIn(pin, "fatura pedido baixa");
+  await until(() => items().some((i) => i.textContent.startsWith("Fatura pedido")), "palette routine", jsErrors);
+  pin.dispatchEvent(new w.KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true }));
+  await until(() => w.location.hash.startsWith("#/ops/sales/sales.invoice_order") && !d.querySelector(".palette-dialog"), "palette opens routine", jsErrors);
+  ok(true, "Ctrl+K acha a rotina pelo nome e abre (CA-050-02)");
+  // The screen really changed (a form left by an earlier visit to this routine does not count).
+  await until(() => !d.querySelector("#area-ops").hidden && d.querySelector("#area-home").hidden && d.querySelector("#ops-main .run-button"),
+              "routine screen shown (toast: " + text("#toast") + ")", jsErrors);
+  key("k", { ctrlKey: true });
+  await until(() => d.querySelector(".palette-dialog"), "palette 2", jsErrors);
+  typeIn(d.querySelector(".palette-dialog .palette-input"), "executar");
+  ok([...d.querySelectorAll(".palette-dialog .palette-group")].some((g) => g.textContent === "Nesta tela") &&
+     items().some((i) => i.textContent.includes("Executar (F8)")), "a paleta traz as ações da tela aberta" +
+     ` (tela ${w.location.hash}; vistas: ${JSON.stringify(w.AnaPalette.screenActions().map((a) => a.label).slice(0, 25))}; ` +
+     `botão: ${(d.querySelector("#ops-main .run-button") || {}).textContent}, desabilitado ${!!(d.querySelector("#ops-main .run-button") || {}).disabled}; ` +
+     `áreas visíveis: ${[...d.querySelectorAll(".area-page")].filter((a) => !a.hidden).map((a) => a.id)}; ` +
+     `oculto acima do botão: ${((d.querySelector("#ops-main .run-button") || { closest: () => null }).closest("[hidden], dialog:not([open])") || {}).outerHTML?.slice(0, 120)})`);
+  typeIn(d.querySelector(".palette-dialog .palette-input"), String(num));
+  await until(() => items().some((i) => i.textContent.startsWith(`Pedido de venda ${num}`)), "palette order", jsErrors);
+  items().find((i) => i.textContent.startsWith(`Pedido de venda ${num}`)).click();
+  await until(() => w.location.hash.includes(`docs.view?kind=order&key=${num}`) && text("#ops-main").includes(String(num)), "palette opens order", jsErrors);
+  ok(true, "Ctrl+K acha o pedido pelo número e abre o documento (CA-050-02)");
+  key("k", { metaKey: true });
+  await until(() => d.querySelector(".palette-dialog"), "palette 3", jsErrors);
+  typeIn(d.querySelector(".palette-dialog .palette-input"), taxId.replace(/\D/g, ""));
+  await until(() => items().some((i) => i.textContent.includes(`Cliente Paleta ${stamp}`)), "palette cnpj", jsErrors);
+  d.querySelector(".palette-dialog .palette-input").dispatchEvent(new w.KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true }));
+  await until(() => w.location.hash === `#/master/party/${party}`, "palette opens customer", jsErrors);
+  ok(true, "Ctrl+K acha o cliente pelo CNPJ (sem pontuação) e abre o cadastro (CA-050-02)");
+
+  // RF-050-04: "?" lists the shortcuts, the global ones and the screen's.
+  await go(w, "#/ops/sales/sales.create_order?_form=1");
+  await until(() => d.querySelector("#ops-main select[name=customer]"), "order form", jsErrors);
+  key("?");
+  await until(() => d.querySelector(".shortcuts-dialog"), "shortcuts", jsErrors);
+  const sc = d.querySelector(".shortcuts-dialog").textContent;
+  ok(sc.includes("Ctrl+K") && sc.includes("Nesta tela") && sc.includes("Salvar (F8)") && sc.includes("Simular (F9)"),
+     "? lista os atalhos globais e os da tela");
+  [...d.querySelectorAll(".shortcuts-dialog button")].find((b) => b.textContent === "Fechar").click();
+  await until(() => !d.querySelector(".shortcuts-dialog"), "shortcuts closed", jsErrors);
+
+  // T-050-07 (D6): the customer brings its payment term.
+  const cust = d.querySelector("#ops-main select[name=customer]");
+  if (![...cust.options].some((o) => o.value === String(party))) cust.append(new w.Option(`Cliente Paleta ${stamp}`, String(party)));
+  cust.value = String(party);
+  cust.dispatchEvent(new w.Event("change", { bubbles: true }));
+  await until(() => d.querySelector("#ops-main select[name=payment_term]").value === "D30", "payment term from customer", jsErrors);
+  ok(true, "pedido: a condição de pagamento vem do cliente escolhido (RF-050-06)");
+
+  // CA-050-03: cancelling shows "Desfazer"; undoing reopens the order.
+  await w.AnaApi.run("sales.cancel_order", { params: { number: num } });
+  await until(() => d.querySelector("#undo-bar .undo-button"), "undo bar", jsErrors);
+  ok(text("#undo-bar").includes(`Pedido ${num} cancelado`), "cancelar o pedido mostra Desfazer (CA-050-03)");
+  d.querySelector("#undo-bar .undo-button").click();
+  await until(() => text("#toast").includes("Desfeito") && !d.querySelector("#undo-bar"), "undone", jsErrors);
+  const again = await w.AnaApi.run("sales.reopen_order", { params: { number: num } });
+  ok(again.error && again.error.code === "ORDER_NOT_CANCELLED", "desfazer reabriu o pedido (CA-050-03)");
+
+  // D5: an irreversible routine says its consequence and asks; "Voltar" runs nothing.
+  await go(w, "#/ops/inventory/inventory.write_off?quantity=1");
+  await until(() => d.querySelector(".confirm-dialog"), "confirm dialog", jsErrors);
+  ok(text(".confirm-dialog").includes("Não há desfazer"), "rotina irreversível pede confirmação dizendo a consequência");
+  [...d.querySelectorAll(".confirm-dialog button")].find((b) => b.textContent === "Voltar").click();
+  await until(() => !d.querySelector(".confirm-dialog"), "confirm closed", jsErrors);
+  await sleep(200);
+  ok(!text("#ops-main").includes("Executando"), "Voltar não executa a rotina");
+
+  // RF-050-08: the camera reads the code into the field (a reader stands in for the camera here).
+  w.BarcodeDetector = class { async detect() { return [{ rawValue: String(num) }]; } };
+  Object.defineProperty(w.navigator, "mediaDevices", { configurable: true,
+    value: { getUserMedia: async () => ({ getTracks: () => [{ stop() {} }] }) } });
+  await go(w, "#/ops/docs/docs.view?_form=1");
+  await until(() => d.querySelector("#ops-main .scan-btn"), "scan button", jsErrors);
+  d.querySelector("#ops-main .scan-btn").click();
+  await until(() => d.querySelector("#ops-main input[name=key]").value === String(num) && !d.querySelector(".scan-dialog"), "scanned", jsErrors);
+  ok(true, "câmera lê o código e preenche o campo (RF-050-08)");
+  delete w.BarcodeDetector;
+}
 ok(true, "todas as seções administrativas abrem");
 ok(jsErrors.length === 0, "nenhum erro de JavaScript (admin)" + (jsErrors.length ? ": " + jsErrors.join("; ") : ""));
 w.close();

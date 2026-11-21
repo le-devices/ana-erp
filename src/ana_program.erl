@@ -199,7 +199,13 @@ set_category(C, Name, Source) ->
         {match, [Cat]} -> string:trim(Cat);
         nomatch -> null
     end,
-    exec(C, "UPDATE ana_system.program SET category = $2 WHERE name = $1 AND category IS DISTINCT FROM $2", [Name, Category]).
+    %% Spec 050 (D5): "# ana:confirm <consequence>" — the screen asks before running, saying the consequence.
+    Confirm = case re:run(Source, "^#[ \t]*ana:confirm[ \t]+([^\r\n]+)", [multiline, unicode, {capture, all_but_first, binary}]) of
+        {match, [Cf]} -> case string:trim(Cf) of <<>> -> null; T -> unicode:characters_to_binary(string:slice(T, 0, 300)) end;
+        nomatch -> null
+    end,
+    exec(C, "UPDATE ana_system.program SET category = $2, confirm = $3 WHERE name = $1 "
+            "AND (category IS DISTINCT FROM $2 OR confirm IS DISTINCT FROM $3)", [Name, Category, Confirm]).
 
 new_version(C, Name, V, Source, Comment, Who) ->
     exec(C, "INSERT INTO ana_system.program_version (name, version, source, comment, created_by) "
