@@ -120,8 +120,14 @@
       return r;
     }),
     undo: (id) => API.request("POST", `/api/undo/${enc(id)}`, {}, { accept: [422] }),
+    // Spec 048: home panel — the company's spaces and their indicators.
+    home: {
+      spaces: () => API.request("GET", "/api/home/spaces"),
+      indicator: (id, fresh) => API.request("GET", `/api/home/blocks/${id}/indicator` + (fresh ? "?fresh=1" : "")),
+    },
     // Spec 045: execution variants of a routine.
     runVariants: {
+      visible: () => API.request("GET", "/api/variants"),          // spec 048 / T-045-07b: the palette
       list: (n) => API.request("GET", `/api/programs/${enc(n)}/variants`),
       save: (n, body) => API.request("POST", `/api/programs/${enc(n)}/variants`, body),
       remove: (n, id) => API.request("DELETE", `/api/programs/${enc(n)}/variants/${id}`),
@@ -233,6 +239,13 @@
     uiSettings: () => API.request("GET", "/api/ui/settings"),
     putUiSetting: (key, value) => API.request("PUT", "/api/ui/settings", { key, value }),
     admin: {
+      // Spec 048: the company's spaces of the home panel.
+      home: () => API.request("GET", "/api/admin/home"),
+      homePreview: (as) => API.request("GET", `/api/admin/home/preview/${enc(as)}`),
+      homeSpace: (id, body) => API.request(id ? "PUT" : "POST", "/api/admin/home/spaces" + (id ? `/${id}` : ""), body),
+      homeSpaceDelete: (id) => API.request("DELETE", `/api/admin/home/spaces/${id}`),
+      homeBlock: (space, id, body) => API.request(id ? "PUT" : "POST", `/api/admin/home/spaces/${space}/blocks` + (id ? `/${id}` : ""), body),
+      homeBlockDelete: (id) => API.request("DELETE", `/api/admin/home/blocks/${id}`),
       license: () => API.request("GET", "/api/admin/license"),
       installLicense: (text) => API.request("POST", "/api/admin/license", { text }),
       saveLogo: (logo) => API.request("PUT", "/api/admin/company/logo", { logo }),

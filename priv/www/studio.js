@@ -11,7 +11,7 @@
   const ROLE_LEVEL = { user: 1, developer: 2, admin: 3 };
   const ADMIN_SECTIONS = {
     users: "Usuários", groups: "Grupos de acesso", limits: "Limites e cotas", company: "Empresa",
-    settings: "Parâmetros", accounts: "Contas padrão", commands: "Comandos", remote: "Sistemas remotos",
+    settings: "Parâmetros", home: "Painel inicial", accounts: "Contas padrão", commands: "Comandos", remote: "Sistemas remotos",
     scheduler: "Agendamento", monitor: "Monitor", consumption: "Consumo", audit: "Auditoria", retention: "Retenção",
     health: "Saúde", alerts: "Alertas", core: "Núcleo", uiperf: "Desempenho das telas", sqlperf: "Desempenho do SQL", advice: "Dicas de otimização", updates: "Atualizações do produto",
     license: "Licença", extensions: "Extensões", telemetry: "Telemetria",
@@ -328,7 +328,8 @@
     $("#logout").addEventListener("click", async () => { await API.logout(); location.hash = ""; location.reload(); });
     for (const b of $$(".area")) b.addEventListener("click", () => go("#/" + b.dataset.area));
     $("#user-avatar").addEventListener("click", (e) => { e.stopPropagation(); toggle($("#user-avatar"), () => { $("#user-menu").hidden = false; }); });
-    $("#notices-btn").addEventListener("click", () => go(state.systemNotices ? "#/admin/checks" : "#/home"));
+    // Spec 048 (D4): one notice center — tasks, scheduled routines, approvals, system checks.
+    $("#notices-btn").addEventListener("click", () => window.AnaHome.notices());
     document.addEventListener("click", (e) => { if (!e.target.closest("#user-menu")) closeMenus(); });
     document.addEventListener("keydown", (e) => { if (e.key === "Escape") closeMenus(); });
     $("#command-form").addEventListener("submit", (e) => {

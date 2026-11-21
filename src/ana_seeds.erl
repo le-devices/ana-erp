@@ -30,6 +30,8 @@ apply() ->
     _ = ana_task:run(<<"programs.product_updates">>, ana_task:system_user(), <<"internal">>,
                      fun() -> ana_product_updates:check() end),
     _ = ana_task:run(<<"seed.routines">>, ana_task:system_user(), <<"internal">>, fun ensure_routines/0),
+    %% Spec 048: the product's blocks of the home panel, once, after their programs exist.
+    _ = ana_task:run(<<"seed.home">>, ana_task:system_user(), <<"internal">>, fun ana_home:ensure_product_blocks/0),
     ok.
 
 %% Spec 038 (phase 4): the routines that keep the subsystems reconciled without typing. Created once,

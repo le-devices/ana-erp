@@ -788,6 +788,39 @@ ok(true, "API pública: clientes, novo cliente e chamadas (spec 010)");
   ok(true, "câmera lê o código e preenche o campo (RF-050-08)");
   delete w.BarcodeDetector;
 }
+// ---------------------------------------------------------------- spec 048: home panel
+{
+  w.AnaPrefs.set("home.layout", null);
+  await go(w, "#/home");
+  await until(() => d.querySelector("#area-home .home-search-input") && text("#area-home .home-spaces").includes("Visão geral"), "home spaces", jsErrors);
+  const first = () => d.querySelector("#area-home .home-block .block-open");
+  // The home is drawn again right after login: wait for the blocks of the last drawing, with their numbers.
+  await until(() => first() && [...d.querySelectorAll("#area-home .home-block .block-value")].every((v) => v.textContent !== "…"), "indicators", jsErrors);
+  ok(/Pedidos com falta: .+/.test(first().getAttribute("aria-label")) && d.querySelector("#area-home .block-status"),
+     "Início: espaço da empresa com indicadores (número, situação e texto no nome acessível)");
+  ok(text("#area-home").includes("Meu espaço") && text("#area-home").includes("Favoritas"), "os blocos pessoais continuam (RF-048-07)");
+  const btn = (label) => [...d.querySelectorAll("#area-home button")].find((b) => b.textContent === label);
+  btn("Personalizar").click();
+  await until(() => btn("Concluir"), "personalize", jsErrors);
+  [...d.querySelectorAll("#area-home .home-block")][0].querySelector(".block-edit button:last-child").click();   // Esconder
+  btn("Concluir").click();
+  await until(() => !text("#area-home .home-spaces").includes("Pedidos com falta") && text("#area-home").includes("1 bloco(s) escondido(s)"), "hidden", jsErrors);
+  await go(w, "#/ops");
+  await go(w, "#/home");
+  await until(() => text("#area-home .home-spaces").includes("Títulos vencidos"), "home again", jsErrors);
+  ok(!text("#area-home .home-spaces").includes("Pedidos com falta"), "bloco escondido continua escondido ao voltar (CA-048-03)");
+  btn("Restaurar padrão").click();
+  await until(() => text("#area-home .home-spaces").includes("Pedidos com falta"), "restored", jsErrors);
+  ok(true, "Restaurar padrão volta ao painel da empresa (CA-048-03)");
+  d.querySelector("#notices-btn").click();
+  await until(() => d.querySelector(".notices-dialog"), "notice center", jsErrors);
+  ok(text(".notices-dialog").includes("Tarefas dos processos") && text(".notices-dialog").includes("Avisos das verificações do sistema"),
+     "centro de avisos reúne tarefas, rotinas agendadas, aprovações e verificações (D4)");
+  [...d.querySelectorAll(".notices-dialog button")].find((b) => b.textContent === "Fechar").click();
+  await go(w, "#/admin/home");
+  await until(() => text("#admin-main").includes("Ver como um usuário vê") && text("#admin-main").includes("Visão geral"), "home editor", jsErrors);
+  ok(true, "Administração → Painel inicial: espaços, blocos e pré-visualização (RF-048-02)");
+}
 ok(true, "todas as seções administrativas abrem");
 ok(jsErrors.length === 0, "nenhum erro de JavaScript (admin)" + (jsErrors.length ? ": " + jsErrors.join("; ") : ""));
 w.close();
