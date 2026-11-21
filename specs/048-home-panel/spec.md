@@ -1,6 +1,6 @@
 # 048 — Painel inicial
 
-Situação: especificada (nov/2026).
+Situação: implementada (nov/2026). Blocos sugeridos pelo uso ficam com a spec 051; modo TV com a 054. Ver plan.md.
 
 ## Problema
 O início do Estúdio já tem blocos (favoritas, categorias pessoais e da
