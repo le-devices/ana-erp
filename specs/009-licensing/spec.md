@@ -3,6 +3,7 @@
 Situação: decisões tomadas (out/2026, recomendações aceitas pelo dono do
 produto). Fase 1 (licença, módulos, limites, expiração, versão, ambientes,
 camadas de programas), fase 2 (pontos de extensão, permissão por dado) e fase 3 (marca conjunta, telemetria) implementadas.
+**A spec 066 (nov/2026) muda o modelo**: núcleo aberto em AGPL-3.0 sem trava; a licença assinada passa a valer para módulos premium, pacotes fiscais oficiais, suporte e licença comercial (D3/D4 da 066).
 Pendente do fornecedor: gerar a chave de produção (`scripts/license.py
 keygen`) e publicar a parte pública em `priv/license/keys.json`.
 
