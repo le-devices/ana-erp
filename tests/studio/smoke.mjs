@@ -121,7 +121,7 @@ await until(() => text("#program-name") === "demo.hello", "program after library
 ok(!d.querySelector("#run").disabled, "programa comum volta a ter Executar");
 await until(() => text("#program-name") === "demo.hello", "program", jsErrors);
 ok(d.querySelector("#editor textarea").value.includes("def main"), "código no editor");
-ok([...d.querySelectorAll("[data-ptab]")].map((b) => b.textContent).join("|") === "Código|Propriedades e limites|Versões|Execuções|Agendamentos|Desempenho", "abas do programa");
+ok([...d.querySelectorAll("[data-ptab]")].map((b) => b.textContent).join("|") === "Código|Propriedades e limites|Versões|Execuções|Agendamentos|Desempenho|Qualidade", "abas do programa");
 ok([...d.querySelectorAll("[data-panel]")].map((b) => b.textContent).join("|") === "Saída|Resultado", "painel inferior só com Saída e Resultado (CA-020-02)");
 d.querySelector('[data-ptab="props"]').click();
 await until(() => d.querySelectorAll("#limits-box input").length === 10, "limits", jsErrors);
