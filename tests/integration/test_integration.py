@@ -9404,3 +9404,95 @@ class TestAssistant(Base):
             self.assertEqual(self.status(n), "OPEN")
         finally:
             self.configure(program=self.model)
+
+
+class TestProgramQualityPhase2(Base):
+    """Quality gate, phase 2 (spec 064): tests of programs with coverage, performance against the previous version,
+    failures by version and package."""
+
+    def gate(self, prog):
+        s, g, _ = http("GET", f"/api/quality/gate?programs={prog}", token=self.token)
+        self.assertEqual(s, 200, g)
+        return g["programs"][0]
+
+    def run_tests(self, prog):
+        s, r, _ = http("POST", f"/api/programs/{prog}/tests/run", {}, self.token)
+        self.assertEqual(s, 200, r)
+        return r
+
+    def test_t_064_06_cases_and_functions_in_rehearsals_with_coverage(self):
+        prog = f"test.qt_cases_{SUFFIX}"
+        self.save(prog, "PARAMS = {'n': {'type': 'int', 'required': True}}\n"
+                        "TESTS = [\n"
+                        "    {'name': 'dobra', 'params': {'n': 2}, 'expect': {'double': 4}},\n"
+                        "    {'name': 'errado', 'params': {'n': 2}, 'expect': {'double': 5}},\n"
+                        "    {'name': 'recusa negativo', 'params': {'n': -1}, 'error': 'NEGATIVE'},\n"
+                        "]\n"
+                        "def main(n):\n"
+                        "    if n < 0:\n"
+                        "        raise ana.Error('NEGATIVE', 'negativo')\n"
+                        f"    ana.sql_exec(\"INSERT INTO base.party (kind, name) VALUES ('customer', 'Teste {SUFFIX} ' || $1)\", str(n))\n"
+                        "    return {'double': n * 2}\n"
+                        "def test_grava_e_desfaz():\n"
+                        "    r = main(3)\n"
+                        f"    assert ana.sql_value(\"SELECT count(*) FROM base.party WHERE name = 'Teste {SUFFIX} 3'\") == 1\n"
+                        "    assert r == {'double': 6}\n"
+                        "def nunca_chamada():\n"
+                        "    return 'linha que os testes não cobrem'\n")
+        r = self.run_tests(prog)
+        by = {t["name"]: t for t in r["results"]}
+        self.assertEqual({k: v["status"] for k, v in by.items()},
+                         {"dobra": "passed", "errado": "failed", "recusa negativo": "passed", "test_grava_e_desfaz": "passed"})
+        self.assertIn('esperava {"double":5}', by["errado"]["message"])
+        self.assertEqual((r["passed"], r["failed"]), (3, 1))
+        self.assertTrue(0 < r["coverage"] < 100, r["coverage"])                     # nunca_chamada is not covered
+        self.assertIn(r["executable_lines"], range(10, 40))
+        self.assertEqual(self.count("base.party", f"name LIKE 'Teste {SUFFIX} %'"), 0)   # everything undone
+        g = self.gate(prog)
+        self.assertIn("tests_failed", [f["rule"] for f in g["blocking"]])             # a failing test blocks the gate
+
+    def test_ca_064_03_doubling_sql_commands_is_a_regression_of_the_new_version(self):
+        prog = f"test.qt_perf_{SUFFIX}"
+        tests = "TESTS = [{'name': 'conta', 'params': {}, 'expect': {'n': 1}}]\n"
+        self.save(prog, tests + "def main():\n    return {'n': ana.sql_value('SELECT 1')}\n")
+        self.assertEqual(self.run_tests(prog)["regressions"], [])
+        self.save(prog, tests + "def main():\n    for _ in range(4):\n        ana.sql_value('SELECT 1')\n"
+                                "    return {'n': ana.sql_value('SELECT 1')}\n")
+        r = self.run_tests(prog)
+        self.assertEqual((r["passed"], r["previous_version"]), (1, r["version"] - 1))
+        self.assertEqual([(g["test"], g["metric"], g["previous"], g["current"]) for g in r["regressions"]],
+                         [("conta", "sql_count", 1, 5)])
+        blocking = self.gate(prog)["blocking"]
+        self.assertIn("performance_regression", [f["rule"] for f in blocking])
+        self.assertIn("comandos SQL passou de 1 para 5", " ".join(f["message"] for f in blocking))
+
+    def test_ca_064_05_a_failure_shows_the_version_the_package_and_its_gate(self):
+        s, k, _ = http("GET", "/api/admin/transports/key", token=self.token)
+        http("PUT", f"/api/admin/transports/origins/{k['name']}", {"public_key": k["public_key"]}, self.token)
+        prog = f"test.qt_fail_{SUFFIX}"
+        self.save(prog, "def main():\n    raise ana.Error('QUEBROU', 'a versão do pacote quebra')\n")
+        s, c, _ = http("POST", "/api/admin/transports/export", {"title": f"Pacote qualidade {SUFFIX}", "programs": [prog]}, self.token)
+        self.assertEqual(s, 200, c)
+        self.save(prog, "def main():\n    return 'consertado aqui'\n")
+        self.assertEqual(self.run_program(prog)[1]["result"], "consertado aqui")
+        s, rcv, _ = http("POST", "/api/admin/transports/receive", token=self.token, raw=json.dumps(c["package"]).encode())
+        self.assertEqual(s, 200, rcv)
+        s, imp, _ = http("POST", f"/api/admin/transports/{rcv['id']}/import", {"accept_conflicts": [prog]}, self.token)
+        self.assertEqual(s, 200, imp)
+        try:
+            self.assertEqual(self.run_program(prog)[1]["error"]["code"], "QUEBROU")
+            s, q, _ = http("GET", f"/api/programs/{prog}/quality", token=self.token)
+            self.assertEqual(s, 200, q)
+            f = [x for x in q["failures"] if x["code"] == "QUEBROU"][0]
+            self.assertEqual((f["version"], f["started_in"], f["n"]), (q["version"], q["version"], 1))
+            self.assertEqual(f["package"]["title"], f"Pacote qualidade {SUFFIX}")
+            self.assertIn("ok", f["package"]["gate"])
+            self.assertEqual([v["package"] for v in q["versions"] if v["version"] == q["version"]], [f"Pacote qualidade {SUFFIX}"])
+        finally:
+            http("POST", f"/api/admin/transports/{rcv['id']}/revert", {}, self.token)
+
+    def test_rnf_064_03_tests_never_run_in_production(self):
+        prog = f"test.qt_prod_{SUFFIX}"
+        self.save(prog, "TESTS = [{'name': 'a', 'params': {}}]\ndef main():\n    return 1\n")
+        s, q, _ = http("GET", f"/api/programs/{prog}/quality", token=self.token)
+        self.assertEqual((s, q["in_production"]), (200, False))       # the battery runs on a development instance

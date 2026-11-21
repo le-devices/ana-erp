@@ -1222,3 +1222,8 @@ input.narrow { width: 6em; }
 .assistant-form { display: flex; gap: 8px; padding: 10px 12px; border-top: 1px solid var(--border); }
 .assistant-input { flex: 1; resize: vertical; min-height: 44px; }
 @media (max-width: 600px) { .assistant-panel { top: 0; width: 100%; } .assistant-btn { display: none; } }
+
+/* Spec 064, phase 2: the Quality tab of a program. */
+.quality-head { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; margin-bottom: 8px; }
+.quality-head h2 { margin: 0; flex: 1 1 auto; }
+.quality-regressions { margin-top: 8px; }

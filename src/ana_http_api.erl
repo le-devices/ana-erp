@@ -390,6 +390,12 @@ route(<<"GET">>, [<<"home">>, <<"blocks">>, Id, <<"indicator">>], Req) ->
         end)
     end);
 
+%% --- Quality of a program: tests, coverage, performance, failures (spec 064, phase 2) ---
+route(<<"POST">>, [<<"programs">>, Name, <<"tests">>, <<"run">>], Req) ->
+    ana_http:require(Req, ?DEV, fun(U) -> home_reply(ana_program_tests:run(Name, U), Req) end);
+route(<<"GET">>, [<<"programs">>, Name, <<"quality">>], Req) ->
+    ana_http:require(Req, ?DEV, fun(U) -> home_reply(ana_program_tests:overview(Name, U), Req) end);
+
 %% --- Assistant (spec 052) --------------------------------------------------
 route(<<"GET">>, [<<"assistant">>], Req) ->
     ana_http:require(Req, ?USER, fun(U) -> home_reply(ana_assistant:config(U), Req) end);

@@ -27,6 +27,7 @@
 <script src="studio/ops.js" defer></script>
 <script src="studio/dev.js" defer></script>
 <script src="studio/patterns.js" defer></script>
+<script src="studio/quality.js" defer></script>
 <script src="studio/admin.js" defer></script>
 <script src="studio/files.js" defer></script>
 <script src="studio/masterdata.js" defer></script>
@@ -163,6 +164,7 @@
         <button class="tab" data-ptab="executions">Execuções</button>
         <button class="tab" data-ptab="schedules">Agendamentos</button>
         <button class="tab" data-ptab="perf">Desempenho</button>
+        <button class="tab" data-ptab="quality">Qualidade</button>
         <span class="run-state" id="run-state"></span>
       </nav>
       <div id="notice" class="notice" hidden></div>
@@ -244,6 +246,7 @@
 
       <!-- Performance of this program (spec 019) -->
       <div id="ptab-perf" class="ptab page-pad" hidden></div>
+      <div id="ptab-quality" class="ptab page-pad" hidden></div>
 
       <!-- Executions of this program -->
       <div id="ptab-executions" class="ptab split page-pad" hidden>
