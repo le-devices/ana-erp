@@ -154,12 +154,16 @@ hold(<<"files">>, #{<<"action">> := A} = Req) when A =/= <<"get">>, A =/= <<"lis
 hold(<<"schedule">>, #{<<"name">> := N} = Req) ->
     {hold, #{kind => <<"schedule">>, name => N, program => maps:get(<<"program">>, Req, null),
              cron => maps:get(<<"cron">>, Req, null), active => maps:get(<<"active">>, Req, true)}};
+hold(<<"set_value">>, #{<<"name">> := N} = Req) ->
+    %% Spec 065 (D4): a company value the routine would keep.
+    {hold, #{kind => <<"value">>, name => N, value => maps:get(<<"value">>, Req, null)}};
 hold(_, _) -> pass.
 
 %% What the program receives for a held request: an answer saying it was held, in the shape it expects.
 -spec held_reply(map()) -> map().
 held_reply(#{kind := <<"http">>}) -> #{<<"status">> => 202, <<"headers">> => #{}, <<"text">> => <<>>, <<"held">> => true};
 held_reply(#{kind := <<"schedule">>}) -> #{<<"job">> => null, <<"held">> => true};
+held_reply(#{kind := <<"value">>, name := N, value := V}) -> #{<<"name">> => N, <<"value">> => V, <<"held">> => true};
 held_reply(#{kind := <<"files">>}) -> #{<<"file">> => null, <<"version">> => null, <<"id">> => null, <<"held">> => true};
 held_reply(_) -> #{<<"held">> => true}.
 

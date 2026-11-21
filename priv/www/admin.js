@@ -864,7 +864,8 @@
     const a = await API.admin.alerts();
     const targetName = (r) => r.source === "health" ? (r.target === "*" ? "qualquer componente" : COMPONENT[r.target] || r.target)
       : METRIC[r.target] || r.target;
-    const condition = (r) => r.source === "health" ? `${targetName(r)} em ${LEVEL[r.level] || r.level}` : `${targetName(r)} ${r.op} ${n2(r.threshold)}`;
+    const condition = (r) => r.source === "health" ? `${targetName(r)} em ${LEVEL[r.level] || r.level}`
+      : `${targetName(r)} ${r.op} ${r.threshold_value ? "valor da empresa " + r.threshold_value : n2(r.threshold)}`;
     const destinations = (r) => [r.notify_studio ? "Estúdio" : null, r.connector ? `conector ${r.connector}` : null,
       (r.recipients || []).length ? `${r.recipients.length} e-mail(s)` : null].filter(Boolean).join(", ") || "nenhum";
     const opt = (v, t) => el("option", { value: v, text: t });
@@ -876,6 +877,8 @@
     const level = el("select", {}, opt("red", "vermelho"), opt("yellow", "amarelo ou pior"));
     const op = el("select", {}, [">", ">=", "<", "<="].map((o) => opt(o, o)));
     const threshold = el("input", { type: "number", step: "any", placeholder: "limiar" });
+    // Spec 065 (T-065-07): or a company value, read at each check (changing it changes the rule, no edit here).
+    const thresholdValue = el("input", { placeholder: "ou o nome de um valor da empresa (ex.: ti.memoria_maxima_mb)", "aria-label": "Valor da empresa do limiar" });
     const windowS = el("input", { type: "number", min: 0, max: 86400, value: 0 });
     const severity = el("select", {}, Object.entries(SEVERITY).map(([k, v]) => opt(k, v[1])));
     const studio = el("input", { type: "checkbox", checked: true });
@@ -883,7 +886,7 @@
     const recipients = el("textarea", { rows: 2, placeholder: "e-mails separados por vírgula (entregues pelo conector)" });
     const active = el("input", { type: "checkbox", checked: true });
     const healthOnly = [field("Nível", level)];
-    const metricOnly = [field("Comparação", op), field("Limiar", threshold)];
+    const metricOnly = [field("Comparação", op), field("Limiar", threshold), field("Limiar por valor da empresa", thresholdValue)];
     const sync = () => {
       const h = source.value === "health";
       const keep = target.value;
@@ -898,6 +901,7 @@
       id.value = r ? r.id : ""; name.value = r ? r.name : ""; source.value = r ? r.source : "health"; sync();
       target.value = r ? r.target : "*"; level.value = (r && r.level) || "red"; op.value = (r && r.op) || ">";
       threshold.value = r && r.threshold != null ? r.threshold : ""; windowS.value = r ? r.window_s : 0;
+      thresholdValue.value = (r && r.threshold_value) || "";
       severity.value = r ? r.severity : "warning"; studio.checked = r ? r.notify_studio : true;
       connector.value = (r && r.connector) || ""; recipients.value = r ? (r.recipients || []).join(", ") : "";
       active.checked = r ? r.active : true;
@@ -933,6 +937,7 @@
           const h = source.value === "health";
           const body = { id: id.value ? Number(id.value) : null, name: name.value.trim(), source: source.value, target: target.value,
             level: h ? level.value : null, op: h ? null : op.value, threshold: h || threshold.value === "" ? null : Number(threshold.value),
+            threshold_value: h || !thresholdValue.value.trim() ? null : thresholdValue.value.trim(),
             window_s: parseInt(windowS.value || "0", 10), severity: severity.value, notify_studio: studio.checked,
             connector: connector.value || null, active: active.checked,
             recipients: recipients.value.split(/[,;\s]+/).map((x) => x.trim()).filter(Boolean) };
@@ -1409,10 +1414,13 @@
         t.description ? el("p", { text: t.description }) : null,
         t.manifest.tests ? el("p", { class: "muted", text: "Testes declarados: " + t.manifest.tests }) : null,
         pre.missing && pre.missing.length ? el("p", { class: "warn-text", text: "Chama programas que não existem aqui: " + pre.missing.join(", ") }) : null,
+        pre.missing_values && pre.missing_values.length ? el("p", { class: "warn-text" },
+          "Lê valores da empresa que não existem aqui: " + pre.missing_values.join(", ") + " ",
+          el("a", { href: "#/admin/values", class: "button small", text: "Criar em Valores da empresa" })) : null,
         t.refused_reason ? el("p", { class: "warn-text", text: `Recusado por ${t.refused_by}: ${t.refused_reason}` }) : null,
         table([
           { label: "Item", value: (r) => r.i.name },
-          { label: "Tipo", value: (r) => ({ program: "programa", command: "comando", setting: "parâmetro" })[r.i.kind] || r.i.kind },
+          { label: "Tipo", value: (r) => ({ program: "programa", command: "comando", setting: "parâmetro", value: "valor da empresa" })[r.i.kind] || r.i.kind },
           { label: "Situação aqui", value: (r) => pill(r.l, r.c) },
           { label: "Aceitar conflito", value: (r) => r.box || "" },
           { label: "", value: (r) => r.i.kind === "program" ? el("button", { type: "button", class: "quiet small", text: "Comparar", onclick: () => {
@@ -2217,7 +2225,8 @@
   const VALUE_STATUS = { pending: ["aguarda aprovação", "warn"], active: ["em uso", "ok"], refused: ["recusada", "off"],
                          withdrawn: ["retirada", "off"], replaced: ["substituída", ""] };
   const VALUE_ACTIONS = { defined: "criou", redefined: "mudou a definição", requested: "pediu mudança", activated: "mudou",
-                          approved: "aprovou", refused: "recusou", withdrawn: "retirou", archived: "arquivou", restored: "restaurou" };
+                          approved: "aprovou", refused: "recusou", withdrawn: "retirou", archived: "arquivou", restored: "restaurou",
+                          kept: "mudou pela rotina", transported: "veio num transporte" };
   const INSTANCES = { development: "desenvolvimento", test: "teste", production: "produção" };
   let valuesMeta = null, valuesState = { q: "", area: "", archived: false, open: null };
 
@@ -2283,7 +2292,8 @@
         { label: "Próxima vigência", value: (v) => v.next ? `${brDate(v.next.valid_from)}: ${valueText(v.next.value, v.value_type)}${v.next.expression ? " (" + exprLabel(v.next.expression) + ")" : ""}` : "—" },
         { label: "", value: (v) => el("span", {}, v.sensitive ? pill("sensível", "warn") : null,
                                        v.pending ? pill(`${v.pending} aguardando aprovação`, "warn") : null,
-                                       v.archived ? pill("arquivado", "off") : null) },
+                                       v.archived ? pill("arquivado", "off") : null,
+                                       v.unused ? pill("sem uso há 180 dias: arquivar?", "warn") : null) },
       ], groups[a], { onRow: (v) => open(v.name) })));
     main().replaceChildren(
       ...header("Valores da empresa", "Valores de negócio com nome — período aberto, margem mínima, depósito principal, centros de custo de P&D — que as rotinas leem pelo nome (ana.value no Python, base.company_value no SQL). Mude aqui, com vigência, sem tocar em código."),
@@ -2355,12 +2365,13 @@
                                           v.reason ? el("div", { class: "muted", text: v.reason }) : null) },
         { label: "", value: actions },
       ], d.versions, { empty: "Nenhuma versão ainda: informe o primeiro valor abaixo." }),
+      valueUsage(d.usage, def),
       d.can_edit && !def.archived ? valueVersionForm(def, d) : null,
-      d.can_edit ? el("details", { class: "value-def" }, el("summary", { text: "Definição" }), valueDefineForm(def)) : null,
+      d.can_edit ? el("details", { class: "value-def" }, el("summary", { text: "Definição" }), valueDefineForm(def, d.usage)) : null,
       !d.changes.length ? null : el("details", { class: "value-history" }, el("summary", { text: `Histórico (${d.changes.length})` }),
         table([
           { label: "Quando", value: (c) => fmtDate(c.at) },
-          { label: "Quem", value: (c) => c.username },
+          { label: "Quem", value: (c) => c.program ? `${c.program} (para ${c.username})` : c.username },
           { label: "O quê", value: (c) => VALUE_ACTIONS[c.action] || c.action },
           { label: "Antes → depois", value: (c) => el("span", { class: "small" }, change(c.before), " → ", change(c.after)) },
           { label: "Motivo", value: (c) => c.reason || "" },
@@ -2372,6 +2383,33 @@
       if (x.status) return (VALUE_STATUS[x.status] || [x.status])[0];
       return Object.keys(x).filter((k) => k !== "name").map((k) => `${k}: ${x[k]}`).join(", ");
     }
+  }
+
+  // D8: who reads or keeps the value — shown before changing or archiving it.
+  function usageCount(u) {
+    if (!u) return 0;
+    return ["programs", "libraries", "variants", "schedules", "alert_rules", "processes", "flows", "tax_rules"]
+      .reduce((n, k) => n + (u[k] || []).length, 0);
+  }
+  function valueUsage(u, def) {
+    if (!u) return null;
+    const items = [];
+    const add = (label, list, text, href) => { if ((list || []).length) items.push(el("li", {}, el("strong", { text: label + ": " }),
+      ...list.map((x, i) => [i ? ", " : "", href ? el("a", { href: href(x), text: text(x) }) : text(x)]).flat())); };
+    add("Mantido pelas rotinas", (u.maintained_by || []).map((p) => ({ p })), (x) => x.p, (x) => `#/dev/program/${x.p}`);
+    add("Programas", u.programs, (x) => `${x.name} (linha ${x.line})${x.keeps ? " — mantém" : ""}`, (x) => `#/dev/program/${x.name}`);
+    add("Bibliotecas", u.libraries, (x) => `${x.name} (linha ${x.line})`, (x) => `#/dev/program/${x.name}`);
+    add("Variantes", u.variants, (x) => `${x.program} · ${x.name}${x.company ? " (empresa)" : ""}`);
+    add("Agendamentos", u.schedules, (x) => `${x.name} (${x.program})`);
+    add("Regras de alerta", u.alert_rules, (x) => x.name, () => "#/admin/alerts");
+    add("Processos", u.processes, (x) => x.name);
+    add("Esteiras", u.flows, (x) => x.name);
+    add("Regras de imposto", u.tax_rules, (x) => x.name);
+    const reads = u.reads && Number(u.reads.n) ? `${u.reads.n} execução(ões) leram nos últimos 180 dias; a última em ${fmtDate(u.reads.last)}.`
+                                               : "Nenhuma execução leu este valor nos últimos 180 dias.";
+    return el("details", { class: "value-usage", open: true }, el("summary", { text: `Onde é usado (${usageCount(u)})` }),
+      items.length ? el("ul", {}, items) : el("p", { class: "muted", text: "Nenhum programa, variante, agendamento ou regra cita este valor pelo nome." }),
+      el("p", { class: "muted small", text: reads }));
   }
 
   function valuePreviewAt(name, def) {
@@ -2452,7 +2490,7 @@
       el("div", { class: "row-buttons" }, el("button", { class: "primary", type: "submit", text: def.sensitive ? "Pedir aprovação" : "Salvar" })));
   }
 
-  function valueDefineForm(def) {
+  function valueDefineForm(def, usage) {
     const isNew = !def;
     const name = el("input", { value: def ? def.name : "", disabled: !isNew, placeholder: "ex.: financeiro.margem_minima" });
     const description = el("input", { value: def ? def.description : "" });
@@ -2468,9 +2506,12 @@
     const [sens, sensL] = box("Sensível: mudança só com aprovação de outra pessoa", def && def.sensitive);
     const [reas, reasL] = box("Exige motivo em cada mudança", def && def.reason_required);
     const [same, sameL] = box("Igual em todos os ambientes (o conteúdo viaja nos transportes)", def && def.same_everywhere);
+    const keepers = el("input", { value: def ? (def.maintained_by || []).join(", ") : "", placeholder: "ex.: finance.close_period (separe por vírgula)",
+                                  "aria-label": "Rotinas que mantêm o valor" });
     const body = () => ({ description: description.value.trim(), area: area.value.trim() || null, value_type: type.value, shape: shape.value,
                           ref_kind: type.value === "reference" ? ref.value : null, sensitive: sens.checked, reason_required: reas.checked,
-                          same_everywhere: same.checked });
+                          same_everywhere: same.checked,
+                          maintained_by: keepers.value.split(",").map((s) => s.trim()).filter(Boolean) });
     return el("form", { class: "form-card", onsubmit: (e) => { e.preventDefault(); guard(async () => {
       if (isNew) {
         const n = name.value.trim();
@@ -2488,11 +2529,14 @@
       field("Nome", name), field("Descrição", description), field("Área responsável", area),
       el("div", { class: "row-buttons" }, field("Tipo", type), field("Forma", shape), refField),
       sensL, reasL, sameL,
+      field("Mantido pelas rotinas (ana.set_value)", keepers),
       isNew ? el("p", { class: "muted small", text: "Senhas, tokens e chaves não são valores da empresa: vão para o cofre dos conectores." }) : null,
       el("div", { class: "row-buttons" }, el("button", { class: "primary", type: "submit", text: isNew ? "Criar" : "Salvar definição" }),
         isNew ? null : el("button", { type: "button", class: def.archived ? "" : "danger", text: def.archived ? "Restaurar" : "Arquivar",
           onclick: () => guard(async () => {
-            if (!def.archived && !confirm(`Arquivar ${def.name}? As rotinas que o lerem passam a receber "valor arquivado". O histórico fica.`)) return;
+            const n = usageCount(usage);
+            if (!def.archived && !confirm(`Arquivar ${def.name}? ${n ? `${n} uso(s) listado(s) em "Onde é usado" deixam de funcionar — ` : ""}`
+                                          + `as rotinas que o lerem passam a receber "valor arquivado". O histórico fica.`)) return;
             await API.values.redefine(def.name, { archived: !def.archived });
             toast(def.archived ? "Valor restaurado." : "Valor arquivado.");
             await values();

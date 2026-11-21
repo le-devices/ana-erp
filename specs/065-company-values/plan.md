@@ -60,7 +60,30 @@ linha do tempo das versões, prévia de expressão, aprovações pendentes e his
 - Credenciais recusadas (`VALUE_SECRET`), pelo nome ou pelo conteúdo, apontando o cofre dos conectores.
 - Versões passadas não se apagam; uma versão futura ou pendente pode ser retirada.
 
+## Fase 2
+- **Referências (T-065-07).** `{{valor:nome}}` nos parâmetros dos agendamentos (resolvido no dia, para o usuário
+  da rotina; sozinho, chega no tipo do valor), nas condições e parâmetros das esteiras e processos (lido quando a
+  regra roda), nas variantes (`company_value`, spec 045) e no limiar das regras de alerta de métrica (lido a cada
+  verificação). Nas fórmulas do motor de impostos, `company_value('nome')` lê o valor na data do fato. As
+  verificações periódicas (spec 033) não têm limiares configuráveis: nada a referenciar.
+- **Mantidos por rotinas (T-065-08).** `ana.set_value(nome, valor)` — só uma rotina listada em "Mantido pelas
+  rotinas" do valor. Conferido na hora (tipo, credencial) e gravado logo depois do COMMIT da rotina (falhou, nada
+  muda; simulação, nada muda; ensaio, aparece entre os efeitos retidos), como versão a partir de hoje, com a
+  rotina e o usuário na trilha. O fechamento (`finance.close_period`) mantém `financeiro.periodo_aberto` e a
+  contagem confirmada (`inventory.count`) mantém `estoque.ultimo_inventario`.
+- **Onde é usado (T-065-09).** Programas e bibliotecas que citam o nome literalmente (`ana.value`,
+  `ana.set_value`, `base.company_value*`, `{{valor:}}`), rotinas que o mantêm, variantes, agendamentos, regras de
+  alerta, processos, esteiras e regras de imposto, e as leituras registradas nas execuções dos últimos 180 dias —
+  na tela do valor e antes de arquivar. No editor e no portão de qualidade (spec 064), nome inexistente é achado
+  sério (`company_value_unknown`) e constante que já é valor da empresa vira sugestão (`company_value_constant`).
+- **Transporte (T-065-10).** O pacote leva a definição dos valores que seus programas leem; o conteúdo, só dos
+  marcados "igual em todos os ambientes" (versões gerais). A importação cria ou atualiza a definição sem tocar no
+  conteúdo do destino; desfazer volta como era. A prévia avisa dos valores que os programas leem e que não existem
+  no destino, com o atalho para criá-los.
+- **Sugestões (T-065-11).** Uma versão que começa nos próximos 7 dias vira aviso (uma vez, pela tarefa diária do
+  cluster); valor criado há mais de 180 dias que ninguém cita nem leu aparece como "sem uso: arquivar?".
+
 ## Fora desta fase
-Referências `{{valor:nome}}` em variantes, agendamentos, regras, verificações, esteiras e impostos; valores
-mantidos por rotinas; "onde é usado"; transporte; sugestões (fase 2, T-065-07..11). A leitura feita pelo
-SQL (`base.company_value`) não entra no registro da execução nesta fase — só a de `ana.value`.
+A leitura feita pelo SQL (`base.company_value`) não entra no registro da execução — só a de `ana.value`. O
+assistente (spec 052), a paleta de comandos (spec 050 fase 2), a implantação guiada (spec 061) e o completar de
+`ana.value("` no editor ficam para T-065-11b.

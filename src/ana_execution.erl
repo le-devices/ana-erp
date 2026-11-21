@@ -51,6 +51,9 @@
     stats_base = #{} :: map(),              % per-transaction statistics at the start of a rehearsal
     %% Spec 065 (RNF-065-02): the company values this execution read, kept in its record.
     values_read = #{} :: map(),
+    %% Spec 065 (D4): company values the routine keeps (ana.set_value), written right after its COMMIT.
+    value_sets = [] :: [map()],
+    read_only = false :: boolean(),          % simulation or restricted license: nothing is kept after the run
     %% Spec 045 (RF-045-06): the variant this run used (id, name, version, warnings), or null.
     variant = null :: map() | null,
     breakpoints = [] :: list(),
@@ -423,7 +426,7 @@ prepare_run(P, L, St) ->
     end,
     case ana_db:checkout(?POOL, 15000) of
         {ok, C} ->
-            St2 = St1#st{conn = C},
+            St2 = St1#st{conn = C, read_only = ana_license:restricted() orelse simulating(P, St1#st.params)},
             %% RF-022-05: a part may read the snapshot exported by its main execution.
             Snap = case St1#st.snapshot_in of
                 undefined -> "BEGIN; ";
@@ -640,6 +643,16 @@ request(<<"value">>, Id, #{<<"name">> := Name} = A, St = #st{user = User}) when 
             respond(Id, {error, err(Code, M)}, St),
             St
     end;
+request(<<"set_value">>, Id, #{<<"name">> := Name} = A, St = #st{user = User, stack = [#frame{program = Prog} | _]}) ->
+    case ana_values:check_set(Name, A, Prog, User) of
+        {ok, Set} ->
+            respond(Id, {ok, #{name => Name, value => maps:get(value, Set), before => maps:get(before, Set),
+                               valid_from => maps:get(from, Set)}}, St),
+            St#st{value_sets = [Set | St#st.value_sets]};
+        {error, Code, M} ->
+            respond(Id, {error, err(Code, M)}, St),
+            St
+    end;
 request(<<"savepoint">>, Id, A, St) ->
     savepoint(Id, A, St);
 request(<<"call">>, Id, #{<<"program">> := Name} = A, St) ->
@@ -793,6 +806,7 @@ root_end2(#{<<"ok">> := true} = M, St0 = #st{conn = C}) ->
                 [] ->
                     case epgsql:squery(C, "COMMIT") of
                         {ok, [], []} ->
+                            ok = ana_values:apply_sets([S || not St#st.read_only, S <- lists:reverse(St#st.value_sets)], St#st.user),
                             finish(<<"success">>, #{result => Result}, St#st{in_tx = false});
                         {error, E} ->
                             %% E.g. a deferred constraint violated at COMMIT (RF-006-05).
@@ -1140,6 +1154,7 @@ two_phase_commit(Result, Gids, St = #st{conn = C, par = Par}) ->
             case ana_parallel:decide(Own, All) of
                 ok ->
                     Failed = [G || G <- All, {error, _} <- [epgsql:squery(C, ["COMMIT PREPARED '", G, "'"])]],
+                    ok = ana_values:apply_sets([S || not St#st.read_only, S <- lists:reverse(St#st.value_sets)], St#st.user),
                     _ = case Failed of
                         [] -> ana_parallel:forget(Own);
                         _ -> logger:error("execution ~s: COMMIT PREPARED failed for ~p; recovery will finish it",

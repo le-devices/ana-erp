@@ -15,7 +15,7 @@ run(OccId) ->
     User = #{username => maps:get(<<"run_as">>, O), role => maps:get(<<"role">>, O)},
     Params = render(maps:merge(maps:get(<<"params">>, O),
                                case maps:get(<<"override">>, O) of M when is_map(M) -> M; _ -> #{} end),
-                    maps:get(<<"timezone">>, O)),
+                    maps:get(<<"timezone">>, O), maps:get(username, User)),
     Started = erlang:monotonic_time(millisecond),
     %% Spec 045 (CA-045-03): a job with a variant runs with its values resolved on the day of the run; the job's own
     %% parameters fill the free fields only.
@@ -132,16 +132,21 @@ notify(Job, Kind, Message, OccId) ->
 %% Date templates in string parameters, in the job's time zone. Spec 065 (RF-065-11): "{{today}}" and the others
 %% are cases of the closed list of expressions, resolved by its only implementation in the database; what is not
 %% in the list stays as it was.
-render(Params, Tz) ->
-    case lists:usort(tokens(Params)) of
+render(Params, Tz) -> render(Params, Tz, null).
+
+%% Spec 065 (T-065-07): "{{valor:nome}}" is the company value in effect, for the job's user. A parameter that is only
+%% the reference receives the value in its type (a list stays a list); inside a text, its text.
+render(Params, Tz, User) ->
+    P1 = case lists:usort(tokens(Params)) of
         [] -> Params;
         Tokens ->
-            case ana_db:rows("SELECT t, ana_system.value_expression(t, NULL, $2, false, NULL) AS v FROM unnest($1::text[]) t",
-                             [Tokens, Tz]) of
+            case ana_db:rows("SELECT t, ana_system.value_expression(t, NULL, $2, false, $3) AS v FROM unnest($1::text[]) t",
+                             [Tokens, Tz, User]) of
                 {ok, Rows} -> subst(Params, maps:from_list([{T, V} || #{<<"t">> := T, <<"v">> := V} <- Rows, V =/= null]));
                 _ -> Params
             end
-    end.
+    end,
+    ana_flows:company_values(P1, User).
 
 tokens(M) when is_map(M) -> lists:append([tokens(V) || V <- maps:values(M)]);
 tokens(L) when is_list(L) -> lists:append([tokens(V) || V <- L]);

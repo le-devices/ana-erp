@@ -20,7 +20,9 @@ inspect(Source) when is_binary(Source), byte_size(Source) =< 1048576 ->
         {ok, #{<<"ok">> := false, <<"error">> := #{<<"line">> := L, <<"message">> := M}}} ->
             {ok, #{ok => false, syntax => #{line => L, message => M}, lint => []}};
         {ok, #{<<"ok">> := true} = R} ->
-            {ok, #{ok => true, lint => maps:get(<<"lint">>, R, []), params => maps:get(<<"params">>, R, null)}};
+            %% Spec 065 (D8, T-065-11): a company value that does not exist, and a constant that already is one.
+            {ok, #{ok => true, lint => maps:get(<<"lint">>, R, []) ++ ana_values:quality_findings(Source),
+                   params => maps:get(<<"params">>, R, null)}};
         {error, _} -> {error, <<"inspeção indisponível agora; tente de novo"/utf8>>}
     end;
 inspect(_) -> {error, <<"código ausente ou grande demais"/utf8>>}.

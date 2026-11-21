@@ -14,7 +14,7 @@
 -module(ana_flows).
 
 -export([claim/1, step/1, sweep/0, user/1, check/2, code/1, small/1]).
--export([render/2, condition/2]).
+-export([render/2, condition/2, company_values/2]).
 
 -define(LEASE, "interval '15 minutes'").
 %% Refusals that mean "a person must decide", not "something is wrong" (spec 042, A-04).
@@ -224,6 +224,7 @@ sweep() ->
 %% Parameters from the step template: "{{field}}" alone keeps the fact's type (number, list…);
 %% inside a text it is interpolated.
 -spec render(term(), map()) -> term().
+render(<<"{{valor:", _/binary>> = B, _Facts) -> company_values(B, null);
 render(B, Facts) when is_binary(B) ->
     case re:run(B, <<"^\\{\\{([a-z_][a-z0-9_]*)\\}\\}$">>, [{capture, all_but_first, binary}]) of
         {match, [K]} -> maps:get(K, Facts, null);
@@ -234,6 +235,36 @@ render(B, Facts) when is_binary(B) ->
 render(L, Facts) when is_list(L) -> [render(X, Facts) || X <- L];
 render(M, Facts) when is_map(M) -> maps:map(fun(_, V) -> render(V, Facts) end, M);
 render(X, _) -> X.
+
+%% "{{valor:nome}}" (spec 065): alone, the company value in its type; inside a text, its text. Unknown names stay as
+%% they were (the screens that save rules point them out).
+-spec company_values(term(), binary() | null) -> term().
+company_values(<<"{{valor:", Rest/binary>> = B, User) ->
+    case binary:split(Rest, <<"}}">>) of
+        [Name, <<>>] ->
+            case ana_values:read(Name, #{user => User}) of
+                {ok, #{value := V}} -> V;
+                _ -> B
+            end;
+        _ -> inline_values(B, User)
+    end;
+company_values(B, User) when is_binary(B) ->
+    case binary:match(B, <<"{{valor:">>) of
+        nomatch -> B;
+        _ -> inline_values(B, User)
+    end;
+company_values(L, User) when is_list(L) -> [company_values(X, User) || X <- L];
+company_values(M, User) when is_map(M) -> maps:map(fun(_, X) -> company_values(X, User) end, M);
+company_values(X, _) -> X.
+
+inline_values(B, User) ->
+    iolist_to_binary(re:replace(B, <<"\\{\\{valor:([a-z][a-z0-9_]*(?:\\.[a-z][a-z0-9_]*){1,3})\\}\\}">>,
+                                fun(Whole, [Name]) ->
+                                    case ana_values:read(Name, #{user => User}) of
+                                        {ok, #{value := V}} -> text(V);
+                                        _ -> Whole
+                                    end
+                                end, [global, {return, binary}])).
 
 text(B) when is_binary(B) -> B;
 text(I) when is_integer(I) -> integer_to_binary(I);
@@ -258,7 +289,8 @@ condition(_, _) -> false.
 
 rule(#{<<"field">> := F, <<"op">> := Op} = R, Facts) ->
     A = maps:get(F, Facts, null),
-    V = maps:get(<<"value">>, R, null),
+    %% Spec 065 (T-065-07): the value compared may be a company value ("{{valor:nome}}"), read when the rule runs.
+    V = company_values(maps:get(<<"value">>, R, null), null),
     case Op of
         <<"empty">> -> blank(A);
         <<"not_empty">> -> not blank(A);

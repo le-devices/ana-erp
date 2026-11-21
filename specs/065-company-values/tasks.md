@@ -14,3 +14,4 @@ Fase 2 — integração e automação
 - [ ] T-065-09 "Onde é usado", impacto antes de mudar ou apagar, nomes no editor e no portão de qualidade (RF-065-08, spec 064)
 - [ ] T-065-10 Transporte da definição e, quando marcado, do conteúdo; aviso de ausente na importação (RF-065-10)
 - [ ] T-065-11 Sugestões: constante no código que já é valor da empresa, vigência próxima, valor sem uso; assistente, paleta e implantação guiada
+- [ ] T-065-11b Assistente (spec 052), paleta de comandos (spec 050 fase 2) e implantação guiada (spec 061) encontram e mudam valores; editor completa `ana.value("` com nome, tipo e valor atual
