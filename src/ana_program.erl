@@ -63,7 +63,7 @@ for_execution(Name) ->
         [] ->
             case ana_db:one(
                    "SELECT name, version, source, kind, exposed, restricted, min_role, active, params, "
-                   "       description, docs, limits, portal, public "
+                   "       description, docs, limits, portal, public, indicator_refresh_s "
                    "FROM ana_system.program WHERE name = $1", [Name]) of
                 {ok, #{} = P} ->
                     ets:insert(?CACHE, {Name, P}),
@@ -206,8 +206,14 @@ set_category(C, Name, Source) ->
         {match, [Cf]} -> case string:trim(Cf) of <<>> -> null; T -> unicode:characters_to_binary(string:slice(T, 0, 300)) end;
         nomatch -> null
     end,
-    exec(C, "UPDATE ana_system.program SET category = $2, confirm = $3 WHERE name = $1 "
-            "AND (category IS DISTINCT FROM $2 OR confirm IS DISTINCT FROM $3)", [Name, Category, Confirm]).
+    %% Spec 048 (D1): "# ana:indicator <seconds>" — a read-only program shown on a block, cached that long.
+    Indicator = case re:run(Source, "^#[ \t]*ana:indicator[ \t]+([0-9]{1,6})[ \t]*$", [multiline, {capture, all_but_first, binary}]) of
+        {match, [Sec]} -> max(60, min(86400, binary_to_integer(Sec)));
+        nomatch -> null
+    end,
+    exec(C, "UPDATE ana_system.program SET category = $2, confirm = $3, indicator_refresh_s = $4 WHERE name = $1 "
+            "AND (category IS DISTINCT FROM $2 OR confirm IS DISTINCT FROM $3 OR indicator_refresh_s IS DISTINCT FROM $4)",
+         [Name, Category, Confirm, Indicator]).
 
 new_version(C, Name, V, Source, Comment, Who) ->
     exec(C, "INSERT INTO ana_system.program_version (name, version, source, comment, created_by) "

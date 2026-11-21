@@ -27,6 +27,25 @@ route(<<"POST">>, [<<"license">>], #{username := Who}, Req) ->
         end
     end);
 
+%% --- Home panel: the company's spaces (spec 048, RF-048-02) ---------------------
+route(<<"GET">>, [<<"home">>], _U, Req) ->
+    home(ana_home:all(), Req);
+route(<<"GET">>, [<<"home">>, <<"preview">>, As], _U, Req) ->
+    home(ana_home:preview(As), Req);
+route(<<"POST">>, [<<"home">>, <<"spaces">>], U, Req) ->
+    with_body(Req, fun(B, R) -> home(ana_home:save_space(new, B, U), R) end);
+route(<<"PUT">>, [<<"home">>, <<"spaces">>, Id], U, Req) ->
+    with_id(Id, Req, fun(N) -> with_body(Req, fun(B, R) -> home(ana_home:save_space(N, B, U), R) end) end);
+route(<<"DELETE">>, [<<"home">>, <<"spaces">>, Id], U, Req) ->
+    with_id(Id, Req, fun(N) -> home(ana_home:delete_space(N, U), Req) end);
+route(<<"POST">>, [<<"home">>, <<"spaces">>, Sp, <<"blocks">>], U, Req) ->
+    with_id(Sp, Req, fun(S) -> with_body(Req, fun(B, R) -> home(ana_home:save_block(S, new, B, U), R) end) end);
+route(<<"PUT">>, [<<"home">>, <<"spaces">>, Sp, <<"blocks">>, Id], U, Req) ->
+    with_id(Sp, Req, fun(S) -> with_id(Id, Req, fun(N) ->
+        with_body(Req, fun(B, R) -> home(ana_home:save_block(S, N, B, U), R) end) end) end);
+route(<<"DELETE">>, [<<"home">>, <<"blocks">>, Id], U, Req) ->
+    with_id(Id, Req, fun(N) -> home(ana_home:delete_block(N, U), Req) end);
+
 %% --- Telemetry (spec 009, D13) ----------------------------------------------
 route(<<"GET">>, [<<"telemetry">>], _U, Req) ->
     reply(ana_telemetry:status(), Req);
@@ -459,6 +478,9 @@ read_raw(Req, Max, Acc) ->
         {ok, Data, Req2} -> {ok, <<Acc/binary, Data/binary>>, Req2};
         {more, Data, Req2} -> read_raw(Req2, Max, <<Acc/binary, Data/binary>>)
     end.
+
+home({ok, V}, Req) -> ana_http:json(200, V, Req);
+home({error, Status, Code, Msg}, Req) -> ana_http:reply_error(Status, Code, Msg, Req).
 
 with_body(Req, Fun) ->
     case ana_http:read_json(Req) of

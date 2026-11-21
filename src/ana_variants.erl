@@ -10,13 +10,25 @@
 %% whose type no longer fits makes the variant invalid with the reason — it never runs with a wrong value (D6).
 -module(ana_variants).
 
--export([list/2, save/3, delete/3, act/4, preview/3, apply/4, validate_program/1, can_publish/2]).
+-export([list/2, save/3, delete/3, act/4, preview/3, apply/4, validate_program/1, can_publish/2, visible/1]).
 
 -define(MAX_PER_ROUTINE, 200).
 
 %% ======================================================================= reading
 
 -spec list(binary(), map()) -> {ok, map()} | {error, binary(), binary()}.
+%% Spec 048 / T-045-07b: every valid variant this user may use (theirs and the company's published), of the routines
+%% they may run — what the command palette offers.
+-spec visible(map()) -> {ok, [map()]} | {error, binary(), binary()}.
+visible(User = #{username := Who}) ->
+    case ana_db:rows("SELECT v.id, v.program, v.name, v.owner IS NULL AS company FROM ana_system.run_variant v "
+                     "JOIN ana_system.program p ON p.name = v.program AND p.active AND p.kind = 'program' AND p.in_menu "
+                     "WHERE v.status = 'valid' AND (v.owner = $1 OR (v.owner IS NULL AND v.published)) "
+                     "ORDER BY v.program, lower(v.name) LIMIT 2000", [Who]) of
+        {ok, Rows} -> {ok, [R || R = #{<<"program">> := P} <- Rows, ana_execution:can_run(P, User)]};
+        {error, _} -> {error, <<"DB_UNAVAILABLE">>, <<"banco de dados indisponível"/utf8>>}
+    end.
+
 list(Program, User = #{username := Who}) ->
     case decl(Program) of
         {error, _, _} = E -> E;

@@ -76,6 +76,18 @@
     return [...t.entries()].map(([label, hash]) => ({ group: "Ir para", label, hash }));
   }
 
+  // T-045-07b: the variants of the routines (the user's and the company's published), asked once a minute at most.
+  let variantsCache = { at: 0, items: [] };
+  async function variants() {
+    if (Date.now() - variantsCache.at < 60000) return variantsCache.items;
+    let rows = [];
+    try { rows = await API.runVariants.visible(); } catch (_) { rows = []; }
+    const label = (p) => { const r = window.AnaOps && window.AnaOps.routineOf ? window.AnaOps.routineOf(p) : null; return (r && r.description) || p; };
+    variantsCache = { at: Date.now(), items: (rows || []).map((v) => ({ group: "Variantes", label: `${label(v.program)} — ${v.name}`,
+      detail: v.company ? "da empresa" : "minha", hash: `#/ops/${v.program.split(".")[0]}/${v.program}?_variant=${v.id}` })) };
+    return variantsCache.items;
+  }
+
   // ------------------------------------------------------------------ the palette
   let open = null;
   function show(initial = "") {
@@ -90,7 +102,8 @@
     const list = el("ul", { id: "palette-list", class: "palette-list", role: "listbox", "aria-label": "Resultados" });
     const hint = el("p", { class: "palette-hint muted small", text: "↑↓ escolhem · Enter abre · Esc fecha · ? atalhos" });
     const dlg = el("dialog", { class: "md-dialog palette-dialog", "aria-label": "Paleta de comandos" }, input, list, hint);
-    const local = { targets: external ? [] : targets(), actions: screenActions() };
+    const local = { targets: external ? [] : targets(), actions: screenActions(), variants: [] };
+    if (!external) variants().then((v) => { local.variants = v; if (open) draw(); });
     const help = { group: "Ajuda", label: "Atalhos do teclado", detail: "?", run: () => shortcuts() };
     let items = [];
     let active = 0;
@@ -100,7 +113,7 @@
 
     function draw() {
       const q = input.value;
-      const groups = [match(local.targets, q), match(local.actions, q), remote, match([help], q)];
+      const groups = [match(local.targets, q), q.trim() ? match(local.variants, q) : [], match(local.actions, q), remote, match([help], q)];
       items = groups.flat();
       if (active >= items.length) active = Math.max(0, items.length - 1);
       const rows = [];

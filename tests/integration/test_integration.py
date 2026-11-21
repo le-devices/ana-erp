@@ -9069,3 +9069,157 @@ class TestPremiumExperiencePhase2(Base):
                          {"program": "sales.lookup", "params": {"kind": "customer_defaults"}, "depends": ["customer"],
                           "field": "payment_term"})
         self.assertTrue(params["items"]["columns"]["product"]["scan"])
+
+
+class TestHomePanel(Base):
+    """Home panel (spec 048): indicator programs, the company's spaces by access group, the global search."""
+
+    @classmethod
+    def setUpClass(cls):
+        super().setUpClass()
+        cls.spaces, cls.groups = [], []
+        cls.sfx = SUFFIX[-6:]
+
+    @classmethod
+    def tearDownClass(cls):
+        for sp in cls.spaces:
+            http("DELETE", f"/api/admin/home/spaces/{sp}", token=cls.token)
+        for g in cls.groups:
+            http("DELETE", f"/api/admin/groups/{g}", token=cls.token)
+
+    def space(self, name, groups=()):
+        s, c, _ = http("POST", "/api/admin/home/spaces", {"name": f"{name} {SUFFIX}", "access_groups": list(groups)}, self.token)
+        self.assertEqual(s, 200, c)
+        self.spaces.append(c["id"])
+        return c["id"]
+
+    def block(self, space, program, indicator=None, expect=200, **extra):
+        s, c, _ = http("POST", f"/api/admin/home/spaces/{space}/blocks",
+                       {"title": extra.pop("title", f"Bloco {program}"), "program": program, "indicator": indicator, **extra}, self.token)
+        self.assertEqual(s, expect, c)
+        return c.get("id") if expect == 200 else c
+
+    def indicator(self, block, token=None, fresh=False):
+        s, c, _ = http("GET", f"/api/home/blocks/{block}/indicator" + ("?fresh=1" if fresh else ""), token=token or self.token)
+        self.assertEqual(s, 200, c)
+        return c
+
+    def mine(self, token=None):
+        s, c, _ = http("GET", "/api/home/spaces", token=token or self.token)
+        self.assertEqual(s, 200, c)
+        return c
+
+    def group(self, patterns):
+        g = f"hp{self.sfx}{len(self.groups)}"
+        s, c, _ = http("PUT", f"/api/admin/groups/{g}", {"description": "painel", "program_patterns": patterns}, self.token)
+        self.assertEqual(s, 200, c)
+        self.groups.append(g)
+        return g
+
+    def test_t_048_01_indicator_read_only_cached_and_unavailable_on_failure(self):
+        good, writer, slow = (f"test.ind_{k}_{SUFFIX}" for k in ("good", "writer", "slow"))
+        self.save(good, "# ana:indicator 60\ndef main():\n"
+                        f"    n = ana.sql_value(\"SELECT count(*) FROM base.party WHERE name LIKE 'Painel {SUFFIX}%'\")\n"
+                        "    return {'value': n, 'status': 'warning' if n else 'ok', 'text': f'{n} parceiro(s)'}\n")
+        self.save(writer, "# ana:indicator 60\ndef main():\n"
+                          f"    ana.sql_exec(\"INSERT INTO base.party (kind, name) VALUES ('customer', 'Painel {SUFFIX} escrito')\")\n"
+                          "    return {'value': 1}\n")
+        self.save(slow, "# ana:indicator 60\ndef main():\n    ana.sql_value('SELECT pg_sleep(8)')\n    return {'value': 1}\n")
+        sp = self.space("Indicadores")
+        b_good, b_writer, b_slow = (self.block(sp, "docs.view", ind) for ind in (good, writer, slow))
+        a = self.indicator(b_good)
+        self.assertEqual((a["value"], a["status"], a["refresh_s"], a["cached"]), (0, "ok", 60, False), a)
+        self.client.call("base.save_party", name=f"Painel {SUFFIX} um", state="SP")
+        self.assertEqual((self.indicator(b_good)["value"], self.indicator(b_good)["cached"]), (0, True))   # still cached
+        time.sleep(10.5)
+        a = self.indicator(b_good, fresh=True)                                                             # "Atualizar"
+        self.assertEqual((a["value"], a["status"], a["text"], a["cached"]), (1, "warning", "1 parceiro(s)", False))
+        # CA-048-05: a failing indicator says "indisponível" — read-only (nothing written) and at most 5 s.
+        w = self.indicator(b_writer)
+        self.assertEqual((w["status"], w["text"]), ("unavailable", "indisponível"), w)
+        self.assertEqual(self.count("base.party", f"name = 'Painel {SUFFIX} escrito'"), 0)
+        t0 = time.time()
+        sl = self.indicator(b_slow)
+        self.assertEqual(sl["status"], "unavailable", sl)
+        self.assertLess(time.time() - t0, 7.5)
+        names = [b["title"] for x in self.mine() if x["id"] == sp for b in x["blocks"]]
+        self.assertEqual(len(names), 3)                                                    # the panel goes on
+        # Only a program marked "# ana:indicator" can be an indicator.
+        e = self.block(sp, "docs.view", "sales.shortages", expect=422)
+        self.assertIn("ana:indicator", e["error"]["message"])
+
+    def test_ca_048_02_space_by_access_group_and_block_by_permission(self):
+        secret = f"test.hp_secret_{SUFFIX}"
+        self.save(secret, "def main():\n    return 1\n", restricted=True)
+        fin = self.group(["docs.*"])
+        sp = self.space("Financeiro", [fin])
+        self.block(sp, "docs.view", title="Documentos")
+        self.block(sp, secret, title="Rotina restrita")
+        _, member = new_user("user", groups=[fin])
+        member_name = CREATED_USERS[-1]
+        _, outsider = new_user("user")
+        outsider_name = CREATED_USERS[-1]
+        seen = {x["id"]: [b["title"] for b in x["blocks"]] for x in self.mine(member)}
+        self.assertEqual(seen.get(sp), ["Documentos"])                                     # the restricted one is not shown
+        self.assertNotIn(sp, [x["id"] for x in self.mine(outsider)])
+        s, p, _ = http("GET", f"/api/admin/home/preview/{member_name}", token=self.token)
+        self.assertEqual([[b["title"] for b in x["blocks"]] for x in p["spaces"] if x["id"] == sp], [["Documentos"]])
+        s, p, _ = http("GET", f"/api/admin/home/preview/{outsider_name}", token=self.token)
+        self.assertNotIn(sp, [x["id"] for x in p["spaces"]])
+        # The indicator of a block in a space the user does not see is not readable either.
+        hidden_block = self.block(sp, "docs.view", "sales.indicator_shortages")
+        self.assertEqual(http("GET", f"/api/home/blocks/{hidden_block}/indicator", token=outsider)[0], 404)
+        self.assertEqual(self.indicator(hidden_block, token=member)["status"] in ("ok", "warning"), True)
+
+    def test_ca_048_01_product_block_of_orders_with_shortage_follows_a_new_order(self):
+        overview = [x for x in self.mine() if x["name"] == "Visão geral"]
+        self.assertTrue(overview, "espaço do produto")
+        blocks = {b["indicator"]: b for b in overview[0]["blocks"]}
+        self.assertEqual(set(blocks), {"sales.indicator_shortages", "finance.indicator_overdue", "supply.indicator_approvals"})
+        bid = blocks["sales.indicator_shortages"]["id"]
+        before = self.indicator(bid, fresh=True)["value"]
+        code = f"HP{self.sfx}"
+        self.client.call("base.save_product", code=code, description=f"Item painel {SUFFIX}", price="10")
+        s, c, _ = self.run_program("sales.fulfillment_policy", {"action": "rule", "product": code, "mode": "hold"})
+        self.assertNotIn("error", c, c)
+        cust = self.client.call("base.save_party", name=f"Cliente Painel {SUFFIX}", state="SP")["id"]
+        s, c, _ = self.run_program("sales.create_order", {"customer": cust, "items": [{"product": code, "quantity": 2}]})
+        self.assertNotIn("error", c, c)
+        time.sleep(10.5)
+        after = self.indicator(bid, fresh=True)
+        self.assertEqual((after["value"], after["status"]), (before + 1, "warning"))
+
+    def test_rnf_048_02_indicator_runs_as_the_viewer(self):
+        ind = f"test.ind_who_{SUFFIX}"
+        self.save(ind, "# ana:indicator 60\ndef main():\n    return {'value': 1, 'text': 'ok'}\n")
+        sp = self.space("Quem")
+        bid = self.block(sp, "docs.view", ind)
+        _, viewer = new_user("user")
+        name = CREATED_USERS[-1]
+        self.assertEqual(self.indicator(bid, token=viewer)["value"], 1)
+        end, who = time.time() + 5, []
+        while time.time() < end and name not in who:                      # the record of a short run is written at its end
+            s, rows, _ = http("GET", f"/api/executions?program={ind}&limit=5", token=self.token)
+            who = [r["username"] for r in rows]
+            time.sleep(0.3)
+        self.assertIn(name, who)
+
+    def test_ca_048_04_search_finds_a_bill_by_number_and_variants(self):
+        bill = self.scalar("SELECT max(id) FROM finance.bill")
+        if bill:
+            s, c, _ = self.run_program("base.find", {"q": str(bill)})
+            self.assertIn(f"#/ops/docs/docs.view?kind=bill&key={bill}", [f["hash"] for f in c["result"]])
+        prog = f"test.hp_variant_{SUFFIX}"
+        self.save(prog, 'PARAMS = {"n": {"type": "int"}}\ndef main(n=None):\n    return n\n')
+        s, v, _ = http("POST", f"/api/programs/{prog}/variants", {"name": "Painel da empresa", "scope": "company",
+                                                                  "entries": {"n": {"value": 3}}}, self.token)
+        self.assertEqual(s, 200, v)
+        http("POST", f"/api/programs/{prog}/variants/{v['id']}/publish", {}, self.token)
+        s, lst, _ = http("GET", "/api/variants", token=self.token)
+        self.assertIn((prog, "Painel da empresa", True), [(x["program"], x["name"], x["company"]) for x in lst])
+        # A block opens the routine with a company variant; a personal one is refused.
+        sp = self.space("Variantes")
+        self.block(sp, prog, variant_id=v["id"])
+        s, mine, _ = http("POST", f"/api/programs/{prog}/variants", {"name": "Só minha", "entries": {"n": {"value": 1}}}, self.token)
+        e = self.block(sp, prog, variant_id=mine["id"], expect=422)
+        self.assertIn("da empresa", e["error"]["message"])

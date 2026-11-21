@@ -28,6 +28,7 @@
 -define(MAX_RESULT, 8 * 1024 * 1024).
 -define(I_EXEC, 1).
 -define(I_DEBUG, 2).
+-define(INDICATOR_TIMEOUT_MS, 5000).
 
 -record(frame, {
     port :: port(),
@@ -422,7 +423,11 @@ prepare(St0 = #st{program = Name, user = U}) ->
 
 prepare_run(P, L, St) ->
     St1 = St#st{version = maps:get(<<"version">>, P), limits = L,
-                timeout_ms = maps:get(<<"timeout_ms">>, L),
+                %% Spec 048 (D1): an indicator answers in a few seconds or the block says "indisponível".
+                timeout_ms = case indicator(P) of
+                    true -> min(?INDICATOR_TIMEOUT_MS, maps:get(<<"timeout_ms">>, L));
+                    false -> maps:get(<<"timeout_ms">>, L)
+                end,
                 output_max = maps:get(<<"output_kb">>, L) * 1024},
     %% RF-025-04: short synchronous executions are written once, at the end.
     _ = case St1#st.debug orelse St1#st.caller =:= undefined of
@@ -431,7 +436,8 @@ prepare_run(P, L, St) ->
     end,
     case ana_db:checkout(?POOL, 15000) of
         {ok, C} ->
-            St2 = St1#st{conn = C, read_only = ana_license:restricted() orelse simulating(P, St1#st.params)},
+            St2 = St1#st{conn = C, read_only = ana_license:restricted() orelse simulating(P, St1#st.params)
+                                                orelse indicator(P)},
             %% RF-022-05: a part may read the snapshot exported by its main execution.
             Snap = case St1#st.snapshot_in of
                 undefined -> "BEGIN; ";
@@ -442,7 +448,8 @@ prepare_run(P, L, St) ->
             Q = fun(V) -> binary:replace(iolist_to_binary(V), <<"'">>, <<"''">>, [global]) end,
             %% Spec 009 (RF-009-05): restricted license → the database itself refuses every write.
             %% Spec 020 (RF-020-13): so does a simulation ("Simular" never saves, whatever the program does).
-            ReadOnly = case ana_license:restricted() orelse simulating(P, St1#st.params) of
+            %% Spec 048 (D1): so does an indicator — it only reads, whatever its code does.
+            ReadOnly = case ana_license:restricted() orelse simulating(P, St1#st.params) orelse indicator(P) of
                 true -> "SET TRANSACTION READ ONLY; ";
                 false -> ""
             end,
@@ -510,6 +517,9 @@ simulating(#{<<"params">> := Decl}, Params) when is_map(Decl), is_map(Params) ->
                  (_) -> false
               end, maps:to_list(Decl));
 simulating(_, _) -> false.
+
+indicator(#{<<"indicator_refresh_s">> := S}) when is_integer(S) -> true;
+indicator(_) -> false.
 
 first_missing(Modules) ->
     case [M || M <- Modules, not ana_license:allowed(M)] of

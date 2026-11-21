@@ -2545,7 +2545,90 @@
           }) })));
   }
 
-  const SECTIONS = { users, groups, settings, company, values, commands, remote, accounts, limits, consumption, scheduler, monitor, audit, retention, health, alerts, core, disk, uiperf, sqlperf, advice, updates, integrations, checks, transports, datacopy, publicapi, license, extensions, telemetry };
+  // ------------------------------------------------------------------ home panel (spec 048, RF-048-02)
+  async function home() {
+    const r = await API.admin.home();
+    const routines = (await window.AnaOps.loadRoutines().catch(() => [])).slice().sort((a, b) => (a.description || a.name).localeCompare(b.description || b.name));
+    const SIZES = [["small", "Pequeno"], ["medium", "Médio"], ["wide", "Largo"]];
+    const groupsBox = (chosen) => {
+      const box = el("div", { class: "check-list" }, ...r.groups.map((g) => check(g.name + (g.description ? ` — ${g.description}` : ""),
+        el("input", { type: "checkbox", value: g.name, checked: chosen.includes(g.name) }))));
+      box.value = () => [...box.querySelectorAll("input:checked")].map((i) => i.value);
+      return box;
+    };
+    const spaceForm = (sp) => {
+      const name = el("input", { value: sp ? sp.name : "", "aria-label": "Nome do espaço" });
+      const desc = el("input", { value: sp ? sp.description : "", "aria-label": "Descrição do espaço" });
+      const pos = el("input", { type: "number", value: sp ? sp.position : 0, "aria-label": "Ordem do espaço" });
+      const groups = groupsBox(sp ? sp.access_groups : []);
+      return el("form", { class: "form-card", onsubmit: (e) => { e.preventDefault(); guard(async () => {
+        await API.admin.homeSpace(sp && sp.id, { name: name.value, description: desc.value, position: Number(pos.value) || 0, access_groups: groups.value() });
+        toast("Espaço salvo."); home();
+      }); } },
+        el("h3", { text: sp ? `Espaço: ${sp.name}` : "Novo espaço" }),
+        field("Nome", name), field("Descrição", desc), field("Ordem", pos),
+        el("fieldset", {}, el("legend", { text: "Publicado para os grupos (nenhum marcado = todos)" }), groups),
+        el("div", { class: "row-buttons" }, el("button", { class: "primary", type: "submit", text: sp ? "Salvar o espaço" : "Criar espaço" }),
+          sp ? el("button", { type: "button", class: "danger", text: "Apagar o espaço", onclick: () => guard(async () => {
+            if (!confirm(`Apagar o espaço "${sp.name}" e os blocos dele? Os usuários deixam de vê-lo.`)) return;
+            await API.admin.homeSpaceDelete(sp.id); toast("Espaço apagado."); home();
+          }) }) : null));
+    };
+    const blockForm = (sp) => {
+      const title = el("input", { "aria-label": "Título do bloco" });
+      const program = el("select", { "aria-label": "Rotina que o bloco abre" }, el("option", { value: "", text: "— rotina —" }),
+        ...routines.map((x) => el("option", { value: x.name, text: `${x.description || x.name} (${x.name})` })));
+      const variant = el("select", { "aria-label": "Variante da empresa" }, el("option", { value: "", text: "— sem variante —" }));
+      const indicator = el("select", { "aria-label": "Indicador do bloco" }, el("option", { value: "", text: "— sem indicador —" }),
+        ...r.indicators.map((i) => el("option", { value: i.name, text: `${i.description || i.name} (a cada ${Math.round(i.refresh_s / 60)} min)` })));
+      const size = el("select", { "aria-label": "Tamanho do bloco" }, ...SIZES.map(([k, v]) => el("option", { value: k, text: v })));
+      size.value = "medium";
+      const pos = el("input", { type: "number", value: sp.blocks.length + 1, "aria-label": "Ordem do bloco" });
+      program.addEventListener("change", () => guard(async () => {
+        variant.replaceChildren(el("option", { value: "", text: "— sem variante —" }));
+        if (!program.value) return;
+        const vs = await API.runVariants.list(program.value).catch(() => ({ variants: [] }));
+        for (const v of (vs.variants || []).filter((x) => x.owner === null && x.published)) variant.append(el("option", { value: String(v.id), text: v.name }));
+        if (!title.value) title.value = (routines.find((x) => x.name === program.value) || {}).description || "";
+      }));
+      return el("form", { class: "form-card", onsubmit: (e) => { e.preventDefault(); guard(async () => {
+        await API.admin.homeBlock(sp.id, null, { title: title.value, program: program.value, variant_id: variant.value ? Number(variant.value) : null,
+                                                indicator: indicator.value || null, size: size.value, position: Number(pos.value) || 0 });
+        toast("Bloco incluído."); home();
+      }); } },
+        el("h3", { text: `Novo bloco em ${sp.name}` }),
+        field("Título", title), field("Abre a rotina", program), field("Com a variante (da empresa, publicada)", variant),
+        field("Indicador (número, situação e linha curta)", indicator), field("Tamanho", size), field("Ordem", pos),
+        el("div", { class: "row-buttons" }, el("button", { class: "primary", type: "submit", text: "Incluir bloco" })));
+    };
+    const as = el("input", { "aria-label": "Usuário para pré-visualizar", placeholder: "usuário" });
+    const preview = el("div", { class: "home-preview" });
+    main().replaceChildren(
+      ...header("Painel inicial", "Espaços com blocos que a empresa publica para os grupos de acesso: cada bloco abre uma rotina (com variante, se quiser) e pode mostrar um indicador ao vivo. Quem não pode executar a rotina não vê o bloco; quem não pode executar o indicador vê o bloco sem o número."),
+      ...r.spaces.map((sp) => el("section", { class: "card" }, spaceForm(sp),
+        table([
+          { label: "Ordem", value: (b) => b.position, class: "num" },
+          { label: "Título", value: (b) => b.title },
+          { label: "Abre", value: (b) => el("span", {}, el("code", { text: b.program }), b.variant_name ? ` · variante ${b.variant_name}` : "") },
+          { label: "Indicador", value: (b) => (b.indicator ? el("code", { text: b.indicator }) : "—") },
+          { label: "Tamanho", value: (b) => (SIZES.find(([k]) => k === b.size) || [0, b.size])[1] },
+          { label: "", value: (b) => el("button", { class: "danger small", text: "Remover", onclick: () => guard(async () => {
+            if (!confirm(`Remover o bloco "${b.title}"?`)) return;
+            await API.admin.homeBlockDelete(b.id); toast("Bloco removido."); home();
+          }) }) },
+        ], sp.blocks, { empty: "Nenhum bloco neste espaço ainda.", emptyAction: { label: "Incluir bloco", onClick: () => main().querySelector(`#home-new-${sp.id} select`)?.focus() } }),
+        el("div", { id: `home-new-${sp.id}` }, blockForm(sp)))),
+      el("section", { class: "card" }, spaceForm(null)),
+      el("section", { class: "card" }, el("h3", { text: "Ver como um usuário vê" }),
+        el("form", { class: "row-buttons", onsubmit: (e) => { e.preventDefault(); guard(async () => {
+          const v = await API.admin.homePreview(as.value.trim());
+          preview.replaceChildren(...(v.spaces.length ? v.spaces.map((sp) => el("div", {}, el("strong", { text: sp.name }),
+            el("ul", {}, ...sp.blocks.map((b) => el("li", { text: b.title + (b.indicator ? " · com indicador" : "") })))))
+            : [el("p", { class: "muted", text: `${v.user} não vê nenhum espaço da empresa.` })]));
+        }); } }, field("Usuário", as), el("button", { type: "submit", text: "Ver" })), preview));
+  }
+
+  const SECTIONS = { users, groups, settings, company, values, home, commands, remote, accounts, limits, consumption, scheduler, monitor, audit, retention, health, alerts, core, disk, uiperf, sqlperf, advice, updates, integrations, checks, transports, datacopy, publicapi, license, extensions, telemetry };
 
   function show(section) {
     refreshUpdatesCount();
