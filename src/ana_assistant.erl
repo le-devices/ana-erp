@@ -21,6 +21,7 @@
 -define(MAX_TURNS, 6).                 % model calls per question
 -define(MAX_TOOLS, 400).
 -define(SEARCH_FROM, 30).             % above this many routines, the language model searches them (tool search)
+-define(ALWAYS_LOADED, [<<"docs__view">>, <<"base__find">>]).   % never deferred: the API needs one loaded
 -define(MAX_RESULT, 6000).             % characters of a tool result sent to the model
 -define(MAX_MESSAGES, 80).             % a conversation longer than this starts over
 -define(ACTION_TTL_S, 900).            % a rehearsed action waits 15 minutes for the person
@@ -274,7 +275,13 @@ request(Cfg, #{api_tools := Tools}, Msgs) ->
         <<"anthropic">> when length(Tools) > ?SEARCH_FROM ->
             %% Many routines: they are deferred and the model searches the ones it needs (server-side tool search) —
             %% the definitions do not fill the context, and the cached prefix stays the same.
-            Deferred = [T#{<<"defer_loading">> => true} || T <- Tools],
+            %% At least one routine stays loaded (the API refuses all deferred): the most used ones — open a document,
+            %% find a document or a record — or the first one.
+            Keep = case [T || T = #{<<"name">> := N} <- Tools, lists:member(N, ?ALWAYS_LOADED)] of
+                [] -> [hd(Tools)];
+                K -> K
+            end,
+            Deferred = [case lists:member(T, Keep) of true -> T; false -> T#{<<"defer_loading">> => true} end || T <- Tools],
             Search = #{<<"type">> => <<"tool_search_tool_bm25_20251119">>, <<"name">> => <<"tool_search_tool_bm25">>},
             (request(Cfg#{<<"provider">> => <<"anthropic_all">>}, #{api_tools => [Search | Deferred]}, Msgs));
         P when P =:= <<"anthropic">>; P =:= <<"anthropic_all">> ->
