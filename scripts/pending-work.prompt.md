@@ -62,7 +62,7 @@ Tarefas adiadas já concluídas (ordem acordada em out/2026): T-017-05b ✓, T-0
 13a. ✓ 066 fase 1 — publicar o repositório em AGPL-3.0: LICENSE/NOTICE, SPDX, CONTRIBUTING/SECURITY, CLA, licenças das dependências e segredos na bateria (T-066-01..06; a publicação em si é ação do dono do produto). Fases 2 e 3 (núcleo sem trava, assinatura, premium, pacotes fiscais oficiais) entram depois na fila (`specs/066-open-core`)
 14. ✓ 048 — painel inicial (`specs/048-home-panel`)
 15. ✓ 052 — assistente que executa com segurança (`specs/052-safe-assistant`)
-16. 064 fase 2 — testes dos programas e cobertura, desempenho comparado com a versão anterior, falhas ligadas à versão, tela "Qualidade" com o assistente (T-064-06..09)
+16. ✓ 064 fase 2 — testes dos programas e cobertura, desempenho comparado com a versão anterior, falhas ligadas à versão, tela "Qualidade" com o assistente (T-064-06..09)
 16a. 067 fase 1 — uso simulado contínuo: personas robô percorrendo esteiras inteiras com variação, oráculos de automação e de contas, rotina agendada fora da produção (T-067-01..05 e 05b, com o workflow noturno do GitHub Actions; antecipada para logo depois da 064 fase 2, como rede de segurança das automações, em 21/11/2026; pedido do dono do produto em 21/11/2026). Fase 2 (telas, perfil real, trilhas) logo depois da 050 fase 3
 17. 051 — automação por padrão (`specs/051-automation-by-default`)
 18. 050 fase 3 — auditoria de experiência de todas as áreas (T-050-09..16), junto com a auditoria de automação (T-051-06)
