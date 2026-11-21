@@ -1627,7 +1627,7 @@ def inspect(channel, msg):
 # does; and the edges "function>library:function" (or ">program" for ana.call) to what it uses. The catalog joins
 # the edges of all programs, so a report that only reads through a library is not taken for one that writes.
 WRITE_SQL_RE = re.compile(r"\b(INSERT\s+INTO|UPDATE\s+[\w.\"]+\s+SET|DELETE\s+FROM|MERGE\s+INTO|TRUNCATE)\b", re.I)
-WRITE_CALLS = {"sql_exec", "sql_batch", "send_email", "schedule_job", "remote", "set_value"}
+WRITE_CALLS = {"sql_exec", "sql_batch", "send_email", "schedule_job", "remote", "set_value", "simulate"}
 READ_FILE_CALLS = {"get", "list", "folder"}
 DB_CALL_RE = re.compile(r"\b([a-z_][a-z0-9_]*\.[a-z_][a-z0-9_]*)\s*\(", re.I)
 

@@ -7864,6 +7864,11 @@ class TestDiskEndurance(Base):
         prog = f"test.disk_rewrite_{SUFFIX}"
         try:
             self.save(prog, f"def main():\n    return ana.sql_exec(\"UPDATE {table} SET pad = md5(random()::text) || pad\")\n")
+            # The rate spans the last five samples: the base is taken over a quiet moment of its own, so whatever the
+            # tests before wrote (the budget test samples heavy runs) does not inflate it and hide the jump.
+            for _ in range(5):
+                http("POST", "/api/admin/observability/disk/sample", {}, self.token)
+                time.sleep(0.2)
             s, r, _ = http("POST", "/api/admin/observability/disk/sample", {}, self.token)
             self.assertEqual(s, 200, r)
             base = r["rates"].get("wal_mb_per_hour", 0)
@@ -9533,6 +9538,17 @@ class TestUsageSimulation(Base):
         s, runs = http("GET", "/api/admin/simulation", token=self.token)[:2]
         self.assertEqual(runs["runs"][0]["id"], rep["id"])
         self.assertEqual(len(runs["personas"]), 8)
+
+    def test_rehearsing_the_start_holds_the_run(self):
+        """A rehearsal (spec 056) of simulation.start lists the run it would begin and begins none: the run lives
+        outside the transaction, so the rehearsal could not undo it."""
+        before = psql("SELECT count(*) FROM ana_system.sim_run")
+        s, c, _ = self.run_program("simulation.start", {"days": 1, "per_day": 2}, rehearse=True)
+        self.assertEqual(s, 200, c)
+        self.assertEqual([h["kind"] for h in c["rehearsal"]["held"]], ["simulation"], c)
+        self.assertTrue(c["result"]["held"])
+        time.sleep(1)
+        self.assertEqual(psql("SELECT count(*) FROM ana_system.sim_run"), before)
 
     def test_ca_067_04_the_same_seed_runs_the_same_steps(self):
         a = self.simulate(seed=67004)

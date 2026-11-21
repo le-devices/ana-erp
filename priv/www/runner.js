@@ -654,6 +654,7 @@
       case "remote": return `chamaria ${h.function} no sistema ${h.system}`;
       case "files": return `${h.action === "put" ? "gravaria o arquivo" : "faria “" + h.action + "” no arquivo"} ${h.name || h.file || ""}`.trim();
       case "schedule": return `${h.active === false ? "pararia" : "agendaria"} a rotina ${h.name}${h.cron ? " (" + h.cron + ")" : ""}`;
+      case "simulation": return `começaria uma rodada de uso simulado${h.days ? " (" + h.days + " dia(s) × " + (h.per_day || "?") + " cenários)" : ""}`;
       default: return "efeito externo retido";
     }
   }

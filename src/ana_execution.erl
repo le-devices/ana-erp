@@ -715,6 +715,10 @@ request(<<"offer_undo">>, Id, _A, St) ->
     respond(Id, {ok, #{offered => false}}, St),
     St;
 %% Spec 067 (D6): the usage simulation starts in the background — only from the routine simulation.start.
+request(<<"simulation_start">>, Id, _A, St = #st{read_only = true}) ->
+    %% A run that keeps nothing (simulation, restricted license, read-only option) never starts one.
+    respond(Id, {error, err(<<"READ_ONLY">>, <<"esta execução não grava: a simulação não começa"/utf8>>)}, St),
+    St;
 request(<<"simulation_start">>, Id, A, St = #st{user = User, stack = [#frame{program = <<"simulation.start">>} | _]}) ->
     respond(Id, case ana_simulation:start(A, User) of
                     {ok, M} -> {ok, M};
