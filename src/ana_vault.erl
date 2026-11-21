@@ -1,3 +1,5 @@
+%% SPDX-FileCopyrightText: 2026 LE Devices
+%% SPDX-License-Identifier: AGPL-3.0-or-later
 %% Secrets vault for connectors (spec 017, RF-017-02).
 %%
 %% AES-256-GCM with the master key ANA_MASTER_KEY (32 bytes, base64, the same on

@@ -1,0 +1,71 @@
+ANA ERP
+Copyright (C) 2026 LE Devices
+
+Este programa é software livre: você pode redistribuí-lo e/ou modificá-lo sob os termos da Licença Pública Geral
+Affero GNU (GNU AGPL), publicada pela Free Software Foundation, na versão 3 da licença ou (a seu critério)
+qualquer versão posterior. O texto integral está no arquivo LICENSE.
+
+Este programa é distribuído na esperança de que seja útil, mas SEM QUALQUER GARANTIA; sem mesmo a garantia
+implícita de COMERCIALIZAÇÃO ou de ADEQUAÇÃO A UM PROPÓSITO ESPECÍFICO. Veja a GNU AGPL para mais detalhes.
+
+This program is free software: you can redistribute it and/or modify it under the terms of the GNU Affero General
+Public License as published by the Free Software Foundation, either version 3 of the License, or (at your option)
+any later version. See the file LICENSE.
+
+Licença comercial: quem não quiser ou não puder cumprir as obrigações da AGPL pode contratar uma licença
+comercial com a LE Devices. Contribuições são aceitas sob o Termo de Licença de Contribuição (CLA.md).
+
+A marca "ANA" e o logotipo do ANA ERP são da LE Devices e não são licenciados pela AGPL (veja TRADEMARKS.md).
+
+-----------------------------------------------------------------------------------------------------------------
+PERMISSÃO ADICIONAL — PROGRAMAS DO CLIENTE (seção 7 da GNU AGPL versão 3)
+-----------------------------------------------------------------------------------------------------------------
+
+Rascunho para revisão jurídica antes da publicação (spec 066).
+
+Além das permissões da GNU AGPL, a LE Devices, titular dos direitos do ANA ERP, concede a seguinte permissão:
+
+1. "Programa do Cliente" é um programa de negócio escrito para ser executado pelo ANA ERP — programas e
+   bibliotecas Python executados pelo runtime do ANA, consultas, modelos de processo, pacotes de regras,
+   variantes, agendamentos e integrações — que interage com o ANA ERP somente através das suas interfaces de
+   programas: a API do runtime (o módulo `ana` e os pacotes `ana_lib`), o protocolo entre o núcleo e o runtime,
+   as APIs HTTP, RPC e pública, os pontos de extensão e os formatos de pacotes e de transporte.
+
+2. Um Programa do Cliente não é considerado obra derivada do ANA ERP, nem obra baseada nele, só por ser
+   executado pelo ANA ERP, por usar essas interfaces, ou por ser armazenado, transportado ou distribuído junto
+   com uma instalação do ANA ERP. Você pode licenciar os seus Programas do Cliente sob os termos que escolher,
+   inclusive proprietários, e não é obrigado a oferecer o código deles pela seção 13 da AGPL.
+
+3. Esta permissão não se aplica: (a) ao próprio ANA ERP nem às modificações dele, inclusive aos programas do
+   produto (pasta `priv/programs` e os namespaces reservados do produto), que continuam sob a AGPL quando
+   modificados e oferecidos a terceiros; (b) a um programa que copie partes do ANA ERP além do necessário para
+   usar as interfaces do item 1.
+
+4. Quem distribuir o ANA ERP, modificado ou não, pode manter ou remover esta permissão adicional nas suas
+   cópias, como a seção 7 da AGPL permite.
+
+ADDITIONAL PERMISSION — CUSTOMER PROGRAMS (section 7 of the GNU AGPL version 3). English summary; the Portuguese text
+above prevails. A business program written to be run by ANA ERP that interacts with it only through its program
+interfaces (the runtime API `ana` and `ana_lib`, the core–runtime protocol, the HTTP, RPC and public APIs, the
+extension points, the package and transport formats) is not a derivative work of ANA ERP merely because it is run
+by ANA ERP or uses those interfaces; you may license it under terms of your choice and need not offer its source
+under section 13. This permission does not cover ANA ERP itself or its modifications, including the product
+programs in `priv/programs`.
+
+-----------------------------------------------------------------------------------------------------------------
+COMPONENTES DE TERCEIROS
+-----------------------------------------------------------------------------------------------------------------
+
+Distribuídos com o núcleo (rebar.lock; conferidos pela bateria em scripts/licensing_check.py):
+  cowboy 2.12.0 ........ ISC           https://github.com/ninenines/cowboy
+  cowlib 2.13.0 ........ ISC           https://github.com/ninenines/cowlib
+  ranch 1.8.0 .......... ISC           https://github.com/ninenines/ranch
+  epgsql 4.7.1 ......... BSD-3-Clause  https://github.com/epgsql/epgsql
+
+Usados pelo núcleo, instalados à parte:
+  Erlang/OTP ........... Apache-2.0
+  Python ............... Python Software Foundation License
+  PostgreSQL ........... PostgreSQL License
+  Citus (colunar) ...... AGPL-3.0
+
+Só nos testes, não distribuídos: jsdom (MIT), cryptography (Apache-2.0 ou BSD-3-Clause).

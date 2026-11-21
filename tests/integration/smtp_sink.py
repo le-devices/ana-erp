@@ -1,3 +1,5 @@
+# SPDX-FileCopyrightText: 2026 LE Devices
+# SPDX-License-Identifier: AGPL-3.0-or-later
 """A small SMTP server for the e-mail tests (spec 044), standard library only.
 
 Runs in a container on the compose network as host "smtp-sink":

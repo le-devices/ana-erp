@@ -1,3 +1,5 @@
+%% SPDX-FileCopyrightText: 2026 LE Devices
+%% SPDX-License-Identifier: AGPL-3.0-or-later
 %% SQL performance (spec 019, RF-019-06/07a): per-statement aggregates.
 %%
 %% Executions cast their measured statements here; aggregates live in memory

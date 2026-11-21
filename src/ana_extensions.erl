@@ -1,3 +1,5 @@
+%% SPDX-FileCopyrightText: 2026 LE Devices
+%% SPDX-License-Identifier: AGPL-3.0-or-later
 %% Extension points (spec 009, D9): a customer program registered for a point of a product program runs in
 %% the same transaction, without copying the product program. before_* may refuse (business error) or adjust
 %% the fields the point allows; after_* receives the result. Registrations are cached in persistent_term and

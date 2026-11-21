@@ -1,0 +1,27 @@
+# Licensing of the files that do not carry SPDX lines of their own (REUSE specification 3.x, https://reuse.software).
+# Every source file of the core, the Studio, the runtime, the tests and the tools carries the lines itself
+# (checked by scripts/licensing_check.py in the battery). The paths below are licensed here instead, for a reason:
+version = 1
+
+# Product programs: the installations compare their source with the product's to offer updates (spec 028). A header
+# added to each one would offer every installation ~260 "product updates" for a comment.
+[[annotations]]
+path = "priv/programs/**"
+precedence = "aggregate"
+SPDX-FileCopyrightText = "2026 LE Devices"
+SPDX-License-Identifier = "AGPL-3.0-or-later"
+
+# Migrations: once applied in an installation, a migration file is never edited.
+[[annotations]]
+path = ["priv/migrations/**", "priv/demo/**"]
+precedence = "aggregate"
+SPDX-FileCopyrightText = "2026 LE Devices"
+SPDX-License-Identifier = "AGPL-3.0-or-later"
+
+# Documentation, specifications, data and configuration that cannot hold comments (JSON, lock files, keys).
+[[annotations]]
+path = ["**/*.md", "NOTICE", "specs/**", "**/*.json", "rebar.lock", "priv/license/**", "tests/integration/license_test.key",
+        "tests/load/results/**"]
+precedence = "aggregate"
+SPDX-FileCopyrightText = "2026 LE Devices"
+SPDX-License-Identifier = "AGPL-3.0-or-later"

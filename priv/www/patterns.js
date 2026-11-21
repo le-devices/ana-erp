@@ -1,3 +1,5 @@
+// SPDX-FileCopyrightText: 2026 LE Devices
+// SPDX-License-Identifier: AGPL-3.0-or-later
 // Pattern catalog (spec 050, T-050-01; constitution P18): the rules every screen follows, each with a
 // live example built by the same components the screens use. Developers see it in Desenvolvimento →
 // Padrões; the verifier of the Studio tests (tests/studio/ux_check.mjs) enforces the checkable ones.

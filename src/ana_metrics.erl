@@ -1,3 +1,5 @@
+%% SPDX-FileCopyrightText: 2026 LE Devices
+%% SPDX-License-Identifier: AGPL-3.0-or-later
 %% Metrics (spec 019, RF-019-02): counters in ETS, exposed at /metrics in the
 %% Prometheus text format and sampled every 5 min for the studio charts.
 -module(ana_metrics).

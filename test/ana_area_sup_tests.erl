@@ -1,3 +1,5 @@
+%% SPDX-FileCopyrightText: 2026 LE Devices
+%% SPDX-License-Identifier: AGPL-3.0-or-later
 %% Spec 062 (CA-062-01): an area that keeps failing exhausts only its own supervisor; the other areas
 %% keep their processes (nothing restarts there).
 -module(ana_area_sup_tests).

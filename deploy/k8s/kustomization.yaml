@@ -1,3 +1,5 @@
+# SPDX-FileCopyrightText: 2026 LE Devices
+# SPDX-License-Identifier: AGPL-3.0-or-later
 # ANA ERP on Kubernetes (spec 036). Guide: deploy/INSTALL.md, section "Kubernetes".
 #   1. edit secret.yaml (generate values: see the comments) and config.yaml
 #   2. kubectl apply -k deploy/k8s

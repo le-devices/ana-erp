@@ -1,3 +1,5 @@
+# SPDX-FileCopyrightText: 2026 LE Devices
+# SPDX-License-Identifier: AGPL-3.0-or-later
 """Project dashboard data (internal tool, not part of the product).
 
 Everything comes from the repository itself, read at request time:

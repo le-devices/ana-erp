@@ -1,3 +1,5 @@
+%% SPDX-FileCopyrightText: 2026 LE Devices
+%% SPDX-License-Identifier: AGPL-3.0-or-later
 %% Runtime settings editable by administrators (spec 011, RF-011-05).
 %%
 %% Each setting has a type, a range and a default taken from an environment

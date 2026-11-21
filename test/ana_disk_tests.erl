@@ -1,3 +1,5 @@
+%% SPDX-FileCopyrightText: 2026 LE Devices
+%% SPDX-License-Identifier: AGPL-3.0-or-later
 %% Spec 063 (T-063-01..03): the pure parts of the disk-endurance measure.
 -module(ana_disk_tests).
 -include_lib("eunit/include/eunit.hrl").

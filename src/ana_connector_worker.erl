@@ -1,3 +1,5 @@
+%% SPDX-FileCopyrightText: 2026 LE Devices
+%% SPDX-License-Identifier: AGPL-3.0-or-later
 %% Delivery worker of one connector (spec 062, D4; spec 017): claims only this connector's messages, with
 %% its own concurrency, so a slow or stuck connector never holds the others back. Woken by
 %% ana_integration (event, timer or safety tick); stops after a while without work.

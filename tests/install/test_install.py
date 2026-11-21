@@ -1,3 +1,5 @@
+# SPDX-FileCopyrightText: 2026 LE Devices
+# SPDX-License-Identifier: AGPL-3.0-or-later
 """Installation (spec 036): CA-036-01..03 against the stack installed by tests/install/run.sh."""
 import json
 import os

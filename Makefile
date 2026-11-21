@@ -1,5 +1,7 @@
+# SPDX-FileCopyrightText: 2026 LE Devices
+# SPDX-License-Identifier: AGPL-3.0-or-later
 # ANA ERP — atalhos de desenvolvimento
-.PHONY: subir parar logs compilar eunit dialyzer teste-runtime teste-integracao teste-trilhas teste-estudio teste-cluster teste-caos teste-pg-ha testes limpar
+.PHONY: subir parar logs compilar eunit dialyzer licencas teste-runtime teste-integracao teste-trilhas teste-estudio teste-cluster teste-caos teste-pg-ha testes limpar
 
 subir:            ## sobe banco + núcleo
 	docker compose up -d --build
@@ -18,6 +20,9 @@ eunit:
 
 dialyzer:
 	docker run --rm -v $(PWD):/app -v ana-plt:/root/.cache/rebar3 -w /app erlang:27 rebar3 dialyzer
+
+licencas:         ## linhas SPDX, licenças das dependências e credenciais desde dev (spec 066)
+	python3 scripts/licensing_check.py all dev
 
 teste-runtime:    ## runtime Python isolado (sem banco)
 	python3 -m unittest discover -s tests/runtime -v

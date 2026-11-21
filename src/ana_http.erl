@@ -1,3 +1,5 @@
+%% SPDX-FileCopyrightText: 2026 LE Devices
+%% SPDX-License-Identifier: AGPL-3.0-or-later
 %% HTTP server and shared helpers (spec 001: RF-001-05..07, RNF-001-03..05).
 -module(ana_http).
 -export([start/0, json/3, reply_error/4, read_json/1, read_raw/2, authenticate/1, require/3, require_any/2,

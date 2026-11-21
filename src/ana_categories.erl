@@ -1,3 +1,5 @@
+%% SPDX-FileCopyrightText: 2026 LE Devices
+%% SPDX-License-Identifier: AGPL-3.0-or-later
 %% Categories of routines (spec 020, RF-020-20..23): personal ones (only their owner sees and changes them) and
 %% the company's (made by an administrator, seen by everyone or by the chosen access groups). A category holds
 %% shortcuts: the routine stays one (same version, permissions and history), optionally with its own name and

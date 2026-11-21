@@ -1,3 +1,5 @@
+%% SPDX-FileCopyrightText: 2026 LE Devices
+%% SPDX-License-Identifier: AGPL-3.0-or-later
 %% What each person leaves on a screen (spec 020, RF-020-17/18): table variants (columns, order, sorting,
 %% filters; named, one default per screen) and screen settings (dividers, collapsed panels, pinned header).
 %% Only the owner reads and changes them; sizes and counts are bounded so a client cannot fill the database.

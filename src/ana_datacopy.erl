@@ -1,3 +1,5 @@
+%% SPDX-FileCopyrightText: 2026 LE Devices
+%% SPDX-License-Identifier: AGPL-3.0-or-later
 %% Masked copy of business data from production to a test/development instance (spec 034,
 %% RF-034-06, RF-034-07).
 %%

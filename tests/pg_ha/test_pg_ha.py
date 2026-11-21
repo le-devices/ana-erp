@@ -1,3 +1,5 @@
+# SPDX-FileCopyrightText: 2026 LE Devices
+# SPDX-License-Identifier: AGPL-3.0-or-later
 """Real primary failover with a local PostgreSQL cluster (spec 023, T-023-09).
 
 db = primary, db2 = streaming replica; two core nodes with ANA_DB_HOST=db,db2 and

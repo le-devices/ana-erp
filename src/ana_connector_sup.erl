@@ -1,3 +1,5 @@
+%% SPDX-FileCopyrightText: 2026 LE Devices
+%% SPDX-License-Identifier: AGPL-3.0-or-later
 %% One delivery worker per connector (spec 062, D4): started on demand by ana_integration, stopped when idle.
 -module(ana_connector_sup).
 -behaviour(supervisor).

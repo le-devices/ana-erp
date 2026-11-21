@@ -1,3 +1,5 @@
+# SPDX-FileCopyrightText: 2026 LE Devices
+# SPDX-License-Identifier: AGPL-3.0-or-later
 """Every field of every product program has a Portuguese label (spec 029: no raw English names
 on screen), and columns of rows editors too."""
 

@@ -1,3 +1,5 @@
+%% SPDX-FileCopyrightText: 2026 LE Devices
+%% SPDX-License-Identifier: AGPL-3.0-or-later
 %% Internal tasks with an owner (constitution P14, RF-011-16).
 %%
 %% Work that is not a program execution (seeding, analytics refresh…) is

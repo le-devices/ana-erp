@@ -1,3 +1,5 @@
+%% SPDX-FileCopyrightText: 2026 LE Devices
+%% SPDX-License-Identifier: AGPL-3.0-or-later
 %% Outbound calls to exposed programs on registered remote systems (RF-003-08).
 %%
 %% RNF-003-01: the program only names the remote system; URL and credentials

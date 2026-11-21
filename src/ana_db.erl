@@ -1,3 +1,5 @@
+%% SPDX-FileCopyrightText: 2026 LE Devices
+%% SPDX-License-Identifier: AGPL-3.0-or-later
 %% PostgreSQL connection pools and query helpers (spec 001).
 %%
 %% - RF-001-02: pool size configurable (ANA_DB_POOL / ANA_DB_POOL_EXEC).

@@ -1,3 +1,5 @@
+%% SPDX-FileCopyrightText: 2026 LE Devices
+%% SPDX-License-Identifier: AGPL-3.0-or-later
 %% Quality gate of programs (spec 064, phase 1: T-064-02..04).
 %%
 %% Findings come from the inspection of the Python runtime (security, performance, robustness, standards,

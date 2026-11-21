@@ -1,3 +1,5 @@
+%% SPDX-FileCopyrightText: 2026 LE Devices
+%% SPDX-License-Identifier: AGPL-3.0-or-later
 %% Runtime Python processes (spec 002, plan "Isolamento").
 %%
 %% Each process is a {packet, 4} port with a clean environment (RNF-002-01): no

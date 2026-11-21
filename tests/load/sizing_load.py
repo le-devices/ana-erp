@@ -1,3 +1,5 @@
+# SPDX-FileCopyrightText: 2026 LE Devices
+# SPDX-License-Identifier: AGPL-3.0-or-later
 """Sizing load test (official sizing table of deploy/INSTALL.md; baseline of spec 062, T-062-01).
 
 Virtual users work like people: each one repeats a realistic mix of actions with a pause between

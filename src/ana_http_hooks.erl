@@ -1,3 +1,5 @@
+%% SPDX-FileCopyrightText: 2026 LE Devices
+%% SPDX-License-Identifier: AGPL-3.0-or-later
 %% Inbound webhooks (spec 017, RF-017-04, RNF-017-02).
 %%
 %% POST /hooks/<connector>, no session: the HMAC-SHA256 signature of

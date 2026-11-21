@@ -1,3 +1,5 @@
+// SPDX-FileCopyrightText: 2026 LE Devices
+// SPDX-License-Identifier: AGPL-3.0-or-later
 // Studio code editor (RF-005-02): transparent textarea over a highlighted
 // <pre>, gutter with line numbers and breakpoints, bands for the paused line
 // and the error line.

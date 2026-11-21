@@ -1,3 +1,5 @@
+%% SPDX-FileCopyrightText: 2026 LE Devices
+%% SPDX-License-Identifier: AGPL-3.0-or-later
 %% Spec 030: pure parts of the flows engine.
 -module(ana_flows_tests).
 -include_lib("eunit/include/eunit.hrl").

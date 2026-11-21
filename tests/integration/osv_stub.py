@@ -1,3 +1,5 @@
+# SPDX-FileCopyrightText: 2026 LE Devices
+# SPDX-License-Identifier: AGPL-3.0-or-later
 """A stand-in OSV service for the T-033-09b tests, standard library only.
 
 GET  /feed.json       -> the file /w/osv_feed.json (a list of advisories)

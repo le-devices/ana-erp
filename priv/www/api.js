@@ -1,3 +1,5 @@
+// SPDX-FileCopyrightText: 2026 LE Devices
+// SPDX-License-Identifier: AGPL-3.0-or-later
 // ANA API client. Token kept in sessionStorage: no cookies → no CSRF
 // (RNF-005-02).
 "use strict";

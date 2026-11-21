@@ -1,3 +1,5 @@
+%% SPDX-FileCopyrightText: 2026 LE Devices
+%% SPDX-License-Identifier: AGPL-3.0-or-later
 %% Scheduler API (spec 018, RF-018-07/09). Managing jobs requires developer;
 %% running as another user requires admin (checked in ana_schedule).
 -module(ana_http_scheduler).

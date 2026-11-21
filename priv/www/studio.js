@@ -1,3 +1,5 @@
+// SPDX-FileCopyrightText: 2026 LE Devices
+// SPDX-License-Identifier: AGPL-3.0-or-later
 // ANA shell (spec 020): authentication, areas by role, hash routing (#/…) and
 // the global "go to" bar. Area contents live in ops.js, dev.js and admin.js.
 "use strict";

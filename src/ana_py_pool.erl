@@ -1,3 +1,5 @@
+%% SPDX-FileCopyrightText: 2026 LE Devices
+%% SPDX-License-Identifier: AGPL-3.0-or-later
 %% Pool of prewarmed Python processes (RNF-002-07, P12).
 %%
 %% Keeps N processes that already loaded the runtime and sent "ready". Each one

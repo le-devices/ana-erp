@@ -1,3 +1,5 @@
+// SPDX-FileCopyrightText: 2026 LE Devices
+// SPDX-License-Identifier: AGPL-3.0-or-later
 // Minimal, safe Python syntax highlighter (produces escaped HTML).
 "use strict";
 (function () {

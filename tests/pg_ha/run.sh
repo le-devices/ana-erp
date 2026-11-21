@@ -1,4 +1,6 @@
 #!/bin/sh
+# SPDX-FileCopyrightText: 2026 LE Devices
+# SPDX-License-Identifier: AGPL-3.0-or-later
 # Real primary failover with a local PostgreSQL cluster (spec 023, T-023-09).
 # Prepares replication on the primary, starts the replica, two core nodes and the
 # balancer, runs the tests and restores the single-node environment afterwards

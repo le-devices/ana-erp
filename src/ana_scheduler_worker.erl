@@ -1,3 +1,5 @@
+%% SPDX-FileCopyrightText: 2026 LE Devices
+%% SPDX-License-Identifier: AGPL-3.0-or-later
 %% Runs one scheduler occurrence (spec 018): executes the program as the job's
 %% technical user with the job's limits, records the result, retries with
 %% exponential backoff, notifies, pauses on exhaustion and fires dependent

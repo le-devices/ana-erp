@@ -1,3 +1,5 @@
+%% SPDX-FileCopyrightText: 2026 LE Devices
+%% SPDX-License-Identifier: AGPL-3.0-or-later
 %% Business access groups (spec 011, RF-011-04).
 %%
 %% A program with `restricted = true` runs only for users in a group whose

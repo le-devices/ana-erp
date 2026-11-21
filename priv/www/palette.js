@@ -1,3 +1,5 @@
+// SPDX-FileCopyrightText: 2026 LE Devices
+// SPDX-License-Identifier: AGPL-3.0-or-later
 // Command palette and keyboard help (spec 050, T-050-05, D4). Ctrl+K (⌘K) on any screen: routines, commands,
 // categories, programs, tables and admin sections (the same targets as the "Ir para…" bar, already filtered by role,
 // groups and license); the actions of the screen on display (its visible buttons, by accessible name — every screen has

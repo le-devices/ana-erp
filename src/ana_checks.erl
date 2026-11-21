@@ -1,3 +1,5 @@
+%% SPDX-FileCopyrightText: 2026 LE Devices
+%% SPDX-License-Identifier: AGPL-3.0-or-later
 %% Periodic checks: security, vulnerable components, integrity, robustness and performance
 %% (spec 033).
 %%

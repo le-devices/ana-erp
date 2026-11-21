@@ -1,3 +1,5 @@
+%% SPDX-FileCopyrightText: 2026 LE Devices
+%% SPDX-License-Identifier: AGPL-3.0-or-later
 %% Structured logs (spec 019, RF-019-09): one JSON object per line with the
 %% correlation metadata (execution_id, program, user) set by each process.
 %% Enabled with ANA_LOG_FORMAT=json.

@@ -1,3 +1,5 @@
+%% SPDX-FileCopyrightText: 2026 LE Devices
+%% SPDX-License-Identifier: AGPL-3.0-or-later
 %% Spec 010: pure parts of the public API.
 -module(ana_api_tests).
 -include_lib("eunit/include/eunit.hrl").

@@ -1,3 +1,5 @@
+# SPDX-FileCopyrightText: 2026 LE Devices
+# SPDX-License-Identifier: AGPL-3.0-or-later
 """Test battery and open pull requests from GitHub, for the project dashboard (internal tool).
 
 Read-only: GET requests to api.github.com only, with a fine-grained token that can only read Actions,

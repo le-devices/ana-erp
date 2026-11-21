@@ -1,3 +1,5 @@
+%% SPDX-FileCopyrightText: 2026 LE Devices
+%% SPDX-License-Identifier: AGPL-3.0-or-later
 %% Encrypted, deduplicated content store of the file repository (spec 016,
 %% RNF-016-02..04).
 %%

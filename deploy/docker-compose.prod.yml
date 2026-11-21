@@ -1,3 +1,5 @@
+# SPDX-FileCopyrightText: 2026 LE Devices
+# SPDX-License-Identifier: AGPL-3.0-or-later
 # ANA ERP — production installation (spec 036). Created and driven by install.sh / ana-ctl;
 # every secret comes from .env (generated, mode 600). Two core nodes with the "ha" profile.
 name: ${ANA_PROJECT:-ana-erp}

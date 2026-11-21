@@ -1,3 +1,5 @@
+%% SPDX-FileCopyrightText: 2026 LE Devices
+%% SPDX-License-Identifier: AGPL-3.0-or-later
 %% "Núcleo" (spec 062, D6; constitution P20): a read-only look inside the running core for administrators —
 %% the processes that use the most memory, work (reductions) and have the longest message queues, the
 %% supervisors of each area with their children and recent restarts, ETS tables and run queues.

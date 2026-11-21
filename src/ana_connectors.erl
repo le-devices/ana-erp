@@ -1,3 +1,5 @@
+%% SPDX-FileCopyrightText: 2026 LE Devices
+%% SPDX-License-Identifier: AGPL-3.0-or-later
 %% Connector administration (spec 017, RF-017-01/02/09). Admin only; every change
 %% goes to admin_log. Secrets are write-only: the API reports which keys exist.
 -module(ana_connectors).

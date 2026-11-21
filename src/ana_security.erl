@@ -1,3 +1,5 @@
+%% SPDX-FileCopyrightText: 2026 LE Devices
+%% SPDX-License-Identifier: AGPL-3.0-or-later
 %% Users, passwords, sessions and roles (specs 001 and 011).
 %%
 %% RF-001-03 PBKDF2-SHA256 with random salt          RF-001-09 brute-force lockout

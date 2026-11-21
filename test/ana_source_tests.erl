@@ -1,3 +1,5 @@
+%% SPDX-FileCopyrightText: 2026 LE Devices
+%% SPDX-License-Identifier: AGPL-3.0-or-later
 %% Source checks that catch a mistake made more than once: a binary literal with accents and no /utf8
 %% (<<"ação">>) is stored as Latin-1 and breaks the JSON answer (500) the first time it is shown.
 -module(ana_source_tests).

@@ -1,0 +1,25 @@
+# SPDX-FileCopyrightText: 2026 LE Devices
+# SPDX-License-Identifier: AGPL-3.0-or-later
+#
+# Licensing and credentials (spec 066, T-066-02, T-066-05, RNF-066-02): on every pull request, documentation included
+# (the battery skips documentation, credentials do not): SPDX lines in every source file, accepted licenses of the
+# dependencies, and no credential in what the pull request adds. Standard library and git only (~20 s).
+name: Licenças e credenciais
+
+on:
+  pull_request:
+    branches: [dev, qa, master]
+
+permissions:
+  contents: read
+
+jobs:
+  licensing:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: SPDX, dependencies and credentials
+        run: python3 scripts/licensing_check.py all "origin/${{ github.base_ref }}"

@@ -1,3 +1,5 @@
+%% SPDX-FileCopyrightText: 2026 LE Devices
+%% SPDX-License-Identifier: AGPL-3.0-or-later
 %% Exposed programs (spec 003).
 %%
 %% Erlang API callable locally or from another node (RF-003-06):

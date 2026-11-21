@@ -1,3 +1,5 @@
+%% SPDX-FileCopyrightText: 2026 LE Devices
+%% SPDX-License-Identifier: AGPL-3.0-or-later
 %% Security headers middleware (RNF-001-04, RNF-005-01).
 -module(ana_http_security).
 -behaviour(cowboy_middleware).

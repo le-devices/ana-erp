@@ -1,3 +1,5 @@
+# SPDX-FileCopyrightText: 2026 LE Devices
+# SPDX-License-Identifier: AGPL-3.0-or-later
 # ANA ERP — full environment: docker compose up --build
 # Memory: ANA_PG_SHARED_BUFFERS / ANA_PG_EFFECTIVE_CACHE / ANA_PG_WORK_MEM (default for ~2 GB hosts)
 name: ana-erp

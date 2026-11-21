@@ -1,3 +1,5 @@
+# SPDX-FileCopyrightText: 2026 LE Devices
+# SPDX-License-Identifier: AGPL-3.0-or-later
 """Business-process trails end to end (spec 042, T-042-08): each trail runs through the real programs with fresh data
 and must leave every control reconciliation (customers, suppliers, credits, inventory, work in process, banks) exactly
 as it found it, the ledger balanced, and its documents settled and linked — so a regression in any process shows up.

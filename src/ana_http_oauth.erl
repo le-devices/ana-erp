@@ -1,3 +1,5 @@
+%% SPDX-FileCopyrightText: 2026 LE Devices
+%% SPDX-License-Identifier: AGPL-3.0-or-later
 %% OAuth token endpoint (spec 010, RF-010-02): client_credentials → short signed access token.
 %% Strict limits per address against guessing (RNF-010-04); generic failures (RNF-010-05).
 -module(ana_http_oauth).

@@ -1,3 +1,5 @@
+// SPDX-FileCopyrightText: 2026 LE Devices
+// SPDX-License-Identifier: AGPL-3.0-or-later
 // Scheduler UI (spec 018): job list, job form, occurrences and preview. Used in
 // the program's "Agendamentos" tab and in Administração → Agendamento.
 "use strict";

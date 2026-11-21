@@ -1,3 +1,5 @@
+%% SPDX-FileCopyrightText: 2026 LE Devices
+%% SPDX-License-Identifier: AGPL-3.0-or-later
 %% License of the instance (spec 009, phase 1).
 %%
 %% A license is base64url(JSON) "." base64url(Ed25519 signature), signed by the vendor with a key listed in

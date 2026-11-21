@@ -1,3 +1,5 @@
+%% SPDX-FileCopyrightText: 2026 LE Devices
+%% SPDX-License-Identifier: AGPL-3.0-or-later
 %% Execution supervisor: one temporary child per execution (P3).
 -module(ana_execution_sup).
 -behaviour(supervisor).

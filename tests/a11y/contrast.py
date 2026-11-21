@@ -1,3 +1,5 @@
+# SPDX-FileCopyrightText: 2026 LE Devices
+# SPDX-License-Identifier: AGPL-3.0-or-later
 """Contrast audit of the Studio's color tokens, light and dark (spec 020, RF-020-09, T-020-07).
 
 WCAG 2.1: normal text needs 4.5:1, interface parts (borders of fields, icons) 3:1. Reads the tokens from

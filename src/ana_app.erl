@@ -1,3 +1,5 @@
+%% SPDX-FileCopyrightText: 2026 LE Devices
+%% SPDX-License-Identifier: AGPL-3.0-or-later
 %% ANA ERP startup (spec 001).
 -module(ana_app).
 -behaviour(application).

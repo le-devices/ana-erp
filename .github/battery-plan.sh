@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# SPDX-FileCopyrightText: 2026 LE Devices
+# SPDX-License-Identifier: AGPL-3.0-or-later
 # Which suites of the battery a run needs (minutes are billed: run only what the change can break).
 #
 #   battery-plan.sh select < files       → the suites the changed files touch ("static integration ...")
@@ -23,6 +25,8 @@ select_suites() {
     [ -z "$f" ] && continue
     case "$f" in
       specs/*|*.md) ;;                                                     # documentation
+      LICENSE|NOTICE|REUSE.toml|.github/workflows/cla.yml|.github/workflows/licensing.yml) ;;   # licensing (own workflows)
+      scripts/licensing_check.py) add static ;;
       priv/www/*|tests/studio/*|tests/a11y/*) add static studio ;;
       tests/integration/*) add static integration ;;
       tests/trails/*) add static trails ;;

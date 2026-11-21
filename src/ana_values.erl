@@ -1,3 +1,5 @@
+%% SPDX-FileCopyrightText: 2026 LE Devices
+%% SPDX-License-Identifier: AGPL-3.0-or-later
 %% Company values (spec 065, phase 1: T-065-01..06).
 %%
 %% Small named business values — typed, with validity, per instance and per company of the group — that any

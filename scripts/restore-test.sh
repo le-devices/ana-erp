@@ -1,4 +1,6 @@
 #!/bin/sh
+# SPDX-FileCopyrightText: 2026 LE Devices
+# SPDX-License-Identifier: AGPL-3.0-or-later
 # Verified restore (spec 023, RF-023-06): restores the latest base backup in a
 # throwaway container, replays the archived WAL up to a point in time and
 # checks the restored database. Nothing touches the running database.

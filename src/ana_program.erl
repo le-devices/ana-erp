@@ -1,3 +1,5 @@
+%% SPDX-FileCopyrightText: 2026 LE Devices
+%% SPDX-License-Identifier: AGPL-3.0-or-later
 %% Program repository (spec 002: RF-002-01, RF-002-02, RNF-002-08; spec 011:
 %% RF-011-10).
 %%

@@ -1,3 +1,5 @@
+# SPDX-FileCopyrightText: 2026 LE Devices
+# SPDX-License-Identifier: AGPL-3.0-or-later
 """Tax engine without a database (spec 049): formula language, selection, Simples package, validity.
 
 The libraries are loaded straight from priv/programs. Run: python3 -m unittest tests/runtime/test_tax.py

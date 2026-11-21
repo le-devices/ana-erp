@@ -1,3 +1,5 @@
+// SPDX-FileCopyrightText: 2026 LE Devices
+// SPDX-License-Identifier: AGPL-3.0-or-later
 // Shared pieces for running programs: parameter forms (RF-005-07) and output
 // rendering, used by Operation and Development.
 "use strict";

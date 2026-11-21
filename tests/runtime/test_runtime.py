@@ -1,3 +1,5 @@
+# SPDX-FileCopyrightText: 2026 LE Devices
+# SPDX-License-Identifier: AGPL-3.0-or-later
 """Tests for the isolated Python runtime (specs 002 and 004), no database.
 
 A "fake core" speaks the protocol with the runtime process and answers its

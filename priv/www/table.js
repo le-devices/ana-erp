@@ -1,3 +1,5 @@
+// SPDX-FileCopyrightText: 2026 LE Devices
+// SPDX-License-Identifier: AGPL-3.0-or-later
 // Work tables (spec 020, RF-020-17): title with count, search, filters per column, choice and order of the
 // columns, sorting, named variants per user (one default), spreadsheet export and actions on the selection.
 // One component for Operação (program output), Cadastros and Administração. The layout the user leaves comes

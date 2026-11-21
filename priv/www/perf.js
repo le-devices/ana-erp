@@ -1,3 +1,5 @@
+// SPDX-FileCopyrightText: 2026 LE Devices
+// SPDX-License-Identifier: AGPL-3.0-or-later
 // Interface performance (spec 050, T-050-03; P18 budget: a screen opens within 1 s). Measures how long
 // each screen takes to open, how long its calls to the server take and the long tasks that freeze the
 // page, and sends them in batches every 30 s. Never blocks or fails the screen it measures.

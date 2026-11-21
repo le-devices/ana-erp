@@ -1,3 +1,5 @@
+%% SPDX-FileCopyrightText: 2026 LE Devices
+%% SPDX-License-Identifier: AGPL-3.0-or-later
 %% Vulnerability advisories in the OSV format (spec 033, RF-033-02).
 %%
 %% Import accepts one advisory, a list, or {"vulns": [...]}; each affected range becomes a row

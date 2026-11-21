@@ -1,3 +1,5 @@
+%% SPDX-FileCopyrightText: 2026 LE Devices
+%% SPDX-License-Identifier: AGPL-3.0-or-later
 %% Seed programs (RF-006-06, RF-006-08).
 %%
 %% Reads priv/programs/<name>.py with metadata in the header:

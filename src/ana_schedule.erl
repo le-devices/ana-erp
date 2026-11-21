@@ -1,3 +1,5 @@
+%% SPDX-FileCopyrightText: 2026 LE Devices
+%% SPDX-License-Identifier: AGPL-3.0-or-later
 %% Scheduled routines: storage, validation and occurrence calculation (spec 018).
 %%
 %% Local-time arithmetic is done by ana_cron; conversion between local time

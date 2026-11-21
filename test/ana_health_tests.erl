@@ -1,3 +1,5 @@
+%% SPDX-FileCopyrightText: 2026 LE Devices
+%% SPDX-License-Identifier: AGPL-3.0-or-later
 %% Spec 019 (T-019-08b): alert conditions and silences.
 -module(ana_health_tests).
 -include_lib("eunit/include/eunit.hrl").

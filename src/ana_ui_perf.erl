@@ -1,3 +1,5 @@
+%% SPDX-FileCopyrightText: 2026 LE Devices
+%% SPDX-License-Identifier: AGPL-3.0-or-later
 %% Interface performance (spec 050, T-050-03; P18): browsers send how long each screen took to open
 %% and how long its calls to the server took. Samples are aggregated in memory (ETS counters) and
 %% written once a minute, only for what changed (P15): one row per day, screen and kind, with a
