@@ -6,6 +6,7 @@ Fase 1 — simular e achar
 - [ ] T-067-03 Executor pela API, com dias simulados e efeitos retidos; recusa na produção (RF-067-03, 05, D5, RNF-067-01, CA-067-05)
 - [ ] T-067-04 Oráculos de automação e de contas (esteira parada, limbo, conciliações, saldos) (RF-067-04, D4, CA-067-02)
 - [ ] T-067-05 Rotina agendada, relatório, tendência e aviso de achado novo (RF-067-05, 06, D6, CA-067-01)
+- [ ] T-067-05b Workflow agendado do GitHub Actions: pilha com dados sintéticos, relatório como artefato, issue por achado novo, disparo com semente (RF-067-09, D6a, CA-067-07)
 
 Fase 2 — usabilidade e realismo
 - [ ] T-067-06 Executor pelas telas (navegador sem tela): passos, cliques, telas, erros e tempo; oráculos de usabilidade (RF-067-03, 04, D3, CA-067-03)

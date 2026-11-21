@@ -44,6 +44,17 @@ usabilidade e de automação — todo dia, sem gente.
   um com a semente, a persona, a sequência de passos, os documentos e as execuções ligadas, e a tendência entre
   simulações (novo, persistente, resolvido). Achado novo vira aviso ao responsável e, se for de um programa, achado da
   tela Qualidade (spec 064).
+- **D6a — No desenvolvimento do produto: GitHub Actions agendado** (decisão do dono do produto em 21/11/2026). Um
+  workflow com `schedule` (cron, toda noite) sobe a pilha num executor padrão — gratuito para o repositório público —,
+  carrega dados de demonstração e **sintéticos**, roda a simulação dentro do tempo do executor (até 6 horas por job) e:
+  - publica o relatório como artefato da execução e como resumo do job;
+  - abre (ou atualiza) uma *issue* por achado novo, com a semente e os passos para reproduzir, e fecha a do achado
+    resolvido;
+  - pode ser disparado à mão com uma semente (reproduzir um achado) e em pull requests para `qa`/`master`.
+  Como o repositório é público, **logs, artefatos e issues são públicos**: só dados sintéticos e de demonstração, nunca
+  cópia de dados de cliente, nunca segredo. A máquina de desenvolvimento não precisa ficar ligada.
+  Nas instalações dos clientes, a mesma simulação roda como rotina agendada da instância de testes (D6), com a cópia
+  mascarada deles — lá os dados não saem da casa do cliente.
 - **D7 — Parecida com o uso real.** As frequências das personas podem vir do **perfil de uso da produção** (quantas
   vezes cada rotina, área e esteira roda por dia), agregado e sem dados pessoais (P14), para a simulação exercitar o
   que a empresa de fato faz — e também o que quase nunca faz (cauda).
@@ -62,6 +73,8 @@ usabilidade e de automação — todo dia, sem gente.
 - **RF-067-06** Relatório por simulação e tendência; aviso de achado novo; ligação com a tela Qualidade (D6).
 - **RF-067-07** Perfil de uso real agregado da produção para calibrar as personas (D7).
 - **RF-067-08** Achado → trilha de regressão (spec 053) e sugestão de automação (spec 051) (D8).
+- **RF-067-09** Workflow agendado do GitHub Actions para o produto: pilha com dados sintéticos, simulação, relatório
+  como artefato, issue por achado novo e fechamento do resolvido, disparo manual com semente (D6a).
 
 ## Requisitos não funcionais
 - **RNF-067-01** Nunca roda na produção nem chama sistemas externos (spec 034); dados pessoais nunca saem da produção.
@@ -80,6 +93,8 @@ usabilidade e de automação — todo dia, sem gente.
 - **CA-067-04** Rodar de novo com a semente de um achado reproduz o mesmo achado.
 - **CA-067-05** Na produção, a rotina é recusada.
 - **CA-067-06** Um achado vira trilha de regressão com um clique, e a trilha falha enquanto o furo não for consertado.
+- **CA-067-07** O workflow noturno do repositório roda sem a máquina de desenvolvimento, abre uma issue para um achado
+  novo (com semente e passos) e a fecha quando o achado some; nenhum dado que não seja sintético aparece nos logs.
 
 ## Relação com outras specs
 - **042 (trilhas)**: roteiros fixos com conciliações; aqui, uso variado e contínuo — os oráculos de contas reaproveitam
