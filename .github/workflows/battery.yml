@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: 2026 LE Devices
+# SPDX-FileCopyrightText: 2026 André Luis Pereira dos Santos
 # SPDX-License-Identifier: AGPL-3.0-or-later
 # Test battery on GitHub-hosted runners (private repository: billed minutes, free monthly quota).
 # Each suite runs on its own clean runner, in parallel; the whole battery takes as long as the slowest one.

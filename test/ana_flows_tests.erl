@@ -1,4 +1,4 @@
-%% SPDX-FileCopyrightText: 2026 LE Devices
+%% SPDX-FileCopyrightText: 2026 André Luis Pereira dos Santos
 %% SPDX-License-Identifier: AGPL-3.0-or-later
 %% Spec 030: pure parts of the flows engine.
 -module(ana_flows_tests).

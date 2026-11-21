@@ -1,4 +1,4 @@
-// SPDX-FileCopyrightText: 2026 LE Devices
+// SPDX-FileCopyrightText: 2026 André Luis Pereira dos Santos
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Charts (spec 026): SVG drawn in the browser, no dependencies, strict-CSP safe
 // (colors come from classes .s1….s8 over CSS variables; no style attributes).

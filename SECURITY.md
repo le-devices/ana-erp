@@ -28,4 +28,4 @@ contrato de suporte recebem os avisos antes da divulgação.
 
 ## Boa-fé
 Pesquisa feita de boa-fé, dentro desta política, sem acessar ou alterar dados de terceiros e sem interromper
-serviços, não será objeto de ação da LE Devices.
+serviços, não será objeto de ação do titular do ANA ERP.

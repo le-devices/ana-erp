@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: 2026 LE Devices
+# SPDX-FileCopyrightText: 2026 André Luis Pereira dos Santos
 # SPDX-License-Identifier: AGPL-3.0-or-later
 """Universal rehearsal (spec 056) without a database: what the inspection says a program writes and uses, so the
 catalog offers "Ensaiar" exactly on the routines that write (RF-056-03, CA-056-02).

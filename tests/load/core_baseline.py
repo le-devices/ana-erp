@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: 2026 LE Devices
+# SPDX-FileCopyrightText: 2026 André Luis Pereira dos Santos
 # SPDX-License-Identifier: AGPL-3.0-or-later
 """Core baseline (spec 062, T-062-01; constitution P20): the numbers every Erlang-side change is compared with.
 

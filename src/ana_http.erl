@@ -1,4 +1,4 @@
-%% SPDX-FileCopyrightText: 2026 LE Devices
+%% SPDX-FileCopyrightText: 2026 André Luis Pereira dos Santos
 %% SPDX-License-Identifier: AGPL-3.0-or-later
 %% HTTP server and shared helpers (spec 001: RF-001-05..07, RNF-001-03..05).
 -module(ana_http).

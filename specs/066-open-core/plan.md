@@ -6,7 +6,7 @@
 - `LICENSE`: texto integral e sem alteração da GNU AGPL-3.0 (o GitHub reconhece a licença por ele).
 - `NOTICE`: direitos autorais, aviso da AGPL, licença comercial, marca, **permissão adicional da seção 7 para os
   programas do cliente** (D1) e os componentes de terceiros com as licenças.
-- Linhas SPDX (`SPDX-FileCopyrightText: 2026 LE Devices` e `SPDX-License-Identifier: AGPL-3.0-or-later`) no topo
+- Linhas SPDX (`SPDX-FileCopyrightText: 2026 André Luis Pereira dos Santos` e `SPDX-License-Identifier: AGPL-3.0-or-later`) no topo
   de todo arquivo de código, configuração e instalação — 200 arquivos, com a sintaxe de comentário de cada
   linguagem, depois do shebang e do doctype.
 - **Sem cabeçalho no arquivo, licenciados pelo `REUSE.toml`** (especificação REUSE 3): os programas do produto

@@ -1,4 +1,4 @@
-%% SPDX-FileCopyrightText: 2026 LE Devices
+%% SPDX-FileCopyrightText: 2026 André Luis Pereira dos Santos
 %% SPDX-License-Identifier: AGPL-3.0-or-later
 %% Inbound webhooks (spec 017, RF-017-04, RNF-017-02).
 %%

@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: 2026 LE Devices
+# SPDX-FileCopyrightText: 2026 André Luis Pereira dos Santos
 # SPDX-License-Identifier: AGPL-3.0-or-later
 """A small SMTP server for the e-mail tests (spec 044), standard library only.
 

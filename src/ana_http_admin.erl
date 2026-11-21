@@ -1,4 +1,4 @@
-%% SPDX-FileCopyrightText: 2026 LE Devices
+%% SPDX-FileCopyrightText: 2026 André Luis Pereira dos Santos
 %% SPDX-License-Identifier: AGPL-3.0-or-later
 %% Administration API (spec 011). Every route requires the admin role
 %% (RNF-011-01); destructive actions are confirmed by the studio and logged.

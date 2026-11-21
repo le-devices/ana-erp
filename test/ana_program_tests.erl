@@ -1,4 +1,4 @@
-%% SPDX-FileCopyrightText: 2026 LE Devices
+%% SPDX-FileCopyrightText: 2026 André Luis Pereira dos Santos
 %% SPDX-License-Identifier: AGPL-3.0-or-later
 %% Program names (RF-002-01) and access patterns (RF-011-04).
 -module(ana_program_tests).

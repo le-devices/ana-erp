@@ -1,4 +1,4 @@
-// SPDX-FileCopyrightText: 2026 LE Devices
+// SPDX-FileCopyrightText: 2026 André Luis Pereira dos Santos
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Pattern catalog (spec 050, T-050-01; constitution P18): the rules every screen follows, each with a
 // live example built by the same components the screens use. Developers see it in Desenvolvimento →

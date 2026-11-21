@@ -19,7 +19,7 @@ aberto sob a [GNU AGPL-3.0](LICENSE) (com a [permissão adicional para os progra
 - Nomenclatura própria do ANA: não use termos de outros ERPs (o portão de qualidade aponta os mais comuns).
 - Todo arquivo de código novo começa com as linhas SPDX (`scripts/licensing_check.py add-headers` escreve):
 
-      SPDX-FileCopyrightText: 2026 LE Devices
+      SPDX-FileCopyrightText: 2026 André Luis Pereira dos Santos
       SPDX-License-Identifier: AGPL-3.0-or-later
 
 - Literais Erlang com acento usam `/utf8`.

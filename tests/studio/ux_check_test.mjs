@@ -1,4 +1,4 @@
-// SPDX-FileCopyrightText: 2026 LE Devices
+// SPDX-FileCopyrightText: 2026 André Luis Pereira dos Santos
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Spec 050 (CA-050-01, CA-050-04): the verifier catches a screen that breaks the pattern, and error
 // messages hide technical codes from operation users. Run before smoke.mjs (make teste-estudio).

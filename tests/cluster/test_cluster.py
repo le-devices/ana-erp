@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: 2026 LE Devices
+# SPDX-FileCopyrightText: 2026 André Luis Pereira dos Santos
 # SPDX-License-Identifier: AGPL-3.0-or-later
 """Cluster tests: exactly-once scheduling and failover (CA-018-01) and Erlang
 distribution calls to ana_rpc:call/3 (T-003-06, RF-003-06, RNF-003-02).

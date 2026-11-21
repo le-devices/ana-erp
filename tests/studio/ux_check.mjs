@@ -1,4 +1,4 @@
-// SPDX-FileCopyrightText: 2026 LE Devices
+// SPDX-FileCopyrightText: 2026 André Luis Pereira dos Santos
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Premium-experience verifier (spec 050, T-050-02; constitution P18).
 // Runs on every screen the Studio test visits. Violations already known are listed in

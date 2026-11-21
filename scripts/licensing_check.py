@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# SPDX-FileCopyrightText: 2026 LE Devices
+# SPDX-FileCopyrightText: 2026 André Luis Pereira dos Santos
 # SPDX-License-Identifier: AGPL-3.0-or-later
 """Licensing checks of the repository (spec 066, T-066-02 and T-066-05), run by the battery on every pull request.
 
@@ -20,7 +20,7 @@ import sys
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 LICENSE_ID = "AGPL-3.0-or-later"
-HOLDER = "2026 LE Devices"
+HOLDER = "2026 André Luis Pereira dos Santos"
 SPDX = "SPDX-License-Identifier:"
 
 # How each kind of file comments a line (prefix, suffix). Files not listed here are covered by REUSE.toml.

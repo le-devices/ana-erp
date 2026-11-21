@@ -1,4 +1,4 @@
-%% SPDX-FileCopyrightText: 2026 LE Devices
+%% SPDX-FileCopyrightText: 2026 André Luis Pereira dos Santos
 %% SPDX-License-Identifier: AGPL-3.0-or-later
 %% Spec 039 (RF-039-11, CA-039-03): navigation in a BPM model.
 -module(ana_bpm_model_tests).

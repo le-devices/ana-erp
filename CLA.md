@@ -2,8 +2,8 @@
 
 Versão 1.0 — novembro de 2026
 
-> Rascunho do fornecedor, revisado (spec 066), pendente de validação por advogado inscrito na OAB e da
-> definição do titular (item 1). Enquanto esta nota existir, o termo não está em vigor.
+> Rascunho do fornecedor, revisado (spec 066), pendente de validação por advogado inscrito na OAB. Enquanto esta
+> nota existir, o termo não está em vigor.
 
 Obrigado por contribuir com o ANA ERP. Este termo deixa claro o que você concede ao **Fornecedor** quando envia
 uma contribuição, para que o projeto possa continuar aberto sob a GNU AGPL-3.0 **e** oferecer a licença comercial
@@ -12,7 +12,8 @@ contribuição e pode usá-la como quiser.
 
 ## 1. Definições
 - **Fornecedor**: o titular dos direitos patrimoniais do ANA ERP indicado no arquivo `NOTICE` do repositório na
-  data da sua contribuição, e quem vier a sucedê-lo nessa titularidade por cessão, incorporação, fusão, cisão ou
+  data da sua contribuição — hoje André Luis Pereira dos Santos, que os cederá à sociedade LE Devices quando ela
+  for constituída — e quem vier a sucedê-lo nessa titularidade por cessão, incorporação, fusão, cisão ou
   sucessão.
 - **Você**: a pessoa física que aceita este termo ou, no caso do item 10, a pessoa jurídica em nome da qual ele
   é aceito.

@@ -1,4 +1,4 @@
-%% SPDX-FileCopyrightText: 2026 LE Devices
+%% SPDX-FileCopyrightText: 2026 André Luis Pereira dos Santos
 %% SPDX-License-Identifier: AGPL-3.0-or-later
 %% File repository (spec 016): folders, versions, grants, share links, uploads,
 %% signed downloads, search, entity folders and audit. Every permission comes from

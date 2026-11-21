@@ -1,4 +1,4 @@
-%% SPDX-FileCopyrightText: 2026 LE Devices
+%% SPDX-FileCopyrightText: 2026 André Luis Pereira dos Santos
 %% SPDX-License-Identifier: AGPL-3.0-or-later
 %% Supervisor of one area of the core (spec 062, D1; constitution P20). Each area has its own restart
 %% budget: an area that keeps failing exhausts only its own supervisor, which the root restarts as a

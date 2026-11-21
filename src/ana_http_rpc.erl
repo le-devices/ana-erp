@@ -1,4 +1,4 @@
-%% SPDX-FileCopyrightText: 2026 LE Devices
+%% SPDX-FileCopyrightText: 2026 André Luis Pereira dos Santos
 %% SPDX-License-Identifier: AGPL-3.0-or-later
 %% JSON-RPC 2.0 over HTTP (spec 003: RF-003-01..05, RNF-003-04, RNF-003-05).
 -module(ana_http_rpc).

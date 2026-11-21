@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: 2026 LE Devices
+# SPDX-FileCopyrightText: 2026 André Luis Pereira dos Santos
 # SPDX-License-Identifier: AGPL-3.0-or-later
 # ANA ERP — atalhos de desenvolvimento
 .PHONY: subir parar logs compilar eunit dialyzer licencas teste-runtime teste-integracao teste-trilhas teste-estudio teste-cluster teste-caos teste-pg-ha testes limpar

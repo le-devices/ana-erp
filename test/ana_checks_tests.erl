@@ -1,4 +1,4 @@
-%% SPDX-FileCopyrightText: 2026 LE Devices
+%% SPDX-FileCopyrightText: 2026 André Luis Pereira dos Santos
 %% SPDX-License-Identifier: AGPL-3.0-or-later
 %% Spec 033: pure parts of the periodic checks (versions, OSV, CVSS, manifest, dpkg, regression).
 -module(ana_checks_tests).

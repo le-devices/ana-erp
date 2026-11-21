@@ -1,4 +1,4 @@
-%% SPDX-FileCopyrightText: 2026 LE Devices
+%% SPDX-FileCopyrightText: 2026 André Luis Pereira dos Santos
 %% SPDX-License-Identifier: AGPL-3.0-or-later
 %% Live screens (spec 062, D3; constitution P18/P20): one server-sent event stream per signed-in screen.
 %% The connection is a light process subscribed to the event bus (ana_events): its user's topic

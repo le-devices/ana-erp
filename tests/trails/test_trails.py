@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: 2026 LE Devices
+# SPDX-FileCopyrightText: 2026 André Luis Pereira dos Santos
 # SPDX-License-Identifier: AGPL-3.0-or-later
 """Business-process trails end to end (spec 042, T-042-08): each trail runs through the real programs with fresh data
 and must leave every control reconciliation (customers, suppliers, credits, inventory, work in process, banks) exactly

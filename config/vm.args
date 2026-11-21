@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: 2026 LE Devices
+# SPDX-FileCopyrightText: 2026 André Luis Pereira dos Santos
 # SPDX-License-Identifier: AGPL-3.0-or-later
 ## Erlang distribution is enabled by the start script only when
 ## ANA_NODE_NAME and ANA_COOKIE are set (RNF-003-02).

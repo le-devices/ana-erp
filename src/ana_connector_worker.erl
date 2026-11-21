@@ -1,4 +1,4 @@
-%% SPDX-FileCopyrightText: 2026 LE Devices
+%% SPDX-FileCopyrightText: 2026 André Luis Pereira dos Santos
 %% SPDX-License-Identifier: AGPL-3.0-or-later
 %% Delivery worker of one connector (spec 062, D4; spec 017): claims only this connector's messages, with
 %% its own concurrency, so a slow or stuck connector never holds the others back. Woken by

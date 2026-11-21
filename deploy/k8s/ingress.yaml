@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: 2026 LE Devices
+# SPDX-FileCopyrightText: 2026 André Luis Pereira dos Santos
 # SPDX-License-Identifier: AGPL-3.0-or-later
 # HTTPS with cert-manager (automatic certificate). Adjust the host and the ingress class.
 apiVersion: networking.k8s.io/v1

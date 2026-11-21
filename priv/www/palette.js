@@ -1,4 +1,4 @@
-// SPDX-FileCopyrightText: 2026 LE Devices
+// SPDX-FileCopyrightText: 2026 André Luis Pereira dos Santos
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Command palette and keyboard help (spec 050, T-050-05, D4). Ctrl+K (⌘K) on any screen: routines, commands,
 // categories, programs, tables and admin sections (the same targets as the "Ir para…" bar, already filtered by role,

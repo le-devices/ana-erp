@@ -1,4 +1,4 @@
-%% SPDX-FileCopyrightText: 2026 LE Devices
+%% SPDX-FileCopyrightText: 2026 André Luis Pereira dos Santos
 %% SPDX-License-Identifier: AGPL-3.0-or-later
 %% Automated flows (spec 030, RF-030-02..05), executed by the single process engine (ana_bpm, spec
 %% 039): the engine's loop claims ready steps (claim/1), runs them (step/1) and sweeps waiting ones

@@ -1,4 +1,4 @@
-// SPDX-FileCopyrightText: 2026 LE Devices
+// SPDX-FileCopyrightText: 2026 André Luis Pereira dos Santos
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Error messages people understand (spec 050, T-050-04; constitution P18): what happened and what to
 // do, never a technical code on an operation screen. Business errors from programs already speak

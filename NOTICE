@@ -1,5 +1,9 @@
 ANA ERP
-Copyright (C) 2026 LE Devices
+Copyright (C) 2026 André Luis Pereira dos Santos
+
+Titular dos direitos patrimoniais: André Luis Pereira dos Santos, que os cederá à sociedade LE Devices quando ela
+for constituída; a partir da cessão, a LE Devices passa a ser a titular e sucede o atual em todas as licenças,
+permissões e termos deste repositório (inclusive o CLA).
 
 Este programa é software livre: você pode redistribuí-lo e/ou modificá-lo sob os termos da Licença Pública Geral
 Affero GNU (GNU AGPL), publicada pela Free Software Foundation, na versão 3 da licença ou (a seu critério)
@@ -13,9 +17,9 @@ Public License as published by the Free Software Foundation, either version 3 of
 any later version. See the file LICENSE.
 
 Licença comercial: quem não quiser ou não puder cumprir as obrigações da AGPL pode contratar uma licença
-comercial com a LE Devices. Contribuições são aceitas sob o Termo de Licença de Contribuição (CLA.md).
+comercial com o titular. Contribuições são aceitas sob o Termo de Licença de Contribuição (CLA.md).
 
-A marca "ANA" e o logotipo do ANA ERP são da LE Devices e não são licenciados pela AGPL (veja TRADEMARKS.md).
+A marca "ANA" e o logotipo do ANA ERP pertencem ao titular e não são licenciados pela AGPL (veja TRADEMARKS.md).
 
 Contato do titular (licença comercial, marca, direitos do titular de dados do CLA): pelo perfil da organização
 no GitHub; relatos de segurança, pelo relato privado do GitHub (SECURITY.md).
@@ -24,7 +28,7 @@ no GitHub; relatos de segurança, pelo relato privado do GitHub (SECURITY.md).
 PERMISSÃO ADICIONAL — PROGRAMAS DO CLIENTE (seção 7 da GNU AGPL versão 3)
 -----------------------------------------------------------------------------------------------------------------
 
-Rascunho revisado (spec 066), pendente de validação por advogado inscrito na OAB e da definição do titular.
+Rascunho revisado (spec 066), pendente de validação por advogado inscrito na OAB.
 
 Além das permissões da GNU AGPL, o titular dos direitos do ANA ERP concede a seguinte permissão adicional, nos
 termos da seção 7 da licença:

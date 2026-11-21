@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: 2026 LE Devices
+# SPDX-FileCopyrightText: 2026 André Luis Pereira dos Santos
 # SPDX-License-Identifier: AGPL-3.0-or-later
 """Company values (spec 065) in the Python runtime, without a database: ana.value() hands the value in its type and
 a selection answers `x in sel` with the same rule as base.company_value_matches() in SQL (RF-065-05, D1).

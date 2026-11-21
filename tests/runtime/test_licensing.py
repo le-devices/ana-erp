@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: 2026 LE Devices
+# SPDX-FileCopyrightText: 2026 André Luis Pereira dos Santos
 # SPDX-License-Identifier: AGPL-3.0-or-later
 """The licensing checks of the repository (spec 066, T-066-02, T-066-05): SPDX lines, dependency licenses and the
 credentials scan of what a pull request adds."""

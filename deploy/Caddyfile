@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: 2026 LE Devices
+# SPDX-FileCopyrightText: 2026 André Luis Pereira dos Santos
 # SPDX-License-Identifier: AGPL-3.0-or-later
 # ANA ERP — HTTPS entry point (spec 036). Values come from .env (see install.sh):
 #   ANA_SITE       erp.empresa.com.br | https://192.168.0.10 | https://localhost

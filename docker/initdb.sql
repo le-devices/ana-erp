@@ -1,4 +1,4 @@
--- SPDX-FileCopyrightText: 2026 LE Devices
+-- SPDX-FileCopyrightText: 2026 André Luis Pereira dos Santos
 -- SPDX-License-Identifier: AGPL-3.0-or-later
 -- Run once by the superuser when the volume is created.
 -- The core does NOT use a superuser (P10): role "ana" owns the database and

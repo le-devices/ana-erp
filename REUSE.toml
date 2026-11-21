@@ -8,14 +8,14 @@ version = 1
 [[annotations]]
 path = "priv/programs/**"
 precedence = "aggregate"
-SPDX-FileCopyrightText = "2026 LE Devices"
+SPDX-FileCopyrightText = "2026 André Luis Pereira dos Santos"
 SPDX-License-Identifier = "AGPL-3.0-or-later"
 
 # Migrations: once applied in an installation, a migration file is never edited.
 [[annotations]]
 path = ["priv/migrations/**", "priv/demo/**"]
 precedence = "aggregate"
-SPDX-FileCopyrightText = "2026 LE Devices"
+SPDX-FileCopyrightText = "2026 André Luis Pereira dos Santos"
 SPDX-License-Identifier = "AGPL-3.0-or-later"
 
 # Documentation, specifications, data and configuration that cannot hold comments (JSON, lock files, keys).
@@ -23,5 +23,5 @@ SPDX-License-Identifier = "AGPL-3.0-or-later"
 path = ["**/*.md", "NOTICE", "specs/**", "**/*.json", "rebar.lock", "priv/license/**", "tests/integration/license_test.key",
         "tests/load/results/**"]
 precedence = "aggregate"
-SPDX-FileCopyrightText = "2026 LE Devices"
+SPDX-FileCopyrightText = "2026 André Luis Pereira dos Santos"
 SPDX-License-Identifier = "AGPL-3.0-or-later"

@@ -1,4 +1,4 @@
-// SPDX-FileCopyrightText: 2026 LE Devices
+// SPDX-FileCopyrightText: 2026 André Luis Pereira dos Santos
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Studio smoke test (specs 005, 011, 012, 020): loads the real page in a DOM
 // (jsdom), runs the scripts served by ANA and walks through the areas.

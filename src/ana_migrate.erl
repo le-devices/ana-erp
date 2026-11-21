@@ -1,4 +1,4 @@
-%% SPDX-FileCopyrightText: 2026 LE Devices
+%% SPDX-FileCopyrightText: 2026 André Luis Pereira dos Santos
 %% SPDX-License-Identifier: AGPL-3.0-or-later
 %% Versioned SQL migrations (RF-001-01, CA-001-02) and optional demo data
 %% (RF-006-07: only with ANA_DEMO=true — never in a real deployment by default).
