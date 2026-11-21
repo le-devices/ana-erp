@@ -1,3 +1,5 @@
+# SPDX-FileCopyrightText: 2026 André Luis Pereira dos Santos
+# SPDX-License-Identifier: AGPL-3.0-or-later
 # ANA ERP — full environment: docker compose up --build
 # Memory: ANA_PG_SHARED_BUFFERS / ANA_PG_EFFECTIVE_CACHE / ANA_PG_WORK_MEM (default for ~2 GB hosts)
 name: ana-erp
@@ -17,7 +19,14 @@ x-ana-env: &ana-env
   ANA_ADMIN_PASSWORD: ${ANA_ADMIN_PASSWORD:-admin}
   ANA_HTTP_PORT: "8080"
   ANA_DEMO: ${ANA_DEMO:-true}
+  # Spec 034: production | test | development (this compose is the development environment).
+  ANA_INSTANCE: ${ANA_INSTANCE:-development}
+  ANA_PUBLIC_URL: ${ANA_PUBLIC_URL:-http://localhost:8080}
   ANA_TIMEZONE: ${ANA_TIMEZONE:-America/Sao_Paulo}
+  ANA_BPM_SWEEP_MS: ${ANA_BPM_SWEEP_MS:-5000}       # dev/tests: facts of the ERP seen in 5 s (production: 30 s)
+  # Vault of connector secrets (spec 017): 32 bytes in base64, the same on every node.
+  # The default is for development only; generate one with: openssl rand -base64 32
+  ANA_MASTER_KEY: ${ANA_MASTER_KEY:-ZGV2LW9ubHktbWFzdGVyLWtleS1jaGFuZ2UtbWUhISE=}
 
 services:
   db:
@@ -27,8 +36,8 @@ services:
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres_change_this_password}
       ANA_DB_PASSWORD: ${ANA_DB_PASSWORD:-ana_change_this_password}
     # RNF-007-04: work in memory as much as possible; size to the host.
-    # RF-025-07 (SSD): compressed WAL, spaced checkpoints, prewarm list saved
-    # only at shutdown. fsync / full_page_writes / synchronous_commit stay on.
+    # RF-025-07 / spec 063 (SSD): compressed WAL, spaced checkpoints, prewarm list saved
+    # only at shutdown, queries spilling over 10 MB to temporary files logged (D6). fsync / full_page_writes / synchronous_commit stay on.
     command: >
       postgres -c shared_preload_libraries=citus,pg_prewarm
                -c pg_prewarm.autoprewarm=on
@@ -45,8 +54,12 @@ services:
                -c max_wal_size=2GB
                -c min_wal_size=256MB
                -c pg_prewarm.autoprewarm_interval=0
+               -c log_temp_files=10240
+               -c log_checkpoints=on
     volumes:
       - data:/var/lib/postgresql/data
+      # RF-023-06: WAL archive and base backups (scripts/backup.sh); empty until enabled.
+      - wal_archive:/var/lib/postgresql/archive
       - ./docker/initdb.sql:/docker-entrypoint-initdb.d/01-ana.sql:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U postgres -d ana"]
@@ -67,11 +80,18 @@ services:
     read_only: true
     tmpfs:
       - /tmp:size=256m,mode=1777
+    # Spec 016: encrypted file repository, shared by every core node.
+    volumes:
+      - files:/var/lib/ana/files
     security_opt:
       - no-new-privileges:true
     cap_drop: [ALL]
     restart: unless-stopped
     logging: *logging
+    # RF-023-02: time to drain (not ready → running executions finish → stop).
+    stop_grace_period: 40s
 
 volumes:
   data:
+  wal_archive:
+  files:

@@ -1,6 +1,7 @@
 # ana:description Extrato de horas do projeto para o cliente (sem custos)
 # ana:exposed yes
 # ana:command timereport
+# ana:category Projetos/Acompanhamento
 """RF-008-15: statement for the customer — never contains cost."""
 
 import datetime
@@ -8,10 +9,10 @@ import datetime
 from ana_lib.projects import access
 
 PARAMS = {
-    "project": {"type": "str", "required": True},
-    "start": {"type": "date"},
-    "end": {"type": "date"},
-    "approved_only": {"type": "bool", "default": True},
+    "project": {"type": "str", "required": True, "label": "projeto", "lookup": {"program": "projects.lookup", "params": {"kind": "projects"}}},
+    "start": {"type": "date", "label": "de"},
+    "end": {"type": "date", "label": "até"},
+    "approved_only": {"type": "bool", "default": True, "label": "só aprovados"},
 }
 
 

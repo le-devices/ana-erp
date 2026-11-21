@@ -1,3 +1,5 @@
+// SPDX-FileCopyrightText: 2026 André Luis Pereira dos Santos
+// SPDX-License-Identifier: AGPL-3.0-or-later
 // Development area (RF-020-04, RF-020-05): everything about a program lives in
 // the program (code, properties and limits, versions, executions); data
 // (catalog + SQL console) lives together.
@@ -32,6 +34,12 @@ def main(name="mundo"):
   // ------------------------------------------------------------------ entry
   async function show(route) {
     if (!state.loaded) await init();
+    if (route[0] === "patterns") {                      // spec 050 (T-050-01)
+      selectSide("patterns");
+      showView("patterns");
+      window.AnaPatterns.render($("#patterns-view"));
+      return;
+    }
     if (route[0] === "data") {
       selectSide("data");
       showView("data");
@@ -48,7 +56,7 @@ def main(name="mundo"):
   async function init() {
     state.loaded = true;
     editor = new window.AnaEditor($("#editor"));
-    editor.onChange = () => markDirty(true);
+    editor.onChange = () => { markDirty(true); quality.schedule(); };
     editor.onBreakpointsChange = (lines) => {
       if (state.exec && state.exec.debugging) API.command(state.exec.id, { action: "breakpoints", lines }).catch(() => {});
     };
@@ -61,12 +69,14 @@ def main(name="mundo"):
   function showView(v) {
     $("#program-view").hidden = v !== "program";
     $("#data-view").hidden = v !== "data";
+    $("#patterns-view").hidden = v !== "patterns";
   }
 
   function selectSide(side) {
     for (const b of $$("[data-side]")) b.classList.toggle("active", b.dataset.side === side);
     $("#side-programs").hidden = side !== "programs";
     $("#side-data").hidden = side !== "data";
+    $("#side-patterns").hidden = side !== "patterns";
   }
 
   function selectTab(tab) {
@@ -76,6 +86,7 @@ def main(name="mundo"):
     if (tab === "versions") loadVersions();
     if (tab === "executions") loadExecutions();
     if (tab === "schedules") loadSchedules();
+    if (tab === "perf") loadPerformance();
   }
 
   function notice(msg, isError = false) {
@@ -112,9 +123,11 @@ def main(name="mundo"):
             class: "node" + (state.current && state.current.name === p.name ? " active" : "") + (p.active ? "" : " inactive"),
             title: p.description || p.name, onclick: () => window.AnaStudio.go(`#/dev/program/${p.name}`),
           }, el("span", { text: (p.kind === "library" ? "◇ " : "▸ ") + key.slice(0, -1) }));
-          if (p.exposed) item.append(el("span", { class: "tag exposed", text: "exposto" }));
+          if (p.exposed) item.append(el("span", { class: "tag exposed", text: p.public ? "público" : "exposto" }));
           if (p.restricted) item.append(el("span", { class: "tag restricted", text: "restrito" }));
           if (p.warning) item.append(el("span", { class: "tag warn", text: "!", title: p.warning }));
+          // Spec 009 (D8): a product program edited here.
+          if (p.customized) item.append(el("span", { class: "tag warn", text: "customizado", title: "Programa do produto alterado nesta instalação: fora do suporte padrão. As atualizações do produto pedem sua decisão." }));
           ul.append(el("li", {}, item));
         } else {
           const label = depth === 0 ? `${key} — ${R.moduleLabel(key)}` : key;
@@ -142,7 +155,9 @@ def main(name="mundo"):
       editor.markCurrent(null);
       fillProperties(p);
       markDirty(false);
-      notice(p.warning ? "⚠ " + p.warning : "", true);
+      quality.load();
+      notice(p.warning ? "⚠ " + p.warning
+             : p.customized ? "Programa do produto customizado nesta instalação — fora do suporte padrão." : "", true);
       buildParams(p.params);
       clearOutput();
       drawTree();
@@ -158,9 +173,12 @@ def main(name="mundo"):
     $("#p-kind").value = p.kind || "program";
     $("#p-role").value = p.min_role || "user";
     $("#p-exposed").checked = !!p.exposed;
+    $("#p-public").checked = !!p.public;
+    $("#p-menu").checked = p.in_menu !== false;
     $("#p-restricted").checked = !!p.restricted;
     $("#p-active").checked = p.active !== false;
     $("#purge").disabled = !p.version;
+    runButtons(false);
     loadLimits(p);
     loadProgramCommands(p);
   }
@@ -206,6 +224,104 @@ def main(name="mundo"):
     return out;
   }
 
+  // Spec 064 (RF-064-02, CA-064-01): the quality inspection while typing — findings on their lines and a strip
+  // under the editor saying what blocks the transport, how to fix it, and a way to ask for an exemption.
+  const quality = (() => {
+    const ORDER = ["info", "warning", "serious", "critical"];
+    const ICON = { info: "ℹ", warning: "▲", serious: "◆", critical: "◆" };
+    const LABEL = { info: "informação", warning: "atenção", serious: "sério", critical: "crítico" };
+    let timer = null, abort = null, level = "serious", levelKnown = false, exemptions = new Map(), last = null;
+    const strip = () => $("#quality-strip");
+    const blocks = (f) => ORDER.indexOf(f.severity) >= ORDER.indexOf(level);
+
+    function clear() { clearTimeout(timer); if (abort) abort.abort(); editor.setFindings([]); strip().hidden = true; last = null; }
+
+    function schedule() { clearTimeout(timer); timer = setTimeout(run, 500); }
+
+    async function load() {
+      if (!levelKnown) {                         // the installation's blocking severity, read once after login
+        try { level = (await API.qualityGate([])).level || level; levelKnown = true; } catch (_) { /* default */ }
+      }
+      exemptions = new Map();
+      if (state.current && state.current.version) {
+        try {
+          for (const x of await API.qualityExemptions({ program: state.current.name })) {
+            if (x.status !== "refused" && !exemptions.has(x.fingerprint)) exemptions.set(x.fingerprint, x);
+          }
+        } catch (_) { /* the strip still works without the exemptions */ }
+      }
+      run();
+    }
+
+    async function run() {
+      const source = editor.value;
+      if (!source.trim()) { clear(); return; }
+      if (abort) abort.abort();
+      abort = new AbortController();
+      let r;
+      try { r = await API.inspectProgram(source, abort.signal); } catch (e) { if (e.name !== "AbortError") { strip().hidden = true; } return; }
+      last = r;
+      editor.setFindings(r.ok ? r.lint : [{ line: r.syntax.line, severity: "critical", message: r.syntax.message }]);
+      draw();
+    }
+
+    function jump(line) { selectTab("code"); editor.markError(line); editor.focus(); }
+
+    function draw() {
+      const box = strip();
+      const r = last;
+      if (!r) { box.hidden = true; return; }
+      box.hidden = false;
+      if (!r.ok) {
+        box.replaceChildren(el("div", { class: "q-head" }, el("strong", { class: "sev-critical", text: `◆ Erro de sintaxe na linha ${r.syntax.line}:` }),
+          el("span", { text: r.syntax.message }), el("button", { class: "link", text: "ir para a linha", onclick: () => jump(r.syntax.line) })));
+        return;
+      }
+      const list = [...r.lint].sort((a, b) => ORDER.indexOf(b.severity) - ORDER.indexOf(a.severity) || a.line - b.line);
+      const blocking = list.filter((f) => blocks(f) && !(exemptions.get(f.fingerprint) || {}).status?.startsWith("approved"));
+      const head = el("div", { class: "q-head" },
+        el("strong", { class: blocking.length ? "sev-serious" : "", text: blocking.length
+          ? `◆ ${blocking.length} achado(s) bloqueiam o transporte para a produção`
+          : "✓ Nada bloqueia o transporte" }),
+        el("span", { class: "muted", text: list.length ? `${list.length} achado(s) no total · bloqueia a partir de "${LABEL[level]}"` : "nenhum achado" }));
+      const items = list.slice(0, 50).map((f) => {
+        const ex = exemptions.get(f.fingerprint);
+        const li = el("li", {},
+          el("span", { class: "sev-" + f.severity, "aria-label": LABEL[f.severity], text: ICON[f.severity] }),
+          el("button", { class: "link", text: `linha ${f.line}`, onclick: () => jump(f.line) }),
+          el("span", { text: f.message }),
+          f.suggestion ? el("span", { class: "muted", text: "— " + f.suggestion }) : null,
+          ex ? el("span", { class: "pill", text: ex.status === "approved" ? `isenção aprovada até ${fmtDate(ex.valid_until)}` : "isenção pedida, aguardando outra pessoa" })
+             : blocks(f) && state.current && state.current.version && !state.dirty
+               ? el("button", { class: "quiet small", text: "Pedir isenção", onclick: () => askExemption(li, f) }) : null);
+        return li;
+      });
+      box.replaceChildren(head, items.length ? el("ul", {}, ...items) : null);
+    }
+
+    function askExemption(li, f) {
+      if (li.querySelector(".exemption-form")) return;
+      const reason = el("textarea", { rows: 2, placeholder: "ex.: o valor vem de uma lista fixa de colunas; nada vem do usuário" });
+      const until = el("input", { type: "date", value: new Date(Date.now() + 30 * 864e5).toISOString().slice(0, 10) });
+      const form = el("div", { class: "exemption-form" },
+        el("label", {}, "Por que este achado é aceitável", reason),
+        el("label", {}, "Isenção válida até", until),
+        el("div", { class: "row-buttons" },
+          el("button", { class: "primary", text: "Enviar pedido", onclick: async () => {
+            try {
+              await API.requestExemption({ program: state.current.name, fingerprint: f.fingerprint, reason: reason.value, valid_until: until.value });
+              toast("Pedido enviado: outra pessoa aprova em Administração → Transportes → Isenções.");
+              load();
+            } catch (e) { toast(errorText(e), true); }
+          } }),
+          el("button", { class: "quiet", text: "Cancelar", onclick: () => form.remove() })));
+      li.after(form);
+      reason.focus();
+    }
+
+    return { schedule, load, clear };
+  })();
+
   function markDirty(v) {
     state.dirty = v;
     $("#dirty").hidden = !v;
@@ -221,6 +337,7 @@ def main(name="mundo"):
     editor.readOnly = false;
     fillProperties(state.current);
     markDirty(true);
+    quality.load();
     notice("");
     buildParams({ name: { type: "str", default: "mundo" } });
     selectTab("code");
@@ -235,6 +352,8 @@ def main(name="mundo"):
       kind: $("#p-kind").value,
       min_role: $("#p-role").value,
       exposed: $("#p-exposed").checked,
+      public: $("#p-exposed").checked && $("#p-public").checked,
+      in_menu: $("#p-menu").checked,
       restricted: $("#p-restricted").checked,
       active: $("#p-active").checked,
       comment: $("#comment").value,
@@ -270,6 +389,7 @@ def main(name="mundo"):
       toast(`Programa ${p.name} excluído.`);
       state.current = null;
       markDirty(false);
+      quality.clear();
       editor.value = "";
       editor.readOnly = true;
       $("#program-name").textContent = "Nenhum programa aberto";
@@ -282,7 +402,8 @@ def main(name="mundo"):
 
   // ------------------------------------------------------------------ params
   function buildParams(decl) {
-    state.form = R.paramsForm(decl, {});
+    state.form = R.paramsForm(decl, { showTypes: true,
+      lookup: (program, params) => API.run(program, { params }).then((r) => (r.error ? [] : r.result)).catch(() => []) });
     const old = $("#params-form");
     state.form.node.id = "params-form";
     old.replaceWith(state.form.node);
@@ -314,14 +435,28 @@ def main(name="mundo"):
     e.className = "run-state " + cls;
   }
 
+  // A library is imported by programs (from ana_lib.<namespace> import <name>); it never runs by itself.
+  const LIBRARY_HINT = "Biblioteca: não executa sozinha — é usada pelos programas (from ana_lib.<módulo> import <nome>). Para testá-la, rode um programa que a importe.";
+  function isLibrary() {
+    return !!state.current && ($("#p-kind").value || state.current.kind) === "library";
+  }
+  function runButtons(running) {
+    const lib = isLibrary();
+    for (const id of ["#run", "#debug"]) {
+      $(id).disabled = running || lib;
+      $(id).title = lib ? LIBRARY_HINT : id === "#run" ? "Executar (F5)" : "Depurar (Ctrl+F5)";
+    }
+  }
+
   function debugButtons(paused, running) {
     for (const b of $$(".dbg")) b.disabled = !paused;
     $("#dbg-stop").disabled = !running;
-    for (const id of ["#run", "#debug"]) $(id).disabled = running;
+    runButtons(running);
   }
 
   async function run(debug = false) {
     if (!state.current) return;
+    if (isLibrary()) { notice(LIBRARY_HINT, true); return; }
     if (state.dirty) {
       await save();
       if (state.dirty) return;
@@ -456,6 +591,59 @@ def main(name="mundo"):
     if (!rows.length) list.append(el("li", { class: "muted", text: "Nenhuma execução." }));
   }
 
+  // Spec 019: static findings with lines, the program's statements and its last profile.
+  const SEV = { info: ["ℹ", "informação", ""], warning: ["▲", "atenção", "warn"], serious: ["◆", "sério", "off"], critical: ["■", "crítico", "off"] };
+  async function loadPerformance() {
+    const box = $("#ptab-perf");
+    if (!state.current || !state.current.version) { box.replaceChildren(el("p", { class: "muted", text: "Salve o programa para ver o desempenho." })); return; }
+    box.replaceChildren(el("p", { class: "muted", text: "Carregando…" }));
+    let p;
+    try { p = await API.programPerformance(state.current.name); } catch (e) { box.replaceChildren(el("p", { class: "error", text: errorText(e) })); return; }
+    const sevPill = (s) => { const [i, l, c] = SEV[s] || ["", s, ""]; return el("span", { class: "pill " + c, text: `${i} ${l}` }); };
+    const profileButton = el("button", { class: "primary", text: "▶ Perfilar uma execução", onclick: async () => {
+      let params;
+      try { params = readParams(); } catch (e) { notice("Parâmetros inválidos: " + e.message, true); return; }
+      profileButton.disabled = true;
+      try {
+        const r = await API.run(state.current.name, { params, profile: true });
+        toast(r.error ? `Executou com erro (${r.error.code}); o perfil foi guardado.` : "Perfil guardado.", !!r.error);
+      } catch (e) { toast(errorText(e), true); }
+      profileButton.disabled = false;
+      loadPerformance();
+    } });
+    const prof = p.profile && p.profile.profile;
+    box.replaceChildren(
+      el("h3", { text: "Análise do SQL do código" }),
+      el("p", { class: "muted", text: "Padrões que já são lentos ou vão ficar com o volume — recalculado a cada vez que o programa é salvo." }),
+      p.lint.length ? window.AnaUI.table([
+        { label: "Linha", value: (f) => el("button", { class: "link", text: String(f.line), onclick: () => { selectTab("code"); editor.markError(f.line); } }), class: "num" },
+        { label: "Severidade", value: (f) => sevPill(f.severity) },
+        { label: "O que", value: (f) => f.message },
+        { label: "Sugestão", value: (f) => f.suggestion },
+        { label: "SQL", value: (f) => el("code", { text: f.sql || "" }) },
+      ], p.lint) : el("p", { class: "ok-text", text: "✓ Nenhum apontamento no SQL deste programa." }),
+      el("h3", { text: "Comandos SQL medidos" }),
+      p.sql.length ? window.AnaCharts.render({ type: "bar", title: "Tempo total por comando", format: "number", unit: "ms",
+        x: p.sql.slice(0, 8).map((r) => r.sql.slice(0, 50) + (r.sql.length > 50 ? "…" : "")), series: [{ name: "Tempo total", values: p.sql.slice(0, 8).map((r) => Number(r.total_ms)) }] }) : null,
+      p.sql.length ? window.AnaUI.table([
+        { label: "Comando", value: (r) => el("code", { text: r.sql.length > 100 ? r.sql.slice(0, 100) + "…" : r.sql, title: r.sql }) },
+        { label: "Chamadas", value: (r) => r.calls, class: "num" },
+        { label: "Médio (ms)", value: (r) => r.mean_ms, class: "num" },
+        { label: "Máx. (ms)", value: (r) => r.max_ms, class: "num" },
+        { label: "Varredura completa", value: (r) => (r.plan_summary && r.plan_summary.seq_scans || []).map((s) => s.table).join(", ") },
+      ], p.sql) : el("p", { class: "muted", text: "Ainda sem medições (aparecem até 1 minuto depois de executar)." }),
+      el("h3", { text: "Perfil" }),
+      el("div", { class: "row-buttons" }, profileButton,
+        el("span", { class: "muted", text: "Executa com os parâmetros da aba Código e mede onde o tempo é gasto." })),
+      prof && prof.functions ? el("div", {},
+        el("p", { class: "muted", text: `Última: ${fmtDate(p.profile.started_at)} · ${prof.sql_wait_ms} ms esperando SQL` }),
+        window.AnaCharts.render({ type: "bar", title: "Funções com mais tempo", format: "number", unit: "ms",
+          x: prof.functions.slice(0, 10).map((f) => `${f.function} (linha ${f.line})`), series: [{ name: "Tempo total", values: prof.functions.slice(0, 10).map((f) => f.total_ms) }] }),
+        window.AnaUI.table([{ label: "Função", value: (f) => f.function }, { label: "Onde", value: (f) => `${f.where}:${f.line}` },
+          { label: "Chamadas", value: (f) => f.calls, class: "num" }, { label: "Próprio (ms)", value: (f) => f.self_ms, class: "num" },
+          { label: "Total (ms)", value: (f) => f.total_ms, class: "num" }], prof.functions)) : null);
+  }
+
   async function loadSchedules() {
     const box = $("#ptab-schedules");
     if (!state.current || !state.current.version) { box.replaceChildren(el("p", { class: "muted", text: "Salve o programa para agendá-lo." })); return; }
@@ -505,7 +693,8 @@ def main(name="mundo"):
   // ------------------------------------------------------------------ events
   function wire() {
     for (const b of $$("[data-side]")) b.addEventListener("click", () =>
-      window.AnaStudio.go(b.dataset.side === "data" ? "#/dev/data" : (state.current ? `#/dev/program/${state.current.name}` : "#/dev")));
+      window.AnaStudio.go(b.dataset.side === "data" ? "#/dev/data" : b.dataset.side === "patterns" ? "#/dev/patterns"
+        : (state.current ? `#/dev/program/${state.current.name}` : "#/dev")));
     for (const b of $$("[data-ptab]")) b.addEventListener("click", () => selectTab(b.dataset.ptab));
     for (const a of $$("[data-panel]")) a.addEventListener("click", () => showPanel(a.dataset.panel));
     $("#filter").addEventListener("input", drawTree);
@@ -513,6 +702,7 @@ def main(name="mundo"):
     $("#new-program").addEventListener("click", newProgram);
     $("#save").addEventListener("click", save);
     $("#purge").addEventListener("click", purge);
+    $("#p-kind").addEventListener("change", () => runButtons(false));
     $("#run").addEventListener("click", () => run(false));
     $("#debug").addEventListener("click", () => run(true));
     $("#dbg-continue").addEventListener("click", () => debugCommand("continue"));
@@ -526,7 +716,7 @@ def main(name="mundo"):
       json.hidden = !json.hidden;
       $("#params-form").hidden = !json.hidden;
     });
-    for (const id of ["#p-description", "#p-kind", "#p-role", "#p-exposed", "#p-restricted", "#p-active"]) {
+    for (const id of ["#p-description", "#p-kind", "#p-role", "#p-exposed", "#p-public", "#p-menu", "#p-restricted", "#p-active"]) {
       $(id).addEventListener("change", () => markDirty(true));
     }
     $("#console-form").addEventListener("submit", async (e) => {

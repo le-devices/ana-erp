@@ -1,3 +1,5 @@
+# SPDX-FileCopyrightText: 2026 André Luis Pereira dos Santos
+# SPDX-License-Identifier: AGPL-3.0-or-later
 """Tests for the isolated Python runtime (specs 002 and 004), no database.
 
 A "fake core" speaks the protocol with the runtime process and answers its
@@ -56,7 +58,8 @@ class FakeCore:
                     self.send({"type": "response", "id": m["id"], "ok": True, "value": value})
                 except Exception as e:  # noqa: BLE001
                     self.send({"type": "response", "id": m["id"], "ok": False,
-                               "error": {"code": "SQL", "message": str(e), "sqlstate": "42501"}})
+                               "error": {"code": "SQL", "message": str(e),
+                                         "sqlstate": getattr(e, "sqlstate", "42501")}})
                 continue
             if m["type"] in types:
                 return m
@@ -127,6 +130,38 @@ class TestExecution(unittest.TestCase):
         self.assertFalse(end["ok"])
         self.assertEqual(end["error"]["code"], "INVALID_PARAMETER")
 
+    def test_rf_035_01_rows_that_open_a_document(self):
+        source = ("def main():\n"
+                  "    ana.table([{'doc': 'ORD-1', '_open': {'program': 'docs.view', 'params': {'kind': 'order', 'key': '1'}}},\n"
+                  "               {'doc': 'avulso'}])\n")
+        end, ev = run(source)
+        self.assertTrue(end["ok"], end)
+        t = [e["data"] for e in ev if e["type"] == "output" and e["kind"] == "table"][0]
+        self.assertEqual(t["columns"], ["doc"])                          # _open is not a column
+        self.assertEqual(t["row_open"][0], {"label": "Abrir", "program": "docs.view",
+                                            "params": {"kind": "order", "key": "1"}, "open": True})
+        self.assertIsNone(t["row_open"][1])
+        self.assertNotIn("row_actions", t)
+
+    def test_ca_026_02_03_chart_validation_and_other(self):
+        source = ("def main():\n"
+                  "    x = ['a', 'b']\n"
+                  "    ana.chart(type='line', x=x, series=[{'name': f's{i}', 'values': [i, i + 1]} for i in range(10)])\n"
+                  "    ana.chart(type='donut', x=list('abcdefgh'), series=[{'name': 'p', 'values': [8, 7, 6, 5, 4, 3, 2, 1]}])\n")
+        end, ev = run(source)
+        self.assertTrue(end["ok"], end)
+        line, donut = [e["data"] for e in ev if e.get("kind") == "chart"]
+        self.assertEqual(len(line["series"]), 8)
+        self.assertEqual(line["series"][-1]["name"], "Outros")
+        self.assertEqual(line["series"][-1]["values"], [3.0, 6.0])   # the three smallest series (0, 1, 2) summed
+        self.assertEqual(donut["x"][-1], "Outros")
+        self.assertEqual(donut["series"][0]["values"][-1], 6.0)
+        for bad in ("ana.chart(type='pie', x=[1], series=[{'name': 'a', 'values': [1]}])",
+                    "ana.chart(type='line', x=[1, 2], series=[{'name': 'a', 'values': [1]}])",
+                    "ana.chart(type='line', x=[1], series=[{'name': 'a', 'values': ['x']}])"):
+            end, _ = run("def main():\n    " + bad + "\n")
+            self.assertEqual(end["error"]["code"], "INVALID_PARAMETER", bad)
+
     def test_rf_002_05_typed_sql(self):
         def handler(op, args):
             self.assertEqual(op, "sql")
@@ -163,6 +198,20 @@ class TestExecution(unittest.TestCase):
                   "        return e.sqlstate\n")
         end, _ = run(source, handler=handler)
         self.assertEqual(end["result"], "42501")
+
+    def test_database_rule_keeps_its_code(self):
+        class Violation(Exception):
+            sqlstate = "23514"
+
+        def handler(op, args):
+            raise Violation("OVER_RECEIPT: recebido 11 acima do pedido 10")
+        end, _ = run("def main():\n    ana.sql_exec('update x set y = 1')\n", handler=handler)
+        self.assertEqual((end["error"]["code"], end["error"]["message"]),
+                         ("OVER_RECEIPT", "recebido 11 acima do pedido 10"))
+        source = ("def main():\n    try:\n        ana.sql('x')\n    except ana.SqlError as e:\n"
+                  "        return [e.code, e.sqlstate]\n")
+        end, _ = run(source, handler=handler)
+        self.assertEqual(end["result"], ["OVER_RECEIPT", "23514"])           # still an ana.SqlError
 
     def test_python_exception_becomes_structured_error(self):
         end, _ = run("def main():\n    return 1/0\n")
@@ -302,6 +351,33 @@ class TestParams(unittest.TestCase):
         end, _ = run(self.SOURCE, {"a": "abc"})
         self.assertEqual(end["error"]["code"], "INVALID_PARAMETER")
 
+    def test_042_b02_rows_of_a_list_with_columns(self):
+        source = ('PARAMS = {"lines": {"type": "list", "label": "itens contados", "columns": {\n'
+                  '    "product": {"type": "str", "required": True, "label": "item"},\n'
+                  '    "counted": {"type": "decimal", "required": True, "label": "quantidade contada"}}}}\n'
+                  'def main(lines):\n    return [l["counted"] for l in lines]\n')
+        end, _ = run(source, {"lines": [{"product": "A", "counted": "2,5"}]})
+        self.assertEqual(end["result"], ["2,5"])                            # values are not changed
+        end, _ = run(source, {"lines": [{"product": "A", "counted": 1}, {"product": "B", "quantity": 3}]})
+        self.assertEqual(end["error"]["code"], "INVALID_PARAMETER")
+        self.assertIn("itens contados, linha 2: falta quantidade contada", end["error"]["message"])
+        end, _ = run(source, {"lines": [{"product": "A", "counted": "muito"}]})
+        self.assertIn("linha 1: quantidade contada não é do tipo decimal", end["error"]["message"])
+        end, _ = run(source, {"lines": ["A"]})
+        self.assertIn("linha 1: deve ser um objeto", end["error"]["message"])
+        one = ('PARAMS = {"terms": {"type": "list", "columns": {"term": {"type": "str", "required": True}}}}\n'
+               'def main(terms):\n    return terms\n')
+        end, _ = run(one, {"terms": ["AVISTA", {"term": "PIX"}]})
+        self.assertEqual(end["result"], ["AVISTA", {"term": "PIX"}])           # a single column accepts plain values
+
+    def test_decimal_accepts_brazilian_notation(self):
+        # Spec 031 usability: operators type "4,79" or "1.234,56" in money/quantity fields.
+        source = ('PARAMS = {"v": {"type": "decimal"}}\n'
+                  'def main(v):\n    return str(v)\n')
+        for typed, expected in (("4,79", "4.79"), ("1.234,56", "1234.56"), ("12.5", "12.5"), (3, "3")):
+            end, _ = run(source, {"v": typed})
+            self.assertEqual(end["result"], expected, typed)
+
 
 class TestInspection(unittest.TestCase):
     def inspect(self, source):
@@ -319,9 +395,41 @@ class TestInspection(unittest.TestCase):
 
     def test_extracts_params(self):
         r = self.inspect('"""Doc."""\nPARAMS = {"a": {"type": "int"}}\ndef main(a): pass\n')
-        self.assertEqual(r["params"], {"a": {"type": "int"}})
+        self.assertEqual(r["params"], {"a": {"type": "int", "order": 0}})   # declared order kept
         self.assertEqual(r["docs"], "Doc.")
         self.assertTrue(r["has_main"])
+
+    def test_grid_columns_keep_declared_order(self):
+        # JSON objects lose order on storage: the items grid needs "order" per column too.
+        r = self.inspect('PARAMS = {"items": {"type": "list", "columns": {"product": {}, "quantity": {}, "price": {}}}}\n'
+                         'def main(items): pass\n')
+        cols = r["params"]["items"]["columns"]
+        self.assertEqual([cols[c]["order"] for c in ("product", "quantity", "price")], [0, 1, 2])
+
+    def test_lint_ok_marker_accepts_a_finding_on_purpose(self):
+        r = self.inspect("def main(q):\n"
+                         "    # ana:lint-ok leading_wildcard — trigram index\n"
+                         "    a = ana.sql(\"SELECT id FROM t WHERE name ILIKE '%' || $1 || '%' LIMIT 10\", q)\n"
+                         "    b = ana.sql(\"SELECT id FROM t WHERE name ILIKE '%' || $1 || '%' LIMIT 10\", q)\n")
+        self.assertEqual([(f["line"], f["rule"]) for f in r["lint"]], [(4, "leading_wildcard")])
+
+    def test_lint_rules_are_precise(self):
+        r = self.inspect(
+            "def main(ids):\n"
+            "    ana.sql('SELECT x FROM unnest($1::int[]) AS u(x) JOIN s.t ON t.id = u.x', ids)\n"          # 2: bounded by unnest
+            "    ana.sql('SELECT (SELECT count(*) FROM s.a WHERE a.k = $1) AS n, "
+            "(SELECT COALESCE(sum(v), 0) FROM s.b WHERE b.k = $1) AS m', 1)\n"                              # 3: no function in WHERE
+            "    ana.sql('SELECT sum(v) FILTER (WHERE lower(c) = $1) FROM s.t', 'x')\n"                     # 4: FILTER is not a WHERE
+            "    ana.sql('SELECT id FROM s.t WHERE lower(name) = $1', 'x')\n")                              # 5: real one
+        got = sorted((f["line"], f["rule"]) for f in r["lint"])
+        self.assertEqual(got, [(4, "unbounded_select"), (5, "function_on_column")])
+
+    def test_lint_comprehension_source_runs_once(self):
+        r = self.inspect("def main(ids):\n"
+                         "    a = {x['id']: x for x in ana.sql('SELECT id FROM t WHERE id = ANY($1)', ids)}\n"
+                         "    b = [ana.sql_one('SELECT id FROM t WHERE id = $1', i) for i in ids]\n")
+        loops = [f["line"] for f in r["lint"] if f["rule"] == "sql_in_loop"]
+        self.assertEqual(loops, [3])
 
 
 DEBUGGABLE = ("def main():\n"      # 1

@@ -1,3 +1,5 @@
+%% SPDX-FileCopyrightText: 2026 André Luis Pereira dos Santos
+%% SPDX-License-Identifier: AGPL-3.0-or-later
 %% Retention policy (spec 024, RF-024-08..10, RNF-024-02).
 %%
 %% Once a day, after the configured hour in the client's time zone, one node
@@ -35,7 +37,41 @@ categories() ->
      {notifications, <<"Avisos do agendamento"/utf8>>, retention_scheduler_days,
       "scheduler.notification", "created_at", "true"},
      {admin_log, <<"Alterações administrativas"/utf8>>, retention_admin_log_days,
-      "ana_system.admin_log", "at", "true"}].
+      "ana_system.admin_log", "at", "true"},
+     %% Spec 019.
+     {traces, <<"Rastros de execução e perfis"/utf8>>, retention_trace_days,
+      "ana_system.execution_trace", "started_at", "true"},
+     {health, <<"Eventos de saúde"/utf8>>, retention_observability_days,
+      "ana_system.health_event", "at", "true"},
+     {incidents, <<"Incidentes encerrados"/utf8>>, retention_observability_days,
+      "ana_system.incident", "opened_at", "closed_at IS NOT NULL"},
+     {metrics, <<"Amostras de métricas"/utf8>>, retention_observability_days,
+      "ana_system.metric_sample", "at", "true"},
+     %% Spec 017: only finished messages; pending and dead ones stay until decided.
+     {integration_calls, <<"Chamadas de integração"/utf8>>, retention_integration_days,
+      "integration.call_log", "at", "true"},
+     {integration_outbox, <<"Mensagens de saída entregues"/utf8>>, retention_integration_days,
+      "integration.outbox", "created_at", "status IN ('done', 'discarded')"},
+     {integration_inbox, <<"Mensagens de entrada processadas"/utf8>>, retention_integration_days,
+      "integration.inbox", "received_at", "status IN ('done', 'discarded')"},
+     %% Spec 030: finished flow instances (their steps go with them); open ones stay.
+     {flows, <<"Esteiras concluídas ou canceladas"/utf8>>, retention_execution_days,
+      "flow.instance", "finished_at", "status IN ('done', 'cancelled')"},
+     %% Spec 010: public API calls and daily usage (same retention as the other accesses).
+     {api_calls, <<"Chamadas da API pública"/utf8>>, retention_access_days,
+      "ana_system.api_call_log", "at", "true"},
+     {api_usage, <<"Uso diário da API pública"/utf8>>, retention_access_days,
+      "ana_system.api_usage", "day", "true"},
+     %% Spec 040: field-level history of master data (with the administrative changes).
+     {master_history, <<"Histórico dos cadastros"/utf8>>, retention_admin_log_days,
+      "master.change_log", "at", "true"},
+     %% Spec 039: finished cases (their tokens and tasks go with them), their trail and old notices.
+     {bpm_cases, <<"Casos de processos concluídos ou cancelados"/utf8>>, retention_execution_days,
+      "bpm.case", "finished_at", "status IN ('done', 'cancelled')"},
+     {bpm_events, <<"Trilha dos casos de processos"/utf8>>, retention_execution_days,
+      "bpm.event", "at", "true"},
+     {bpm_notices, <<"Avisos de tarefas lidos"/utf8>>, retention_scheduler_days,
+      "bpm.notification", "created_at", "read"}].
 
 %% Manual purge (RF-024-09): owned by the administrator who asked.
 -spec purge_now(map()) -> {ok, binary()} | {error, term()}.
@@ -105,6 +141,7 @@ handle_info(tick, S) ->
 handle_info(partitions, S) ->
     _ = (catch ensure_partitions()),
     _ = (catch ana_parallel:recover(periodic)),         % spec 022: old orphan prepared transactions
+    _ = (catch ana_ha:interrupted(periodic)),           % spec 023: executions of nodes that did not return
     erlang:send_after(3600000, self(), partitions),
     {noreply, S};
 handle_info({purge_done, Pid, Result}, S = #{running := {Pid, Mon}, waiting := W}) ->
@@ -133,7 +170,7 @@ claim_today() ->
     H >= ana_settings:get(retention_hour) andalso
         case ana_db:one("INSERT INTO ana_system.retention_day (day, node) "
                         "VALUES ((now() AT TIME ZONE $1)::date, $2) ON CONFLICT DO NOTHING RETURNING day",
-                        [Tz, atom_to_binary(node())]) of
+                        [Tz, ana_config:node_id()]) of
             {ok, #{<<"day">> := _}} -> true;
             _ -> false
         end.
@@ -141,6 +178,10 @@ claim_today() ->
 purge() ->
     Counts = maps:from_list([{K, purge_category(C)} || C = {K, _, _, _, _, _} <- categories()]),
     _ = ana_db:exec("DELETE FROM ana_system.retention_day WHERE day < current_date - 400", []),
+    %% Spec 065 (T-065-11): the daily task of the cluster also announces company values that change within a week.
+    _ = (catch ana_values:daily_notices()),
+    %% Spec 050 (D5): undo offers long past their time are kept for a month (who undid what), then go.
+    _ = ana_db:exec("DELETE FROM ana_system.undo_offer WHERE expires_at < now() - interval '30 days'", []),
     {ok, iolist_to_binary(json:encode(Counts))}.
 
 %% RF-025-02: whole partitions past the cutoff are dropped; only the default

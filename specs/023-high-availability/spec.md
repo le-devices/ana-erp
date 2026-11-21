@@ -1,5 +1,7 @@
 # 023 — Alta disponibilidade e tolerância a falhas (operação 24/7)
 
+Situação: implementada (reintegração do primário antigo com pg_rewind não automatizada)
+
 ## Problema
 Um ERP é usado o dia inteiro, todos os dias. O ANA já isola programas,
 supervisiona processos e reconecta ao banco, mas a operação 24/7 exige
@@ -28,10 +30,21 @@ auditoria fora da transação.
   sem resposta), e rotinas agendadas seguem as políticas da spec 018.
 - **RF-023-05** Banco em alta disponibilidade: suporte a endereço de
   primário com troca automática (ex.: réplica promovida), reconexão
-  transparente e opção de leitura em réplicas para relatórios/analítico.
+  transparente e opção de leitura em réplicas para o console SQL (consultas e
+  relatórios de leitura). Programas continuam no primário (mesma transação).
 - **RF-023-06** Cópias de segurança e restauração verificada: backup contínuo
   (WAL) com recuperação a um instante; teste periódico de restauração
   documentado.
+- **RF-023-08** Falha momentânea do banco (queda, troca de primário) nunca
+  vira "credencial inválida": sessão, chave de API, token da API pública,
+  entrada e dono da execução respondem "tente de novo" (503 com
+  `Retry-After`, código `DB_UNAVAILABLE`) e a sessão continua valendo. As
+  conexões voltam com espera crescente de 250 ms até 2 s e cada endereço
+  candidato a primário tem no máximo 3 s para responder. Sessões e nonces
+  anti-repetição da API pública são tabelas registradas no WAL (nunca
+  UNLOGGED): chegam à réplica, sobrevivem à troca de primário e à
+  recuperação depois de uma queda — ninguém é deslogado, e uma chamada
+  assinada capturada antes da troca não pode ser repetida.
 - **RF-023-07** Proteção contra sobrecarga em cascata: disjuntores para
   dependências externas (sistemas remotos, conectores), filas com limite e
   rejeição rápida (503/429) em vez de degradação.
@@ -53,5 +66,8 @@ auditoria fora da transação.
   requisições perdidas após a janela de detecção; agendador troca de líder.
 - **CA-023-04** Desligamento gracioso não interrompe execuções curtas em curso.
 - **CA-023-05** Atualização rolling de dois nós sem erro para os usuários.
+- **CA-023-07** Durante a troca de primário e o reinício do banco com carga,
+  nenhuma requisição recebe 401; depois da janela de recuperação, tudo
+  responde 200.
 - **CA-023-06** Exceções internas no núcleo (handler HTTP, processo de
   execução) são registradas e isoladas; o supervisor reinicia o que cair.

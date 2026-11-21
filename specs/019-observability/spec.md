@@ -1,5 +1,7 @@
 # 019 — Observabilidade e dicas de otimização
 
+Situação: implementada; faltam regras de alerta configuráveis (T-019-08b) e OpenTelemetry (T-019-09b)
+
 ## Problema
 Quando algo fica lento ou falha, é preciso responder rápido: o que está
 doente, desde quando, em qual programa, em qual linha, em qual SQL — e o que
@@ -58,6 +60,24 @@ fazer. O monitor atual (spec 011) mostra só o estado instantâneo.
   pool com espera, índice não usado, tabela com muito espaço morto. Cada dica:
   severidade, impacto estimado, evidência (execuções/consultas), ação sugerida,
   dispensar/adiar.
+- **RF-019-07a** Desempenho do SQL (pedido do dono do produto): cada comando
+  SQL de cada execução é medido (duração, linhas, linha do programa que o
+  chamou) e agregado por comando normalizado (chamadas, tempo total, médio e
+  máximo, linhas, programas, primeira e última vez). Tela com os comandos que
+  mais consomem tempo, os lentos com plano resumido e a sugestão de
+  otimização (ex.: `CREATE INDEX CONCURRENTLY …`), em gráfico e tabela.
+- **RF-019-07b** Análise estática do SQL dos programas (problemas futuros):
+  ao salvar (e na partida, para os já salvos), o ERP examina as consultas do
+  código e aponta, com a linha: `SELECT *`, `LIKE '%…'` (não usa índice),
+  função sobre coluna no filtro (pede índice de expressão), `UPDATE`/`DELETE`
+  sem `WHERE`, paginação por `OFFSET`, `NOT IN (SELECT …)`,
+  `ORDER BY random()`, SQL montado com f-string/concatenação (risco de
+  injeção e sem reaproveitar plano) e SQL dentro de laço (N+1 provável), com
+  a sugestão de correção.
+- **RF-019-07c** Crescimento: o ERP registra diariamente o tamanho das tabelas
+  e projeta 90/180 dias; consulta que hoje faz varredura completa numa tabela
+  que cresce gera dica preventiva ("hoje 12 ms; com o crescimento, ~200 ms em
+  6 meses"), antes de virar problema.
 - **RF-019-08** Alertas: regras sobre métricas/saúde (limiar, janela,
   severidade), destinos (e-mail, webhook, Estúdio), silenciamento e incidentes
   com início/fim.
@@ -89,3 +109,35 @@ fazer. O monitor atual (spec 011) mostra só o estado instantâneo.
 - **CA-019-05** Perfilamento mostra a função mais custosa de um programa de
   teste.
 - **CA-019-06** `/metrics` exige autenticação e expõe as métricas de execução.
+- **CA-019-07** Comando SQL lento aparece na tela de desempenho com chamadas,
+  tempo total/máximo, programa e plano resumido.
+- **CA-019-08** Programa com `SELECT *`, `LIKE '%x'`, SQL em f-string e SQL
+  dentro de laço recebe os apontamentos estáticos com as linhas corretas.
+- **CA-019-09** Varredura completa em tabela que cresce gera dica preventiva
+  com a projeção.
+- **CA-019-10** Regra de alerta sobre métrica com janela de 20 s só abre o
+  incidente depois que a condição dura a janela inteira; o aviso chega ao
+  Estúdio e ao conector escolhido (com os e-mails destinatários), e o
+  encerramento também chega ao conector quando a condição passa ou a regra é
+  desativada. Silêncio em vigor registra o incidente sem avisar ninguém; ao
+  encerrar o silêncio, o incidente ainda aberto avisa. Remover a regra encerra
+  os incidentes dela e mantém o histórico (T-019-08b).
+
+## Alertas configuráveis (T-019-08b)
+- Regra: nome, origem (saúde de componente — qualquer um ou um específico, a
+  partir de amarelo ou de vermelho — ou métrica do nó: execuções em andamento,
+  falhas por minuto, memória do núcleo, processos Erlang, espera por conexão
+  com o banco, processos Python prontos), comparação e limiar, janela
+  (0 a 86.400 s), gravidade (informação, atenção, sério, crítico) e destinos.
+- Destinos: aviso no Estúdio; mensagem `alert.opened`/`alert.closed` na fila de
+  saída de um conector de integração (spec 017: novas tentativas, assinatura,
+  hosts permitidos), que entrega por webhook ou por gateway de e-mail aos
+  destinatários informados. A variável `ANA_ALERT_WEBHOOK` continua valendo
+  como destino de contingência, chamado na hora.
+- Avaliação a cada 10 s em cada nó; incidente por regra, alvo e nó. Com o
+  banco fora do ar, as regras já lidas continuam valendo e as gravações
+  esperam em memória, na ordem. O comportamento anterior (componente vermelho
+  abre incidente crítico) virou a regra inicial "Componente em falha".
+- Silêncio: por regra, alvo e nó (vazio = todos), de 1 minuto a 30 dias, com
+  motivo; é encerrado, nunca apagado. Regras e silêncios ficam no registro de
+  administração.

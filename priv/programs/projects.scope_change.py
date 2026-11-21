@@ -1,28 +1,29 @@
 # ana:description Mudança de escopo: pedido, estimativa, aprovação interna e do cliente, recusa
 # ana:exposed yes
+# ana:category Projetos/Planejamento
 """RF-021-07, CA-021-05. Customer approval raises the budget (hours, amount,
 due date in working days), creates an additional milestone when there is an
 amount, and freezes a new baseline; the previous one stays available.
 
-Until the client portal (spec 016) exists, the manager records the
-customer's approval with the approver's name."""
+The manager records an approval given outside the system with the approver's name;
+customers approve themselves on the portal (projects.client_approvals)."""
 
 from ana_lib.projects import access
-from ana_lib.projects import consulting as C
-from ana_lib.projects import finance as F
+from ana_lib.projects import changes
 from ana_lib.projects import views as V
+from ana_lib.util.format import status_text
 
 PARAMS = {
-    "project": {"type": "str", "required": True},
-    "action": {"type": "str", "required": True, "label": "request, estimate, approve_internal, approve_customer, reject"},
+    "project": {"type": "str", "required": True, "label": "projeto", "lookup": {"program": "projects.lookup", "params": {"kind": "projects"}}},
+    "action": {"type": "str", "required": True, "label": "ação", "choices": [["request", "Pedir"], ["estimate", "Estimar"], ["approve_internal", "Aprovar internamente"], ["approve_customer", "Registrar aprovação do cliente"], ["reject", "Recusar"]]},
     "number": {"type": "int", "label": "nº da mudança"},
-    "title": {"type": "str"},
-    "description": {"type": "str"},
-    "est_hours": {"type": "decimal"},
-    "est_amount": {"type": "decimal"},
-    "est_days": {"type": "int"},
-    "customer_approver": {"type": "str"},
-    "reason": {"type": "str"},
+    "title": {"type": "str", "label": "título"},
+    "description": {"type": "str", "label": "descrição"},
+    "est_hours": {"type": "decimal", "label": "horas estimadas"},
+    "est_amount": {"type": "decimal", "label": "valor estimado"},
+    "est_days": {"type": "int", "label": "dias a mais no prazo"},
+    "customer_approver": {"type": "str", "label": "aprovado por (cliente)"},
+    "reason": {"type": "str", "label": "motivo"},
 }
 
 NEXT = {"estimate": ("requested", "estimated"), "approve_internal": ("estimated", "approved_internal"),
@@ -43,13 +44,15 @@ def main(project, action, number=None, title=None, description=None, est_hours=N
     access.require_manager(p)
     if number is None:
         raise ana.Error("INVALID_PARAMETER", "informe o número da mudança")
-    c = ana.sql_one("SELECT * FROM projects.scope_change WHERE project_id = $1 AND number = $2 FOR UPDATE",
+    c = ana.sql_one("SELECT id, project_id, number, title, description, requested_by, requested_at, est_hours, "
+                    "est_amount, est_days, status, internal_approved_by, internal_approved_at, "
+                    "customer_approver, customer_approved_at, rejection_reason, milestone_id, baseline_id FROM projects.scope_change WHERE project_id = $1 AND number = $2 FOR UPDATE",
                     p["id"], number)
     if not c:
         raise ana.Error("CHANGE_NOT_FOUND", f"mudança {number} não encontrada")
     if action == "reject":
         if c["status"] in ("approved", "rejected"):
-            raise ana.Error("INVALID_STATE", f"mudança {number} já está {c['status']}")
+            raise ana.Error("INVALID_STATE", f"mudança {number} já está {status_text(c['status'])}")
         ana.sql_exec("UPDATE projects.scope_change SET status = 'rejected', rejection_reason = $2 WHERE id = $1",
                      c["id"], reason or "")
         return {"number": number, "status": "rejected"}
@@ -57,7 +60,7 @@ def main(project, action, number=None, title=None, description=None, est_hours=N
         raise ana.Error("INVALID_PARAMETER", f"ação desconhecida: {action}")
     before, after = NEXT[action]
     if c["status"] != before:
-        raise ana.Error("INVALID_STATE", f"mudança {number} está {c['status']}; esperado {before}")
+        raise ana.Error("INVALID_STATE", f"mudança {number} está {status_text(c['status'])}; esperado {status_text(before)}")
     if action == "estimate":
         if est_hours is None:
             raise ana.Error("INVALID_PARAMETER", "estimativa exige horas")
@@ -74,27 +77,9 @@ def main(project, action, number=None, title=None, description=None, est_hours=N
 
 
 def approve_customer(p, c, approver):
-    due = p["due_date"]
-    if due and c["est_days"]:
-        cal = C.Calendar.around(due)
-        due = cal.add(cal.roll(due), c["est_days"])
-    ana.sql_exec(
-        "UPDATE projects.project SET budget_hours = COALESCE(budget_hours, 0) + COALESCE($2::numeric, 0), "
-        "  budget_amount = CASE WHEN $3::numeric IS NULL THEN budget_amount ELSE COALESCE(budget_amount, 0) + $3 END, "
-        "  due_date = COALESCE($4, due_date) WHERE id = $1", p["id"], c["est_hours"], c["est_amount"], due)
-    milestone = None
-    if c["est_amount"]:
-        milestone = ana.sql_value(
-            "INSERT INTO projects.milestone (project_id, description, amount, due_date) VALUES ($1, $2, $3, $4) "
-            "RETURNING id", p["id"], f"Mudança de escopo {c['number']}: {c['title']}", c["est_amount"], due)
-    ana.sql_exec("UPDATE projects.scope_change SET status = 'approved', customer_approver = $2, "
-                 "customer_approved_at = now(), milestone_id = $3 WHERE id = $1", c["id"], approver, milestone)
-    base = C.create_baseline(p, f"mudança de escopo {c['number']}: {c['title']}", c["id"])
+    r = changes.approve_by_customer(p, c, approver)
     p = access.project(p["code"])
-    F.check_and_record(p, base["baseline"], f"mudança de escopo {c['number']} aprovada pelo cliente ({approver})")
-    ana.sql_exec("UPDATE projects.scope_change SET baseline_id = (SELECT id FROM projects.baseline "
-                 "WHERE project_id = $2 AND number = $3) WHERE id = $1", c["id"], p["id"], base["baseline"])
     ana.actions([V.open_view(p, "structure", "Incluir as atividades da mudança"),
                  {"label": "Comparar linhas de base", "program": "projects.baselines", "open": True,
                   "params": {"project": p["code"]}}], title="Próximo passo")
-    return {"number": c["number"], "status": "approved", "milestone_id": milestone, "baseline": base["baseline"]}
+    return r

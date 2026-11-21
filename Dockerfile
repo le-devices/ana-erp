@@ -1,3 +1,5 @@
+# SPDX-FileCopyrightText: 2026 André Luis Pereira dos Santos
+# SPDX-License-Identifier: AGPL-3.0-or-later
 # ---- build -------------------------------------------------------------------
 FROM erlang:27 AS build
 WORKDIR /app
@@ -6,6 +8,11 @@ RUN rebar3 get-deps && rebar3 compile --deps_only
 COPY config config
 COPY src src
 COPY priv priv
+# Spec 033: inventory of the Hex libraries and manifest of the shipped files (integrity check).
+RUN cp rebar.lock priv/rebar.lock \
+ && erl -noshell -eval '{ok, V} = file:read_file(filename:join([code:root_dir(), "releases", erlang:system_info(otp_release), "OTP_VERSION"])), ok = file:write_file("priv/OTP_VERSION", V), halt().' \
+ && cd priv && find www programs migrations python demo -type f -print0 | LC_ALL=C sort -z \
+    | xargs -0 sha256sum > asset-manifest.txt
 RUN rebar3 release
 
 # ---- runtime -----------------------------------------------------------------
@@ -19,10 +26,11 @@ RUN apt-get update \
 COPY --from=build /app/_build/default/rel/ana /opt/ana
 COPY bin/ana-start /opt/ana/bin/ana-start
 # Core code belongs to root and is read-only for the process (P10).
-RUN chmod -R a-w /opt/ana && chmod 0555 /opt/ana/bin/ana-start
+RUN chmod -R a-w /opt/ana && chmod 0555 /opt/ana/bin/ana-start \
+ && mkdir -p /var/lib/ana/files && chown ana:ana /var/lib/ana/files && chmod 0700 /var/lib/ana/files
 USER ana
 ENV HOME=/home/ana ANA_PY_DIR=/tmp LANG=C.UTF-8
 EXPOSE 8080
 HEALTHCHECK --interval=10s --timeout=3s --start-period=20s --retries=3 \
-  CMD python3 -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/saude', timeout=2)"
+  CMD python3 -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/health/live', timeout=2)"
 ENTRYPOINT ["/usr/bin/tini", "--", "/opt/ana/bin/ana-start"]

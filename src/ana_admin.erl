@@ -1,14 +1,17 @@
+%% SPDX-FileCopyrightText: 2026 André Luis Pereira dos Santos
+%% SPDX-License-Identifier: AGPL-3.0-or-later
 %% Day-to-day administration (spec 011).
 %%
 %% Users (RF-011-02), groups (RF-011-04), company (RF-011-06), default accounts
 %% (RF-011-07), audit (RF-011-09). Every change is recorded in admin_log
 %% (RNF-011-01) without secrets (RNF-011-02).
 -module(ana_admin).
--export([log/5,
+-export([scope_preview/1,
+         log/5,
          list_users/1, get_user/1, create_user/2, update_user/3, reset_password/2,
-         revoke_sessions/2, unlock_user/2, list_keys/1, create_key/3, revoke_key/2,
+         revoke_sessions/2, unlock_user/2, unlock_ip/2, list_keys/1, create_key/3, revoke_key/2,
          list_groups/0, save_group/3, delete_group/2,
-         get_company/0, save_company/2,
+         get_company/0, save_company/2, save_logo/2, logo/0,
          list_default_accounts/0, save_default_account/3,
          list_remote_systems/0, save_remote_system/3,
          audit_executions/1, audit_logins/1, audit_changes/1, audit_tasks/1,
@@ -42,7 +45,7 @@ list_users(Filter) ->
     end,
     ana_db:rows(
         "SELECT u.username, u.name, u.role, u.kind, u.builtin, u.active, u.must_change_password, u.created_at, "
-        "       u.last_login_at, COALESCE(array_agg(ug.group_name ORDER BY ug.group_name) "
+        "       u.last_login_at, u.party_id, COALESCE(array_agg(ug.group_name ORDER BY ug.group_name) "
         "         FILTER (WHERE ug.group_name IS NOT NULL), '{}') AS groups "
         "FROM ana_system.app_user u LEFT JOIN ana_system.user_group ug USING (username) "
         "WHERE ($1::text IS NULL OR u.username ILIKE $1 OR u.name ILIKE $1) "
@@ -80,6 +83,34 @@ create_user(Fields = #{<<"kind">> := <<"robot">>}, #{username := Who}) ->
                 {error, E} -> {error, E}
             end
     end;
+%% Spec 016 (RF-016-04): external portal account, tied to a customer/supplier.
+create_user(Fields = #{<<"role">> := <<"external">>}, #{username := Who}) ->
+    Username = maps:get(<<"username">>, Fields, <<>>),
+    Party = maps:get(<<"party_id">>, Fields, null),
+    {Password, Generated} = case maps:get(<<"password">>, Fields, null) of
+        P when is_binary(P), P =/= <<>> -> {P, false};
+        _ -> {generate_password(), true}
+    end,
+    case {is_integer(Party), ana_security:check_policy(Username, Password)} of
+        {false, _} -> {error, <<"conta externa exige o cliente/fornecedor (party_id)"/utf8>>};
+        {_, {error, _} = E} -> E;
+        {true, ok} ->
+            case ana_db:exec(
+                   "INSERT INTO ana_system.app_user (username, name, password_hash, role, party_id, must_change_password) "
+                   "SELECT $1, $2, $3, 'external', $4, true WHERE EXISTS (SELECT 1 FROM base.party WHERE id = $4 AND active)",
+                   [Username, maps:get(<<"name">>, Fields, <<>>), ana_security:hash_password(Password), Party]) of
+                {ok, 1} ->
+                    log(Who, <<"user.create_external">>, Username, null, maps:without([<<"password">>], Fields)),
+                    {ok, case Generated of
+                             true -> #{username => Username, password => Password};
+                             false -> #{username => Username}
+                         end};
+                {ok, 0} -> {error, <<"cliente/fornecedor inexistente ou inativo"/utf8>>};
+                {error, #{sqlstate := <<"23505">>}} -> {error, <<"login já existe"/utf8>>};
+                {error, #{sqlstate := <<"23514">>}} -> {error, <<"login inválido"/utf8>>};
+                {error, E} -> {error, E}
+            end
+    end;
 create_user(Fields, #{username := Who}) ->
     Username = maps:get(<<"username">>, Fields, <<>>),
     Role = maps:get(<<"role">>, Fields, <<"user">>),
@@ -87,9 +118,10 @@ create_user(Fields, #{username := Who}) ->
         P when is_binary(P), P =/= <<>> -> {P, false};
         _ -> {generate_password(), true}
     end,
-    case lists:member(Role, ?ROLES) of
+    case lists:member(Role, ?ROLES) andalso ana_license:seat() of
         false -> {error, <<"papel inválido"/utf8>>};
-        true ->
+        {error, _} = Full -> Full;
+        ok ->
             case ana_security:check_policy(Username, Password) of
                 {error, _} = E -> E;
                 ok ->
@@ -112,16 +144,28 @@ create_user(Fields, #{username := Who}) ->
     end.
 
 %% RF-011-02: name, role, active, groups. Never removes the last active admin.
-update_user(Username, Fields, #{username := Who}) ->
+update_user(Username, Fields, Admin) ->
+    try do_update_user(Username, Fields, Admin)
+    catch throw:{error, _} = E -> E
+    end.
+
+do_update_user(Username, Fields, #{username := Who}) ->
     case get_user(Username) of
         {error, _} = E -> E;
         {ok, Before} ->
             Role = maps:get(<<"role">>, Fields, maps:get(<<"role">>, Before)),
+            %% An external account stays external (it belongs to a party), and vice versa.
+            (Role =:= <<"external">>) =:= (maps:get(<<"role">>, Before) =:= <<"external">>)
+                orelse throw({error, <<"conta externa não muda de papel; crie outra conta"/utf8>>}),
             Active = maps:get(<<"active">>, Fields, maps:get(<<"active">>, Before)),
             LosesAdmin = maps:get(<<"role">>, Before) =:= <<"admin">>
                          andalso maps:get(<<"active">>, Before) =:= true
                          andalso (Role =/= <<"admin">> orelse Active =/= true),
-            case lists:member(Role, ?ROLES) andalso is_boolean(Active) of
+            %% Spec 009 (RF-009-04): reactivating a person takes a named-user seat.
+            Reactivates = Active =:= true andalso maps:get(<<"active">>, Before) =/= true
+                          andalso Role =/= <<"external">> andalso maps:get(<<"kind">>, Before) =/= <<"robot">>,
+            _ = Reactivates andalso case ana_license:seat() of ok -> true; Full -> throw(Full) end,
+            case (lists:member(Role, ?ROLES) orelse Role =:= <<"external">>) andalso is_boolean(Active) of
                 false -> {error, <<"dados inválidos"/utf8>>};
                 true when LosesAdmin ->
                     case other_active_admins(Username) of
@@ -184,6 +228,12 @@ revoke_sessions(Username, #{username := Who}) ->
     log(Who, <<"user.revoke_sessions">>, Username, null, #{sessions => N}),
     {ok, #{sessions => N}}.
 
+%% RF-011 (operation): unblock an address after legitimate failures (spec 001 brute-force protection).
+unlock_ip(Ip, #{username := Who}) ->
+    ok = ana_security:unlock_ip(Ip),
+    log(Who, <<"security.unlock_ip">>, Ip, null, null),
+    {ok, #{ip => Ip}}.
+
 unlock_user(Username, #{username := Who}) ->
     ok = ana_security:unlock(Username),
     log(Who, <<"user.unlock">>, Username, null, null),
@@ -244,20 +294,41 @@ generate_password() ->
 
 list_groups() ->
     ana_db:rows(
-        "SELECT g.name, g.description, g.program_patterns, "
-        "       (SELECT count(*) FROM ana_system.user_group ug WHERE ug.group_name = g.name) AS members "
+        "SELECT g.name, g.description, g.program_patterns, g.data_cost_centers, g.data_portfolio, g.data_own_projects, "
+        "       g.value_patterns, g.variant_patterns, (SELECT count(*) FROM ana_system.user_group ug WHERE ug.group_name = g.name) AS members "
         "FROM ana_system.access_group g ORDER BY g.name", []).
 
 save_group(Name, Fields, #{username := Who}) ->
     Patterns = maps:get(<<"program_patterns">>, Fields, []),
-    case is_list(Patterns) andalso lists:all(fun valid_pattern/1, Patterns) of
+    %% Spec 065 (D9): company values the members may change (names or "area.*").
+    Values = maps:get(<<"value_patterns">>, Fields, []),
+    %% Spec 045 (RF-045-02): programs whose company variants the members publish.
+    Variants = maps:get(<<"variant_patterns">>, Fields, []),
+    %% Spec 009 (D10): data scope of the group (null/empty centers = no restriction by center).
+    Centers = case maps:get(<<"data_cost_centers">>, Fields, null) of
+        L when is_list(L), L =/= [] -> L;
+        _ -> null
+    end,
+    case is_list(Patterns) andalso lists:all(fun valid_pattern/1, Patterns)
+         andalso is_list(Values) andalso lists:all(fun valid_pattern/1, Values)
+         andalso is_list(Variants) andalso lists:all(fun valid_pattern/1, Variants)
+         andalso (Centers =:= null orelse lists:all(fun is_binary/1, Centers)) of
         false -> {error, <<"padrões inválidos: use nomes de programa ou prefixo.*"/utf8>>};
         true ->
             case ana_db:exec(
-                   "INSERT INTO ana_system.access_group (name, description, program_patterns) "
-                   "VALUES ($1, $2, $3) ON CONFLICT (name) DO UPDATE SET "
-                   "description = EXCLUDED.description, program_patterns = EXCLUDED.program_patterns",
-                   [Name, maps:get(<<"description">>, Fields, <<>>), Patterns]) of
+                   "INSERT INTO ana_system.access_group (name, description, program_patterns, data_cost_centers, "
+                   "  data_portfolio, data_own_projects, value_patterns, variant_patterns) "
+                   "SELECT $1, $2, $3, $4, $5, $6, $7, $8 WHERE $4::text[] IS NULL OR NOT EXISTS ("
+                   "  SELECT 1 FROM unnest($4::text[]) c WHERE NOT EXISTS (SELECT 1 FROM finance.cost_center WHERE code = c)) "
+                   "ON CONFLICT (name) DO UPDATE SET "
+                   "description = EXCLUDED.description, program_patterns = EXCLUDED.program_patterns, "
+                   "data_cost_centers = EXCLUDED.data_cost_centers, data_portfolio = EXCLUDED.data_portfolio, "
+                   "data_own_projects = EXCLUDED.data_own_projects, value_patterns = EXCLUDED.value_patterns, "
+                   "variant_patterns = EXCLUDED.variant_patterns",
+                   [Name, maps:get(<<"description">>, Fields, <<>>), Patterns, Centers,
+                    maps:get(<<"data_portfolio">>, Fields, false) =:= true,
+                    maps:get(<<"data_own_projects">>, Fields, false) =:= true, Values, Variants]) of
+                {ok, 0} -> {error, <<"centro de custo inexistente no escopo de dados"/utf8>>};
                 {ok, _} ->
                     ok = ana_access:invalidate(),
                     log(Who, <<"group.save">>, Name, null, Fields),
@@ -282,27 +353,87 @@ delete_group(Name, #{username := Who}) ->
 %% ==========================================================================
 
 get_company() ->
-    ana_db:one("SELECT id, legal_name, tax_id, address, city, state, email, phone "
+    ana_db:one("SELECT id, legal_name, tax_id, address, city, state, email, phone, latitude, longitude, public_url, "
+               "  display_name, logo IS NOT NULL AS has_logo, person_kind, state_registration, icms_taxpayer, "
+               "  municipal_registration, tax_regime "
                "FROM base.company ORDER BY id LIMIT 1", []).
+
+%% Spec 009 (D11): the customer's logo (JPEG in base64, converted and shrunk by the browser), or null to remove.
+save_logo(Logo, #{username := Who}) when Logo =:= null; is_binary(Logo) ->
+    Valid = Logo =:= null orelse (byte_size(Logo) =< 400000 andalso binary:part(Logo, 0, min(4, byte_size(Logo))) =:= <<"/9j/">>),
+    case Valid andalso ana_db:exec("UPDATE base.company SET logo = $1", [Logo]) of
+        false -> {error, <<"envie o logotipo como JPEG de até 300 KB"/utf8>>};
+        {ok, 0} -> {error, <<"cadastre a empresa antes do logotipo">>};
+        {ok, _} ->
+            log(Who, <<"company.logo">>, <<"company">>, null, #{removed => Logo =:= null}),
+            {ok, #{logo => Logo =/= null}};
+        {error, _} -> {error, <<"logotipo inválido: use JPEG de até 300 KB"/utf8>>}
+    end;
+save_logo(_, _) -> {error, <<"logotipo inválido"/utf8>>}.
+
+logo() ->
+    case ana_db:one("SELECT logo FROM base.company WHERE logo IS NOT NULL ORDER BY id LIMIT 1", []) of
+        {ok, #{<<"logo">> := L}} -> {ok, base64:decode(L)};
+        _ -> none
+    end.
 
 save_company(Fields, #{username := Who}) ->
     Cols = [<<"legal_name">>, <<"tax_id">>, <<"address">>, <<"city">>, <<"state">>,
             <<"email">>, <<"phone">>],
-    Values = [maps:get(C, Fields, null) || C <- Cols],
+    %% Spec 043 (D4): the company's fiscal data; the database checks them (same rule as the partners).
+    Fiscal = [<<"state_registration">>, <<"icms_taxpayer">>, <<"municipal_registration">>, <<"tax_regime">>],
+    Text = fun(K) -> case maps:get(K, Fields, null) of
+                         B when is_binary(B) -> case string:trim(B) of <<>> -> null; T -> T end;
+                         _ -> null
+                     end end,
+    %% Spec 032: coordinates typed with a decimal comma or point ("-23,5505").
+    Coord = fun(K) ->
+        case maps:get(K, Fields, null) of
+            N when is_number(N) -> N;
+            B when is_binary(B), B =/= <<>> -> binary:replace(string:trim(B), <<",">>, <<".">>);
+            _ -> null
+        end
+    end,
+    %% Spec 037: public address for links sent to customers ("https://erp.empresa.com.br").
+    Url = case maps:get(<<"public_url">>, Fields, null) of
+        U0 when is_binary(U0) -> case string:trim(U0) of <<>> -> null; T -> string:trim(T, trailing, "/") end;
+        _ -> null
+    end,
+    %% Spec 009 (D11): short name shown beside ANA's brand and on the documents (empty = the legal name).
+    Display = case maps:get(<<"display_name">>, Fields, null) of
+        D0 when is_binary(D0) -> case string:trim(D0) of <<>> -> null; D -> D end;
+        _ -> null
+    end,
+    Values = [maps:get(C, Fields, null) || C <- Cols] ++ [Coord(<<"latitude">>), Coord(<<"longitude">>), Url, Display]
+             ++ [Text(F) || F <- Fiscal],
     {ok, Before} = get_company(),
     R = case Before of
         undefined ->
-            ana_db:exec("INSERT INTO base.company (legal_name, tax_id, address, city, state, email, phone) "
-                        "VALUES ($1, $2, $3, $4, $5, $6, $7)", Values);
+            ana_db:exec("INSERT INTO base.company (legal_name, tax_id, address, city, state, email, phone, latitude, longitude, public_url, "
+                        "  display_name, state_registration, icms_taxpayer, municipal_registration, tax_regime) "
+                        "VALUES ($1, $2, $3, $4, $5, $6, $7, $8::text::numeric, $9::text::numeric, $10, $11, $12, $13, $14, $15)",
+                        [case V of N when is_number(N) -> list_to_binary(io_lib:format("~p", [N])); _ -> V end || V <- Values]);
         #{<<"id">> := Id} ->
             ana_db:exec("UPDATE base.company SET legal_name = $2, tax_id = $3, address = $4, city = $5, "
-                        "state = $6, email = $7, phone = $8 WHERE id = $1", [Id | Values])
+                        "state = $6, email = $7, phone = $8, latitude = $9::text::numeric, longitude = $10::text::numeric, "
+                        "public_url = $11, display_name = $12, state_registration = $13, icms_taxpayer = $14, "
+                        "municipal_registration = $15, tax_regime = $16 WHERE id = $1",
+                        [Id | [case V of N when is_number(N) -> list_to_binary(io_lib:format("~p", [N])); _ -> V end || V <- Values]])
     end,
     case R of
         {ok, _} ->
             {ok, After} = get_company(),
+            ana_instance:forget_public_url(),
             log(Who, <<"company.save">>, <<"company">>, Before, After),
             {ok, After};
+        {error, #{sqlstate := <<"23514">>, message := Msg}} when is_binary(Msg) ->
+            %% Rules of the database say "CODE: message" (spec 043); other checks are the URL and the name.
+            case re:run(Msg, "^[A-Z][A-Z0-9_]{2,40}: (.+)$", [{capture, all_but_first, binary}, unicode, dotall]) of
+                {match, [Text0]} -> {error, Text0};
+                nomatch -> {error, <<"endereço público inválido (https://nome[:porta], sem caminho) ou nome de exibição fora de 2 a 60 letras"/utf8>>}
+            end;
+        {error, #{sqlstate := <<"23514">>}} ->
+            {error, <<"endereço público inválido (https://nome[:porta], sem caminho) ou nome de exibição fora de 2 a 60 letras"/utf8>>};
         {error, E} -> {error, E}
     end.
 
@@ -448,7 +579,8 @@ audit_execution(Id) ->
                 "  error->>'code' AS error FROM ana_system.execution "
                 "WHERE parent_execution_id = $1::text::uuid ORDER BY started_at", [Id]),
             Sum = fun(K) -> lists:sum([V || #{K := V} <- [R | Parts], is_integer(V)]) end,
-            {ok, R#{<<"parts">> => Parts,
+            {ok, R#{<<"trace">> => case ana_observability:trace(Id) of undefined -> null; T -> T end,
+                    <<"parts">> => Parts,
                     <<"total">> => #{cpu_ms => Sum(<<"cpu_ms">>), sql_count => Sum(<<"sql_count">>),
                                      parts => length(Parts)}}};
         {error, _} -> {error, not_found}
@@ -467,4 +599,42 @@ limit(F) ->
     try binary_to_integer(maps:get(<<"limit">>, F, <<"100">>)) of
         N -> max(1, min(N, 1000))
     catch _:_ -> 100
+    end.
+
+%% Spec 020 (RF-020-13): what a member of a group would see with this data scope, before saving it —
+%% visible and total records per scoped entity, counted by the database's own row policies (same role
+%% and settings as an execution), in a read-only transaction. "member" = whose portfolio and projects.
+-define(SCOPED, [{<<"base.party">>, <<"Clientes e fornecedores"/utf8>>}, {<<"sales.sales_order">>, <<"Pedidos de venda">>},
+                 {<<"finance.bill">>, <<"Títulos a receber e a pagar"/utf8>>}, {<<"projects.project">>, <<"Projetos">>},
+                 {<<"production.work_order">>, <<"Ordens de produção"/utf8>>},
+                 {<<"supply.purchase_request">>, <<"Solicitações de compra"/utf8>>}]).
+-define(PREVIEW_CAP, 100000).
+
+-spec scope_preview(map()) -> {ok, map()} | {error, binary()}.
+scope_preview(F) ->
+    Scope = ana_access:scope_of(F),
+    Member = case maps:get(<<"member">>, F, <<>>) of M when is_binary(M) -> M; _ -> <<>> end,
+    Count = iolist_to_binary(["SELECT ", lists:join(", ",
+        [io_lib:format("(SELECT count(*) FROM (SELECT 1 FROM ~s LIMIT ~b) x) AS \"~s\"", [T, ?PREVIEW_CAP, T]) || {T, _} <- ?SCOPED])]),
+    Q = fun(V) -> binary:replace(V, <<"'">>, <<"''">>, [global]) end,
+    case ana_db:checkout(ana_db_exec, 5000) of
+        {ok, C} ->
+            try
+                {ok, [], []} = epgsql:squery(C, "BEGIN READ ONLY"),
+                _ = epgsql:squery(C, "SET LOCAL statement_timeout = 5000"),
+                {ok, #{rows := [Total]}} = ana_db:query(C, Count, []),
+                Set = epgsql:squery(C, iolist_to_binary([ana_access:scope_sql_of(Scope),
+                                                         "SET LOCAL ana.username = '", Q(Member), "'"])),
+                [] = [E || {error, E} <- lists:flatten([Set])],      % never count with the scope half applied
+                {ok, #{rows := [Seen]}} = ana_db:query(C, Count, []),
+                Rows = [#{entity => T, label => L, visible => V, total => N}
+                        || {{T, L}, V, N} <- lists:zip3(?SCOPED, Seen, Total)],
+                {ok, #{entities => Rows, cost_centers => case maps:get(cost_centers, Scope) of all -> all; Cs -> Cs end,
+                       restricted => iolist_size(ana_access:scope_sql_of(Scope)) > 0, cap => ?PREVIEW_CAP}}
+            catch _:_ -> {error, <<"não foi possível simular o escopo agora"/utf8>>}
+            after
+                _ = epgsql:squery(C, "ROLLBACK"),
+                ana_db:checkin(ana_db_exec, C)
+            end;
+        {error, _} -> {error, <<"banco indisponível"/utf8>>}
     end.

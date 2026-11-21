@@ -1,6 +1,7 @@
 # ana:description Aloca pessoa (ou perfil) a uma atividade: horas por semana ou distribuídas no período
 # ana:exposed yes
 # ana:command alocar
+# ana:category Projetos/Planejamento
 """RF-021-03/03a, CA-021-02/02a.
 
 - `week` + `hours`: hours of that week (0 removes).
@@ -19,14 +20,14 @@ from ana_lib.projects import consulting as C
 from ana_lib.projects import views as V
 
 PARAMS = {
-    "project": {"type": "str", "required": True, "label": "projeto"},
-    "activity": {"type": "str", "required": True, "label": "atividade"},
-    "employee": {"type": "int", "label": "colaborador"},
-    "profile": {"type": "str", "label": "perfil (quando ainda não há pessoa)"},
+    "project": {"type": "str", "required": True, "label": "projeto", "lookup": {"program": "projects.lookup", "params": {"kind": "projects"}}},
+    "activity": {"type": "str", "required": True, "label": "atividade", "lookup": {"program": "projects.lookup", "params": {"kind": "activities"}, "depends": ["project"]}},
+    "employee": {"type": "int", "label": "pessoa", "lookup": {"program": "projects.lookup", "params": {"kind": "employees"}}},
+    "profile": {"type": "str", "label": "perfil (quando ainda não há pessoa)", "lookup": {"program": "projects.lookup", "params": {"kind": "profiles"}}},
     "hours": {"type": "decimal", "label": "horas"},
     "week": {"type": "date", "label": "semana (qualquer dia)"},
     "distribute": {"type": "bool", "label": "distribuir o total no período da atividade"},
-    "replace_profile": {"type": "str", "label": "trocar alocação deste perfil pela pessoa"},
+    "replace_profile": {"type": "str", "label": "trocar alocação deste perfil pela pessoa", "lookup": {"program": "projects.lookup", "params": {"kind": "profiles"}}},
 }
 
 
@@ -112,11 +113,14 @@ def replace(p, t, profile, employee):
     if not rows:
         raise ana.Error("ALLOCATION_NOT_FOUND", f"não há alocação do perfil {profile} em {t['code']}")
     join_team(p, employee)
-    ana.sql_exec("DELETE FROM projects.allocation WHERE task_id = $1 AND profile = $2", t["id"], profile)
-    for r in rows:
-        existing = ana.sql_value("SELECT hours FROM projects.allocation WHERE task_id = $1 AND employee_id = $2 "
-                                 "AND week = $3", t["id"], employee, r["week"]) or 0
-        upsert(p, t, employee, None, r["week"], existing + r["hours"])
+    # One statement: the profile's weeks move to the person, adding to what they already had.
+    ana.sql_exec("WITH moved AS (DELETE FROM projects.allocation WHERE task_id = $2 AND profile = $3 "
+                 "  RETURNING week, hours) "
+                 "INSERT INTO projects.allocation (project_id, task_id, week, employee_id, hours) "
+                 "SELECT $1, $2, week, $4, hours FROM moved "
+                 "ON CONFLICT (task_id, employee_id, week) WHERE employee_id IS NOT NULL "
+                 "DO UPDATE SET hours = projects.allocation.hours + EXCLUDED.hours",
+                 p["id"], t["id"], profile, employee)
     return [r["week"] for r in rows]
 
 

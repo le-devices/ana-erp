@@ -1,3 +1,5 @@
+%% SPDX-FileCopyrightText: 2026 André Luis Pereira dos Santos
+%% SPDX-License-Identifier: AGPL-3.0-or-later
 %% Parallel execution support (spec 022): two-phase commit helpers and the
 %% recovery of orphan prepared transactions (RF-022-04).
 %%
@@ -11,7 +13,7 @@
 %% "ana_<node>_<execution>_<part>" — part 0 is the main execution itself.
 -spec gid(binary(), non_neg_integer()) -> binary().
 gid(ExecId, Part) ->
-    Node = integer_to_binary(erlang:phash2(node()), 16),
+    Node = integer_to_binary(erlang:phash2(ana_config:node_id()), 16),
     Exec = binary:replace(ExecId, <<"-">>, <<>>, [global]),
     <<"ana_", Node/binary, "_", Exec/binary, "_", (integer_to_binary(Part))/binary>>.
 
@@ -50,7 +52,7 @@ missing(E) -> maps:get(sqlstate, ana_db:sql_error(E), undefined) =:= <<"42704">>
 -spec decide(binary(), [binary()]) -> ok | {error, term()}.
 decide(Main, Gids) ->
     case ana_db:exec("INSERT INTO ana_system.parallel_decision (main_gid, gids, decision, node) "
-                     "VALUES ($1, $2, 'commit', $3)", [Main, Gids, atom_to_binary(node())]) of
+                     "VALUES ($1, $2, 'commit', $3)", [Main, Gids, ana_config:node_id()]) of
         {ok, _} -> ok;
         E -> E
     end.
@@ -66,7 +68,7 @@ forget(Main) ->
 recover(Mode) ->
     try
         MaxAge = 2 * ana_settings:get(ceiling_timeout_ms) div 1000,
-        Mine = <<"ana_", (integer_to_binary(erlang:phash2(node()), 16))/binary, "_">>,
+        Mine = <<"ana_", (integer_to_binary(erlang:phash2(ana_config:node_id()), 16))/binary, "_">>,
         {ok, Prepared} = ana_db:rows(
             "SELECT gid, extract(epoch FROM now() - prepared)::bigint AS age FROM pg_prepared_xacts "
             "WHERE gid LIKE 'ana\\_%' AND database = current_database()", []),

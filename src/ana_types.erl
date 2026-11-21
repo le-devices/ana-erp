@@ -1,3 +1,5 @@
+%% SPDX-FileCopyrightText: 2026 André Luis Pereira dos Santos
+%% SPDX-License-Identifier: AGPL-3.0-or-later
 %% PostgreSQL <-> JSON type conversion (spec 001, plan.md "Tipos").
 %%
 %% Parameters arrive as JSON terms (binaries, numbers, booleans, null, maps,

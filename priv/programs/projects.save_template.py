@@ -1,5 +1,6 @@
 # ana:description Cria ou atualiza modelo de projeto (fases, atividades, horas típicas)
 # ana:exposed yes
+# ana:category Projetos/Planejamento
 """RF-021-02. Templates are data of each client (P13); admin only.
 
 Example items:
@@ -12,11 +13,11 @@ Example items:
 from ana_lib.projects import access
 
 PARAMS = {
-    "code": {"type": "str", "required": True},
-    "name": {"type": "str", "required": True},
-    "service_kind": {"type": "str", "default": ""},
-    "description": {"type": "str", "default": ""},
-    "items": {"type": "list", "required": True},
+    "code": {"type": "str", "required": True, "label": "código"},
+    "name": {"type": "str", "required": True, "label": "nome"},
+    "service_kind": {"type": "str", "default": "", "label": "tipo de serviço"},
+    "description": {"type": "str", "default": "", "label": "descrição"},
+    "items": {"type": "list", "required": True, "label": "itens"},
 }
 
 

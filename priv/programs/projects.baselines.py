@@ -1,11 +1,12 @@
 # ana:description Linhas de base do projeto e comparação entre elas
+# ana:category Projetos/Planejamento
 """RF-021-06. Without `a`/`b`, compares the two most recent baselines."""
 
 from ana_lib.projects import access
 from ana_lib.projects import views as V
 
 PARAMS = {
-    "project": {"type": "str", "required": True},
+    "project": {"type": "str", "required": True, "label": "projeto", "lookup": {"program": "projects.lookup", "params": {"kind": "projects"}}},
     "a": {"type": "int", "label": "linha de base A"},
     "b": {"type": "int", "label": "linha de base B"},
 }
@@ -14,7 +15,9 @@ PARAMS = {
 def main(project, a=None, b=None):
     p = access.project(project)
     V.require_view(p)
-    all_ = ana.sql("SELECT b.*, c.number AS change_number FROM projects.baseline b "
+    all_ = ana.sql("SELECT b.id, b.project_id, b.number, b.reason, b.change_id, b.total_hours, b.total_value, "
+                   "b.finish_date, b.created_by, b.created_at, b.projected_revenue, b.projected_cost, "
+                   "b.projected_profit, b.low_margin_justification, c.number AS change_number FROM projects.baseline b "
                    "LEFT JOIN projects.scope_change c ON c.id = b.change_id "
                    "WHERE b.project_id = $1 ORDER BY b.number", p["id"])
     manage = access.can_manage(p)
@@ -32,9 +35,11 @@ def main(project, a=None, b=None):
     a = a or all_[-2]["number"]
     b = b or all_[-1]["number"]
     rows = ana.sql(
-        "WITH x AS (SELECT i.* FROM projects.baseline_item i JOIN projects.baseline bl ON bl.id = i.baseline_id "
+        "WITH x AS (SELECT i.baseline_id, i.task_id, i.code, i.name, i.kind, i.parent_code, i.planned_hours, "
+        "i.planned_start, i.planned_finish, i.planned_value FROM projects.baseline_item i JOIN projects.baseline bl ON bl.id = i.baseline_id "
         "           WHERE bl.project_id = $1 AND bl.number = $2), "
-        "     y AS (SELECT i.* FROM projects.baseline_item i JOIN projects.baseline bl ON bl.id = i.baseline_id "
+        "     y AS (SELECT i.baseline_id, i.task_id, i.code, i.name, i.kind, i.parent_code, i.planned_hours, "
+        "i.planned_start, i.planned_finish, i.planned_value FROM projects.baseline_item i JOIN projects.baseline bl ON bl.id = i.baseline_id "
         "           WHERE bl.project_id = $1 AND bl.number = $3) "
         "SELECT COALESCE(y.code, x.code) AS code, COALESCE(y.name, x.name) AS name, "
         "  x.planned_hours AS hours_a, y.planned_hours AS hours_b, x.planned_finish AS finish_a, "

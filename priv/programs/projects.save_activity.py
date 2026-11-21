@@ -1,5 +1,6 @@
 # ana:description Cria ou altera fase ou atividade do projeto (responsável, horas, datas, dependências)
 # ana:exposed yes
+# ana:category Projetos/Planejamento
 """RF-021-01. Predecessors: list of codes, optionally with lag in working
 days ("1.2+3"). Cycles are refused. Only the project manager or an admin."""
 
@@ -10,23 +11,23 @@ from ana_lib.projects import consulting as C
 from ana_lib.projects import views as V
 
 PARAMS = {
-    "project": {"type": "str", "required": True, "label": "projeto"},
+    "project": {"type": "str", "required": True, "label": "projeto", "lookup": {"program": "projects.lookup", "params": {"kind": "projects"}}},
     "code": {"type": "str", "required": True, "label": "código"},
     "name": {"type": "str", "label": "nome"},
-    "kind": {"type": "str", "label": "phase ou activity"},
-    "phase": {"type": "str", "label": "fase (código)"},
-    "owner": {"type": "int", "label": "responsável (colaborador)"},
-    "profile": {"type": "str", "label": "perfil"},
+    "kind": {"type": "str", "label": "tipo", "choices": [["activity", "Atividade"], ["phase", "Fase"]]},
+    "phase": {"type": "str", "label": "fase", "lookup": {"program": "projects.lookup", "params": {"kind": "phases"}, "depends": ["project"]}},
+    "owner": {"type": "int", "label": "responsável", "lookup": {"program": "projects.lookup", "params": {"kind": "employees"}}},
+    "profile": {"type": "str", "label": "perfil", "lookup": {"program": "projects.lookup", "params": {"kind": "profiles"}}},
     "planned_hours": {"type": "decimal", "label": "horas planejadas"},
     "duration_days": {"type": "int", "label": "duração (dias úteis)"},
     "planned_start": {"type": "date", "label": "início planejado"},
     "planned_finish": {"type": "date", "label": "término planejado"},
-    "predecessors": {"type": "list", "label": "predecessoras", "default": None},
+    "predecessors": {"type": "list", "label": "predecessoras (códigos, ex.: [\"1.1\", \"1.2+3\"])", "default": None},
     "deliverable": {"type": "str", "label": "entregável"},
     "acceptance_criteria": {"type": "str", "label": "critério de aceite"},
-    "billable": {"type": "bool"},
-    "client_visible": {"type": "bool"},
-    "active": {"type": "bool"},
+    "billable": {"type": "bool", "label": "faturável"},
+    "client_visible": {"type": "bool", "label": "visível ao cliente"},
+    "active": {"type": "bool", "label": "ativa"},
 }
 
 FIELDS = ["name", "kind", "owner_employee_id", "profile", "planned_hours", "duration_days", "planned_start",
@@ -48,7 +49,7 @@ def main(project, code, phase=None, owner=None, predecessors=None, **f):
         if ph["kind"] != "phase":
             raise ana.Error("INVALID_PARAMETER", f"{phase} não é uma fase")
         parent_id = ph["id"]
-    current = ana.sql_one("SELECT * FROM projects.task WHERE project_id = $1 AND code = $2 FOR UPDATE", p["id"], code)
+    current = ana.sql_one("SELECT id FROM projects.task WHERE project_id = $1 AND code = $2 FOR UPDATE", p["id"], code)
     if current is None:
         if not f.get("name"):
             raise ana.Error("INVALID_PARAMETER", "atividade nova exige nome")
@@ -64,8 +65,13 @@ def main(project, code, phase=None, owner=None, predecessors=None, **f):
             f.get("acceptance_criteria"), f.get("billable"), f.get("client_visible"), f.get("active"))
     else:
         task_id = current["id"]
-        sets = [f"{c} = COALESCE(${n + 2}, {c})" for n, c in enumerate(FIELDS)]
-        ana.sql_exec(f"UPDATE projects.task SET {', '.join(sets)}, updated_at = now() WHERE id = $1",
+        ana.sql_exec("UPDATE projects.task SET name = COALESCE($2, name), kind = COALESCE($3, kind), owner_employee_id = "
+                     "COALESCE($4, owner_employee_id), profile = COALESCE($5, profile), planned_hours = COALESCE($6, "
+                     "planned_hours), duration_days = COALESCE($7, duration_days), planned_start = COALESCE($8, "
+                     "planned_start), planned_finish = COALESCE($9, planned_finish), deliverable = COALESCE($10, "
+                     "deliverable), acceptance_criteria = COALESCE($11, acceptance_criteria), billable = COALESCE($12, "
+                     "billable), client_visible = COALESCE($13, client_visible), active = COALESCE($14, active), "
+                     "updated_at = now() WHERE id = $1",
                      task_id, *[f.get(c) for c in FIELDS])
         if phase is not None:
             ana.sql_exec("UPDATE projects.task SET parent_id = $2 WHERE id = $1", task_id, parent_id)

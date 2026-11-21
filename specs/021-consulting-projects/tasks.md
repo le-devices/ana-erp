@@ -6,7 +6,8 @@
 - [x] T-021-04 Quadro, Gantt e caminho crítico (RF-021-04, CA-021-03)
 - [x] T-021-05 Andamento, valor agregado e linhas de base (RF-021-05, 06, CA-021-04)
 - [x] T-021-06 Mudanças de escopo e riscos (RF-021-07, 08, CA-021-05)
-- [x] T-021-07 Relatório de status agendado, guardado sem custos e marcado visível ao cliente (RF-021-09, CA-021-07). Exibição no portal e aprovação pelo cliente: dependem da spec 016
+- [x] T-021-07 Relatório de status agendado, guardado sem custos e marcado visível ao cliente, exibido no portal (`projects.my_projects`, spec 016) (RF-021-09, CA-021-07)
+- [x] T-021-11 Aceite de entregáveis e aprovação de mudanças de escopo pelo cliente no portal (`projects.client_approvals`, H8)
 - [x] T-021-08 Telas: Minha semana, Projeto (abas), Portfólio, fluxo guiado (RF-021-10, 11, CA-021-06)
 - [x] T-021-10 Lucro a partir da alocação, projeção de viabilidade, cenários e política de margem (RF-021-12..15, CA-021-08..10)
 - [x] T-021-09 Testes CA-021-01..10 (+02a) e RNF-021-01 (2 mil atividades)

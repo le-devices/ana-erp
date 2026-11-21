@@ -1,3 +1,5 @@
+# SPDX-FileCopyrightText: 2026 André Luis Pereira dos Santos
+# SPDX-License-Identifier: AGPL-3.0-or-later
 """Cluster tests: exactly-once scheduling and failover (CA-018-01) and Erlang
 distribution calls to ana_rpc:call/3 (T-003-06, RF-003-06, RNF-003-02).
 
@@ -12,8 +14,8 @@ import unittest
 import urllib.error
 import urllib.request
 
-NODE1 = "http://localhost:8080"
-NODE2 = "http://localhost:8081"
+NODE1 = "http://localhost:" + os.environ.get("ANA_PORT", "8080")   # ports configurable: the host may use them
+NODE2 = "http://localhost:" + os.environ.get("ANA2_PORT", "8081")
 COOKIE = os.environ.get("ANA_TEST_COOKIE", "ana-cluster-test-cookie")
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 COMPOSE = ["docker", "compose", "-f", os.path.join(ROOT, "docker-compose.yml"),
@@ -41,7 +43,9 @@ def wait_health(base, timeout=90):
         if http(base, "GET", "/health")[0] == 200:
             return
         time.sleep(1)
-    raise AssertionError(f"{base} did not become healthy")
+    name = "ana-erp-ana2-1" if base == NODE2 else "ana-erp-ana-1"
+    logs = subprocess.run(["docker", "logs", "--tail", "40", name], capture_output=True, text=True).stdout
+    raise AssertionError(f"{base} did not become healthy; last lines of {name}:\n{logs}")
 
 
 def login(base):
@@ -103,6 +107,7 @@ class TestCluster(unittest.TestCase):
         finally:
             subprocess.run(COMPOSE + ["start", "ana", "ana2"], capture_output=True)
             wait_health(NODE1)
+            wait_health(NODE2)                  # the next tests use both nodes
             http(NODE1, "DELETE", f"/api/scheduler/jobs/{job['id']}", token=login(NODE1))
 
     def test_rf_022_04_orphan_prepared_transactions_recovered(self):
@@ -132,6 +137,42 @@ class TestCluster(unittest.TestCase):
         self.assertEqual(psql(f"SELECT count(*) FROM base.party WHERE name = 'orphan-rb-{tag}'"), "0")
         self.assertEqual(psql(f"SELECT count(*) FROM base.party WHERE name = 'orphan-ok-{tag}'"), "1")
         self.assertEqual(psql(f"SELECT count(*) FROM ana_system.parallel_decision WHERE main_gid = '{commit_gid}'"), "0")
+
+    def test_ca_065_07_value_changed_on_one_node_is_read_on_the_other(self):
+        """Spec 065 (CA-065-07, RNF-065-01): a company value changed through node 1 is read by a routine on node 2
+        within 1 s — every node keeps the values in memory and reloads on the database's notice."""
+        wait_health(NODE1)
+        wait_health(NODE2)
+        tag = str(int(time.time() * 1000))[-8:]
+        name, prog = f"c{tag}.limite", f"test.cluster_value_{tag}"
+        s, c = http(NODE1, "POST", "/api/values", {"name": name, "description": "Teste de cluster", "value_type": "integer"}, self.token)
+        self.assertEqual(s, 200, c)
+        try:
+            s, c = http(NODE1, "POST", f"/api/values/{name}/versions", {"content": 1, "valid_from": "2020-01-01"}, self.token)
+            self.assertEqual(s, 200, c)
+            s, c = http(NODE1, "PUT", f"/api/programs/{prog}", {"source": "def main(name):\n    return ana.value(name)\n"}, self.token)
+            self.assertEqual(s, 200, c)
+
+            last = {}
+
+            def on_node2():
+                s, c = http(NODE2, "POST", f"/api/programs/{prog}/run", {"params": {"name": name}}, self.token)
+                last["reply"] = (s, c)
+                return c.get("result") if s == 200 and isinstance(c, dict) else None
+            end = time.time() + 30
+            while on_node2() != 1 and time.time() < end:
+                time.sleep(0.2)
+            self.assertEqual(on_node2(), 1, last.get("reply"))
+            s, meta = http(NODE1, "GET", "/api/values/meta", token=self.token)
+            s, c = http(NODE1, "POST", f"/api/values/{name}/versions", {"content": 2, "valid_from": meta["today"]}, self.token)
+            self.assertEqual(s, 200, c)
+            t0 = time.time()
+            while on_node2() != 2 and time.time() - t0 < 1.0:
+                time.sleep(0.05)
+            self.assertEqual(on_node2(), 2, "o outro nó não leu o novo valor em até 1 s")
+        finally:
+            http(NODE1, "PUT", f"/api/values/{name}", {"archived": True}, self.token)
+            http(NODE1, "DELETE", f"/api/programs/{prog}?purge=1", token=self.token)
 
 
 if __name__ == "__main__":

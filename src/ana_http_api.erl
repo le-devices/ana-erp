@@ -1,3 +1,5 @@
+%% SPDX-FileCopyrightText: 2026 André Luis Pereira dos Santos
+%% SPDX-License-Identifier: AGPL-3.0-or-later
 %% REST API for the studio (specs 001, 002, 004, 005, 007, 011).
 -module(ana_http_api).
 -export([init/2]).
@@ -6,10 +8,23 @@
 -define(ADMIN, <<"admin">>).
 -define(USER, <<"user">>).
 -define(BUSINESS_SCHEMAS, [<<"base">>, <<"inventory">>, <<"sales">>, <<"finance">>,
-                           <<"projects">>, <<"analytics">>]).
+                           <<"projects">>, <<"supply">>, <<"production">>, <<"logistics">>, <<"field">>, <<"analytics">>]).
 
 init(Req, health) ->
     {ok, health(Req), health};
+%% RF-023-01
+init(Req, live) ->
+    {ok, ana_http:json(200, ana_ha:live(), Req), live};
+%% RF-019-02, CA-019-06: Prometheus text; admin/developer session or a robot key.
+init(Req, metrics) ->
+    Req2 = ana_http:require(Req, ?DEV, fun(_) ->
+        cowboy_req:reply(200, #{<<"content-type">> => <<"text/plain; version=0.0.4; charset=utf-8">>},
+                         ana_metrics:prometheus(), Req)
+    end),
+    {ok, Req2, metrics};
+init(Req, ready) ->
+    {Ok, Body} = ana_ha:ready(),
+    {ok, ana_http:json(case Ok of true -> 200; false -> 503 end, Body, Req), ready};
 init(Req, api) ->
     Method = cowboy_req:method(Req),
     Path = cowboy_req:path_info(Req),
@@ -55,7 +70,10 @@ route(<<"POST">>, [<<"session">>], Req) ->
                 {error, locked} ->
                     ana_http:reply_error(429, <<"LOCKED">>, <<"muitas tentativas; aguarde alguns minutos">>, R);
                 {error, credentials} ->
-                    ana_http:reply_error(401, <<"CREDENTIALS">>, <<"login ou senha inválidos"/utf8>>, R)
+                    ana_http:reply_error(401, <<"CREDENTIALS">>, <<"login ou senha inválidos"/utf8>>, R);
+                {error, unavailable} ->
+                    ana_http:reply_error(503, <<"DB_UNAVAILABLE">>, <<"banco de dados indisponível no momento: tente de novo em instantes"/utf8>>,
+                                         cowboy_req:set_resp_header(<<"retry-after">>, <<"2">>, R))
             end;
         (_, R) -> invalid(R)
     end);
@@ -65,13 +83,29 @@ route(<<"DELETE">>, [<<"session">>], Req) ->
         _ -> ok
     end,
     cowboy_req:reply(204, Req);
+%% Spec 009 (D11): the customer's logo, public (shown on the sign-in screen too); cached briefly.
+route(<<"GET">>, [<<"company">>, <<"logo">>], Req) ->
+    case ana_admin:logo() of
+        {ok, Jpeg} -> cowboy_req:reply(200, #{<<"content-type">> => <<"image/jpeg">>, <<"cache-control">> => <<"max-age=300">>},
+                                       Jpeg, Req);
+        none -> ana_http:reply_error(404, <<"NOT_FOUND">>, <<"sem logotipo">>, Req)
+    end;
+%% Spec 009 (RF-009-08): what the banner needs, for anyone signed in (no customer data, no limits).
+route(<<"GET">>, [<<"license">>], Req) ->
+    ana_http:require_any(Req, fun(_U) ->
+        L = ana_license:current(),
+        ana_http:json(200, maps:with([state, reason, days_left, environment, valid_until], L), Req)
+    end);
 route(<<"GET">>, [<<"me">>], Req) ->
     ana_http:require_any(Req, fun(U) ->
-        Company = case ana_admin:get_company() of
-            {ok, #{<<"legal_name">> := N}} -> N;
-            _ -> null
+        {Company, Logo} = case ana_admin:get_company() of
+            {ok, #{<<"legal_name">> := N, <<"display_name">> := D, <<"has_logo">> := L}} ->
+                {case D of null -> N; _ -> D end, L =:= true};
+            _ -> {null, false}
         end,
-        ana_http:json(200, (maps:without([trace, key_id], U))#{company => Company}, Req)
+        %% Spec 034: the screen marks development/test instances. Spec 009 (D11): the customer's brand.
+        ana_http:json(200, (maps:without([trace, key_id], U))#{company => Company, company_logo => Logo,
+                                                               instance => ana_instance:info()}, Req)
     end);
 route(<<"POST">>, [<<"me">>, <<"password">>], Req) ->
     ana_http:require_any(Req, fun(U) ->
@@ -91,14 +125,58 @@ route(<<"POST">>, [<<"me">>, <<"password">>], Req) ->
 route(<<"GET">>, [<<"routines">>], Req) ->
     ana_http:require(Req, ?USER, fun(U = #{username := Who}) ->
         {ok, Rows} = ana_db:rows(
-            "SELECT p.name, p.description, p.docs, p.params, p.min_role, p.restricted, p.exposed, "
+            "SELECT p.name, p.description, p.docs, p.params, p.min_role, p.restricted, p.exposed, p.category, p.confirm, "
             "  (SELECT c.code FROM ana_system.command c WHERE c.program = p.name ORDER BY c.code LIMIT 1) AS command, "
-            "  EXISTS (SELECT 1 FROM ana_system.user_favorite f WHERE f.program = p.name AND f.username = $1) AS favorite "
-            "FROM ana_system.program p WHERE p.active AND p.kind = 'program' ORDER BY p.name", [Who]),
+            "  EXISTS (SELECT 1 FROM ana_system.user_favorite f WHERE f.program = p.name AND f.username = $1) AS favorite, "
+            %% Spec 056 (RF-056-03): routines that write offer "Ensaiar".
+            "  (w.name IS NOT NULL) AS writes "
+            "FROM ana_system.program p LEFT JOIN (SELECT ana_system.writing_programs() AS name) w ON w.name = p.name "
+            "WHERE p.active AND p.kind = 'program' AND p.in_menu ORDER BY p.name", [Who]),
         ana_http:json(200, [maps:without([<<"min_role">>, <<"restricted">>], R)
-                            || R = #{<<"min_role">> := M} <- Rows,
-                               ana_security:has_role(U, M), ana_access:allowed(U, R)], Req)
+                            || R = #{<<"min_role">> := M, <<"name">> := N} <- Rows,
+                               ana_security:has_role(U, M), ana_access:allowed(U, R),
+                               %% RF-020-23: a module outside the license is not offered (spec 009).
+                               ana_license:allowed(ana_license:module_of(N))], Req)
     end);
+
+%% --- Categories of routines (spec 020, RF-020-20..23) ---------------------
+route(<<"GET">>, [<<"categories">>], Req) ->
+    ana_http:require(Req, ?USER, fun(U) -> ok_json(ana_categories:list(U), Req) end);
+route(<<"POST">>, [<<"categories">>], Req) ->
+    ana_http:require(Req, ?USER, fun(U) -> with_body(Req, fun(B, R) -> category_reply(ana_categories:create(U, B), R) end) end);
+route(<<"PUT">>, [<<"categories">>, <<"order">>], Req) ->
+    ana_http:require(Req, ?USER, fun(U) -> with_body(Req, fun(B, R) ->
+        category_reply(ana_categories:reorder(U, maps:get(<<"ids">>, B, [])), R) end) end);
+route(<<"PUT">>, [<<"categories">>, Id], Req) ->
+    ana_http:require(Req, ?USER, fun(U) -> with_id(Id, Req, fun(N) ->
+        with_body(Req, fun(B, R) -> category_reply(ana_categories:update(U, N, B), R) end) end) end);
+route(<<"DELETE">>, [<<"categories">>, Id], Req) ->
+    ana_http:require(Req, ?USER, fun(U) -> with_id(Id, Req, fun(N) -> category_reply(ana_categories:delete(U, N), Req) end) end);
+route(<<"POST">>, [<<"categories">>, Id, <<"shortcuts">>], Req) ->
+    ana_http:require(Req, ?USER, fun(U) -> with_id(Id, Req, fun(N) ->
+        with_body(Req, fun(B, R) -> category_reply(ana_categories:add_shortcuts(U, N, maps:get(<<"items">>, B, [])), R) end) end) end);
+route(<<"PUT">>, [<<"shortcuts">>, Id], Req) ->
+    ana_http:require(Req, ?USER, fun(U) -> with_id(Id, Req, fun(N) ->
+        with_body(Req, fun(B, R) -> category_reply(ana_categories:update_shortcut(U, N, B), R) end) end) end);
+route(<<"DELETE">>, [<<"shortcuts">>, Id], Req) ->
+    ana_http:require(Req, ?USER, fun(U) -> with_id(Id, Req, fun(N) -> category_reply(ana_categories:delete_shortcut(U, N), Req) end) end);
+%% Table variants and screen state per user (RF-020-17/18).
+route(<<"GET">>, [<<"ui">>, <<"variants">>], Req) ->
+    ana_http:require(Req, ?USER, fun(U) ->
+        ok_json(ana_ui_state:variants(U, maps:get(<<"screen">>, ana_http:qs_map(Req), <<>>)), Req) end);
+route(<<"POST">>, [<<"ui">>, <<"variants">>], Req) ->
+    ana_http:require(Req, ?USER, fun(U) -> with_body(Req, fun(B, R) -> category_reply(ana_ui_state:save_variant(U, B), R) end) end);
+route(<<"DELETE">>, [<<"ui">>, <<"variants">>, Id], Req) ->
+    ana_http:require(Req, ?USER, fun(U) -> with_id(Id, Req, fun(N) -> category_reply(ana_ui_state:delete_variant(U, N), Req) end) end);
+%% Spec 050 (T-050-03): how long screens and calls took in the browser (batched, aggregated in memory).
+route(<<"POST">>, [<<"ui">>, <<"perf">>], Req) ->
+    ana_http:require(Req, ?USER, fun(#{username := Who}) -> with_body(Req, fun(B, R) ->
+        ok_json(ana_ui_perf:record(maps:get(<<"samples">>, B, []), Who), R) end) end);
+route(<<"GET">>, [<<"ui">>, <<"settings">>], Req) ->
+    ana_http:require(Req, ?USER, fun(U) -> ok_json(ana_ui_state:settings(U), Req) end);
+route(<<"PUT">>, [<<"ui">>, <<"settings">>], Req) ->
+    ana_http:require(Req, ?USER, fun(U) -> with_body(Req, fun(B, R) ->
+        category_reply(ana_ui_state:put_setting(U, maps:get(<<"key">>, B, null), maps:get(<<"value">>, B, null)), R) end) end);
 route(<<"GET">>, [<<"me">>, <<"favorites">>], Req) ->
     ana_http:require(Req, ?USER, fun(#{username := Who}) ->
         ok_json(ana_db:rows("SELECT f.program, p.description FROM ana_system.user_favorite f "
@@ -116,28 +194,112 @@ route(<<"DELETE">>, [<<"me">>, <<"favorites">>, Program], Req) ->
                                  [Who, Program]), Req)
     end);
 
+%% --- Company values (spec 065) ---------------------------------------------
+%% Everyone in the company sees them; who changes is decided per value (administrators and groups, D9).
+route(<<"GET">>, [<<"values">>], Req) ->
+    ana_http:require(Req, ?USER, fun(U) -> values_reply(ana_values:list(ana_http:qs_map(Req), U), Req) end);
+route(<<"GET">>, [<<"values">>, <<"meta">>], Req) ->
+    ana_http:require(Req, ?USER, fun(_) -> values_reply(ana_values:meta(), Req) end);
+route(<<"POST">>, [<<"values">>, <<"preview">>], Req) ->
+    ana_http:require(Req, ?USER, fun(U) ->
+        with_body(Req, fun(B, R) when is_map(B) -> values_reply(ana_values:preview(B, U), R); (_, R) -> invalid(R) end)
+    end);
+route(<<"POST">>, [<<"values">>], Req) ->
+    ana_http:require(Req, ?USER, fun(U) ->
+        with_body(Req, fun(B, R) when is_map(B) -> values_reply(ana_values:define(B, U), R); (_, R) -> invalid(R) end)
+    end);
+route(<<"GET">>, [<<"values">>, Name], Req) ->
+    ana_http:require(Req, ?USER, fun(U) -> values_reply(ana_values:detail(Name, U), Req) end);
+route(<<"PUT">>, [<<"values">>, Name], Req) ->
+    ana_http:require(Req, ?USER, fun(U) ->
+        with_body(Req, fun(B, R) when is_map(B) -> values_reply(ana_values:redefine(Name, B, U), R); (_, R) -> invalid(R) end)
+    end);
+route(<<"POST">>, [<<"values">>, Name, <<"versions">>], Req) ->
+    ana_http:require(Req, ?USER, fun(U) ->
+        with_body(Req, fun(B, R) when is_map(B) -> values_reply(ana_values:propose(Name, B, U), R); (_, R) -> invalid(R) end)
+    end);
+route(<<"POST">>, [<<"values">>, Name, <<"versions">>, Id, Action], Req)
+  when Action =:= <<"approve">>; Action =:= <<"refuse">>; Action =:= <<"withdraw">> ->
+    ana_http:require(Req, ?USER, fun(U) ->
+        with_body(Req, fun(B, R) ->
+            Note = case B of #{<<"note">> := N} when is_binary(N), N =/= <<>> -> N; _ -> null end,
+            with_integer(Id, R, fun(I) ->
+                values_reply(case Action of
+                                 <<"withdraw">> -> ana_values:withdraw(Name, I, U);
+                                 _ -> ana_values:decide(Name, I, Action, Note, U)
+                             end, R)
+            end)
+        end)
+    end);
+
 %% --- Programs (spec 002, RF-011-10) ---------------------------------------
+%% --- Quality gate (spec 064) ------------------------------------------------
+route(<<"POST">>, [<<"programs">>, <<"inspect">>], Req) ->
+    ana_http:require(Req, ?DEV, fun(_) ->
+        with_body(Req, fun(#{<<"source">> := S}, R) when is_binary(S) -> quality_reply(ana_quality:inspect(S), R);
+                          (_, R) -> invalid(R)
+                       end)
+    end);
+route(<<"GET">>, [<<"quality">>, <<"gate">>], Req) ->
+    ana_http:require(Req, ?DEV, fun(_) ->
+        Names = [N || N <- binary:split(maps:get(<<"programs">>, ana_http:qs_map(Req), <<>>), <<",">>, [global]), N =/= <<>>],
+        quality_reply(ana_quality:gate(Names), Req)
+    end);
+route(<<"GET">>, [<<"quality">>, <<"exemptions">>], Req) ->
+    ana_http:require(Req, ?DEV, fun(_) ->
+        F = maps:with([<<"program">>, <<"status">>], ana_http:qs_map(Req)),
+        quality_reply(ana_quality:exemptions(F), Req)
+    end);
+route(<<"POST">>, [<<"quality">>, <<"exemptions">>], Req) ->
+    ana_http:require(Req, ?DEV, fun(U) ->
+        with_body(Req, fun(B, R) when is_map(B) -> quality_reply(ana_quality:request_exemption(B, U), R); (_, R) -> invalid(R) end)
+    end);
+route(<<"POST">>, [<<"quality">>, <<"exemptions">>, Id, Decision], Req) when Decision =:= <<"approve">>; Decision =:= <<"refuse">> ->
+    ana_http:require(Req, ?DEV, fun(U) ->
+        with_body(Req, fun(B, R) ->
+            Note = case B of #{<<"note">> := N} when is_binary(N) -> N; _ -> null end,
+            case catch binary_to_integer(Id) of
+                I when is_integer(I) ->
+                    quality_reply(ana_quality:decide_exemption(I, case Decision of <<"approve">> -> <<"approved">>;
+                                                                                      _ -> <<"refused">> end, Note, U), R);
+                _ -> invalid(R)
+            end
+        end)
+    end);
+
 route(<<"GET">>, [<<"programs">>], Req) ->
     ana_http:require(Req, ?DEV, fun(_) ->
         ok_json(ana_program:list(ana_http:qs_int(<<"inactive">>, Req, 0) =:= 1), Req)
     end);
+route(<<"GET">>, [<<"programs">>, Name, <<"performance">>], Req) ->
+    ana_http:require(Req, ?DEV, fun(_) ->
+        case ana_observability:program_performance(Name) of
+            {ok, R} -> ana_http:json(200, R, Req);
+            {error, not_found} -> ana_http:reply_error(404, <<"NOT_FOUND">>, <<"programa não encontrado"/utf8>>, Req)
+        end
+    end);
 route(<<"GET">>, [<<"programs">>, Name], Req) ->
     ana_http:require(Req, ?DEV, fun(_) -> one_json(ana_program:get(Name), Req) end);
 route(<<"PUT">>, [<<"programs">>, Name], Req) ->
-    ana_http:require(Req, ?DEV, fun(U) ->
+    ana_http:require(Req, ?DEV, fun(U) -> transported(Req, fun() ->
         with_body(Req, fun(Fields, R) when is_map(Fields) ->
+            New = ana_program:get(Name) =:= {ok, undefined},
             case validate_program(Fields) of
+                ok when New ->
+                    case ana_seeds:reserved(Name) of
+                        true -> ana_http:reply_error(400, <<"PRODUCT_NAMESPACE">>,
+                                    <<"esse namespace é do produto: crie seus programas em outro, por exemplo cli."/utf8,
+                                      Name/binary>>, R);
+                        false -> save_reply(ana_program:save(Name, Fields, U), R)
+                    end;
                 ok -> save_reply(ana_program:save(Name, Fields, U), R);
                 {error, Msg} -> ana_http:reply_error(400, <<"INVALID">>, Msg, R)
             end;
             (_, R) -> invalid(R)
         end)
-    end);
+    end) end);
 route(<<"DELETE">>, [<<"programs">>, Name], Req) ->
-    case ana_http:qs_int(<<"purge">>, Req, 0) of
-        1 -> ana_http:require(Req, ?ADMIN, fun(U) -> save_reply(ana_program:purge(Name, U), Req) end);
-        _ -> ana_http:require(Req, ?DEV, fun(U) -> save_reply(ana_program:deactivate(Name, U), Req) end)
-    end;
+    transported(Req, fun() -> delete_program(Name, Req) end);
 route(<<"GET">>, [<<"programs">>, Name, <<"limits">>], Req) ->
     ana_http:require(Req, ?DEV, fun(U) ->
         case ana_program:get(Name) of
@@ -152,11 +314,45 @@ route(<<"GET">>, [<<"programs">>, Name, <<"versions">>, V], Req) ->
         with_integer(V, Req, fun(N) -> one_json(ana_program:version(Name, N), Req) end)
     end);
 route(<<"POST">>, [<<"programs">>, Name, <<"versions">>, V, <<"restore">>], Req) ->
-    ana_http:require(Req, ?DEV, fun(U) ->
+    ana_http:require(Req, ?DEV, fun(U) -> transported(Req, fun() ->
         with_integer(V, Req, fun(N) -> save_reply(ana_program:restore(Name, N, U), Req) end)
+    end) end);
+%% --- Execution variants (spec 045) -------------------------------------------
+route(<<"GET">>, [<<"programs">>, Name, <<"variants">>], Req) ->
+    ana_http:require(Req, ?USER, fun(U) -> values_reply(ana_variants:list(Name, U), Req) end);
+route(<<"POST">>, [<<"programs">>, Name, <<"variants">>], Req) ->
+    ana_http:require(Req, ?USER, fun(U) ->
+        with_body(Req, fun(B, R) when is_map(B) -> values_reply(ana_variants:save(Name, B, U), R); (_, R) -> invalid(R) end)
     end);
+route(<<"DELETE">>, [<<"programs">>, Name, <<"variants">>, Id], Req) ->
+    ana_http:require(Req, ?USER, fun(U) -> with_integer(Id, Req, fun(I) -> values_reply(ana_variants:delete(Name, I, U), Req) end) end);
+route(<<"GET">>, [<<"programs">>, Name, <<"variants">>, Id, <<"preview">>], Req) ->
+    ana_http:require(Req, ?USER, fun(U) -> with_integer(Id, Req, fun(I) -> values_reply(ana_variants:preview(Name, I, U), Req) end) end);
+route(<<"POST">>, [<<"programs">>, Name, <<"variants">>, <<"clear_default">>], Req) ->
+    ana_http:require(Req, ?USER, fun(U) -> values_reply(ana_variants:act(Name, null, <<"clear_default">>, U), Req) end);
+route(<<"POST">>, [<<"programs">>, Name, <<"variants">>, Id, Action], Req)
+  when Action =:= <<"publish">>; Action =:= <<"unpublish">>; Action =:= <<"company_default">>; Action =:= <<"restore">>;
+       Action =:= <<"default">> ->
+    ana_http:require(Req, ?USER, fun(U) -> with_integer(Id, Req, fun(I) -> values_reply(ana_variants:act(Name, I, Action, U), Req) end) end);
+
 route(<<"POST">>, [<<"programs">>, Name, <<"run">>], Req) ->
-    ana_http:require(Req, ?USER, fun(U) -> run(Name, U, Req) end);
+    %% Spec 016: external portal accounts reach this route too; the execution only lets
+    %% them run programs marked for the portal (ana_execution:load/2).
+    ana_http:require_any(Req, fun
+        (#{must_change_password := true}) ->
+            ana_http:reply_error(403, <<"PASSWORD_CHANGE_REQUIRED">>, <<"troque sua senha para continuar">>, Req);
+        (U = #{role := <<"external">>}) -> run(Name, U, Req);
+        (U) ->
+            case ana_security:has_role(U, ?USER) of
+                true -> run(Name, U, Req);
+                false -> ana_http:reply_error(403, <<"FORBIDDEN">>, <<"papel insuficiente">>, Req)
+            end
+    end);
+route(<<"GET">>, [<<"portal">>, <<"programs">>], Req) ->
+    ana_http:require_any(Req, fun(_) ->
+        ok_json(ana_db:rows("SELECT name, description, params, docs FROM ana_system.program "
+                            "WHERE portal AND active AND kind = 'program' ORDER BY description, name", []), Req)
+    end);
 
 %% --- Executions and debugger (specs 002, 004) -----------------------------
 route(<<"GET">>, [<<"executions">>], Req) ->
@@ -180,6 +376,18 @@ route(<<"POST">>, [<<"executions">>, Id, <<"command">>], Req) ->
             end;
             (_, R) -> invalid(R)
         end)
+    end);
+
+%% --- Undo (spec 050, D5) ---------------------------------------------------
+%% The routine that undoes runs as an ordinary execution of this user; the offer is theirs, once, within its time.
+route(<<"POST">>, [<<"undo">>, Id], Req) ->
+    ana_http:require(Req, ?USER, fun(U) ->
+        case developer_view(U, ana_undo:run(Id, U)) of
+            {ok, Res} -> ana_http:json(200, Res, Req);
+            {error, Status, Code, Msg} -> ana_http:reply_error(Status, Code, Msg, Req);
+            {error, #{<<"code">> := <<"FORBIDDEN">>} = E} -> ana_http:json(403, #{error => E}, Req);
+            {error, E} -> ana_http:json(422, #{error => E}, Req)
+        end
     end);
 
 %% --- Commands (RF-005-06) -------------------------------------------------
@@ -242,29 +450,52 @@ run(Name, U, Req) ->
         case Debug andalso not ana_security:has_role(U, ?DEV) of
             true -> ana_http:reply_error(403, <<"FORBIDDEN">>, <<"depuração exige papel developer"/utf8>>, R);
             false ->
-                Params = case maps:get(<<"params">>, B, #{}) of
+                Given = case maps:get(<<"params">>, B, #{}) of
                     P when is_map(P) -> P;
                     _ -> #{}
                 end,
+                %% Spec 045 (D5): "variant" (id or name) — its values resolved now, the given ones over the free fields.
+                case with_variant(Name, maps:get(<<"variant">>, B, null), Given, U) of
+                    {error, Code, Msg} -> ana_http:reply_error(case Code of <<"VARIANT_NOT_FOUND">> -> 404; _ -> 422 end, Code, Msg, R);
+                    {ok, Params, Variant} ->
+                External = maps:get(role, U) =:= <<"external">>,
                 Options = #{origin => <<"studio">>,
                             debug => Debug,
-                            async => maps:get(<<"async">>, B, false) =:= true,
+                            async => not External andalso maps:get(<<"async">>, B, false) =:= true,
                             breakpoints => as_list(maps:get(<<"breakpoints">>, B, [])),
                             stop_on_entry => maps:get(<<"stop_on_entry">>, B, false) =:= true,
                             commit => maps:get(<<"commit">>, B, false) =:= true,
-                            timeout_ms => maps:get(<<"timeout_ms">>, B, undefined)},
-                case ana_execution:run(Name, Params, U, Options) of
+                            %% Spec 056: rehearsal — runs whole, undone at the end, effects listed (any user who may run it).
+                            rehearse => maps:get(<<"rehearse">>, B, false) =:= true,
+                            timeout_ms => case External of true -> undefined; false -> maps:get(<<"timeout_ms">>, B, undefined) end,
+                            profile => not External andalso maps:get(<<"profile">>, B, false) =:= true,
+                            variant => Variant},
+                case developer_view(U, ana_execution:run(Name, Params, U, Options)) of
+                    {ok, Res} when Variant =/= null -> ana_http:json(200, Res#{variant => Variant}, R);
                     {ok, Res} -> ana_http:json(200, Res, R);
-                    {error, #{<<"code">> := <<"OVERLOAD">>} = E} -> ana_http:json(503, #{error => E}, R);
+                    {error, #{<<"code">> := C} = E} when C =:= <<"OVERLOAD">>; C =:= <<"DRAINING">>;
+                                                         C =:= <<"DB_UNAVAILABLE">> ->
+                        ana_http:json(503, #{error => E}, R);
                     {error, #{<<"code">> := C} = E} when C =:= <<"QUOTA_EXCEEDED">>; C =:= <<"PROGRAM_BUSY">> ->
                         ana_http:json(429, #{error => E}, R);
-                    {error, #{<<"code">> := <<"PROGRAM_NOT_FOUND">>} = E} -> ana_http:json(404, #{error => E}, R);
+                    {error, #{<<"code">> := C} = E} when C =:= <<"PROGRAM_NOT_FOUND">>; C =:= <<"PROGRAM_INACTIVE">>;
+                                                         C =:= <<"NOT_EXECUTABLE">> ->
+                        ana_http:json(404, #{error => E}, R);
                     {error, #{<<"code">> := <<"FORBIDDEN">>} = E} -> ana_http:json(403, #{error => E}, R);
                     {error, E} -> ana_http:json(422, #{error => E}, R)
+                end
                 end
         end;
         (_, R) -> invalid(R)
     end).
+
+with_variant(_, null, Given, _) -> {ok, Given, null};
+with_variant(Program, Ref, Given, U) when is_integer(Ref); is_binary(Ref) ->
+    case ana_variants:apply(Program, Ref, Given, U) of
+        {ok, Params, Info} -> {ok, Params, Info};
+        E -> E
+    end;
+with_variant(_, _, _, _) -> {error, <<"INVALID">>, <<"variant: informe o id ou o nome da variante"/utf8>>}.
 
 list_executions(U = #{username := Username}, Req) ->
     Limit = max(1, min(200, ana_http:qs_int(<<"limit">>, Req, 50))),
@@ -328,7 +559,12 @@ table(Schema, Table, Req) ->
 
 %% RF-005-05: own connection as ana_read, read-only transaction.
 sql_console(Sql, Req) ->
-    case epgsql:connect(ana_config:db_role(read)) of
+    %% RF-023-05: replicas for reading when ANA_DB_READ_HOSTS is set.
+    Conn = case ana_config:text("ANA_DB_READ_HOSTS", "") of
+        "" -> ana_db:connect(ana_config:db_role(read));
+        Replicas -> ana_db:connect_read(ana_config:db_role(read), Replicas)   % replicas down: the primary answers
+    end,
+    case Conn of
         {ok, C} ->
             try
                 [{ok, [], []}, {ok, [], []}] =
@@ -348,12 +584,50 @@ sql_console(Sql, Req) ->
 %% Helpers
 %% ==========================================================================
 
+%% RF-019-04: frames and local variables of an error are for developers only.
+developer_view(U, R) ->
+    case ana_security:has_role(U, ?DEV) of
+        true -> R;
+        false -> strip(R)
+    end.
+
+strip({error, E}) when is_map(E) ->
+    E2 = maps:without([<<"frames">>, <<"locals">>, <<"trace">>], E),
+    {error, case maps:find(<<"events">>, E2) of
+        {ok, Evs} when is_list(Evs) -> E2#{<<"events">> => [strip_event(Ev) || Ev <- Evs]};
+        _ -> E2
+    end};
+strip({ok, #{events := Evs} = Res}) when is_list(Evs) -> {ok, Res#{events => [strip_event(Ev) || Ev <- Evs]}};
+strip(R) -> R.
+
+strip_event(#{<<"error">> := E} = Ev) when is_map(E) ->
+    Ev#{<<"error">> => maps:without([<<"frames">>, <<"locals">>, <<"trace">>], E)};
+strip_event(Ev) -> Ev.
+
+
+%% Spec 034 (RF-034-01): production with "transport_required" changes programs only by package.
+transported(Req, Fun) ->
+    case ana_instance:transport_required() of
+        true -> ana_http:reply_error(409, <<"TRANSPORT_REQUIRED">>,
+                                     <<"nesta produção programas só mudam por pacote de transporte (Administração → Transportes)"/utf8>>, Req);
+        false -> Fun()
+    end.
+
+delete_program(Name, Req) ->
+    case ana_http:qs_int(<<"purge">>, Req, 0) of
+        1 -> ana_http:require(Req, ?ADMIN, fun(U) -> save_reply(ana_program:purge(Name, U), Req) end);
+        _ -> ana_http:require(Req, ?DEV, fun(U) -> save_reply(ana_program:deactivate(Name, U), Req) end)
+    end.
+
 validate_program(F) ->
     Checks = [
         {<<"source">>, fun(V) -> is_binary(V) andalso byte_size(V) =< 1024 * 1024 end},
         {<<"description">>, fun(V) -> is_binary(V) andalso byte_size(V) =< 500 end},
         {<<"kind">>, fun(V) -> lists:member(V, [<<"program">>, <<"library">>]) end},
         {<<"exposed">>, fun is_boolean/1},
+        {<<"in_menu">>, fun is_boolean/1},
+        {<<"portal">>, fun is_boolean/1},
+        {<<"public">>, fun is_boolean/1},
         {<<"restricted">>, fun is_boolean/1},
         {<<"active">>, fun is_boolean/1},
         {<<"min_role">>, fun(V) -> lists:member(V, [?ADMIN, ?DEV, ?USER]) end},
@@ -381,6 +655,16 @@ save_reply({error, #{} = E}, Req) ->
 simple_reply({ok, _}, Req) -> ana_http:json(200, #{ok => true}, Req);
 simple_reply({error, E}, Req) -> ana_http:json(400, #{error => E}, Req).
 
+category_reply({ok, V}, Req) -> ana_http:json(200, V, Req);
+category_reply({error, not_found}, Req) -> ana_http:reply_error(404, <<"NOT_FOUND">>, <<"não encontrado"/utf8>>, Req);
+category_reply({error, Msg}, Req) when is_binary(Msg) -> ana_http:reply_error(400, <<"INVALID">>, Msg, Req).
+
+with_id(Id, Req, Fun) ->
+    case catch binary_to_integer(Id) of
+        N when is_integer(N) -> Fun(N);
+        _ -> ana_http:reply_error(400, <<"INVALID">>, <<"identificador inválido"/utf8>>, Req)
+    end.
+
 ok_json({ok, V}, Req) -> ana_http:json(200, V, Req);
 ok_json({error, E}, Req) -> ana_http:json(500, #{error => E}, Req).
 
@@ -404,3 +688,18 @@ invalid(Req) -> ana_http:reply_error(400, <<"INVALID">>, <<"requisição inváli
 
 as_list(L) when is_list(L) -> L;
 as_list(_) -> [].
+
+values_reply({ok, V}, Req) -> ana_http:json(200, V, Req);
+values_reply({error, Code, M}, Req) ->
+    Status = case Code of
+        <<"NOT_FOUND">> -> 404;
+        <<"VALUE_NOT_FOUND">> -> 404;
+        <<"FORBIDDEN">> -> 403;
+        <<"FOUR_EYES">> -> 403;
+        <<"CONFLICT">> -> 409;
+        _ -> 400
+    end,
+    ana_http:reply_error(Status, Code, M, Req).
+
+quality_reply({ok, V}, Req) -> ana_http:json(200, V, Req);
+quality_reply({error, M}, Req) when is_binary(M) -> ana_http:reply_error(400, <<"INVALID">>, M, Req).

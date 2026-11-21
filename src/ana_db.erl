@@ -1,3 +1,5 @@
+%% SPDX-FileCopyrightText: 2026 André Luis Pereira dos Santos
+%% SPDX-License-Identifier: AGPL-3.0-or-later
 %% PostgreSQL connection pools and query helpers (spec 001).
 %%
 %% - RF-001-02: pool size configurable (ANA_DB_POOL / ANA_DB_POOL_EXEC).
@@ -9,10 +11,10 @@
 
 -include_lib("epgsql/include/epgsql.hrl").
 
--export([start_link/3, wait_for_database/0]).
+-export([start_link/3, wait_for_database/0, connect/1, connect/2, connect_read/2, hosts/1]).
 -export([with_connection/1, with_connection/3, checkout/2, checkin/2, transaction/1,
          query/3, batch/3, squery/2, query_limited/3,
-         rows/2, one/2, exec/2, status/1, sql_error/1]).
+         rows/2, rows/3, one/2, exec/2, status/1, sql_error/1]).
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2, terminate/2]).
 
 -define(CACHE, ana_stmt_cache).
@@ -28,7 +30,7 @@
     size :: pos_integer(),
     open = 0 :: non_neg_integer(),
     refill :: reference() | undefined,      % single reconnection timer
-    backoff = 500 :: pos_integer()          % exponential backoff (ms)
+    backoff = 250 :: pos_integer()          % exponential backoff (ms)
 }).
 
 %% ==========================================================================
@@ -45,7 +47,7 @@ wait_for_database() ->
     wait_for_database(500, erlang:monotonic_time(millisecond) + 60000).
 
 wait_for_database(Wait, Deadline) ->
-    case epgsql:connect(ana_config:db()) of
+    case connect(ana_config:db()) of
         {ok, C} ->
             ok = epgsql:close(C);
         {error, Reason} ->
@@ -56,6 +58,125 @@ wait_for_database(Wait, Deadline) ->
                     timer:sleep(Wait),
                     wait_for_database(min(Wait * 2, 8000), Deadline)
             end
+    end.
+
+%% RF-023-05: ANA_DB_HOST may list several addresses ("pg1,pg2"). With more
+%% than one, only the primary is accepted (pg_is_in_recovery() = false), so a
+%% promoted replica is found after a failover; the last address that worked
+%% is tried first. Mode `any` accepts replicas (read-only use).
+-spec connect(map()) -> {ok, pid()} | {error, term()}.
+connect(Config) -> connect(Config, primary).
+
+-spec connect(map(), primary | any) -> {ok, pid()} | {error, term()}.
+connect(Config = #{host := Host}, Mode) ->
+    case hosts(Host) of
+        [Single] -> safe_connect(Config#{host => Single});
+        Hosts -> try_hosts(prefer(Hosts), Config, Mode, no_hosts)
+    end.
+
+%% A failed epgsql:connect stops the connection process with the error as exit
+%% reason, and the caller is linked to it: a caller that does not trap exits (an
+%% HTTP request, for instance) would die instead of getting {error, Reason}.
+safe_connect(Config) ->
+    case process_flag(trap_exit, true) of
+        true -> normalize(catch epgsql:connect(Config));          % already trapping (pools)
+        false ->
+            R = normalize(catch epgsql:connect(Config)),
+            flush_exits(),
+            process_flag(trap_exit, false),
+            R
+    end.
+
+normalize({ok, C}) -> {ok, C};
+normalize({error, R}) -> {error, R};
+normalize({'EXIT', R}) -> {error, R};
+normalize(Other) -> {error, Other}.
+
+flush_exits() ->
+    receive {'EXIT', _, _} -> flush_exits()
+    after 0 -> ok
+    end.
+
+%% Read-only connections (SQL console): replicas first with a short connect
+%% timeout; then the primary the pools are using (no new probing), then any.
+-spec connect_read(map(), string()) -> {ok, pid()} | {error, term()}.
+connect_read(Config, Replicas) ->
+    Fast = Config#{timeout => 3000},
+    case Replicas =/= "" andalso first_ok(hosts(Replicas), Fast, no_hosts) of
+        {ok, C} -> {ok, C};
+        _ ->
+            Primary = persistent_term:get({?MODULE, last_primary}, undefined),
+            All = hosts(maps:get(host, Config)),
+            Order = case lists:member(Primary, All) of
+                true -> [Primary | lists:delete(Primary, All)];
+                false -> All
+            end,
+            first_ok(Order -- hosts(Replicas), Config, no_hosts)
+    end.
+
+-spec hosts(string()) -> [string()].
+hosts(Host) ->
+    [H || H0 <- string:split(Host, ",", all), H <- [string:trim(H0)], H =/= ""].
+
+prefer(Hosts) ->
+    Last = persistent_term:get({?MODULE, last_primary}, undefined),
+    case lists:member(Last, Hosts) of
+        true -> [Last | lists:delete(Last, Hosts)];
+        false -> Hosts
+    end.
+
+%% Every address is probed; among the primaries the one with the newest WAL
+%% timeline wins. A promoted replica always has a newer timeline than the old
+%% primary, so an old primary that comes back without being demoted (split
+%% brain) is never chosen — not even after the core restarts (CA T-023-09).
+try_hosts(Hosts, Config, any, _) ->
+    first_ok(Hosts, Config, no_hosts);
+try_hosts(Hosts, Config, primary, _) ->
+    %% An address that failed in the last 15 s is skipped (unless all did), so a dead
+    %% host costs one connect timeout per window, not one per connection.
+    Now = erlang:monotonic_time(millisecond),
+    {Alive, Skipped} = lists:partition(fun(H) -> Now - persistent_term:get({?MODULE, down, H}, -100000) > 15000 end, Hosts),
+    First = [{H, probe(H, Config)} || H <- Alive],
+    %% No primary among the "alive" ones: the skipped addresses get their chance right away
+    %% (a replica that was down a moment ago may be the new primary).
+    Probes = case [x || {_, {primary, _, _}} <- First] of
+        [] -> First ++ [{H, probe(H, Config)} || H <- Skipped];
+        _ -> First
+    end,
+    _ = [persistent_term:put({?MODULE, down, H}, Now) || {H, {error, _}} <- Probes],
+    _ = [persistent_term:erase({?MODULE, down, H}) || {H, {primary, _, _}} <- Probes],
+    Primaries = [{TL, H, C} || {H, {primary, TL, C}} <- Probes],
+    Last = case [R || {_, {error, R}} <- Probes] ++ [{not_primary, H} || {H, replica} <- Probes] of
+        [] -> no_hosts;
+        [R | _] -> R
+    end,
+    case lists:reverse(lists:keysort(1, Primaries)) of
+        [] -> {error, Last};
+        [{TL, H, C} | Others] ->
+            _ = [catch epgsql:close(O) || {_, _, O} <- Others],
+            _ = Others =/= [] andalso ok =:= logger:warning(
+                  "more than one primary answered (~p); using ~s (timeline ~b)", [[X || {_, X, _} <- Primaries], H, TL]),
+            persistent_term:put({?MODULE, last_primary}, H),
+            {ok, C}
+    end.
+
+first_ok([], _, Last) -> {error, Last};
+first_ok([H | Rest], Config, _) ->
+    case safe_connect(Config#{host => H}) of
+        {ok, C} -> {ok, C};
+        {error, Reason} -> first_ok(Rest, Config, {H, Reason})
+    end.
+
+probe(H, Config) ->
+    %% A host going down (or shutting down) must not hold the switch-over: 3 s at most per address.
+    case safe_connect(Config#{host => H, timeout => min(maps:get(timeout, Config, 5000), 3000)}) of
+        {ok, C} ->
+            case epgsql:squery(C, "SELECT pg_is_in_recovery(), CASE WHEN pg_is_in_recovery() THEN 0 ELSE "
+                                  "('x' || substring(pg_walfile_name(pg_current_wal_lsn()) from 1 for 8))::bit(32)::int END") of
+                {ok, _, [{<<"f">>, TL}]} -> {primary, binary_to_integer(TL), C};
+                _ -> catch epgsql:close(C), replica
+            end;
+        {error, Reason} -> {error, {H, Reason}}
     end.
 
 %% Runs Fun(Conn) with a connection borrowed from the pool.
@@ -164,6 +285,14 @@ rows(Sql, Params) ->
         end
     end).
 
+%% The same inside a transaction (spec 039: the BPM engine moves a case under its lock).
+-spec rows(pid(), iodata(), [term()]) -> {ok, [map()]} | {error, map()}.
+rows(C, Sql, Params) ->
+    case query(C, Sql, Params) of
+        {ok, R} -> {ok, as_maps(R)};
+        E -> E
+    end.
+
 -spec one(iodata(), [term()]) -> {ok, map() | undefined} | {error, map()}.
 one(Sql, Params) ->
     case rows(Sql, Params) of
@@ -215,6 +344,10 @@ init({Name, Config, Size}) ->
 
 handle_call({checkout, Client, Ref}, _From, St = #st{free = [C | Rest]}) ->
     {reply, {ok, C}, lend(C, Client, Ref, St#st{free = Rest})};
+handle_call({checkout, _, _}, _From, St = #st{free = [], open = 0, refill = T}) when T =/= undefined ->
+    %% CA-023-02: database down and no connection left — fail fast, don't queue.
+    {reply, {error, #{code => <<"DB_UNAVAILABLE">>,
+                      message => <<"banco de dados indisponível; tente novamente em instantes"/utf8>>}}, St};
 handle_call({checkout, Client, Ref}, From, St = #st{queue = Q}) ->
     {noreply, open_up_to(St#st{queue = queue:in({From, Client, Ref}, Q)})};
 handle_call(status, _From, St) ->
@@ -321,9 +454,9 @@ discard(C) ->
     unlink(C),
     catch epgsql:close(C).
 
-open_up_to(St = #st{open = O, size = S}) when O >= S -> St#st{backoff = 500};
+open_up_to(St = #st{open = O, size = S}) when O >= S -> St#st{backoff = 250};
 open_up_to(St = #st{open = O, config = Config, name = Name}) ->
-    case epgsql:connect(Config()) of
+    case connect(Config()) of
         {ok, C} ->
             open_up_to(release(C, St#st{open = O + 1}));
         {error, Reason} ->
@@ -332,9 +465,10 @@ open_up_to(St = #st{open = O, config = Config, name = Name}) ->
             schedule_refill(St)
     end.
 
-%% A single pending timer, exponential backoff up to 30 s.
+%% A single pending timer, exponential backoff up to 2 s (RNF-023-02: the core is back within seconds
+%% after the database returns or a replica is promoted; a longer pause only delays the recovery).
 schedule_refill(St = #st{refill = undefined, backoff = B}) ->
-    St#st{refill = erlang:send_after(B, self(), refill), backoff = min(B * 2, 30000)};
+    St#st{refill = erlang:send_after(B, self(), refill), backoff = min(B * 2, 2000)};
 schedule_refill(St) ->
     St.
 
@@ -397,6 +531,21 @@ as_maps(#{columns := Cols, rows := Rows}) ->
     Names = [N || #{name := N} <- Cols],
     [maps:from_list(lists:zip(Names, R)) || R <- Rows].
 
+sql_error(#error{code = <<"25006">>}) ->
+    case ana_license:restricted() of
+        true ->
+            %% Spec 009 (RF-009-05): the license's restricted mode opens read-only execution transactions.
+            #{code => <<"LICENSE_RESTRICTED">>, sqlstate => <<"25006">>,
+              message => <<"licença vencida ou inválida: o ERP está somente para consulta (peça ao administrador para instalar a licença)"/utf8>>};
+        false ->
+            %% Spec 020 (RF-020-13): so does a simulation.
+            #{code => <<"SIMULATION_READ_ONLY">>, sqlstate => <<"25006">>,
+              message => <<"simulação não grava nada: o programa tentou gravar durante a simulação"/utf8>>}
+    end;
+sql_error(#error{code = <<"42501">>, message = <<"new row violates row-level security", _/binary>>}) ->
+    %% Spec 009 (D10): writing a document outside the user's data scope.
+    #{code => <<"DATA_SCOPE">>, sqlstate => <<"42501">>,
+      message => <<"o registro fica fora dos dados que você pode ver (centro de custo, carteira ou projetos)"/utf8>>};
 sql_error(#error{code = Code, message = Msg, extra = Extra}) ->
     Base = #{code => <<"SQL">>, sqlstate => Code, message => Msg},
     case proplists:get_value(detail, Extra) of

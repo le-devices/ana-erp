@@ -1,5 +1,6 @@
 # ana:description Gera relatório de status do projeto (andamento, marcos, riscos, horas, próximos passos)
 # ana:exposed yes
+# ana:category Projetos/Acompanhamento
 """RF-021-09, CA-021-07. Schedulable (spec 018), e.g. weekly, run as a robot
 that manages the project. Content is client-safe: hours and progress, never
 cost, rates or margin (RNF-021-02). Without `project`, one report per active
@@ -12,7 +13,7 @@ from ana_lib.projects import consulting as C
 from ana_lib.projects import views as V
 
 PARAMS = {
-    "project": {"type": "str", "label": "projeto (vazio = todos que eu gerencio)"},
+    "project": {"type": "str", "label": "projeto (vazio = todos que eu gerencio)", "lookup": {"program": "projects.lookup", "params": {"kind": "projects"}}},
     "days": {"type": "int", "default": 7, "label": "período (dias)"},
     "client_visible": {"type": "bool", "default": True, "label": "visível ao cliente"},
 }
@@ -22,7 +23,9 @@ def main(project=None, days=7, client_visible=True):
     if project:
         projects = [access.project(project)]
     else:
-        projects = ana.sql("SELECT * FROM projects.project WHERE status = 'active' AND ($1 OR manager = $2) "
+        projects = ana.sql("SELECT id, code, name, customer_id, manager, billing, status, start_date, due_date, budget_hours, "
+                           "budget_amount, service_tax_rate, service_tax_withheld, description, created_at, "
+                           "cost_center FROM projects.project WHERE status = 'active' AND ($1 OR manager = $2) "
                            "ORDER BY code", access.is_admin(), ana.context.user)
     out = []
     for p in projects:

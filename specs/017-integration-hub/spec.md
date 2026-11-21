@@ -89,3 +89,26 @@ segredos espalhados e sem rastreabilidade.
   a fila de mortos; reprocessar entrega com sucesso.
 - **CA-017-06** Programa não consegue ler o segredo de um conector nem chamar
   host fora da lista.
+
+## Fontes automáticas de extrato (T-017-05b)
+Cada conta bancária pode ter uma fonte (`finance.statement_source`), escolhida
+pela empresa — as duas opções valem igualmente:
+- **Pasta de arquivos**: OFX ou CNAB 240 enviados à pasta da conta no
+  repositório (spec 016), por pessoas ou por outro sistema. Cada arquivo (e
+  versão) é lido uma vez (`finance.statement_file`); arquivo que não é OFX nem
+  CNAB 240 (CSV só com extensão `.csv`) fica registrado com o motivo e não
+  para a busca.
+- **API do banco**: conector `http_api` (hosts permitidos, credenciais,
+  tentativas) e um programa adaptador `main(connector, bank_account, since,
+  options)` que devolve `{"format": "lines" | "ofx", …}`. O adaptador genérico
+  lê `GET <path>?account=&from=` em JSON (`transactions`, `balance`) ou OFX;
+  banco com outro contrato ganha um adaptador próprio, sem mudar a rotina. A
+  busca seguinte começa um dia antes da última (a importação não duplica).
+
+A rotina `extratos.buscar` (de hora em hora nos dias úteis; nasce desligada)
+e o botão "Buscar agora" leem todas as fontes, cada uma isolada das outras,
+e a importação concilia o que é certo (spec 038). CNAB 240 segue o layout
+FEBRABAN de extrato (segmento E: data 146–153, valor 154–171, D/C 172,
+histórico 180–204, documento 205–240; saldo final no trailer de lote:
+143–150, 151–168, 169). O CNAB 400 de extrato não é padronizado entre os
+bancos: entra como adaptador do banco.

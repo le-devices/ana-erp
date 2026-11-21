@@ -1,3 +1,5 @@
+%% SPDX-FileCopyrightText: 2026 André Luis Pereira dos Santos
+%% SPDX-License-Identifier: AGPL-3.0-or-later
 %% Program repository (spec 002: RF-002-01, RF-002-02, RNF-002-08; spec 011:
 %% RF-011-10).
 %%
@@ -5,10 +7,11 @@
 %% NOTIFY "ana_program" (ana_listener).
 -module(ana_program).
 -compile({no_auto_import, [get/1]}).
--export([init_cache/0, valid_name/1,
+-export([refresh_params/0, init_cache/0, valid_name/1,
          list/1, get/1, save/3, deactivate/2, purge/2, versions/1, version/2, restore/3,
          for_execution/1, library_source/1,
-         commands/0, save_command/3, delete_command/1, on_notify/2]).
+         commands/0, save_command/3, delete_command/1, on_notify/2,
+         inspect_fields/1, write_in/5, invalidate/1]).
 
 -define(CACHE, ana_program_cache).
 -define(CHANNEL, "ana_program").
@@ -29,14 +32,17 @@ valid_name(_) -> false.
 
 list(IncludeInactive) ->
     ana_db:rows(
-        "SELECT name, description, kind, exposed, restricted, min_role, active, version, warning, "
-        "       updated_at, updated_by "
+        "SELECT name, description, kind, exposed, public, restricted, min_role, active, version, warning, "
+        "       updated_at, updated_by, "
+        %% Spec 009 (D8): a product program edited here is "customized — outside standard support".
+        "       (seed_hash IS NOT NULL AND seed_hash <> encode(sha256(convert_to(source, 'UTF8')), 'hex')) AS customized "
         "FROM ana_system.program WHERE active OR $1 ORDER BY name", [IncludeInactive]).
 
 get(Name) ->
     ana_db:one(
-        "SELECT name, description, kind, exposed, restricted, min_role, active, version, source, "
-        "       params, docs, warning, limits, updated_at, updated_by "
+        "SELECT name, description, kind, exposed, public, restricted, min_role, active, in_menu, version, source, "
+        "       params, docs, warning, limits, lint, updated_at, updated_by, "
+        "       (seed_hash IS NOT NULL AND seed_hash <> encode(sha256(convert_to(source, 'UTF8')), 'hex')) AS customized "
         "FROM ana_system.program WHERE name = $1", [Name]).
 
 versions(Name) ->
@@ -57,7 +63,7 @@ for_execution(Name) ->
         [] ->
             case ana_db:one(
                    "SELECT name, version, source, kind, exposed, restricted, min_role, active, params, "
-                   "       description, docs, limits "
+                   "       description, docs, limits, portal, public "
                    "FROM ana_system.program WHERE name = $1", [Name]) of
                 {ok, #{} = P} ->
                     ets:insert(?CACHE, {Name, P}),
@@ -99,7 +105,21 @@ save(Name, Fields, #{username := Who}) ->
                 catch throw:{error, E} -> {error, E}
                 end,
             invalidate(Name),
+            %% Spec 045 (D6): the variants of the program follow its parameters (valid or invalid, with the reason).
+            _ = case R of {ok, _} -> catch ana_variants:validate_program(Name); _ -> ok end,
             R
+    end.
+
+%% Spec 034: several programs in one transaction (transport import). Inspection (Python) runs
+%% before the transaction; the caller invalidates the caches after COMMIT.
+-spec inspect_fields(map()) -> map() | undefined.
+inspect_fields(Fields) ->
+    inspection(maps:get(<<"source">>, Fields, undefined), maps:get(<<"kind">>, Fields, undefined)).
+
+-spec write_in(epgsql:connection(), binary(), map(), map() | undefined, binary()) -> {ok, map()} | {error, term()}.
+write_in(C, Name, Fields, Insp, Who) ->
+    try write(C, Name, Fields, maps:get(<<"source">>, Fields, undefined), Insp, Who)
+    catch throw:{error, E} -> {error, E}
     end.
 
 write(C, Name, Fields, Source, Insp, Who) ->
@@ -112,8 +132,10 @@ write(C, Name, Fields, Source, Insp, Who) ->
         undefined ->
             ok = exec(C,
                 "INSERT INTO ana_system.program (name, description, kind, exposed, restricted, min_role, "
-                "  active, version, source, params, docs, warning, updated_by, limits) "
-                "VALUES ($1, $2, $3, $4, $5, $6, $7, 1, $8, $9, $10, $11, $12, $13)",
+                "  active, version, source, params, docs, warning, updated_by, limits, in_menu, lint, portal, public, "
+                "  writing, uses) "
+                "VALUES ($1, $2, $3, $4, $5, $6, $7, 1, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, "
+                "        COALESCE($18::text[], '{}'), COALESCE($19::text[], '{}'))",
                 [Name, maps:get(<<"description">>, Fields, <<>>),
                  maps:get(<<"kind">>, Fields, <<"program">>),
                  maps:get(<<"exposed">>, Fields, false),
@@ -121,8 +143,12 @@ write(C, Name, Fields, Source, Insp, Who) ->
                  maps:get(<<"min_role">>, Fields, <<"user">>),
                  maps:get(<<"active">>, Fields, true),
                  Source, field(params, Insp), field(docs, Insp), field(warning, Insp), Who,
-                 maps:get(<<"limits">>, Fields, #{})]),
+                 maps:get(<<"limits">>, Fields, #{}), maps:get(<<"in_menu">>, Fields, true), field(lint, Insp),
+                 maps:get(<<"portal">>, Fields, false) =:= true,
+                 maps:get(<<"public">>, Fields, false) =:= true andalso maps:get(<<"exposed">>, Fields, false) =:= true,
+                 field(writing, Insp), field(uses, Insp)]),
             ok = new_version(C, Name, 1, Source, Comment, Who),
+            ok = set_category(C, Name, Source),
             notify(C, Name),
             {ok, #{version => 1, created => true, warning => field(warning, Insp)}};
         #{<<"version">> := V, <<"source">> := CurrentSource} ->
@@ -139,7 +165,14 @@ write(C, Name, Fields, Source, Insp, Who) ->
                         "  params = CASE WHEN $9 IS NULL THEN params ELSE $10 END, "
                         "  docs = CASE WHEN $9 IS NULL THEN docs ELSE $11 END, "
                         "  warning = CASE WHEN $9 IS NULL THEN warning ELSE $12 END, "
-                        "  updated_at = now(), updated_by = $13, limits = COALESCE($14, limits) "
+                        "  updated_at = now(), updated_by = $13, limits = COALESCE($14, limits), "
+                        "  in_menu = COALESCE($15, in_menu), "
+                        "  lint = CASE WHEN $9 IS NULL THEN lint ELSE $16 END, "
+                        "  portal = COALESCE($17, portal), "
+                        "  public = CASE WHEN COALESCE($4, exposed) THEN COALESCE($18, public) ELSE false END, "
+                        %% Spec 056: what the program writes and uses (catalog of "Ensaiar").
+                        "  writing = CASE WHEN $9 IS NULL THEN writing ELSE COALESCE($19::text[], '{}') END, "
+                        "  uses = CASE WHEN $9 IS NULL THEN uses ELSE COALESCE($20::text[], '{}') END "
                         "WHERE name = $1",
                         [Name, maps:get(<<"description">>, Fields, null),
                          maps:get(<<"kind">>, Fields, null),
@@ -148,14 +181,33 @@ write(C, Name, Fields, Source, Insp, Who) ->
                          maps:get(<<"min_role">>, Fields, null),
                          maps:get(<<"active">>, Fields, null), NV,
                          null_if_undefined(Source), field(params, Insp), field(docs, Insp),
-                         field(warning, Insp), Who, maps:get(<<"limits">>, Fields, null)]),
+                         field(warning, Insp), Who, maps:get(<<"limits">>, Fields, null),
+                         maps:get(<<"in_menu">>, Fields, null), field(lint, Insp),
+                         maps:get(<<"portal">>, Fields, null), maps:get(<<"public">>, Fields, null),
+                         field(writing, Insp), field(uses, Insp)]),
                     _ = Changed andalso (ok =:= new_version(C, Name, NV, Source, Comment, Who)),
+                    ok = set_category(C, Name, Source),
                     notify(C, Name),
                     {ok, #{version => NV, created => false, warning => field(warning, Insp)}};
                 _Other ->
                     {error, {conflict, V}}
             end
     end.
+
+%% Spec 020 (RF-020-19): "Área/Categoria" from the header line "# ana:category …" (also for the company's programs).
+set_category(_C, _Name, undefined) -> ok;
+set_category(C, Name, Source) ->
+    Category = case re:run(Source, "^#[ \t]*ana:category[ \t]+([^\r\n]+)", [multiline, unicode, {capture, all_but_first, binary}]) of
+        {match, [Cat]} -> string:trim(Cat);
+        nomatch -> null
+    end,
+    %% Spec 050 (D5): "# ana:confirm <consequence>" — the screen asks before running, saying the consequence.
+    Confirm = case re:run(Source, "^#[ \t]*ana:confirm[ \t]+([^\r\n]+)", [multiline, unicode, {capture, all_but_first, binary}]) of
+        {match, [Cf]} -> case string:trim(Cf) of <<>> -> null; T -> unicode:characters_to_binary(string:slice(T, 0, 300)) end;
+        nomatch -> null
+    end,
+    exec(C, "UPDATE ana_system.program SET category = $2, confirm = $3 WHERE name = $1 "
+            "AND (category IS DISTINCT FROM $2 OR confirm IS DISTINCT FROM $3)", [Name, Category, Confirm]).
 
 new_version(C, Name, V, Source, Comment, Who) ->
     exec(C, "INSERT INTO ana_system.program_version (name, version, source, comment, created_by) "
@@ -186,13 +238,34 @@ restore(Name, V, User) ->
         E -> E
     end.
 
+%% Programs saved before parameters carried their declared order ("order")
+%% are inspected again, without a new version, so forms follow the source.
+-spec refresh_params() -> {ok, non_neg_integer()}.
+refresh_params() ->
+    {ok, Rows} = ana_db:rows(
+        "SELECT name, source, kind FROM ana_system.program", []),
+    %% Also refreshes the static SQL findings (spec 019): the rules evolve with the product.
+    %% Written only when something changed (P15).
+    N = length([ok || #{<<"name">> := Name, <<"source">> := Source, <<"kind">> := Kind} <- Rows,
+                      #{params := P, lint := L, writing := Wr, uses := Us} <- [inspection(Source, Kind)],
+                      {ok, 1} <- [ana_db:exec("UPDATE ana_system.program SET params = COALESCE($2, params), "
+                                              "lint = COALESCE($3, '[]'::jsonb), writing = COALESCE($4::text[], writing), "
+                                              "uses = COALESCE($5::text[], uses) WHERE name = $1 "
+                                              "AND (params IS DISTINCT FROM COALESCE($2, params) "
+                                              "     OR lint IS DISTINCT FROM COALESCE($3, '[]'::jsonb) "
+                                              "     OR writing IS DISTINCT FROM COALESCE($4::text[], writing) "
+                                              "     OR uses IS DISTINCT FROM COALESCE($5::text[], uses))",
+                                              [Name, P, L, Wr, Us])],
+                      _ <- [invalidate(Name)], _ <- [catch ana_variants:validate_program(Name)]]),
+    {ok, N}.
+
 %% RF-005-08: inspection (syntax, PARAMS, docs) without running.
 inspection(undefined, _) -> undefined;
 inspection(Source, Kind) ->
     case ana_py:inspect(Source) of
         {ok, #{<<"ok">> := false, <<"error">> := #{<<"line">> := L, <<"message">> := M}}} ->
             #{warning => unicode:characters_to_binary(io_lib:format("linha ~p: ~ts", [L, M])),
-              params => null, docs => null};
+              params => null, docs => null, lint => null, writing => null, uses => null};
         {ok, #{<<"ok">> := true} = R} ->
             Warning = case R of
                 #{<<"error">> := #{<<"line">> := L, <<"message">> := M}} ->
@@ -203,10 +276,12 @@ inspection(Source, Kind) ->
             end,
             #{warning => Warning,
               params => maps:get(<<"params">>, R, null),
-              docs => maps:get(<<"docs">>, R, null)};
+              docs => maps:get(<<"docs">>, R, null),
+              lint => maps:get(<<"lint">>, R, null),
+              writing => maps:get(<<"writing">>, R, null), uses => maps:get(<<"uses">>, R, null)};
         {error, Reason} ->
             logger:warning("inspection unavailable: ~0p", [Reason]),
-            #{warning => null, params => null, docs => null}
+            #{warning => null, params => null, docs => null, lint => null, writing => null, uses => null}
     end.
 
 field(_, undefined) -> null;

@@ -1,3 +1,5 @@
+%% SPDX-FileCopyrightText: 2026 André Luis Pereira dos Santos
+%% SPDX-License-Identifier: AGPL-3.0-or-later
 %% Cron and business-day calendar (spec 018, T-018-02, CA-018-04).
 -module(ana_cron_tests).
 -include_lib("eunit/include/eunit.hrl").

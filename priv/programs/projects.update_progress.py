@@ -1,5 +1,6 @@
 # ana:description Atualiza situação e % concluído de uma atividade
 # ana:exposed yes
+# ana:category Projetos/Planejamento
 """RF-021-04/05, H4. The responsible person, a team member allocated to the
 activity, or the manager. Moving to doing/done records actual dates."""
 
@@ -9,9 +10,9 @@ from ana_lib.projects import access
 from ana_lib.projects import views as V
 
 PARAMS = {
-    "project": {"type": "str", "required": True},
-    "activity": {"type": "str", "required": True},
-    "status": {"type": "str", "label": "todo, doing, review, done, blocked"},
+    "project": {"type": "str", "required": True, "label": "projeto", "lookup": {"program": "projects.lookup", "params": {"kind": "projects"}}},
+    "activity": {"type": "str", "required": True, "label": "atividade", "lookup": {"program": "projects.lookup", "params": {"kind": "activities"}, "depends": ["project"]}},
+    "status": {"type": "str", "label": "situação", "choices": [["todo", "A fazer"], ["doing", "Em andamento"], ["review", "Em revisão"], ["done", "Concluído"], ["blocked", "Bloqueado"]]},
     "percent": {"type": "decimal", "label": "% concluído"},
     "note": {"type": "str", "label": "observação"},
 }

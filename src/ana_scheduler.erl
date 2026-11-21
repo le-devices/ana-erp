@@ -1,3 +1,5 @@
+%% SPDX-FileCopyrightText: 2026 André Luis Pereira dos Santos
+%% SPDX-License-Identifier: AGPL-3.0-or-later
 %% Scheduler engine (spec 018).
 %%
 %% One process per node. Only the leader (session advisory lock on a dedicated
@@ -76,7 +78,7 @@ handle_info(_, S) ->
 
 ensure_leader(S = #{leader := true}) -> S;
 ensure_leader(S = #{conn := undefined}) ->
-    case epgsql:connect((ana_config:db())#{application_name => "ana_scheduler"}) of
+    case ana_db:connect((ana_config:db())#{application_name => "ana_scheduler"}) of
         {ok, C} -> ensure_leader(S#{conn => C});
         {error, _} -> S
     end;
@@ -104,7 +106,7 @@ reconcile() ->
         "WHERE o.id = o2.id AND o.status = 'running'"), []),
     ok.
 
-node_name() -> atom_to_binary(node()).
+node_name() -> ana_config:node_id().
 
 %% ==========================================================================
 %% Work

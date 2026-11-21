@@ -1,0 +1,21 @@
+# SPDX-FileCopyrightText: 2026 André Luis Pereira dos Santos
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# Chaos tests (spec 023): two core nodes behind HAProxy, on top of the
+# cluster compose. Usage: tests/chaos/run.sh
+services:
+  ana:
+    environment:
+      ANA_DRAIN_DELAY_MS: "4000"        # longer than the balancer's detection (2 × 1 s)
+  ana2:
+    environment:
+      ANA_DRAIN_DELAY_MS: "4000"
+      # RF-023-05: a list of addresses; the first does not exist, the primary is found.
+      ANA_DB_HOST: "pg-missing.invalid,db"
+    stop_grace_period: 40s
+  lb:
+    image: haproxy:2.9-alpine
+    volumes:
+      - ./tests/chaos/haproxy.cfg:/usr/local/etc/haproxy/haproxy.cfg:ro
+    ports:
+      - "${ANA_LB_PORT:-8090}:8090"
+    depends_on: [ana, ana2]

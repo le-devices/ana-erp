@@ -1,0 +1,96 @@
+{
+ "date": "2026-11-07",
+ "machine": "8 núcleos, 15 GB; ERP e banco presos aos núcleos do perfil (cpuset) com limite de memória; gerador em outros núcleos",
+ "method": "tests/load/sizing_load.py — pausa média 8 s, 8 ações (20 % gravam), degraus de 60 s; passa com p95 de toda ação interativa <= 1 s e erros <= 0,5 %",
+ "profiles": [
+  {
+   "profile": "2 vCPU, 4 GB (ERP 1,5 GB + banco 2,5 GB; shared_buffers 512 MB)",
+   "capacity_users": 80,
+   "steps": [
+    {
+     "users": 10,
+     "per_second": 1.3,
+     "errors": 0,
+     "worst_interactive_p95_ms": 221.5,
+     "passed": true
+    },
+    {
+     "users": 20,
+     "per_second": 2.6,
+     "errors": 0,
+     "worst_interactive_p95_ms": 169.8,
+     "passed": true
+    },
+    {
+     "users": 40,
+     "per_second": 5.2,
+     "errors": 0,
+     "worst_interactive_p95_ms": 296.1,
+     "passed": true
+    },
+    {
+     "users": 60,
+     "per_second": 7.5,
+     "errors": 0,
+     "worst_interactive_p95_ms": 390.5,
+     "passed": true
+    },
+    {
+     "users": 80,
+     "per_second": 9.6,
+     "errors": 0,
+     "worst_interactive_p95_ms": 356.1,
+     "passed": true
+    },
+    {
+     "users": 100,
+     "per_second": 13.1,
+     "errors": 0,
+     "worst_interactive_p95_ms": 3479.1,
+     "passed": false
+    },
+    {
+     "users": 120,
+     "per_second": 15.4,
+     "errors": 0,
+     "worst_interactive_p95_ms": 3036.1,
+     "passed": false
+    }
+   ]
+  },
+  {
+   "profile": "4 vCPU, 8 GB (ERP 3 GB + banco 5 GB; shared_buffers 2 GB)",
+   "capacity_users": 140,
+   "steps": [
+    {
+     "users": 80,
+     "per_second": 10.5,
+     "errors": 2,
+     "worst_interactive_p95_ms": 225.8,
+     "passed": true
+    },
+    {
+     "users": 120,
+     "per_second": 15.7,
+     "errors": 3,
+     "worst_interactive_p95_ms": 330.9,
+     "passed": true
+    },
+    {
+     "users": 140,
+     "per_second": 18.0,
+     "errors": 0,
+     "worst_interactive_p95_ms": 562.5,
+     "passed": true
+    },
+    {
+     "users": 160,
+     "per_second": 21.9,
+     "errors": 1,
+     "worst_interactive_p95_ms": 1112.7,
+     "passed": false
+    }
+   ]
+  }
+ ]
+}

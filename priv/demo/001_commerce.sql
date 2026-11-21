@@ -1,14 +1,14 @@
 -- Demo: commerce (RF-006-07). Applied only with ANA_DEMO=true.
 
 INSERT INTO base.company (legal_name, tax_id, city, state) VALUES
-    ('ANA Demonstração Ltda', '00.000.000/0001-00', 'São Paulo', 'SP')
+    ('ANA Demonstração Ltda', '12.345.678/0001-95', 'São Paulo', 'SP')
 ON CONFLICT DO NOTHING;
 
 INSERT INTO base.party (kind, name, tax_id, email, city, state) VALUES
-    ('customer', 'Mercado Bom Preço', '11.111.111/0001-11', 'compras@bompreco.example', 'Campinas', 'SP'),
-    ('customer', 'Padaria Pão Quente', '22.222.222/0001-22', 'contato@paoquente.example', 'Curitiba', 'PR'),
-    ('customer', 'Loja Esquina', '33.333.333/0001-33', 'loja@esquina.example', 'Recife', 'PE'),
-    ('supplier', 'Distribuidora Norte', '44.444.444/0001-44', 'vendas@norte.example', 'Manaus', 'AM')
+    ('customer', 'Mercado Bom Preço', '11.111.111/0001-91', 'compras@bompreco.example', 'Campinas', 'SP'),
+    ('customer', 'Padaria Pão Quente', '22.222.222/0001-91', 'contato@paoquente.example', 'Curitiba', 'PR'),
+    ('customer', 'Loja Esquina', '33.333.333/0001-91', 'loja@esquina.example', 'Recife', 'PE'),
+    ('supplier', 'Distribuidora Norte', '44.444.444/0001-91', 'vendas@norte.example', 'Manaus', 'AM')
 ON CONFLICT DO NOTHING;
 
 INSERT INTO base.product (code, description, unit, price) VALUES
@@ -24,8 +24,9 @@ INSERT INTO inventory.warehouse (code, description) VALUES
     ('LOJA', 'Depósito da loja')
 ON CONFLICT DO NOTHING;
 
-INSERT INTO inventory.stock_movement (product_id, warehouse_id, quantity, kind, document, created_by)
-SELECT p.id, w.id, q.qty, 'in', 'OPENING-BALANCE', 'system'
+-- Spec 038: opening balance at an estimated cost (60 % of the price); the database posts it against opening balances.
+INSERT INTO inventory.stock_movement (product_id, warehouse_id, quantity, kind, document, created_by, reason, unit_cost)
+SELECT p.id, w.id, q.qty, 'in', 'OPENING-BALANCE', 'system', 'opening', round(p.price * 0.6, 2)
 FROM (VALUES ('CAFE-500', 'CENTRAL', 200), ('ARROZ-5', 'CENTRAL', 150),
              ('FEIJAO-1', 'CENTRAL', 300), ('OLEO-900', 'CENTRAL', 120),
              ('ACUCAR-1', 'CENTRAL', 250), ('CAFE-500', 'LOJA', 30),

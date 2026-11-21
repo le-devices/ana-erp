@@ -7,6 +7,7 @@ same views serve the screen and integrations."""
 import datetime
 from decimal import Decimal
 
+from ana_lib.docs.common import link as doc_link
 from ana_lib.projects import access
 from ana_lib.projects import consulting as C
 from ana_lib.projects import finance as F
@@ -54,7 +55,10 @@ def require_view(p):
 
 
 def activity(p, code, lock=False):
-    t = ana.sql_one("SELECT * FROM projects.task WHERE project_id = $1 AND code = $2 AND active"
+    t = ana.sql_one("SELECT id, project_id, code, name, planned_hours, billable, active, kind, parent_id, seq, "
+                    "owner_employee_id, profile, duration_days, planned_start, planned_finish, status, percent_complete, "
+                    "actual_start, actual_finish, deliverable, acceptance_criteria, notes, client_visible, updated_at "
+                    "FROM projects.task WHERE project_id = $1 AND code = $2 AND active"
                     + (" FOR UPDATE" if lock else ""), p["id"], str(code))
     if not t:
         raise ana.Error("TASK_NOT_FOUND", f"atividade {code} não encontrada no projeto {p['code']}")
@@ -231,7 +235,8 @@ def gantt(p):
     base = C.latest_baseline(p["id"])
     bitems = {}
     if base:
-        bitems = {b["task_id"]: b for b in ana.sql("SELECT * FROM projects.baseline_item WHERE baseline_id = $1",
+        bitems = {b["task_id"]: b for b in ana.sql("SELECT baseline_id, task_id, code, name, kind, parent_code, planned_hours, planned_start, "
+                                                   "planned_finish, planned_value FROM projects.baseline_item WHERE baseline_id = $1",
                                                    base["id"])}
     items = []
     for t in ordered(tasks):
@@ -254,6 +259,11 @@ def progress(p):
              "% horas consumidas": r["hours_consumed_pct"], "IDP": r["spi"], "IDC": r["cpi"],
              "estimativa no término (h)": r["eac_hours"], "alertas": "; ".join(r["alerts"])}
             for r in prog["phases"] + [prog["project"]]]
+    if prog["phases"]:
+        ana.chart(type="column", title="Horas por fase", format="hours", x=[r["name"] for r in prog["phases"]],
+                  series=[{"name": "Planejadas", "values": [r["bac_hours"] for r in prog["phases"]]},
+                          {"name": "Agregadas (feito)", "values": [r["ev_hours"] for r in prog["phases"]]},
+                          {"name": "Apontadas", "values": [r["ac_hours"] for r in prog["phases"]]}])
     ana.table(rows, title="Planejado × realizado" + (f" (linha de base {prog['baseline']['number']})"
                                                      if prog["baseline"] else " (sem linha de base)"))
     if access.can_manage(p):
@@ -324,6 +334,9 @@ def people(employees, ws, title):
             if a > c:
                 over.append({"employee_id": e, "pessoa": names.get(e), "week": w, "excess": a - c})
         out.append(row)
+    ana.chart(type="column", title=title, subtitle="horas por semana, todos os projetos", format="hours",
+              x=list(ws), series=[{"name": "Alocado", "values": [sum((alloc.get((e, w), Decimal(0)) for e in employees), Decimal(0)) for w in ws]},
+                                  {"name": "Capacidade", "values": [sum((cap[(e, w)] for e in employees), Decimal(0)) for w in ws]}])
     ana.table(out, title=title + " (alocado/capacidade)")
     for o in over:
         sug = C.suggest_moves(o["employee_id"], o["week"], o["excess"])
@@ -364,7 +377,9 @@ def activity_detail(p, code):
 
 
 def changes(p):
-    rows = ana.sql("SELECT * FROM projects.scope_change WHERE project_id = $1 ORDER BY number DESC", p["id"])
+    rows = ana.sql("SELECT id, project_id, number, title, description, requested_by, requested_at, est_hours, "
+                   "est_amount, est_days, status, internal_approved_by, internal_approved_at, "
+                   "customer_approver, customer_approved_at, rejection_reason, milestone_id, baseline_id FROM projects.scope_change WHERE project_id = $1 ORDER BY number DESC", p["id"])
     labels = {"requested": "pedida", "estimated": "estimada", "approved_internal": "aprovada internamente",
               "approved": "aprovada pelo cliente", "rejected": "recusada"}
     out = []
@@ -400,7 +415,8 @@ def changes(p):
 
 
 def risks(p):
-    rows = ana.sql("SELECT * FROM projects.risk WHERE project_id = $1 ORDER BY status = 'closed', "
+    rows = ana.sql("SELECT id, project_id, kind, title, probability, impact, owner, action_plan, due_date, status, "
+                   "client_visible, created_by, created_at FROM projects.risk WHERE project_id = $1 ORDER BY status = 'closed', "
                    "probability * impact DESC, id", p["id"])
     labels = {"open": "aberto", "mitigating": "em tratamento", "closed": "fechado"}
     out = [{"tipo": "risco" if r["kind"] == "risk" else "pendência", "título": r["title"],
@@ -425,11 +441,17 @@ def risks(p):
 
 
 def billing(p):
-    ms = ana.sql("SELECT description, amount, due_date, status FROM projects.milestone WHERE project_id = $1 "
+    ms = ana.sql("SELECT id, description, amount, due_date, status FROM projects.milestone WHERE project_id = $1 "
                  "ORDER BY due_date NULLS LAST, id", p["id"])
     labels = {"planned": "previsto", "completed": "concluído", "invoiced": "faturado"}
     ana.table([{"marco": m["description"], "valor": fmt(m["amount"]), "data": fmt(m["due_date"]),
-                "situação": labels[m["status"]]} for m in ms], title="Marcos")
+                "situação": labels[m["status"]], "_open": doc_link("milestone", m["id"])} for m in ms], title="Marcos")
+    invs = ana.sql("SELECT number, issue_date, through_date, total, status FROM projects.invoice WHERE project_id = $1 ORDER BY number DESC LIMIT 100",
+                   p["id"])
+    if invs:
+        ana.table([{"fatura": f"INV-{i['number']}", "emissão": fmt(i["issue_date"]), "até": fmt(i["through_date"]), "valor": fmt(i["total"]),
+                    "situação": {"issued": "emitida", "cancelled": "cancelada"}.get(i["status"], i["status"]),
+                    "_open": doc_link("project_invoice", i["number"])} for i in invs], title="Faturas do projeto")
     hours = ana.sql_one(
         "SELECT COALESCE(sum(hours) FILTER (WHERE status = 'pending'), 0) AS pending, "
         "  COALESCE(sum(hours) FILTER (WHERE status = 'approved' AND billable), 0) AS approved "
@@ -494,6 +516,23 @@ def viability(p, simulation=None):
                      [{"label": "Excluir", "program": "projects.save_scenario",
                        "params": {"project": p["code"], "name": name, "remove": True}}]})
     ana.table(rows, title="Cenários")
+    # Charts (spec 026): month by month and the cumulative result in the three scenarios.
+    months = sorted({m["month"] for _, _, _, r in results for m in r["monthly"]})
+    if months:
+        by_month = {m["month"]: m for m in base["monthly"]}
+        ana.chart(type="column", title="Faturamento × custo por mês", subtitle="cenário base", format="money",
+                  x=months, series=[{"name": "Faturamento", "values": [by_month.get(m, {}).get("revenue", 0) for m in months]},
+                                    {"name": "Custo", "values": [by_month.get(m, {}).get("cost", 0) for m in months]}])
+        lines = []
+        for key, name, _, r in results[:3] + [x for x in results[3:] if x[0] == "simulation"]:
+            cum = {m["month"]: m["cumulative"] for m in r["monthly"]}
+            last, vals = 0, []
+            for m in months:
+                last = cum.get(m, last)
+                vals.append(last)
+            lines.append({"name": name, "values": vals})
+        ana.chart(type="line", title="Resultado acumulado", subtitle="quando fica positivo, o projeto se pagou",
+                  format="money", x=months, series=lines)
     ana.table([{"mês": m["month"].strftime("%m/%Y"), "faturamento": fmt(m["revenue"]), "impostos": fmt(m["taxes"]),
                 "custo": fmt(m["cost"]), "resultado": fmt(m["result"]), "acumulado": fmt(m["cumulative"])}
                for m in base["monthly"]], title="Mês a mês (cenário base)")

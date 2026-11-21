@@ -1,21 +1,22 @@
 # ana:description Despesa prevista do projeto (única ou mensal), para a projeção de viabilidade
 # ana:exposed yes
+# ana:category Projetos/Planejamento
 """RF-021-13. Monthly expenses repeat in every month of the project, so a
 longer deadline costs more."""
 
 from ana_lib.projects import access
 
 PARAMS = {
-    "project": {"type": "str", "required": True},
-    "id": {"type": "int"},
-    "description": {"type": "str"},
-    "kind": {"type": "str", "default": "other"},
-    "amount": {"type": "decimal"},
-    "monthly": {"type": "bool", "default": False},
-    "expected_date": {"type": "date"},
-    "rebillable": {"type": "bool", "default": False},
-    "markup_pct": {"type": "decimal", "default": 0},
-    "remove": {"type": "bool", "default": False},
+    "project": {"type": "str", "required": True, "label": "projeto", "lookup": {"program": "projects.lookup", "params": {"kind": "projects"}}},
+    "id": {"type": "int", "label": "despesa prevista (id; vazio = nova)"},
+    "description": {"type": "str", "label": "descrição"},
+    "kind": {"type": "str", "default": "other", "label": "tipo", "choices": [["component", "Componentes"], ["pcb", "Placas"], ["supplies", "Insumos"], ["subcontract", "Terceiros"], ["travel", "Viagens"], ["software", "Software"], ["other", "Outros"]]},
+    "amount": {"type": "decimal", "label": "valor"},
+    "monthly": {"type": "bool", "default": False, "label": "mensal"},
+    "expected_date": {"type": "date", "label": "data prevista"},
+    "rebillable": {"type": "bool", "default": False, "label": "refaturável ao cliente"},
+    "markup_pct": {"type": "decimal", "default": 0, "label": "acréscimo na refatura (%)"},
+    "remove": {"type": "bool", "default": False, "label": "remover"},
 }
 
 

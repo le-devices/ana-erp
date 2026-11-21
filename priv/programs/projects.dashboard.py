@@ -1,5 +1,6 @@
 # ana:description Painel de projetos: orçado × realizado, custo, faturado e margem
 # ana:command projects
+# ana:category Projetos/Acompanhamento
 """RF-008-14. Cost and margin appear only for projects the user manages
 (or for admins) — RNF-008-02."""
 
@@ -8,7 +9,9 @@ from decimal import Decimal
 from ana_lib.projects import access
 from ana_lib.util.format import money
 
-PARAMS = {"project": {"type": "str"}}
+PARAMS = {
+    "project": {"type": "str", "label": "projeto", "lookup": {"program": "projects.lookup", "params": {"kind": "projects"}}},
+}
 
 
 def main(project=None):

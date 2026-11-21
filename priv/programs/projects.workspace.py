@@ -1,5 +1,6 @@
 # ana:description Projeto: visão geral, estrutura, alocação, quadro, linha do tempo, andamento, mudanças, riscos
 # ana:command proj
+# ana:category Projetos/Planejamento
 """RF-021-10/11: everything about one client project in tabs of the same
 screen, with the guided flow (current stage and next step)."""
 
@@ -7,9 +8,9 @@ from ana_lib.projects import access
 from ana_lib.projects import views as V
 
 PARAMS = {
-    "project": {"type": "str", "required": True, "label": "projeto"},
-    "view": {"type": "str", "default": "overview", "label": "aba"},
-    "activity": {"type": "str", "label": "atividade (aba detalhe)"},
+    "project": {"type": "str", "required": True, "label": "projeto", "lookup": {"program": "projects.lookup", "params": {"kind": "projects"}}},
+    "view": {"type": "str", "default": "overview", "label": "aba", "choices": [["overview", "Visão geral"], ["viability", "Viabilidade"], ["structure", "Estrutura"], ["allocation", "Alocação"], ["board", "Quadro"], ["gantt", "Linha do tempo"], ["progress", "Andamento"], ["changes", "Mudanças"], ["risks", "Riscos"], ["billing", "Faturamento"], ["reports", "Relatórios"], ["activity", "Detalhe da atividade"]]},
+    "activity": {"type": "str", "label": "atividade (aba Detalhe da atividade)", "lookup": {"program": "projects.lookup", "params": {"kind": "activities"}, "depends": ["project"]}},
     "weeks": {"type": "int", "default": 6, "label": "semanas (alocação)"},
 }
 

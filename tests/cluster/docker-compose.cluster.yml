@@ -1,3 +1,5 @@
+# SPDX-FileCopyrightText: 2026 André Luis Pereira dos Santos
+# SPDX-License-Identifier: AGPL-3.0-or-later
 # Two-node cluster for tests (spec 018 CA-018-01, spec 003 T-003-06).
 # Usage: tests/cluster/run.sh
 x-cluster-env: &cluster-env
@@ -5,6 +7,7 @@ x-cluster-env: &cluster-env
   # In a cluster the restricted-role passwords must be shared (README).
   ANA_DB_EXEC_PASSWORD: ${ANA_TEST_EXEC_PASSWORD:-cluster-exec-test-password}
   ANA_DB_READ_PASSWORD: ${ANA_TEST_READ_PASSWORD:-cluster-read-test-password}
+  ANA_MASTER_KEY: ${ANA_MASTER_KEY:-ZGV2LW9ubHktbWFzdGVyLWtleS1jaGFuZ2UtbWUhISE=}
 
 services:
   ana:
@@ -30,13 +33,15 @@ services:
       ANA_NODE_NAME: ana@ana2.cluster
       <<: *cluster-env
     ports:
-      - "8081:8080"
+      - "${ANA2_PORT:-8081}:8080"
     depends_on:
       db:
         condition: service_healthy
     read_only: true
     tmpfs:
       - /tmp:size=256m,mode=1777
+    volumes:
+      - files:/var/lib/ana/files      # the same repository as node 1 (spec 016)
     security_opt:
       - no-new-privileges:true
     cap_drop: [ALL]

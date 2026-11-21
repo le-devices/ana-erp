@@ -1,0 +1,6 @@
+# SPDX-FileCopyrightText: 2026 André Luis Pereira dos Santos
+# SPDX-License-Identifier: AGPL-3.0-or-later
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: ana-erp

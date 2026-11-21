@@ -1,5 +1,6 @@
 # ana:description Quadro de alocação: pessoas × semanas em todos os projetos, sobrealocação e folga
 # ana:command alocacao
+# ana:category Projetos/Planejamento
 """RF-021-03/03a. Allocated / capacity per person and week, all projects;
 demand still allocated only to profiles (no person yet)."""
 
@@ -12,8 +13,8 @@ from ana_lib.projects import views as V
 PARAMS = {
     "start": {"type": "date", "label": "a partir de"},
     "weeks": {"type": "int", "default": 8, "label": "semanas"},
-    "profile": {"type": "str", "label": "perfil"},
-    "project": {"type": "str", "label": "só a equipe deste projeto"},
+    "profile": {"type": "str", "label": "perfil", "lookup": {"program": "projects.lookup", "params": {"kind": "profiles"}}},
+    "project": {"type": "str", "label": "só a equipe deste projeto", "lookup": {"program": "projects.lookup", "params": {"kind": "projects"}}},
 }
 
 
