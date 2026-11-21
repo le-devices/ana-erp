@@ -15,7 +15,7 @@ execute(Req, Env) ->
         <<"referrer-policy">> => <<"no-referrer">>,
         <<"cross-origin-opener-policy">> => <<"same-origin">>,
         <<"cross-origin-resource-policy">> => <<"same-origin">>,
-        <<"permissions-policy">> => <<"camera=(), microphone=(), geolocation=()">>,
+        <<"permissions-policy">> => <<"camera=(self), microphone=(), geolocation=()">>,
         <<"cache-control">> => <<"no-store">>
     }, Req),
     Req3 = case ana_api:public_mode() of

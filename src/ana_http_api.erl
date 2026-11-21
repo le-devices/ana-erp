@@ -123,7 +123,7 @@ route(<<"POST">>, [<<"me">>, <<"password">>], Req) ->
 route(<<"GET">>, [<<"routines">>], Req) ->
     ana_http:require(Req, ?USER, fun(U = #{username := Who}) ->
         {ok, Rows} = ana_db:rows(
-            "SELECT p.name, p.description, p.docs, p.params, p.min_role, p.restricted, p.exposed, p.category, "
+            "SELECT p.name, p.description, p.docs, p.params, p.min_role, p.restricted, p.exposed, p.category, p.confirm, "
             "  (SELECT c.code FROM ana_system.command c WHERE c.program = p.name ORDER BY c.code LIMIT 1) AS command, "
             "  EXISTS (SELECT 1 FROM ana_system.user_favorite f WHERE f.program = p.name AND f.username = $1) AS favorite, "
             %% Spec 056 (RF-056-03): routines that write offer "Ensaiar".
@@ -374,6 +374,18 @@ route(<<"POST">>, [<<"executions">>, Id, <<"command">>], Req) ->
             end;
             (_, R) -> invalid(R)
         end)
+    end);
+
+%% --- Undo (spec 050, D5) ---------------------------------------------------
+%% The routine that undoes runs as an ordinary execution of this user; the offer is theirs, once, within its time.
+route(<<"POST">>, [<<"undo">>, Id], Req) ->
+    ana_http:require(Req, ?USER, fun(U) ->
+        case developer_view(U, ana_undo:run(Id, U)) of
+            {ok, Res} -> ana_http:json(200, Res, Req);
+            {error, Status, Code, Msg} -> ana_http:reply_error(Status, Code, Msg, Req);
+            {error, #{<<"code">> := <<"FORBIDDEN">>} = E} -> ana_http:json(403, #{error => E}, Req);
+            {error, E} -> ana_http:json(422, #{error => E}, Req)
+        end
     end);
 
 %% --- Commands (RF-005-06) -------------------------------------------------

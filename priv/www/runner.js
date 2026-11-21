@@ -44,6 +44,58 @@
     return el("span", { class: "picker-btns" }, b, today);
   }
 
+  // Spec 050 (T-050-08, RF-050-08): bar codes and QR codes read by the camera, where the browser reads codes
+  // (BarcodeDetector) and there is a camera. A USB reader keeps working as a keyboard everywhere.
+  const canScan = () => typeof window.BarcodeDetector === "function" && !!(navigator.mediaDevices && navigator.mediaDevices.getUserMedia);
+  function putScanned(input, code) {
+    if (input.tagName === "SELECT") {
+      const op = [...input.options].find((o) => o.value === code) || [...input.options].find((o) => o.value && o.textContent.split(/\s+/).includes(code));
+      if (!op) { window.AnaUI.toast(`Código ${code} lido, mas não está entre as opções deste campo.`, true); return; }
+      input.value = op.value;
+    } else input.value = code;
+    input.dispatchEvent(new Event("input", { bubbles: true }));
+    input.dispatchEvent(new Event("change", { bubbles: true }));
+  }
+  function scanButton(input, label) {
+    if (!canScan()) return null;
+    const b = el("button", { type: "button", class: "picker-btn scan-btn", title: `Ler ${label || "o código"} pela câmera`,
+                             "aria-label": `Ler ${label || "o código"} pela câmera` }, window.AnaUI.icon("scan", 16));
+    b.addEventListener("click", () => scan(input, label));
+    return b;
+  }
+  async function scan(input, label) {
+    const video = el("video", { class: "scan-video", autoplay: true, muted: true, playsinline: true, "aria-label": "Imagem da câmera" });
+    const note = el("p", { class: "muted small", role: "status", text: "Aponte a câmera para o código de barras ou QR." });
+    const cancel = el("button", { type: "button", class: "quiet", text: "Cancelar" });
+    const dlg = el("dialog", { class: "md-dialog scan-dialog", "aria-label": `Ler ${label || "o código"} pela câmera` },
+      el("h2", { text: `Ler ${label || "o código"}` }), video, note, el("div", { class: "row-buttons" }, cancel));
+    let stream = null, done = false, timer = null;
+    const stop = () => { done = true; clearTimeout(timer); if (stream) stream.getTracks().forEach((t) => t.stop()); };
+    cancel.addEventListener("click", () => dlg.close());
+    window.AnaUI.modal(dlg, stop);
+    cancel.focus();
+    try {
+      stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "environment" }, audio: false });
+      if (done) { stop(); return; }
+      video.srcObject = stream;                     // autoplay + muted: the browser plays it by itself
+      const detector = new window.BarcodeDetector();
+      const look = async () => {
+        if (done) return;
+        try {
+          const codes = await detector.detect(video);
+          const code = codes && codes[0] && String(codes[0].rawValue || "").trim();
+          if (code) { dlg.close(); putScanned(input, code); return; }
+        } catch (_) { /* the frame was not ready: try the next one */ }
+        timer = setTimeout(look, 200);
+      };
+      look();
+    } catch (e) {
+      note.textContent = e && e.name === "NotAllowedError"
+        ? "A câmera não foi liberada. Libere o acesso à câmera para este endereço no navegador e tente de novo."
+        : "Não foi possível abrir a câmera. Digite o código ou use um leitor USB.";
+    }
+  }
+
   /** Typed number in Brazilian notation ("1.234,56") or plain ("1234.56"). */
   const brNumber = (t) => parseFloat(String(t).includes(",") ? String(t).replace(/\./g, "").replace(",", ".") : t);
 
@@ -127,7 +179,8 @@
         }
         inp.addEventListener("change", sync);
         inp.addEventListener("input", sync);
-        tr.append(el("td", { "data-label": cs.label || c }, inp));
+        const scanBtn = cs.scan ? scanButton(inp, cs.label || c) : null;
+        tr.append(el("td", { "data-label": cs.label || c }, scanBtn ? el("span", { class: "picker-wrap" }, inp, scanBtn) : inp));
       }
       // Item chosen: list price as a hint and stock of the warehouse beside the quantity.
       const prodSel = tr.querySelector('[data-col="product"]');
@@ -290,12 +343,13 @@
         else if (spec.default !== undefined && spec.default !== null) input.value = spec.default;
       }
       const picker = pickerButton(input, type);
+      const scanBtn = spec.scan ? scanButton(input, labelText) : null;
       input.dataset.type = type;
       input.dataset.label = labelText;
       if (spec.required) input.dataset.required = "1";
       inputs[name] = input;
       form.append(el("label", { title: spec.help || "", class: type === "datetime" ? "wide" : undefined }, el("span", { class: "label-line" }, label, hint),
-                     picker ? el("span", { class: "picker-wrap" }, input, picker) : input,
+                     picker || scanBtn ? el("span", { class: "picker-wrap" }, input, picker, scanBtn) : input,
                      spec.help ? el("span", { class: "help", text: spec.help }) : null));
     }
     // Lookups (e.g. activities follow the chosen project): loaded now and again when a dependency changes.
@@ -316,6 +370,31 @@
       for (const d of deps) if (inputs[d]) inputs[d].addEventListener("change", () => load(""));
     }
     for (const f of deferred) f();
+    // Spec 050 (T-050-07, D6): values from the context — when the field it depends on changes (e.g. the customer), the
+    // lookup (run as the user) gives the context's values and the field is filled, unless the person already changed it.
+    for (const [name, spec] of entries) {
+      const df = spec.default_from;
+      const input = inputs[name];
+      if (!df || typeof df !== "object" || !df.program || !input || !options.lookup) continue;
+      const deps = df.depends || [];
+      input.addEventListener("input", (e) => { if (e.isTrusted) input.dataset.touched = "1"; });
+      input.addEventListener("change", (e) => { if (e.isTrusted) input.dataset.touched = "1"; });
+      const apply = async () => {
+        const params = { ...(df.params || {}) };
+        for (const d of deps) if (inputs[d] && inputs[d].value !== "") params[d] = inputs[d].value;
+        if (deps.some((d) => !(d in params)) || input.dataset.touched === "1") return;
+        let ctx;
+        try { ctx = await options.lookup(df.program, params); } catch (_) { return; }
+        const v = ctx && !Array.isArray(ctx) && typeof ctx === "object" ? ctx[df.field || name] : undefined;
+        if (v === undefined || v === null || v === "" || input.dataset.touched === "1") return;
+        if (input.tagName === "SELECT" && ![...input.options].some((o) => o.value === String(v))) input.append(el("option", { value: String(v), text: String(v) }));
+        input.value = String(v);
+        input.dataset.fromContext = "1";
+        input.dispatchEvent(new Event("change", { bubbles: true }));
+      };
+      for (const d of deps) if (inputs[d]) inputs[d].addEventListener("change", apply);
+      if (input.value === "" && deps.every((d) => inputs[d] && inputs[d].value !== "")) apply();
+    }
     if (options.submitLabel) form.append(el("button", { class: "primary run-button", type: "submit", text: options.submitLabel }));
 
     // The values as they are, without asking for the required ones (saving a variant, spec 045).
@@ -530,7 +609,8 @@
         if (first) first.focus();
         return;
       }
-      if (a.confirm && !window.confirm(a.confirm)) return;
+      // Spec 050 (D5): the consequence, in a dialog, before an action that cannot be undone.
+      if (a.confirm && !(await window.AnaUI.confirmDialog(a.confirm, { title: a.label, ok: a.label }))) return;
       // Spec 035: "download" actions return {_download: {file}}; the tab opens now (inside the click,
       // so the browser allows it) and receives the file's signed address when it arrives.
       const tab = a.download ? window.open("", "_blank") : null;

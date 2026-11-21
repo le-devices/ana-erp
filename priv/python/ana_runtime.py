@@ -593,6 +593,19 @@ def make_ana_module(channel, output, context):
             value = str(value)
         return channel.request("set_value", {"name": str(name), "value": value, "reason": reason, "valid_from": valid_from})
 
+    def offer_undo(program, params=None, label=None, seconds=30):
+        """Offers the undo of what this routine did (spec 050, D5): the screen shows "Desfazer" for `seconds`
+        (5 to 600) and, if clicked, runs `program` with `params` as the same user — once, as an ordinary execution
+        (permission, audit, validation). Only the routine that was run offers it; nothing is offered in a simulation,
+        a rehearsal or a run that does not keep anything. The offer is recorded right after this run's COMMIT."""
+        data = json.loads(json.dumps(params or {}, default=str))      # dates and decimals travel as text
+        return channel.request("offer_undo", {"program": str(program), "params": data, "label": label,
+                                              "seconds": int(seconds)})
+
+    def can_run(program):
+        """True when the user of this execution may run `program` (role, groups, license) — spec 050."""
+        return channel.request("can_run", {"program": str(program)}) is True
+
     def remote(system, function, **params):
         """Call an exposed program on a registered remote system (RF-003-08)."""
         return channel.request("remote", {"system": system, "function": function, "params": params})
@@ -951,6 +964,8 @@ def make_ana_module(channel, output, context):
     m.schedule_job = schedule_job
     m.value = value
     m.set_value = set_value
+    m.offer_undo = offer_undo
+    m.can_run = can_run
     m.Selection = Selection
     m.remote = remote
     m.http = http

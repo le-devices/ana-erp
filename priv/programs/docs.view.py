@@ -16,7 +16,7 @@ PARAMS = {
                          ["entry", "Lançamento contábil"], ["project_invoice", "Fatura de projeto"],
                          ["statement_line", "Linha do extrato"], ["milestone", "Marco (medição) do projeto"],
                          ["receipt", "Recebimento de compra"], ["supplier_invoice", "Nota do fornecedor"]]},
-    "key": {"type": "str", "required": True, "label": "número", "order": 2},
+    "key": {"type": "str", "required": True, "label": "número", "order": 2, "scan": True},
 }
 STATUS = {"OPEN": "em aberto", "INVOICED": "faturado", "CANCELLED": "cancelado", "open": "em aberto", "settled": "pago",
           "cancelled": "cancelado", "requested": "pedida", "issued": "emitida", "paid": "paga", "failed": "falhou",

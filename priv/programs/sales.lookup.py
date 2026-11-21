@@ -1,7 +1,7 @@
 # ana:description Opções para campos de vendas: clientes, itens com saldo por depósito, depósitos
 # ana:kind program
 # ana:menu no
-"""Lookup for forms: [{"value", "label", …}]. kind: customers | products | warehouses | orders | invoiced | order_lines | origins. products brings price and stock (in the chosen
+"""Lookup for forms: [{"value", "label", …}]. kind: customers | products | warehouses | orders | invoiced | order_lines | origins | customer_defaults. products brings price and stock (in the chosen
 warehouse and in the others) so the order screen shows availability while typing."""
 
 from ana_lib.util.format import compact, money
@@ -9,7 +9,7 @@ from ana_lib.util.format import compact, money
 from ana_lib.master import core  # spec 040: the single lookup of master records
 
 PARAMS = {
-    "kind": {"type": "str", "required": True, "label": "tipo", "choices": ["customers", "products", "warehouses", "orders", "invoiced", "order_lines", "origins"]},
+    "kind": {"type": "str", "required": True, "label": "tipo", "choices": ["customers", "products", "warehouses", "orders", "invoiced", "order_lines", "origins", "customer_defaults"]},
     "warehouse": {"type": "str", "label": "depósito"},
     "from_wh": {"type": "str", "label": "depósito de origem (transferência)"},
     "customer": {"type": "int", "label": "cliente"},
@@ -25,6 +25,17 @@ def main(kind, warehouse=None, from_wh=None, customer=None, order=None):
                        "WHERE p.active AND p.kind IN ('customer', 'both') ORDER BY p.name LIMIT 1000")
         return [{"value": r["id"], "label": r["name"] + (f" — {r['city']}/{r['state']}" if r["city"] else "")
                  + (" (bloqueado)" if r["blocked"] else "")} for r in rows]
+    if kind == "customer_defaults":
+        # Spec 050 (T-050-07, D6): what the order form fills from the customer — the customer's payment term (its credit
+        # profile, else the company's), and the warehouse and cost center of the customer's last order.
+        if not customer:
+            return {}
+        last = ana.sql_one("SELECT w.code AS warehouse, o.cost_center FROM sales.sales_order o "
+                           "JOIN inventory.warehouse w ON w.id = o.warehouse_id "
+                           "WHERE o.customer_id = $1 AND o.status <> 'CANCELLED' ORDER BY o.number DESC LIMIT 1", customer)
+        term = ana.sql_value("SELECT COALESCE((SELECT default_term FROM finance.credit_profile WHERE party_id = $1), "
+                             "(SELECT default_term FROM finance.credit_policy WHERE id = 1))", customer)
+        return {"payment_term": term, "warehouse": last and last["warehouse"], "cost_center": last and last["cost_center"]}
     if kind == "warehouses":
         return core.options("warehouse", filter_sql="t.code NOT IN ('TRANSITO', 'QUARENTENA')")
     if kind == "orders":

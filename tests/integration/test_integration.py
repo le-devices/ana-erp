@@ -8912,3 +8912,157 @@ class TestCompanyValuesPhase2(Base):
             s, lst, _ = http("GET", f"/api/values?q={self.area}", token=self.token)
             flags = {v["name"]: v["unused"] for v in lst["values"]}
             self.assertEqual((flags[quiet], flags[name]), (True, False))
+
+
+class TestPremiumExperiencePhase2(Base):
+    """Premium experience, phase 2 (spec 050): what the command palette finds, the standard undo, the confirmation that
+    says the consequence and the values that come from the context."""
+
+    @classmethod
+    def setUpClass(cls):
+        super().setUpClass()
+        c = cls.client
+        cls.sfx = SUFFIX[-6:]
+        cls.tax_id = cnpj(f"{int(SUFFIX) % 10**8:08d}0001")
+        cls.customer = c.call("base.save_party", name=f"Cliente Paleta {SUFFIX}", state="SP", tax_id=cls.tax_id)["id"]
+        cls.supplier = c.call("base.save_party", name=f"Fornecedor Paleta {SUFFIX}", kind="supplier", state="SP")["id"]
+
+    def ok(self, program, **params):
+        s, c, _ = self.run_program(program, params)
+        self.assertEqual(s, 200, c)
+        self.assertNotIn("error", c, c.get("error"))
+        return c
+
+    def item(self, tag, mode=None):
+        code = f"U{self.sfx}{tag}"
+        self.client.call("base.save_product", code=code, description=f"Item {tag} {SUFFIX}", price="10")
+        self.ok("supply.save_supplier_item", product=code, supplier=self.supplier, price="4", lead_time_days=7, min_qty=10,
+                multiple=5, preferred=True)
+        if mode:
+            self.ok("sales.fulfillment_policy", action="rule", product=code, mode=mode)
+        return code
+
+    def find(self, q, token=None):
+        s, c, _ = self.run_program("base.find", {"q": q}, token=token)
+        self.assertEqual(s, 200, c)
+        self.assertNotIn("error", c, c.get("error"))
+        return c["result"]
+
+    def test_ca_050_02_palette_finds_an_order_by_number_and_a_customer_by_cnpj(self):
+        code = self.item("PL")
+        self.ok("inventory.stock_in", product=code, quantity=5, warehouse="CENTRAL")
+        n = self.ok("sales.create_order", customer=self.customer, items=[{"product": code, "quantity": 1}])["result"]["number"]
+        for q in (str(n), f"ORD-{n}"):
+            found = self.find(q)
+            self.assertIn({"group": "Documentos", "label": f"Pedido de venda {n}", "detail": "em aberto",
+                           "hash": f"#/ops/docs/docs.view?kind=order&key={n}"}, found, q)
+        digits = "".join(ch for ch in self.tax_id if ch.isalnum())
+        for q in (self.tax_id, digits):                                    # with or without punctuation
+            found = self.find(q)
+            self.assertEqual([(f["label"], f["hash"]) for f in found],
+                             [(f"Cliente Paleta {SUFFIX}", f"#/master/party/{self.customer}")], q)
+        by_name = self.find(f"Paleta {SUFFIX}")
+        self.assertIn(f"#/master/party/{self.customer}", [f["hash"] for f in by_name])
+        self.assertIn(f"#/master/product/{code}", [f["hash"] for f in self.find(code)])
+        self.assertEqual(self.find("x"), [])                               # too short to search records
+        self.assertEqual(self.find("999999999"), [])
+
+    def test_rf_050_04_can_run_follows_role_groups_and_existence(self):
+        restricted, probe = f"test.ux_restricted_{SUFFIX}", f"test.ux_probe_{SUFFIX}"
+        self.save(restricted, "def main():\n    return 1\n", restricted=True)
+        self.save(probe, f"def main():\n    return [ana.can_run('{restricted}'), ana.can_run('docs.view'), ana.can_run('nao.existe')]\n")
+        group = f"ux{SUFFIX}"
+        s, c, _ = http("PUT", f"/api/admin/groups/{group}", {"description": "teste", "program_patterns": [probe]}, self.token)
+        self.assertEqual(s, 200, c)
+        try:
+            _, member = new_user("user", groups=[group])
+            self.assertEqual(self.ok(probe)["result"], [True, True, False])
+            s, c, _ = self.run_program(probe, token=member)
+            self.assertEqual((s, c.get("result")), (200, [False, True, False]), c)
+        finally:
+            http("DELETE", f"/api/admin/groups/{group}", token=self.token)
+
+    def test_ca_050_03_cancelling_an_order_offers_undo_and_undo_restores_it_by_document(self):
+        code = self.item("UN", mode="purchase")
+        r = self.ok("sales.create_order", customer=self.customer, items=[{"product": code, "quantity": 3}])["result"]
+        n, req = r["number"], r["supply"]["requests"][0]
+        before = self.scalar(f"SELECT status FROM supply.purchase_request WHERE number = {req}")
+        # Nothing is offered when nothing is kept: simulation and rehearsal.
+        self.assertNotIn("undo", self.ok("sales.cancel_order", number=n, simulate=True))
+        s, c, _ = self.run_program("sales.cancel_order", {"number": n}, rehearse=True)
+        self.assertEqual((s, "error" in c, "undo" in c), (200, False, False), c)
+        done = self.ok("sales.cancel_order", number=n)
+        offer = done["undo"]
+        self.assertEqual((offer["label"], offer["seconds"]), (f"Pedido {n} cancelado", 30))
+        self.assertEqual(self.scalar(f"SELECT status FROM supply.purchase_request WHERE number = {req}"), "cancelled")
+        _, other = new_user("user")
+        s, c, _ = http("POST", f"/api/undo/{offer['id']}", {}, other)            # only who did it undoes it
+        self.assertEqual((s, c["error"]["code"]), (404, "UNDO_NOT_FOUND"))
+        s, c, _ = http("POST", f"/api/undo/{offer['id']}", {}, self.token)
+        self.assertEqual(s, 200, c)
+        self.assertEqual((c["undone"], c["result"]["status"], c["result"]["restored"]),
+                         (f"Pedido {n} cancelado", "OPEN", [f"solicitação de compra {req}"]))
+        self.assertEqual(self.scalar(f"SELECT status FROM sales.sales_order WHERE number = {n}"), "OPEN")
+        self.assertEqual(self.scalar(f"SELECT status FROM supply.purchase_request WHERE number = {req}"), before)
+        s, c, _ = http("POST", f"/api/undo/{offer['id']}", {}, self.token)       # once
+        self.assertEqual((s, c["error"]["code"]), (409, "UNDO_USED"))
+        if psql_available():
+            self.assertEqual(psql("SELECT (used_at IS NOT NULL AND undo_execution IS NOT NULL)::text "
+                                  f"FROM ana_system.undo_offer WHERE id = '{offer['id']}'"), "true")
+        # The order can be cancelled again, and reopened by its own routine too.
+        self.assertIn("undo", self.ok("sales.cancel_order", number=n))
+        self.assertEqual(self.ok("sales.reopen_order", number=n)["result"]["status"], "OPEN")
+
+    def test_rf_050_05_undo_once_within_its_time_given_back_when_it_fails(self):
+        do, undo, nested = f"test.ux_do_{SUFFIX}", f"test.ux_undo_{SUFFIX}", f"test.ux_nested_{SUFFIX}"
+        self.save(undo, "def main(fail=False):\n    if fail:\n        raise ana.Error('NAO_DEU', 'não deu')\n    return 'desfeito'\n")
+        self.save(do, "def main(undo, seconds=30, fail=False):\n"
+                      "    return ana.offer_undo(undo, {'fail': fail}, label='Feito', seconds=seconds)\n")
+        self.save(nested, f"def main():\n    return ana.call('{do}', undo='{undo}')\n")
+        c = self.ok(do, undo=undo, fail=True)
+        self.assertEqual(c["result"], {"offered": True})
+        s, e, _ = http("POST", f"/api/undo/{c['undo']['id']}", {}, self.token)   # the undo failed: the offer stays
+        self.assertEqual((s, e["error"]["code"]), (422, "NAO_DEU"))
+        s, e, _ = http("POST", f"/api/undo/{c['undo']['id']}", {}, self.token)   # still there: it fails again, not "used"
+        self.assertEqual((s, e["error"]["code"]), (422, "NAO_DEU"))
+        short = self.ok(do, undo=undo, seconds=5)["undo"]
+        time.sleep(6)
+        s, e, _ = http("POST", f"/api/undo/{short['id']}", {}, self.token)
+        self.assertEqual((s, e["error"]["code"]), (410, "UNDO_EXPIRED"))
+        self.assertEqual(http("POST", "/api/undo/nao-e-um-id", {}, self.token)[0], 404)
+        # Only the routine that was run offers it; mistakes are the routine's, said right away.
+        n = self.ok(nested)
+        self.assertEqual((n["result"], "undo" in n), ({"offered": False}, False))
+        for bad in ({"undo": undo, "seconds": 1}, {"undo": "nao.existe"}):
+            s, e, _ = self.run_program(do, bad)
+            self.assertEqual(e["error"]["code"], "INVALID_UNDO", e)
+
+    def test_rf_050_05_confirm_line_says_the_consequence(self):
+        s, routines, _ = http("GET", "/api/routines", token=self.token)
+        by = {r["name"]: r for r in routines}
+        self.assertIn("não se desfaz", by["finance.create_charge"]["confirm"])
+        self.assertIn("Não há desfazer", by["inventory.write_off"]["confirm"])
+        self.assertIsNone(by["sales.create_order"]["confirm"])
+        name = f"test.ux_confirm_{SUFFIX}"
+        self.save(name, "# ana:confirm Apaga a planilha de teste para sempre.\ndef main():\n    return 1\n")
+        s, routines, _ = http("GET", "/api/routines", token=self.token)
+        self.assertEqual({r["name"]: r for r in routines}[name]["confirm"], "Apaga a planilha de teste para sempre.")
+        self.save(name, "def main():\n    return 2\n")
+        s, routines, _ = http("GET", "/api/routines", token=self.token)
+        self.assertIsNone({r["name"]: r for r in routines}[name]["confirm"])
+
+    def test_rf_050_06_order_fields_come_from_the_customer(self):
+        self.assertEqual(self.ok("sales.lookup", kind="customer_defaults")["result"], {})
+        customer = self.client.call("base.save_party", name=f"Cliente Contexto {SUFFIX}", state="SP")["id"]
+        self.ok("finance.save_credit_profile", customer=customer, default_term="D30")
+        code = self.item("CX")
+        self.ok("inventory.stock_in", product=code, quantity=5, warehouse="CENTRAL")
+        self.ok("sales.create_order", customer=customer, items=[{"product": code, "quantity": 1}], cost_center="GERAL")
+        got = self.ok("sales.lookup", kind="customer_defaults", customer=customer)["result"]
+        self.assertEqual(got, {"payment_term": "D30", "warehouse": "CENTRAL", "cost_center": "GERAL"})
+        s, routines, _ = http("GET", "/api/routines", token=self.token)
+        params = {r["name"]: r for r in routines}["sales.create_order"]["params"]
+        self.assertEqual(params["payment_term"]["default_from"],
+                         {"program": "sales.lookup", "params": {"kind": "customer_defaults"}, "depends": ["customer"],
+                          "field": "payment_term"})
+        self.assertTrue(params["items"]["columns"]["product"]["scan"])

@@ -210,7 +210,7 @@
     const more = el("button", { type: "button", class: "quiet", text: "Mostrar mais", hidden: true });
     let offset = 0, loaded = [], columns = [];
     const toolbar = el("div", { class: "md-toolbar" }, q, status,
-      e.can_edit ? el("button", { type: "button", class: "primary", text: "Novo (N)", onclick: () => go(`#/master/${e.name}/novo`) }) : null,
+      e.can_edit ? el("button", { type: "button", class: "primary", text: "Novo (N)", "aria-keyshortcuts": "N", onclick: () => go(`#/master/${e.name}/novo`) }) : null,
       e.can_edit ? el("button", { type: "button", class: "quiet", text: "Importar", onclick: () => go(`#/master/_import?entity=${e.name}`) }) : null,
       el("button", { type: "button", class: "quiet", text: "Exportar tudo (CSV)", title: "Todos os cadastros da busca, não só os carregados",
                      onclick: () => exportCsv(e, q.value, status.value) }), count);

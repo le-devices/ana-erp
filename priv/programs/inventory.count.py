@@ -13,10 +13,11 @@ from decimal import Decimal
 from ana_lib.util import validation as v
 
 PARAMS = {
-    "warehouse": {"type": "str", "default": "CENTRAL", "label": "depósito", "order": 1,
+    "warehouse": {"type": "str", "default": "CENTRAL", "label": "depósito", "order": 1, "default_from": "last",
                   "lookup": {"program": "sales.lookup", "params": {"kind": "warehouses"}}},
     "lines": {"type": "list", "label": "itens contados", "add_label": "Adicionar item", "order": 2, "columns": {
-        "product": {"type": "str", "required": True, "label": "item", "lookup": {"program": "sales.lookup", "params": {"kind": "products"}}},
+        "product": {"type": "str", "required": True, "label": "item", "scan": True,
+                    "lookup": {"program": "sales.lookup", "params": {"kind": "products"}}},
         "counted": {"type": "decimal", "required": True, "label": "quantidade contada"}}},
     "note": {"type": "str", "label": "observação", "order": 3},
     "confirm": {"type": "bool", "default": False, "label": "confirmar os ajustes", "order": 4},

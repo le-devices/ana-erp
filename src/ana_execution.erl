@@ -12,7 +12,7 @@
 -behaviour(gen_server).
 
 -export([init_tables/0, start_link/1, run/4, events/4, command/3, status/2,
-         counters/0, running/0, abort/1]).
+         counters/0, running/0, abort/1, can_run/2, new_id/0]).
 -export([init/1, handle_continue/2, handle_call/3, handle_cast/2, handle_info/2,
          terminate/2]).
 
@@ -54,6 +54,9 @@
     %% Spec 065 (D4): company values the routine keeps (ana.set_value), written right after its COMMIT.
     value_sets = [] :: [map()],
     read_only = false :: boolean(),          % simulation or restricted license: nothing is kept after the run
+    %% Spec 050 (D5): the undo the routine offers (ana.offer_undo), recorded after its COMMIT; then what was offered.
+    undo = undefined :: map() | undefined,
+    undo_offered = null :: map() | null,
     %% Spec 045 (RF-045-06): the variant this run used (id, name, version, warnings), or null.
     variant = null :: map() | null,
     breakpoints = [] :: list(),
@@ -653,6 +656,29 @@ request(<<"set_value">>, Id, #{<<"name">> := Name} = A, St = #st{user = User, st
             respond(Id, {error, err(Code, M)}, St),
             St
     end;
+%% Spec 050 (D5): only the routine that was run offers its undo; nothing is offered when nothing will be kept.
+request(<<"offer_undo">>, Id, A, St = #st{user = User, stack = [#frame{program = Prog}]}) ->
+    case St#st.read_only orelse St#st.rehearse orelse (St#st.debug andalso not St#st.commit) of
+        true ->
+            respond(Id, {ok, #{offered => false}}, St),
+            St;
+        false ->
+            case ana_undo:check_offer(A, Prog, User) of
+                {ok, Offer} ->
+                    respond(Id, {ok, #{offered => true}}, St),
+                    St#st{undo = Offer};
+                {error, Code, M} ->
+                    respond(Id, {error, err(Code, M)}, St),
+                    St
+            end
+    end;
+request(<<"offer_undo">>, Id, _A, St) ->
+    respond(Id, {ok, #{offered => false}}, St),
+    St;
+%% Spec 050: may this user run that program (role, groups, license)? — what a screen offers follows the answer.
+request(<<"can_run">>, Id, #{<<"program">> := Name}, St = #st{user = User}) when is_binary(Name) ->
+    respond(Id, {ok, can_run(Name, User)}, St),
+    St;
 request(<<"savepoint">>, Id, A, St) ->
     savepoint(Id, A, St);
 request(<<"call">>, Id, #{<<"program">> := Name} = A, St) ->
@@ -807,7 +833,7 @@ root_end2(#{<<"ok">> := true} = M, St0 = #st{conn = C}) ->
                     case epgsql:squery(C, "COMMIT") of
                         {ok, [], []} ->
                             ok = ana_values:apply_sets([S || not St#st.read_only, S <- lists:reverse(St#st.value_sets)], St#st.user),
-                            finish(<<"success">>, #{result => Result}, St#st{in_tx = false});
+                            finish(<<"success">>, #{result => Result}, offer_undo(St#st{in_tx = false}));
                         {error, E} ->
                             %% E.g. a deferred constraint violated at COMMIT (RF-006-05).
                             finish(<<"error">>, sql_error(E), St#st{in_tx = false})
@@ -1160,7 +1186,7 @@ two_phase_commit(Result, Gids, St = #st{conn = C, par = Par}) ->
                         _ -> logger:error("execution ~s: COMMIT PREPARED failed for ~p; recovery will finish it",
                                           [St#st.id, Failed])
                     end,
-                    finish(<<"success">>, #{result => Result}, St#st{in_tx = false, par = Par#{committed => true}});
+                    finish(<<"success">>, #{result => Result}, offer_undo(St#st{in_tx = false, par = Par#{committed => true}}));
                 {error, E} ->
                     logger:error("execution ~s: commit decision not recorded: ~0p", [St#st.id, E]),
                     _ = ana_parallel:resolve([Own], rollback),
@@ -1224,7 +1250,7 @@ finish(Status, Data, St00) ->
               usage => usage(St), limits => St#st.limits},
     St2 = event(#{<<"status">> => Status, <<"result">> => Result, <<"error">> => Error,
                   <<"duration_ms">> => Duration, <<"rolled_back">> => RolledBack orelse St#st.rehearse,
-                  <<"rehearsal">> => Rehearsal, <<"usage">> => usage(St)},
+                  <<"rehearsal">> => Rehearsal, <<"usage">> => usage(St), <<"undo">> => St#st.undo_offered},
                 <<"end">>,
                 St#st{stack = [], pending = undefined, conn = undefined, in_tx = false, final = Final}),
     _ = St2#st.admitted andalso release(St2#st.debug) =:= ok,
@@ -1242,9 +1268,30 @@ finish(Status, Data, St00) ->
 sync_reply(<<"success">>, Result, _, Duration, St) ->
     R = #{id => St#st.id, result => Result, duration_ms => Duration, usage => usage(St),
           events => lists:reverse(St#st.events)},
-    {ok, with_rehearsal(R, rehearsal, St)};
+    {ok, with_undo(with_rehearsal(R, rehearsal, St), St)};
 sync_reply(_, _, Error, _, St) ->
     {error, with_rehearsal(Error#{<<"events">> => lists:reverse(St#st.events)}, <<"rehearsal">>, St)}.
+
+%% Spec 050 (D5): the answer carries the undo the routine offered (recorded after its COMMIT).
+with_undo(M, #st{undo_offered = null}) -> M;
+with_undo(M, #st{undo_offered = U}) -> M#{undo => U}.
+
+offer_undo(St = #st{undo = undefined}) -> St;
+offer_undo(St = #st{undo = Offer, id = Id, user = User}) ->
+    case ana_undo:record(Id, User, Offer) of
+        {ok, U} -> St#st{undo_offered = U};
+        {error, E} ->
+            logger:warning("execution ~s: undo offer not recorded: ~0p", [Id, E]),
+            St
+    end.
+
+%% Spec 050: may this user run that program now (role, groups, portal, license)?
+-spec can_run(binary(), map()) -> boolean().
+can_run(Name, User) when is_binary(Name) ->
+    element(1, load(Name, User)) =:= ok;
+can_run(_, _) -> false.
+
+new_id() -> uuid().
 
 %% Spec 056: the answer of a rehearsal carries its effects (also when it stopped on an error).
 with_rehearsal(M, K, #st{rehearse = true, final = #{rehearsal := E}}) when is_map(E) -> M#{K => E};

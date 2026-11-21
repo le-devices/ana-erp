@@ -174,6 +174,77 @@
 
   function pill(text, kind = "") { return el("span", { class: "pill " + kind, text }); }
 
+  // ------------------------------------------------------------------ dialogs, confirmation and undo (spec 050)
+  /** Modal dialog: native when the browser has it; Esc and the close callback always end it. */
+  function modal(dlg, onClose) {
+    document.body.append(dlg);
+    dlg.addEventListener("close", () => { dlg.remove(); if (onClose) onClose(); });
+    dlg.addEventListener("keydown", (e) => { if (e.key === "Escape") { e.preventDefault(); dlg.close(); } });
+    if (!dlg.close) dlg.close = () => { dlg.removeAttribute("open"); dlg.dispatchEvent(new Event("close")); };
+    if (dlg.showModal) dlg.showModal(); else dlg.setAttribute("open", "");
+    return dlg;
+  }
+
+  /** D5: an irreversible action asks first, saying its consequence. Resolves true only on "Confirmar". */
+  function confirmDialog(consequence, { title = "Confirmar?", ok = "Confirmar" } = {}) {
+    return new Promise((resolve) => {
+      let answer = false;
+      const yes = el("button", { type: "button", class: "primary", text: ok });
+      const no = el("button", { type: "button", class: "quiet", text: "Voltar" });
+      const dlg = el("dialog", { class: "md-dialog confirm-dialog", role: "alertdialog", "aria-label": title },
+        el("h2", { text: title }), el("p", { class: "consequence", text: consequence }),
+        el("div", { class: "row-buttons" }, no, yes));
+      yes.addEventListener("click", () => { answer = true; dlg.close(); });
+      no.addEventListener("click", () => dlg.close());
+      modal(dlg, () => resolve(answer));
+      no.focus();                                  // the safe choice has the focus
+    });
+  }
+
+  /** D5: "… — Desfazer" for the seconds the routine gave; Ctrl+Z (outside a text field) does the same. */
+  let undoState = null;
+  function offerUndo(offer) {
+    if (!offer || !offer.id) return;
+    dropUndo();
+    const left = el("span", { class: "undo-left" });
+    const btn = el("button", { type: "button", class: "undo-button", text: "Desfazer", "aria-keyshortcuts": "Control+Z" });
+    const bar = el("div", { id: "undo-bar", class: "undo-bar", role: "status" },
+      el("span", { class: "undo-text", text: offer.label || "Feito" }), btn, left,
+      el("button", { type: "button", class: "quiet small undo-close", "aria-label": "Fechar o aviso de desfazer", text: "×", onclick: dropUndo }));
+    const until = Date.now() + (offer.seconds || 30) * 1000;
+    const tick = () => {
+      const s = Math.ceil((until - Date.now()) / 1000);
+      if (s <= 0) { dropUndo(); return; }
+      left.textContent = `${s} s`;
+    };
+    undoState = { offer, bar, timer: setInterval(tick, 1000) };
+    tick();
+    btn.addEventListener("click", () => undo(offer));
+    document.body.append(bar);
+  }
+  function dropUndo() {
+    if (!undoState) return;
+    clearInterval(undoState.timer);
+    undoState.bar.remove();
+    undoState = null;
+  }
+  async function undo(offer) {
+    dropUndo();
+    try {
+      const res = await window.AnaApi.undo(offer.id);
+      if (res.error) { toast(errorText(res.error), true); return; }
+      toast(`Desfeito: ${offer.label || "a última ação"}.`);
+      document.dispatchEvent(new CustomEvent("ana:undone", { detail: { offer, result: res.result } }));
+    } catch (e) { toast(errorText(e), true); }
+  }
+  const typing = (t) => t && (t.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName));
+  document.addEventListener("keydown", (e) => {
+    if (undoState && !e.defaultPrevented && (e.ctrlKey || e.metaKey) && !e.shiftKey && e.key.toLowerCase() === "z" && !typing(e.target)) {
+      e.preventDefault();
+      undo(undoState.offer);
+    }
+  });
+
   // Own line icons (spec 029): 24×24 grid, 1.8 stroke, no icon font, no third-party set.
   const ICONS = {
     back: "M15 5l-7 7 7 7",
@@ -197,6 +268,7 @@
     calendar: "M5 6.5h14v13H5zM5 10.5h14M9 4v4M15 4v4",
     clock: "M12 4.5a7.5 7.5 0 1 1 0 15 7.5 7.5 0 0 1 0-15zM12 8v4.5l3 2",
     plus: "M12 5v14M5 12h14",
+    scan: "M4.5 8V4.5H8M16 4.5h3.5V8M19.5 16v3.5H16M8 19.5H4.5V16M8.5 8.5v7M11.5 8.5v7M15.5 8.5v7",
   };
   const SVG_NS = "http://www.w3.org/2000/svg";
   function icon(name, size = 18) {
@@ -263,5 +335,6 @@
   document.addEventListener("DOMContentLoaded", () => enhance(document));
 
   window.AnaPrefs = Prefs;
-  window.AnaUI = { $, $$, el, fmtDate, errorText, toast, table, emptyCell, pill, splitter, pinnable, icon, enhance, cellText };
+  window.AnaUI = { $, $$, el, fmtDate, errorText, toast, table, emptyCell, pill, splitter, pinnable, icon, enhance, cellText,
+                   modal, confirmDialog, offerUndo, typing };
 })();

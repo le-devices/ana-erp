@@ -38,5 +38,12 @@ def main(number, simulate=False):
         else:
             ana.sql_exec("UPDATE supply.purchase_request SET status = 'cancelled', rejection_reason = $2 WHERE number = $1 "
                          "AND status IN ('draft', 'submitted', 'approved')", n, reason)
+    # Spec 050 (D5, CA-050-03): undo by document — the order and what was cancelled with it, as they were.
+    ana.offer_undo("sales.reopen_order",
+                   {"number": number,
+                    "requests": [{"number": n, "status": status} for kind, n, status, _, c in effect
+                                 if c and kind != "ordem de produção"],
+                    "work_orders": [n for kind, n, _, _, c in effect if c and kind == "ordem de produção"]},
+                   label=f"Pedido {number} cancelado")
     return {"number": number, "status": "CANCELLED", "supply_cancelled": [n for _, n, _, _, c in effect if c],
             "supply_kept": [n for _, n, _, _, c in effect if not c]}
