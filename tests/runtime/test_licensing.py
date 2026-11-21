@@ -2,6 +2,8 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 """The licensing checks of the repository (spec 066, T-066-02, T-066-05): SPDX lines, dependency licenses and the
 credentials scan of what a pull request adds."""
+import contextlib
+import io
 import os
 import subprocess
 import sys
@@ -54,7 +56,10 @@ class Credentials(unittest.TestCase):
             run("-c", "user.email=t@t", "-c", "user.name=t", "-c", "commit.gpgsign=false", "commit", "-q", "-m", "work")
             old, L.ROOT = L.ROOT, d
             try:
-                return L.secrets("base")
+                # The checker prints its findings as GitHub annotations: the deliberate fakes of this test must not
+                # show up as errors in the summary of the run.
+                with contextlib.redirect_stdout(io.StringIO()):
+                    return L.secrets("base")
             finally:
                 L.ROOT = old
 
