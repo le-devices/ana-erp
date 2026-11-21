@@ -23,7 +23,12 @@
   ];
 
   const visible = (n) => !n.closest("[hidden], dialog:not([open]), .palette-dialog, .undo-bar") && !n.disabled;
-  const currentArea = () => [...$$(".area-page")].find((a) => !a.hidden);
+  // The area of the address on display (#/ops/… → #area-ops); the first visible one if the address names none.
+  const currentArea = () => {
+    const name = (location.hash.replace(/^#\/?/, "").split(/[/?]/)[0]) || "home";
+    const byHash = document.getElementById("area-" + name);
+    return byHash && byHash.classList.contains("area-page") ? byHash : [...$$(".area-page")].find((a) => !a.hidden);
+  };
   const nameOf = (n) => (n.getAttribute("aria-label") || n.textContent || n.title || "").replace(/\s+/g, " ").trim();
 
   /** The actions on screen: visible, enabled buttons and links of the open area, by accessible name. */

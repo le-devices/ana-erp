@@ -719,7 +719,9 @@ ok(true, "API pública: clientes, novo cliente e chamadas (spec 010)");
   ok([...d.querySelectorAll(".palette-dialog .palette-group")].some((g) => g.textContent === "Nesta tela") &&
      items().some((i) => i.textContent.includes("Executar (F8)")), "a paleta traz as ações da tela aberta" +
      ` (tela ${w.location.hash}; vistas: ${JSON.stringify(w.AnaPalette.screenActions().map((a) => a.label).slice(0, 25))}; ` +
-     `botão: ${(d.querySelector("#ops-main .run-button") || {}).textContent}, desabilitado ${!!(d.querySelector("#ops-main .run-button") || {}).disabled})`);
+     `botão: ${(d.querySelector("#ops-main .run-button") || {}).textContent}, desabilitado ${!!(d.querySelector("#ops-main .run-button") || {}).disabled}; ` +
+     `áreas visíveis: ${[...d.querySelectorAll(".area-page")].filter((a) => !a.hidden).map((a) => a.id)}; ` +
+     `oculto acima do botão: ${((d.querySelector("#ops-main .run-button") || { closest: () => null }).closest("[hidden], dialog:not([open])") || {}).outerHTML?.slice(0, 120)})`);
   typeIn(d.querySelector(".palette-dialog .palette-input"), String(num));
   await until(() => items().some((i) => i.textContent.startsWith(`Pedido de venda ${num}`)), "palette order", jsErrors);
   items().find((i) => i.textContent.startsWith(`Pedido de venda ${num}`)).click();
