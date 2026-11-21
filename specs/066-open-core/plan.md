@@ -57,5 +57,11 @@ pelo GitHub, prazos de 3 e 10 dias úteis, divulgação combinada até 90 dias, 
    (pull requests de fork).
 9. Settings → Secrets and variables: conferir que não há segredo que não seja necessário.
 10. Perfil da organização no GitHub: e-mail de contato (citado em `CODE_OF_CONDUCT.md` e `TRADEMARKS.md`).
-11. Depois de público: tirar da bateria os cuidados com minutos que deixarem de valer (a seleção de suítes continua
-    útil para o tempo de espera).
+11. Depois de público: a bateria roda em todo pull request (inclusive só de documentação, que não escolhe nada),
+    para que `plan` e `static` possam ser checks obrigatórios; a seleção de suítes continua, pelo tempo de espera.
+
+Feito em 21/11/2026: repositório público; regra "Proteção" (dev, qa, master: sem apagar, sem force push, pull
+request com merge comum, checks `licensing` e `CLA`, administrador liberado); secret scanning e push protection;
+relato privado de vulnerabilidades; permissão padrão dos workflows só de leitura. Faltam: revisão jurídica (item
+1), promoção a qa e master (item 2), chave de produção (item 4), aprovação para forks (item 8), e-mail público da
+organização (item 10).
