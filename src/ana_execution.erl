@@ -714,6 +714,16 @@ request(<<"offer_undo">>, Id, A, St = #st{user = User, stack = [#frame{program =
 request(<<"offer_undo">>, Id, _A, St) ->
     respond(Id, {ok, #{offered => false}}, St),
     St;
+%% Spec 067 (D6): the usage simulation starts in the background — only from the routine simulation.start.
+request(<<"simulation_start">>, Id, A, St = #st{user = User, stack = [#frame{program = <<"simulation.start">>} | _]}) ->
+    respond(Id, case ana_simulation:start(A, User) of
+                    {ok, M} -> {ok, M};
+                    {error, _, Code, Msg} -> {error, err(Code, Msg)}
+                end, St),
+    St;
+request(<<"simulation_start">>, Id, _A, St) ->
+    respond(Id, {error, err(<<"FORBIDDEN">>, <<"só a rotina simulation.start começa a simulação"/utf8>>)}, St),
+    St;
 %% Spec 050: may this user run that program (role, groups, license)? — what a screen offers follows the answer.
 request(<<"can_run">>, Id, #{<<"program">> := Name}, St = #st{user = User}) when is_binary(Name) ->
     respond(Id, {ok, can_run(Name, User)}, St),

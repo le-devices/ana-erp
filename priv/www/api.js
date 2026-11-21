@@ -248,6 +248,11 @@
     uiSettings: () => API.request("GET", "/api/ui/settings"),
     putUiSetting: (key, value) => API.request("PUT", "/api/ui/settings", { key, value }),
     admin: {
+      // Spec 067: usage simulation.
+      simulation: () => API.request("GET", "/api/admin/simulation"),
+      simulationRun: (body) => API.request("POST", "/api/admin/simulation/run", body),
+      simulationReport: (id) => API.request("GET", `/api/admin/simulation/runs/${id}`),
+      simulationStop: (id) => API.request("POST", `/api/admin/simulation/runs/${id}/stop`, {}),
       // Spec 052: the assistant's model, limits and policy; its conversations.
       assistant: () => API.request("GET", "/api/admin/assistant"),
       saveAssistant: (body) => API.request("PUT", "/api/admin/assistant", body),

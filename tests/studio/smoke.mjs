@@ -871,6 +871,18 @@ ok(true, "API pública: clientes, novo cliente e chamadas (spec 010)");
      "aba Qualidade: testes, cobertura, motivo da falha e portão bloqueado pelo teste que falha (T-064-06, T-064-09)");
   await w.AnaApi.purgeProgram(prog);
 }
+// ---------------------------------------------------------------- spec 067: usage simulation
+{
+  await go(w, "#/admin/simulation");
+  await until(() => text("#admin-main").includes("Rodadas") && text("#admin-main").includes("Personas"), "simulation screen", jsErrors);
+  ok(text("#admin-main").includes("sim_vendedor"), "Uso simulado: personas como usuários robô");
+  const see = [...d.querySelectorAll("#admin-main button")].find((b) => b.textContent === "Ver");
+  if (see) {
+    see.click();
+    await until(() => text("#admin-main .sim-report").includes("semente"), "simulation report (aviso: " + text("#toast") + ")", jsErrors);
+    ok(true, "Uso simulado: relatório de uma rodada com semente e achados (RF-067-06)");
+  }
+}
 ok(true, "todas as seções administrativas abrem");
 ok(jsErrors.length === 0, "nenhum erro de JavaScript (admin)" + (jsErrors.length ? ": " + jsErrors.join("; ") : ""));
 w.close();

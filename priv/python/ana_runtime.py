@@ -604,6 +604,11 @@ def make_ana_module(channel, output, context):
         return channel.request("offer_undo", {"program": str(program), "params": data, "label": label,
                                               "seconds": int(seconds)})
 
+    def simulate(days=1, per_day=6, seed=None, flows=False):
+        """Starts the usage simulation (spec 067) in the background; only the routine simulation.start may."""
+        return channel.request("simulation_start", {"days": int(days), "per_day": int(per_day),
+                                                    "seed": int(seed) if seed is not None else None, "flows": bool(flows)})
+
     def can_run(program):
         """True when the user of this execution may run `program` (role, groups, license) — spec 050."""
         return channel.request("can_run", {"program": str(program)}) is True
@@ -968,6 +973,7 @@ def make_ana_module(channel, output, context):
     m.set_value = set_value
     m.offer_undo = offer_undo
     m.can_run = can_run
+    m.simulate = simulate
     m.Selection = Selection
     m.remote = remote
     m.http = http
