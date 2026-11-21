@@ -1,15 +1,15 @@
 # SPDX-FileCopyrightText: 2026 André Luis Pereira dos Santos
 # SPDX-License-Identifier: AGPL-3.0-or-later
-# Test battery on GitHub-hosted runners (private repository: billed minutes, free monthly quota).
+# Test battery on GitHub-hosted runners (public repository since 21/11/2026, spec 066: standard runners are free).
 # Each suite runs on its own clean runner, in parallel; the whole battery takes as long as the slowest one.
-# Runs on pull requests to dev/qa/master and on demand (Actions → Bateria → Run workflow). The plan job picks only the
-# suites a change can break (pull requests to qa and master always run everything).
+# Runs on every pull request to dev/qa/master — documentation included, so "plan" and "static" can be required checks
+# (a documentation-only change chooses nothing in seconds) — and on demand (Actions → Bateria → Run workflow). The plan
+# job picks only the suites a change can break, to keep the wait short (pull requests to qa and master run everything).
 name: Bateria
 
 on:
   pull_request:
     branches: [dev, qa, master]
-    paths-ignore: ["specs/**", "**/*.md"]
   workflow_dispatch:
     inputs:
       suites:
