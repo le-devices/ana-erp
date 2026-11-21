@@ -33,8 +33,12 @@ spec 009).
 ### D2 — Licença comercial (dupla licença)
 - Quem não quer as obrigações da AGPL (por exemplo, um integrador que oferece o ANA modificado como serviço sem
   publicar as mudanças) contrata a **licença comercial** do fornecedor.
-- Só é possível se o fornecedor for dono de todo o código: contribuições externas entram com **CLA** (termo de
-  cessão de direitos autorais ou licença ampla ao fornecedor), conferido automaticamente no pull request.
+- Só é possível se o fornecedor puder relicenciar todo o código: contribuições externas entram com o **Termo de
+  Licença de Contribuição** (`CLA.md`), conferido automaticamente no pull request. É uma licença ampla ao
+  fornecedor (direitos autorais e patentes, inclusive para licenças comerciais), não uma cessão: o
+  contribuidor continua dono do que escreveu, os direitos morais são preservados (Lei 9.610/1998), e o
+  fornecedor se compromete a manter toda contribuição do núcleo disponível em AGPL-3.0 — se não cumprir, a
+  licença volta a valer só para usos sob a AGPL. Empresas podem aceitar por todos os seus empregados.
 
 ### D3 — Núcleo aberto, sem trava
 - A edição aberta não tem limite de usuários, de módulos nem de prazo, e **nunca** entra em modo somente
@@ -60,10 +64,17 @@ Usuários nomeados deixam de ser limitados; o campo continua aceito (licenças a
   spec 034, assinado pelo fornecedor), com programas, migrações próprias e telas.
 - Namespaces reservados `pro.*` (programas) e esquema `pro_*` (dados); a partida carrega os pacotes premium
   presentes e conferidos pela assinatura (D4).
-- Candidatos (decisão comercial do dono do produto, a cada lançamento): emissão de NF-e/NFS-e e conectores
-  com prefeituras e SEFAZ, conectores bancários (CNAB, Open Finance), assistente com IA (spec 052, quando usar
-  serviço pago), aplicativo de celular (spec 060), chão de fábrica e rastreabilidade (spec 054), central de
-  suporte integrada (spec 057). Uma vez publicado no núcleo aberto, um recurso não volta a ser premium.
+- **Primeiros módulos premium** (decisão de 21/11/2026, pela recomendação do fornecedor), na ordem de lançamento:
+  1. **Documentos fiscais eletrônicos**: NF-e, NFS-e (padrão nacional e prefeituras) e NFC-e — emissão,
+     cancelamento, carta de correção, contingência e guarda dos XML. É a obrigação que toda empresa tem e o
+     que mais custa manter atualizado (leiautes, certificados, SEFAZ e prefeituras).
+  2. **Conectores bancários**: CNAB 240/400 (remessa e retorno), PIX com conciliação automática, boleto
+     registrado e Open Finance — cada banco é um contrato e um leiaute a acompanhar.
+  3. **Assistente com IA** (spec 052), quando usar modelo de linguagem pago pelo fornecedor; a versão que roda
+     só com regras locais fica no núcleo.
+  4. **Aplicativo de celular** (spec 060) e **chão de fábrica com rastreabilidade por série** (spec 054).
+  Os pacotes fiscais oficiais (D6) e o suporte são assinaturas desde o início, sem depender destes módulos.
+  Uma vez publicado no núcleo aberto, um recurso não volta a ser premium.
 
 ### D6 — Pacotes fiscais oficiais como assinatura
 - O motor de impostos e o formato dos pacotes de regras continuam abertos (legislação é dado, P21): qualquer um
@@ -99,7 +110,7 @@ Usuários nomeados deixam de ser limitados; o campo continua aceito (licenças a
   `{licenses, ["AGPL-3.0-or-later"]}` (hoje diz Apache-2.0 por engano).
 - **RF-066-02** `CONTRIBUTING.md` (como contribuir, specs primeiro, bateria, CLA), `SECURITY.md` (como reportar
   vulnerabilidade em sigilo, prazos de resposta, versões cobertas), `CODE_OF_CONDUCT.md` e política de marca.
-- **RF-066-03** CLA conferido no pull request: contribuição de quem não assinou não pode ser integrada (check
+- **RF-066-03** CLA (`CLA.md`) conferido no pull request pelo comentário de aceite, registrado com usuário, data e versão do termo: contribuição de quem não assinou não pode ser integrada (check
   obrigatório na bateria).
 - **RF-066-04** Núcleo sem trava (D3): fim do limite de usuários nomeados, dos módulos contratáveis do núcleo e do
   modo restrito por licença; a avaliação de 30 dias deixa de existir; a tela Licença mostra edição, suporte e
@@ -137,6 +148,7 @@ Usuários nomeados deixam de ser limitados; o campo continua aceito (licenças a
   código.
 
 ## Decisões em aberto (do dono do produto)
-- Quais módulos premium vêm primeiro e preço da assinatura, do suporte e da licença comercial.
-- Texto final do CLA e da exceção de programas (revisão jurídica recomendada antes de publicar).
-- Registro da marca no INPI.
+- Preços da assinatura, do suporte, dos módulos premium e da licença comercial (a definir).
+- Registro da marca "ANA" no INPI — providenciado pelo dono do produto.
+- Revisão jurídica do `CLA.md` e da exceção de programas antes da publicação (o rascunho diz que não está em
+  vigor enquanto a nota de revisão existir).
