@@ -1,6 +1,6 @@
 # 065 — Valores da empresa: valores nomeados que as rotinas leem e a empresa mantém
 
-Situação: fase 1 implementada (nov/2026); fase 2 (T-065-07..11) na fila.
+Situação: implementada (nov/2026); falta T-065-11b (assistente, paleta, implantação guiada e autocompletar no editor).
 
 ## Problema
 Toda empresa tem valores de negócio que mudam sem que o código deva mudar:

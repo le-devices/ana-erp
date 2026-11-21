@@ -9,9 +9,9 @@ Fase 1 — valores, leitura em todo lugar, rápido
 - [x] T-065-06 Permissão por área, quatro olhos para sensíveis, auditoria, recusa de credenciais (RF-065-09)
 
 Fase 2 — integração e automação
-- [ ] T-065-07 Referências `{{valor:nome}}` em variantes (spec 045), agendamentos, regras de alerta, verificações, esteiras, processos e impostos (RF-065-05)
-- [ ] T-065-08 Valores mantidos por rotinas: período aberto e último inventário (RF-065-07, CA-065-02)
-- [ ] T-065-09 "Onde é usado", impacto antes de mudar ou apagar, nomes no editor e no portão de qualidade (RF-065-08, spec 064)
-- [ ] T-065-10 Transporte da definição e, quando marcado, do conteúdo; aviso de ausente na importação (RF-065-10)
-- [ ] T-065-11 Sugestões: constante no código que já é valor da empresa, vigência próxima, valor sem uso; assistente, paleta e implantação guiada
+- [x] T-065-07 Referências `{{valor:nome}}` em variantes (spec 045), agendamentos, regras de alerta, verificações, esteiras, processos e impostos (RF-065-05)
+- [x] T-065-08 Valores mantidos por rotinas: período aberto e último inventário (RF-065-07, CA-065-02)
+- [x] T-065-09 "Onde é usado", impacto antes de mudar ou apagar, nomes no editor e no portão de qualidade (RF-065-08, spec 064)
+- [x] T-065-10 Transporte da definição e, quando marcado, do conteúdo; aviso de ausente na importação (RF-065-10)
+- [x] T-065-11 Sugestões: constante no código que já é valor da empresa, vigência próxima, valor sem uso; assistente, paleta e implantação guiada
 - [ ] T-065-11b Assistente (spec 052), paleta de comandos (spec 050 fase 2) e implantação guiada (spec 061) encontram e mudam valores; editor completa `ana.value("` com nome, tipo e valor atual

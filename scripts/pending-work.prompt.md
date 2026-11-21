@@ -57,7 +57,7 @@ Tarefas adiadas já concluídas (ordem acordada em out/2026): T-017-05b ✓, T-0
 11. ✓ 056 — ensaio universal: toda rotina que grava pode ser ensaiada (`specs/056-universal-rehearsal`)
 11a. ✓ 065 fase 1 — valores da empresa: valores nomeados com vigência, leitura por programas e SQL, expressões dinâmicas num só lugar, em memória em cada nó (`specs/065-company-values`) — antes da 045, que os usa
 12. ✓ 045 — variantes de execução (`specs/045-execution-variants`)
-12a. 065 fase 2 — valores da empresa nas variantes, agendamentos, regras, esteiras e impostos; valores mantidos por rotinas; onde é usado; transporte (T-065-07..11)
+12a. ✓ 065 fase 2 — valores da empresa nas variantes, agendamentos, regras, esteiras e impostos; valores mantidos por rotinas; onde é usado; transporte (T-065-07..11)
 13. 050 fase 2 — paleta de comandos, desfazer, valores padrão por contexto, câmera (T-050-05..08)
 14. 048 — painel inicial (`specs/048-home-panel`)
 15. 052 — assistente que executa com segurança (`specs/052-safe-assistant`)
