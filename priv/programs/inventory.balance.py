@@ -1,13 +1,14 @@
 # ana:description Consulta saldo de estoque por item e depósito
 # ana:exposed yes
 # ana:command balance
+# ana:category Estoque/Inventário e saldos
 """Current balance (real time, from movements)."""
 
 from ana_lib.util.format import quantity as fmt_qty
 
 PARAMS = {
-    "product": {"type": "str"},
-    "warehouse": {"type": "str"},
+    "product": {"type": "str", "label": "item", "lookup": {"program": "sales.lookup", "params": {"kind": "products"}}},
+    "warehouse": {"type": "str", "label": "depósito", "lookup": {"program": "sales.lookup", "params": {"kind": "warehouses"}}},
 }
 
 

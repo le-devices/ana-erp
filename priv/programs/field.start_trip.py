@@ -1,10 +1,11 @@
 # ana:description Técnico sai para o atendimento (OS a caminho)
 # ana:exposed yes
+# ana:category Logística e campo/Serviços em campo
 """RF-015-08. Records the first response for the SLA indicators."""
 
 from ana_lib.field import common
 
-PARAMS = {"order": {"type": "int", "required": True, "label": "OS"}}
+PARAMS = {"order": {"type": "int", "required": True, "label": "OS", "lookup": {"program": "logistics.lookup", "params": {"kind": "service_orders"}}}}
 
 
 def main(order):

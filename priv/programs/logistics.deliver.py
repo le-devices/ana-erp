@@ -1,10 +1,12 @@
 # ana:description Registra a entrega (comprovante) ou a devolução da expedição pela transportadora
 # ana:exposed yes
+# ana:category Logística e campo/Expedição
 """RF-015-02. returned: the goods come back to the warehouse (when they had left at shipment)."""
 
 from decimal import Decimal
 
 from ana_lib.logistics import common
+from ana_lib.docs import pdfs
 
 PARAMS = {
     "shipment": {"type": "int", "required": True, "label": "expedição"},
@@ -25,11 +27,12 @@ def main(shipment, received_by=None, returned=False):
             back = {}
             for l in ana.sql("SELECT product_id, quantity FROM logistics.shipment_line WHERE shipment_id = $1", s["id"]):
                 back[l["product_id"]] = back.get(l["product_id"], Decimal(0)) + l["quantity"]
-            common.put_stock(s["warehouse_id"], back, f"EXP-{s['number']}-VOLTA")
+            common.put_stock(s["warehouse_id"], back, f"EXP-{s['number']}-VOLTA", "customer_return")
         ana.sql_exec("UPDATE logistics.shipment SET status = 'returned' WHERE id = $1", s["id"])
         return {"shipment": s["number"], "status": "returned"}
     if not received_by or len(received_by.strip()) < 2:
         raise ana.Error("INVALID_PARAMETER", "informe quem recebeu")
     ana.sql_exec("UPDATE logistics.shipment SET status = 'delivered', delivered_at = now(), received_by = $2 WHERE id = $1",
                  s["id"], received_by.strip())
+    pdfs.publish_quietly("shipment", s["number"])      # spec 037: delivery receipt
     return {"shipment": s["number"], "status": "delivered"}

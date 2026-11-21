@@ -4,9 +4,10 @@
 """Lookup for forms: [{"value", "label"}].
 kind: suppliers | products | warehouses | projects | requests | orders | order_lines."""
 
+from ana_lib.master import core  # spec 040: the single lookup of master records
+
 PARAMS = {
-    "kind": {"type": "str", "required": True,
-             "choices": ["suppliers", "products", "warehouses", "projects", "requests", "orders", "order_lines"]},
+    "kind": {"type": "str", "required": True, "label": "tipo", "choices": ["suppliers", "products", "warehouses", "projects", "requests", "orders", "order_lines"]},
     "order": {"type": "int", "label": "ordem"},
 }
 
@@ -16,16 +17,12 @@ STATUS = {"draft": "rascunho", "submitted": "a aprovar", "approved": "aprovada",
 
 def main(kind, order=None):
     if kind == "suppliers":
-        rows = ana.sql("SELECT id, name FROM base.party WHERE active AND kind IN ('supplier', 'both') ORDER BY name")
-        return [{"value": r["id"], "label": r["name"]} for r in rows]
+        return core.options("party", by="id", filter_sql="t.kind IN ('supplier', 'both')")
     if kind == "products":
-        rows = ana.sql("SELECT code, description, kind FROM base.product WHERE active ORDER BY code")
-        return [{"value": r["code"], "label": f"{r['code']} — {r['description']}" + (" (serviço)" if r["kind"] == "service" else "")}
-                for r in rows]
+        services = {r["code"] for r in ana.sql("SELECT code FROM base.product WHERE active AND kind = 'service'")}
+        return [{**o, "label": o["label"] + (" (serviço)" if o["value"] in services else "")} for o in core.options("product")]
     if kind == "warehouses":
-        # ana:lint-ok unbounded_select — warehouses: small master table, the whole list is the answer
-        rows = ana.sql("SELECT code, description FROM inventory.warehouse ORDER BY code")
-        return [{"value": r["code"], "label": f"{r['code']} — {r['description']}"} for r in rows]
+        return core.options("warehouse")
     if kind == "projects":
         rows = ana.sql("SELECT code, name FROM projects.project WHERE status <> 'closed' ORDER BY code")
         return [{"value": r["code"], "label": f"{r['code']} — {r['name']}"} for r in rows]

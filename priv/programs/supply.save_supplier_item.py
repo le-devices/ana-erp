@@ -1,6 +1,7 @@
 # ana:description Catálogo de fornecimento: quem fornece cada item, preço, prazo e lote
 # ana:exposed yes
 # ana:command fornecimento
+# ana:category Compras/Fornecedores
 """RF-013-01. One row per supplier and item; only one preferred supplier per item."""
 
 from decimal import Decimal

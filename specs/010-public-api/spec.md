@@ -145,7 +145,53 @@ Recomendação documentada: sempre que possível, **S1 com o backend do site
 - **CA-010-10** Requisição pública sem HTTPS (fora de proxy confiável) → 403
   quando `ANA_PUBLIC_MODE=true`.
 - **CA-010-11** Teste de carga atinge RNF-010-14.
+- **CA-010-12** Cliente com 5 falhas técnicas seguidas (limite configurado em 5)
+  passa a receber 503 `CLIENT_SUSPENDED` com `Retry-After`; outro cliente que
+  só erra parâmetros segue atendido; o evento fica registrado com os números,
+  o aviso aparece no Estúdio, a saúde "API pública" fica amarela, e liberar à
+  mão volta a atender em até 5 s, com registro de quem liberou (T-010-06b).
+
+## Disjuntor por cliente (T-010-06b)
+- Contam só falhas técnicas — erro interno, exceção do programa, tempo
+  esgotado, limite de CPU ou memória, falha de SQL ou do processo —, nunca
+  erros de quem chama (parâmetro inválido, permissão, recusa de negócio,
+  limite ou cota).
+- Abre quando, nos últimos 2 minutos do nó, as falhas chegam a
+  `api_breaker_failures` (padrão 20) e são ao menos `api_breaker_ratio` %
+  (padrão 50) das chamadas do cliente. Suspende por `api_breaker_open_s`
+  (padrão 120 s) em todos os nós: a suspensão fica no cadastro do cliente e
+  segue a invalidação do cache (≤ 5 s). Uma abertura por período no cluster.
+- Avisos: aviso no Estúdio, evento em `api_breaker_event`, componente de
+  saúde `public_api` amarelo enquanto houver cliente suspenso (as regras de
+  alerta da T-019-08b podem observá-lo e levar o aviso a um conector).
+- Administração → API pública mostra a suspensão e as aberturas dos últimos
+  7 dias; "Liberar agora" encerra antes do prazo e fica no registro de
+  administração.
 
 ## Fora de escopo
 Provedor de identidade externo (entrar com contas de terceiros) e webhooks de
 saída — candidatos a specs futuras.
+
+## Situação (implementação, outubro/2026)
+Implementados os cenários **S1** (servidor → ANA, com segredo, token Ed25519 de
+10 min e assinatura HMAC opcional) e **S3** (chave publicável, só programas
+`public`, só das origens cadastradas). O **S2** (código + PKCE, consentimento,
+renovação) e o TOTP ficaram para a fase 2 (T-010-10b, T-010-11b).
+
+Decisões tomadas na implementação:
+- Um módulo `ana_api` (clientes, tokens, limites, idempotência, assinatura) e
+  `ana_http_oauth` (`/oauth/token`), em vez dos sete módulos do plano: a
+  validação inteira acontece em memória e em um só lugar.
+- Cliente de tipo `browser` existe no cadastro, mas só obtém token quando o
+  fluxo PKCE chegar; `client_credentials` é só para `confidential`.
+- Fora do escopo, a resposta é `-32601` (igual a programa inexistente), e
+  `/rpc/functions` lista só o que o cliente alcança (RNF-010-05).
+- Mesma `Idempotency-Key` com corpo diferente → 422; chamada igual ainda em
+  andamento → a segunda espera e devolve a mesma resposta.
+- A cota diária conta o dia em UTC; o log de chamadas e o uso diário seguem a
+  retenção de acessos (spec 024).
+- Medição local (8 núcleos, nó único, `tests/load/public_api_load.py`): a
+  camada pública soma ~0,4 ms por chamada (RNF-010-11 atendido), mas a vazão de
+  um programa trivial fica em ~60 chamadas/s com p95 ~550 ms, porque cada
+  execução abre um processo Python isolado (RNF-002-07). O alvo do RNF-010-14
+  depende de decisão do dono do produto (T-010-14b).

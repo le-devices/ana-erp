@@ -1,3 +1,5 @@
+# SPDX-FileCopyrightText: 2026 André Luis Pereira dos Santos
+# SPDX-License-Identifier: AGPL-3.0-or-later
 """Chaos tests (spec 023, CA-023-01..06, RF-023-06).
 
 Two core nodes behind HAProxy (tests/chaos/run.sh). Each test injects a
@@ -17,9 +19,9 @@ import unittest
 import urllib.error
 import urllib.request
 
-LB = "http://localhost:8090"
-NODE1 = "http://localhost:8080"
-NODE2 = "http://localhost:8081"
+LB = "http://localhost:" + os.environ.get("ANA_LB_PORT", "8090")
+NODE1 = "http://localhost:" + os.environ.get("ANA_PORT", "8080")   # ports configurable: the host may use them
+NODE2 = "http://localhost:" + os.environ.get("ANA2_PORT", "8081")
 COOKIE = os.environ.get("ANA_TEST_COOKIE", "ana-cluster-test-cookie")
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 COMPOSE = ["docker", "compose", "-f", os.path.join(ROOT, "docker-compose.yml"),
@@ -92,8 +94,10 @@ class Load:
         while not self.stop_flag.is_set():
             method, path, body = self.make()
             t0 = time.time()
-            s, _ = http(self.base, method, path, body, self.token, timeout=30)
-            self.results.append((t0, s, time.time() - t0))
+            s, answer = http(self.base, method, path, body, self.token, timeout=30)
+            err = answer.get("error") if isinstance(answer, dict) else None
+            code = (err.get("code") if isinstance(err, dict) else None) or ""
+            self.results.append((t0, s, time.time() - t0, code))      # the code says which path answered
             time.sleep(self.pause)
 
     def __enter__(self):
@@ -282,6 +286,9 @@ class TestChaos(unittest.TestCase):
         slow = [r for r in load.results if down_at <= r[0] <= up_at and r[2] > 6]
         self.assertEqual(slow, [], f"durante a queda as requisições devem falhar rápido: {slow[:3]}")
         self.assertLess(recovered_at - up_at, 30, "o núcleo deveria voltar sozinho em segundos")
+        # The database being away is "try again" (503), never a sign-out (401).
+        signed_out = [r for r in load.results if r[1] == 401]
+        self.assertEqual(signed_out, [], f"queda do banco não pode invalidar a sessão: {signed_out[:3]}")
         self.assertEqual(load.failures(since=recovered_at + 1), [], "depois da volta tudo deve funcionar")
         after = {s: subprocess.run(["docker", "inspect", "-f", "{{.State.StartedAt}}", cid], capture_output=True,
                                    text=True).stdout.strip() for s, cid in started.items()}

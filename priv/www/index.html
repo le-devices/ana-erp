@@ -1,4 +1,6 @@
 <!doctype html>
+<!-- SPDX-FileCopyrightText: 2026 André Luis Pereira dos Santos -->
+<!-- SPDX-License-Identifier: AGPL-3.0-or-later -->
 <html lang="pt-BR">
 <head>
 <meta charset="utf-8">
@@ -8,17 +10,30 @@
 <script src="studio/highlight.js" defer></script>
 <script src="studio/editor.js" defer></script>
 <script src="studio/api.js" defer></script>
+<script src="studio/errors.js" defer></script>
+<script src="studio/perf.js" defer></script>
+<script src="studio/live.js" defer></script>
 <script src="studio/ui.js" defer></script>
+<script src="studio/palette.js" defer></script>
+<script src="studio/table.js" defer></script>
+<script src="studio/conditions.js" defer></script>
 <script src="studio/charts.js" defer></script>
+<script src="studio/grid.js" defer></script>
 <script src="studio/runner.js" defer></script>
 <script src="studio/scheduler.js" defer></script>
+<script src="studio/categories.js" defer></script>
 <script src="studio/ops.js" defer></script>
 <script src="studio/dev.js" defer></script>
+<script src="studio/patterns.js" defer></script>
 <script src="studio/admin.js" defer></script>
 <script src="studio/files.js" defer></script>
+<script src="studio/masterdata.js" defer></script>
+<script src="studio/bpm-diagram.js" defer></script>
+<script src="studio/bpm.js" defer></script>
 <script src="studio/studio.js" defer></script>
 </head>
 <body>
+<button id="skip-link" class="skip-link" type="button">Pular para o conteúdo</button>
 
 <!-- Login -->
 <section id="login-screen" class="screen" hidden>
@@ -54,12 +69,16 @@
     <div class="shell-left">
       <button id="user-avatar" class="avatar" type="button" aria-haspopup="menu" aria-expanded="false" title="Minha conta"><span id="avatar-initials">?</span></button>
       <button id="back" class="icon-btn back" type="button" title="Voltar à tela anterior (F3)" aria-label="Voltar" hidden><svg class="icon" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M15 5l-7 7 7 7"/></svg></button>
-      <div class="brand"><svg class="logo" viewBox="0 0 24 24" width="24" height="24" aria-hidden="true"><rect x="1" y="1" width="22" height="22" rx="6" fill="currentColor"/><path d="M6.5 18L12 5.5 17.5 18M8.6 13.4h6.8" fill="none" stroke="#fff" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg><b>ANA</b><span id="brand-company"></span></div>
+      <div class="brand"><svg class="logo" viewBox="0 0 24 24" width="24" height="24" aria-hidden="true"><rect x="1" y="1" width="22" height="22" rx="6" fill="currentColor"/><path d="M6.5 18L12 5.5 17.5 18M8.6 13.4h6.8" fill="none" stroke="#fff" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg><b>ANA</b><span id="brand-company"></span><img id="brand-logo" class="brand-logo" alt="" hidden></div>
+      <span id="instance-band" class="instance-band" hidden></span>
+      <span id="license-band" class="license-band" hidden></span>
     </div>
     <div class="shell-center">
       <nav id="area-menu" class="area-switch shell-tabs" aria-label="Áreas">
         <button class="area" data-area="home">Início</button>
         <button class="area" data-area="ops">Operação</button>
+        <button class="area" data-area="bpm">Processos</button>
+        <button class="area" data-area="master">Cadastros</button>
         <button class="area" data-area="files">Arquivos</button>
         <button class="area" data-area="portal" data-only="external">Portal</button>
         <button class="area" data-area="dev" data-min-role="developer">Desenvolvimento</button>
@@ -72,6 +91,8 @@
         <input id="command" list="command-list" placeholder="Ir para… rotina, comando, programa, tabela"
                autocomplete="off" spellcheck="false" aria-label="Ir para">
         <datalist id="command-list"></datalist>
+        <button id="palette-btn" class="palette-btn" type="button" title="Paleta de comandos: rotinas, documentos, cadastros e ações desta tela"
+                aria-label="Abrir a paleta de comandos" aria-keyshortcuts="Control+K"><kbd>Ctrl K</kbd></button>
       </form>
       <button id="notices-btn" class="icon-btn" type="button" title="Avisos das rotinas agendadas" aria-label="Avisos"><svg class="icon" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6.5 16.5V11a5.5 5.5 0 0 1 11 0v5.5l1.5 2H5zM10 20.5a2 2 0 0 0 4 0"/></svg><span id="notices-dot" class="dot" hidden></span></button>
     </div>
@@ -97,6 +118,7 @@
       <nav class="tabs" role="tablist">
         <button class="tab active" data-side="programs">Programas</button>
         <button class="tab" data-side="data">Dados</button>
+        <button class="tab" data-side="patterns">Padrões</button>
       </nav>
       <div id="side-programs" class="side-content">
         <div class="side-toolbar">
@@ -108,6 +130,9 @@
       </div>
       <div id="side-data" class="side-content" hidden>
         <ul id="catalog-tree" class="tree"></ul>
+      </div>
+      <div id="side-patterns" class="side-content" hidden>
+        <p class="muted small-text">Regras e exemplos vivos de como toda tela do ANA se comporta (spec 050).</p>
       </div>
     </aside>
 
@@ -151,6 +176,7 @@
             <span class="muted small-text">Clique na margem (ou F9) para marcar pontos de parada.</span>
           </div>
           <div id="editor" class="editor"></div>
+          <div id="quality-strip" class="quality-strip" role="status" aria-live="polite" hidden></div>
           <section class="panel">
             <nav class="tabs" role="tablist">
               <button class="tab active" data-panel="output">Saída</button>
@@ -192,6 +218,7 @@
           <label>Tipo <select id="p-kind"><option value="program">programa</option><option value="library">biblioteca</option></select></label>
           <label>Papel mínimo <select id="p-role"><option value="user">usuário</option><option value="developer">desenvolvedor</option><option value="admin">administrador</option></select></label>
           <label class="check"><input id="p-exposed" type="checkbox"> Exposto (chamada remota)</label>
+          <label class="check" title="Pode ser chamado do navegador de qualquer visitante com uma chave publicável (API pública)"><input id="p-public" type="checkbox"> Público (chave publicável)</label>
           <label class="check"><input id="p-menu" type="checkbox"> Aparece no menu de Operação</label>
           <label class="check" title="Só membros de grupos que cobrem este programa"><input id="p-restricted" type="checkbox"> Restrito a grupos</label>
           <label class="check"><input id="p-active" type="checkbox" checked> Ativo</label>
@@ -222,6 +249,9 @@
       </div>
     </section>
 
+    <!-- Pattern catalog (spec 050) -->
+    <section id="patterns-view" class="page-pad" hidden></section>
+
     <!-- Data workspace -->
     <section id="data-view" class="data-view page-pad" hidden>
       <div id="table-detail"><p class="muted">Escolha uma tabela no catálogo à esquerda.</p></div>
@@ -235,6 +265,14 @@
   </div>
 
   <!-- File repository (spec 016) -->
+  <div id="area-bpm" class="area-page two-col" hidden>
+    <nav id="bpm-nav" class="side-nav" aria-label="Processos"></nav>
+    <main id="bpm-main" class="page-main"></main>
+  </div>
+  <div id="area-master" class="area-page two-col" hidden>
+    <nav id="master-nav" class="side-nav" aria-label="Cadastros"></nav>
+    <main id="master-main" class="page-main"></main>
+  </div>
   <div id="area-files" class="area-page" hidden><main id="files-main" class="page-main"></main></div>
   <!-- External portal (spec 016, RF-016-04) -->
   <div id="area-portal" class="area-page" hidden><main id="portal-main" class="page-main"></main></div>
@@ -249,9 +287,15 @@
       <div class="nav-group">Sistema</div>
       <button class="nav-link" data-section="company">Empresa</button>
       <button class="nav-link" data-section="settings">Parâmetros</button>
+      <button class="nav-link" data-section="values">Valores da empresa</button>
       <button class="nav-link" data-section="accounts">Contas padrão</button>
       <button class="nav-link" data-section="commands">Comandos</button>
       <button class="nav-link" data-section="remote">Sistemas remotos</button>
+      <button class="nav-link" data-section="transports">Transportes</button>
+      <button class="nav-link" data-section="datacopy">Cópia de dados para testes</button>
+      <button class="nav-link" data-section="license">Licença</button>
+      <button class="nav-link" data-section="extensions">Extensões</button>
+      <button class="nav-link" data-section="telemetry">Telemetria</button>
       <button class="nav-link" data-section="updates">Atualizações do produto <span class="nav-count" id="updates-count" hidden></span></button>
       <div class="nav-group">Operação do sistema</div>
       <button class="nav-link" data-section="scheduler">Agendamento</button>
@@ -260,8 +304,14 @@
       <button class="nav-link" data-section="audit">Auditoria</button>
       <button class="nav-link" data-section="retention">Retenção</button>
       <button class="nav-link" data-section="integrations">Integrações</button>
+      <button class="nav-link" data-section="publicapi">API pública</button>
       <div class="nav-group">Observabilidade</div>
+      <button class="nav-link" data-section="checks">Verificações <span class="nav-count" id="checks-count" hidden></span></button>
       <button class="nav-link" data-section="health">Saúde</button>
+      <button class="nav-link" data-section="alerts">Alertas</button>
+      <button class="nav-link" data-section="core">Núcleo</button>
+      <button class="nav-link" data-section="disk">Disco</button>
+      <button class="nav-link" data-section="uiperf">Desempenho das telas</button>
       <button class="nav-link" data-section="sqlperf">Desempenho do SQL</button>
       <button class="nav-link" data-section="advice">Dicas de otimização</button>
     </nav>

@@ -1,3 +1,5 @@
+%% SPDX-FileCopyrightText: 2026 André Luis Pereira dos Santos
+%% SPDX-License-Identifier: AGPL-3.0-or-later
 %% Scheduled routines: storage, validation and occurrence calculation (spec 018).
 %%
 %% Local-time arithmetic is done by ana_cron; conversion between local time
@@ -195,7 +197,9 @@ validate(F, User = #{username := Who}) ->
          <<"executar como outro usuário exige papel admin"/utf8>>},
         {timezone_ok(Tz), <<"fuso horário inválido"/utf8>>},
         {is_list(maps:get(<<"triggers">>, F, [])), <<"triggers deve ser uma lista">>},
-        {ana_limits:validate(maps:get(<<"limits">>, F, #{})) =:= ok, <<"limites inválidos"/utf8>>}
+        {ana_limits:validate(maps:get(<<"limits">>, F, #{})) =:= ok, <<"limites inválidos"/utf8>>},
+        {variant_ok(Program, maps:get(<<"variant_id">>, F, null), RunAs),
+         <<"variante inexistente, de outra rotina ou que o usuário de execução não vê (use uma da empresa ou dele)"/utf8>>}
     ],
     case [M || {false, M} <- Checks] of
         [] -> lists:foldl(fun(T, ok) -> validate_trigger(T); (_, E) -> E end, ok, maps:get(<<"triggers">>, F, []));
@@ -213,6 +217,15 @@ validate_trigger(#{<<"kind">> := K} = T) ->
         true -> ok
     end;
 validate_trigger(_) -> {error, <<"gatilho sem tipo">>}.
+
+variant_ok(_, null, _) -> true;
+variant_ok(P, V, RunAs) when is_binary(P), is_integer(V) ->
+    case ana_db:one("SELECT 1 AS ok FROM ana_system.run_variant WHERE id = $1 AND program = $2 "
+                    "AND (owner = $3 OR (owner IS NULL AND published))", [V, P, RunAs]) of
+        {ok, #{<<"ok">> := 1}} -> true;
+        _ -> false
+    end;
+variant_ok(_, _, _) -> false.
 
 program_ok(P) when is_binary(P) ->
     case ana_program:for_execution(P) of
@@ -262,6 +275,12 @@ write(C, Id, F, Who) ->
                    "WHERE id = $1 RETURNING id", [Id | Values])
     end,
     JobId =:= undefined andalso throw({invalid, <<"rotina não encontrada"/utf8>>}),
+    %% Spec 045 (D5): the job may run with a variant of its program (resolved at each run).
+    _ = case maps:find(<<"variant_id">>, F) of
+        {ok, Vid} -> {ok, _} = ana_db:query(C, "UPDATE scheduler.job SET variant_id = $2 WHERE id = $1 "
+                                               "AND variant_id IS DISTINCT FROM $2", [JobId, Vid]);
+        error -> ok
+    end,
     {ok, _} = ana_db:query(C, "DELETE FROM scheduler.trigger WHERE job_id = $1", [JobId]),
     Holidays = holidays_list(),
     Now = erlang:system_time(second),

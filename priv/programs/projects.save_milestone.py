@@ -1,30 +1,39 @@
 # ana:description Cria ou altera marco de valor fixo (ex.: protótipo)
 # ana:exposed yes
 # ana:command milestone
+# ana:category Projetos/Planejamento
 from ana_lib.projects import access
 
 PARAMS = {
-    "project": {"type": "str", "required": True},
-    "description": {"type": "str", "required": True},
-    "amount": {"type": "decimal", "required": True},
-    "due_date": {"type": "date"},
-    "id": {"type": "int"},
+    "project": {"type": "str", "required": True, "label": "projeto", "lookup": {"program": "projects.lookup", "params": {"kind": "projects"}}},
+    "description": {"type": "str", "required": True, "label": "descrição"},
+    "amount": {"type": "decimal", "required": True, "label": "valor"},
+    "due_date": {"type": "date", "label": "vencimento/prazo"},
+    "id": {"type": "int", "label": "marco (id; vazio = novo)"},
+    "activity": {"type": "str", "label": "entregável (atividade) — o aceite do cliente conclui o marco",
+                 "lookup": {"program": "projects.lookup", "params": {"kind": "activities"}, "depends": ["project"]}},
 }
 
 
-def main(project, description, amount, due_date=None, id=None):
+def main(project, description, amount, due_date=None, id=None, activity=None):
     p = access.project(project)
     access.require_manager(p)
     if amount <= 0:
         raise ana.Error("INVALID_VALUE", "valor do marco deve ser positivo")
+    task = None
+    if activity:
+        # Spec 038 (RF-038-12): the customer's acceptance of this deliverable completes the milestone.
+        task = ana.sql_value("SELECT id FROM projects.task WHERE project_id = $1 AND code = $2 AND active", p["id"], str(activity))
+        if not task:
+            raise ana.Error("TASK_NOT_FOUND", f"atividade {activity} não encontrada no projeto")
     if id is None:
         new_id = ana.sql_value(
-            "INSERT INTO projects.milestone (project_id, description, amount, due_date) "
-            "VALUES ($1, $2, $3, $4) RETURNING id", p["id"], description, amount, due_date)
+            "INSERT INTO projects.milestone (project_id, description, amount, due_date, task_id) "
+            "VALUES ($1, $2, $3, $4, $5) RETURNING id", p["id"], description, amount, due_date, task)
         return {"id": new_id}
     n = ana.sql_exec(
-        "UPDATE projects.milestone SET description = $3, amount = $4, due_date = $5 "
-        "WHERE id = $1 AND project_id = $2 AND status = 'planned'", id, p["id"], description, amount, due_date)
+        "UPDATE projects.milestone SET description = $3, amount = $4, due_date = $5, task_id = COALESCE($6, task_id) "
+        "WHERE id = $1 AND project_id = $2 AND status = 'planned'", id, p["id"], description, amount, due_date, task)
     if n != 1:
         raise ana.Error("MILESTONE_LOCKED", f"marco {id} não existe ou não está mais previsto")
     return {"id": id}

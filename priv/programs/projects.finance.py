@@ -17,6 +17,7 @@ import datetime
 from decimal import Decimal
 
 from ana_lib.projects import consulting as C
+from ana_lib.tax import engine as tax_engine
 
 ZERO = Decimal(0)
 HUNDRED = Decimal(100)
@@ -84,6 +85,17 @@ def projection(p, adj=None, today=None):
         "GROUP BY task_id", p["id"])} if executing else {}
     hourly_revenue = p["billing"] in ("hourly", "mixed")
     warnings = []
+    # Spec 049 (RNF-049-04): the tax share comes from the engine's rules for this contract, never from a rate here.
+    if "_tax_share" not in p:                       # once per project, reused by every scenario
+        try:
+            p["_tax_share"] = tax_engine.burden_rate({"operation": "service_sale", "recipient": p["customer_id"],
+                                                     "contract": p["code"]})
+            p["_tax_warning"] = None
+        except tax_engine.TaxError as e:
+            p["_tax_share"], p["_tax_warning"] = ZERO, f"impostos não estimados: {e.message}"
+    tax_share = p["_tax_share"]
+    if p.get("_tax_warning"):
+        warnings.append(p["_tax_warning"])
     monthly = {}
     people = {}
 
@@ -237,7 +249,7 @@ def projection(p, adj=None, today=None):
         for v in monthly.values():
             v["cost"] += overhead * v["cost"] / month_cost
     revenue = labor_revenue + milestone_revenue + expense_revenue      # labor_revenue is 0 for fixed price
-    taxes = revenue * p["service_tax_rate"]
+    taxes = revenue * tax_share
     cost = labor_cost + expense_cost + overhead
     profit = revenue - taxes - cost
     margin = (profit / revenue * HUNDRED) if revenue else None
@@ -254,7 +266,7 @@ def projection(p, adj=None, today=None):
     series, cum, payback = [], ZERO, None
     for m in sorted(monthly):
         v = monthly[m]
-        tax = v["revenue"] * p["service_tax_rate"]
+        tax = v["revenue"] * tax_share
         result = v["revenue"] - tax - v["cost"]
         cum += result
         series.append({"month": m, "revenue": C.q2(v["revenue"]), "taxes": C.q2(tax), "cost": C.q2(v["cost"]),
@@ -333,10 +345,12 @@ def check_and_record(p, number, justification=None):
     pol = base["policy"]
     low = base["margin_pct"] is None or base["margin_pct"] < pol["min_margin_pct"]
     if low and not (justification and len(justification.strip()) >= 10):
+        # Spec 042 (B-04): without a projected revenue there is no margin to show — say what is missing.
+        why = (f"margem projetada {base['margin_pct']}% abaixo da mínima de {pol['min_margin_pct']}%" if base["margin_pct"] is not None
+               else f"o projeto ainda não tem receita prevista (valor-hora dos perfis, preço fixo ou marcos), então a margem "
+                    f"não se calcula e a mínima é {pol['min_margin_pct']}%")
         raise ana.Error("LOW_MARGIN",
-                        f"margem projetada {base['margin_pct'] if base['margin_pct'] is not None else '—'}% abaixo da "
-                        f"mínima de {pol['min_margin_pct']}%: corrija valores, horas ou prazos, ou justifique "
-                        f"(mínimo 10 caracteres)",
+                        f"{why}: corrija valores, horas ou prazos, ou justifique (mínimo 10 caracteres)",
                         {"margin_pct": base["margin_pct"], "min_margin_pct": pol["min_margin_pct"],
                          "profit": base["profit"]})
     if pes["profit"] < 0:

@@ -1,8 +1,10 @@
 # ana:description Aprova ou recusa solicitação de compra dentro da alçada
 # ana:exposed yes
 # ana:command aprovar
+# ana:category Compras/Solicitações
 """RF-013-03. Whoever requested does not approve; above the user's limit (role or access
-group, supply.approval_limit) another approver is required. Draft requests are submitted first."""
+group, supply.approval_limit) another approver is required; without a limit (0) nothing is approved, not even a
+request without an estimated value (spec 042, A-02). Draft requests are submitted first."""
 
 from ana_lib.supply import common
 
@@ -32,7 +34,11 @@ def main(request, decision="approve", reason=None):
         return {"number": r["number"], "status": "rejected"}
     if decision != "approve":
         raise ana.Error("INVALID_PARAMETER", "decisão deve ser approve ou reject")
+    ana.extend("before_approve_purchase", {"number": r["number"], "requester": r["requester"], "total": r["total"]})   # spec 009
     limit = common.approval_limit()
+    # Spec 042 (A-02): no limit (0) approves nothing — not even a request without an estimated value.
+    if limit is not None and limit <= 0:
+        raise ana.Error("NO_APPROVAL_LIMIT", f"{ana.context.user} não tem alçada para aprovar compras; peça a um aprovador")
     if limit is not None and r["total"] > limit:
         raise ana.Error("ABOVE_APPROVAL_LIMIT",
                         f"valor R$ {r['total']} acima da sua alçada (R$ {limit}); peça a um aprovador com limite maior",
@@ -40,4 +46,5 @@ def main(request, decision="approve", reason=None):
     ana.sql_exec("UPDATE supply.purchase_request SET status = 'approved', approved_by = $2, approved_at = now() "
                  "WHERE id = $1", r["id"], ana.context.user)
     ana.actions([{"label": "Gerar ordens de compra", "program": "supply.create_orders", "params": {"requests": [r["number"]]}}])
+    ana.extend("after_approve_purchase", {"number": r["number"], "status": "approved", "total": r["total"]})
     return {"number": r["number"], "status": "approved", "total": r["total"]}

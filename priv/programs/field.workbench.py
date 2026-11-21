@@ -1,6 +1,9 @@
 # ana:description Bancada de serviços em campo: chamados a agendar, agenda do dia e OS a faturar
 # ana:command campo
+# ana:category Logística e campo/Serviços em campo
 """H4–H8: open calls by deadline, today's visits and finished orders waiting for invoicing."""
+
+from ana_lib.docs.common import link as doc_link
 
 PARAMS = {}
 PRIO = {"urgent": "urgente", "high": "alta", "normal": "normal", "low": "baixa"}
@@ -18,17 +21,17 @@ def main():
                  {"label": "A faturar", "value": c["to_invoice"], "status": "warn" if c["to_invoice"] else "ok"}])
     rows = ana.sql("SELECT o.number, p.name, o.priority, o.description, o.due_at, now() > o.due_at AS late FROM field.service_order o "
                    "JOIN base.party p ON p.id = o.customer_id WHERE o.status = 'open' ORDER BY o.due_at LIMIT 200")
-    ana.table([{"OS": r["number"], "cliente": r["name"], "prioridade": PRIO[r["priority"]], "pedido": r["description"],
+    ana.table([{"OS": r["number"], "_open": doc_link("service_order", r["number"]), "cliente": r["name"], "prioridade": PRIO[r["priority"]], "pedido": r["description"],
                 "prazo": f"{r['due_at']:%d/%m %H:%M}" + (" (atrasada)" if r["late"] else ""),
                 "_actions": [{"label": "Agendar", "program": "field.schedule", "params": {"order": r["number"]}, "style": "primary",
                               "ask": {"technician": {"type": "int", "label": "técnico", "required": True,
                                                      "lookup": {"program": "logistics.lookup", "params": {"kind": "technicians"}}},
-                                      "start": {"type": "str", "label": "início (AAAA-MM-DD HH:MM)", "required": True},
+                                      "start": {"type": "datetime", "label": "início", "required": True},
                                       "hours": {"type": "decimal", "label": "duração (h)"}}}]} for r in rows],
               title="Chamados a agendar")
     done = ana.sql("SELECT o.number, p.name, o.done_at FROM field.service_order o JOIN base.party p ON p.id = o.customer_id "
                    "WHERE o.status = 'done' ORDER BY o.done_at LIMIT 200")
-    ana.table([{"OS": r["number"], "cliente": r["name"], "concluída": f"{r['done_at']:%d/%m %H:%M}",
+    ana.table([{"OS": r["number"], "_open": doc_link("service_order", r["number"]), "cliente": r["name"], "concluída": f"{r['done_at']:%d/%m %H:%M}",
                 "_actions": [{"label": "Faturar", "program": "field.invoice_orders", "params": {"orders": [r["number"]]},
                               "style": "primary"}]} for r in done], title="Concluídas, a faturar")
     ana.actions([{"label": "Nova OS", "program": "field.open_order", "open": True},

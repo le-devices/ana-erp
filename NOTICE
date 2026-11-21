@@ -1,0 +1,88 @@
+ANA ERP
+Copyright (C) 2026 André Luis Pereira dos Santos
+
+Titular dos direitos patrimoniais: André Luis Pereira dos Santos, que os cederá à sociedade LE Devices quando ela
+for constituída; a partir da cessão, a LE Devices passa a ser a titular e sucede o atual em todas as licenças,
+permissões e termos deste repositório (inclusive o CLA).
+
+Este programa é software livre: você pode redistribuí-lo e/ou modificá-lo sob os termos da Licença Pública Geral
+Affero GNU (GNU AGPL), publicada pela Free Software Foundation, na versão 3 da licença ou (a seu critério)
+qualquer versão posterior. O texto integral está no arquivo LICENSE.
+
+Este programa é distribuído na esperança de que seja útil, mas SEM QUALQUER GARANTIA; sem mesmo a garantia
+implícita de COMERCIALIZAÇÃO ou de ADEQUAÇÃO A UM PROPÓSITO ESPECÍFICO. Veja a GNU AGPL para mais detalhes.
+
+This program is free software: you can redistribute it and/or modify it under the terms of the GNU Affero General
+Public License as published by the Free Software Foundation, either version 3 of the License, or (at your option)
+any later version. See the file LICENSE.
+
+Licença comercial: quem não quiser ou não puder cumprir as obrigações da AGPL pode contratar uma licença
+comercial com o titular. Contribuições são aceitas sob o Termo de Licença de Contribuição (CLA.md).
+
+A marca "ANA" e o logotipo do ANA ERP pertencem ao titular e não são licenciados pela AGPL (veja TRADEMARKS.md).
+
+Contato do titular (licença comercial, marca, direitos do titular de dados do CLA): pelo perfil da organização
+no GitHub; relatos de segurança, pelo relato privado do GitHub (SECURITY.md).
+
+-----------------------------------------------------------------------------------------------------------------
+PERMISSÃO ADICIONAL — PROGRAMAS DO CLIENTE (seção 7 da GNU AGPL versão 3)
+-----------------------------------------------------------------------------------------------------------------
+
+Rascunho revisado (spec 066), pendente de validação por advogado inscrito na OAB.
+
+Além das permissões da GNU AGPL, o titular dos direitos do ANA ERP concede a seguinte permissão adicional, nos
+termos da seção 7 da licença:
+
+1. Definições.
+   a) "Interfaces de Programas": a API do runtime (o módulo `ana`), o protocolo entre o núcleo e o runtime, as
+      APIs HTTP, RPC e pública, os pontos de extensão, os formatos de pacotes de regras, de modelos de processo e
+      de transporte, e a importação das bibliotecas do produto (`ana_lib`) por um programa.
+   b) "Programa do Cliente": um programa de negócio, consulta, modelo de processo, pacote de regras, variante,
+      agendamento ou integração escrito para ser executado pelo ANA ERP, que não contém código do ANA ERP além de
+      chamadas e referências às Interfaces de Programas, e que fica fora dos namespaces reservados do produto.
+
+2. Permissão. Você pode criar, executar, armazenar, transportar e distribuir Programas do Cliente, sozinhos ou
+   junto com o ANA ERP, e licenciá-los sob os termos que escolher, inclusive proprietários, sem que os termos da
+   GNU AGPL se apliquem a eles. Em especial:
+   a) executar Programas do Cliente no ANA ERP, ou instalá-los nele, não é modificação do ANA ERP para os fins da
+      seção 13 da licença;
+   b) o "Código-Fonte Correspondente" do ANA ERP, inclusive o que a seção 13 manda oferecer aos usuários que
+      interagem com ele pela rede, não inclui os Programas do Cliente.
+
+3. Limites. Esta permissão não se aplica:
+   a) ao ANA ERP nem às modificações dele, inclusive aos programas e bibliotecas do produto (`priv/programs`) e
+      aos namespaces reservados do produto, quando alterados — essas alterações seguem a GNU AGPL; para
+      customizar sem abrir o próprio código, use Programas do Cliente e os pontos de extensão;
+   b) a um programa que copie código do ANA ERP além do necessário para usar as Interfaces de Programas.
+
+4. Quem distribuir o ANA ERP, modificado ou não, pode manter ou remover esta permissão nas suas cópias, como a
+   seção 7 da licença permite. Esta permissão não limita nenhum direito que você já tenha pela GNU AGPL.
+
+ADDITIONAL PERMISSION — CUSTOMER PROGRAMS (section 7 of the GNU AGPL version 3). English summary; the Portuguese text
+above prevails. "Customer Programs" are business programs, queries, process models, rule packages, variants,
+schedules and integrations written to be run by ANA ERP, containing no ANA ERP code beyond calls and references to
+its Program Interfaces (the `ana` runtime API, the core–runtime protocol, the HTTP, RPC and public APIs, the extension
+points, the package and transport formats, and importing the product libraries `ana_lib`), outside the product's
+reserved namespaces. You may create, run, store, transfer and distribute Customer Programs, alone or together with
+ANA ERP, under terms of your choice; running or installing them is not a modification of ANA ERP for section 13, and
+ANA ERP's Corresponding Source does not include them. This permission does not cover ANA ERP itself or its
+modifications, including modified product programs and libraries, nor programs copying ANA ERP code beyond what is
+needed to use the interfaces.
+
+-----------------------------------------------------------------------------------------------------------------
+COMPONENTES DE TERCEIROS
+-----------------------------------------------------------------------------------------------------------------
+
+Distribuídos com o núcleo (rebar.lock; conferidos pela bateria em scripts/licensing_check.py):
+  cowboy 2.12.0 ........ ISC           https://github.com/ninenines/cowboy
+  cowlib 2.13.0 ........ ISC           https://github.com/ninenines/cowlib
+  ranch 1.8.0 .......... ISC           https://github.com/ninenines/ranch
+  epgsql 4.7.1 ......... BSD-3-Clause  https://github.com/epgsql/epgsql
+
+Usados pelo núcleo, instalados à parte:
+  Erlang/OTP ........... Apache-2.0
+  Python ............... Python Software Foundation License
+  PostgreSQL ........... PostgreSQL License
+  Citus (colunar) ...... AGPL-3.0
+
+Só nos testes, não distribuídos: jsdom (MIT), cryptography (Apache-2.0 ou BSD-3-Clause).

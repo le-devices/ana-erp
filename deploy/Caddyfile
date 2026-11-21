@@ -1,0 +1,39 @@
+# SPDX-FileCopyrightText: 2026 André Luis Pereira dos Santos
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# ANA ERP — HTTPS entry point (spec 036). Values come from .env (see install.sh):
+#   ANA_SITE       erp.empresa.com.br | https://192.168.0.10 | https://localhost
+#   ANA_TLS        e-mail (automatic certificate) | internal | /certs/fullchain.pem /certs/privkey.pem
+#   ANA_UPSTREAMS  "ana1:8080" or "ana1:8080 ana2:8080"
+{
+	admin off
+	# Clients that send no server name (access by IP) get this site's certificate.
+	default_sni {$ANA_HOSTNAME}
+}
+
+{$ANA_SITE} {
+	tls {$ANA_TLS}
+	encode zstd gzip
+	header {
+		Strict-Transport-Security "max-age=31536000"
+		X-Content-Type-Options "nosniff"
+		Referrer-Policy "same-origin"
+		-Server
+	}
+	request_body {
+		max_size 64MB
+	}
+	# Only ready nodes receive requests; a node being updated drains first (spec 023).
+	reverse_proxy {$ANA_UPSTREAMS} {
+		lb_policy round_robin
+		lb_try_duration 15s
+		lb_try_interval 250ms
+		health_uri /health/ready
+		health_interval 2s
+		health_timeout 2s
+		health_status 200
+		fail_duration 5s
+		transport http {
+			read_timeout 10m
+		}
+	}
+}

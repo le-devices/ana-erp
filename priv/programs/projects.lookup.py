@@ -9,6 +9,8 @@ Used by PARAMS entries with "lookup" (the screen calls it while filling the form
 
 from ana_lib.projects import access
 
+from ana_lib.master import core  # spec 040: the single lookup of master records
+
 PARAMS = {
     "kind": {"type": "str", "required": True, "label": "tipo",
              "choices": ["projects", "activities", "phases", "employees", "templates", "profiles"]},
@@ -40,6 +42,5 @@ def main(kind, project=None):
         rows = ana.sql("SELECT code, name FROM projects.template WHERE active ORDER BY name")
         return [{"value": r["code"], "label": f"{r['name']} ({r['code']})"} for r in rows]
     if kind == "profiles":
-        rows = ana.sql("SELECT code, description FROM projects.rate_profile WHERE active ORDER BY code")
-        return [{"value": r["code"], "label": f"{r['code']} — {r['description']}"} for r in rows]
+        return core.options("profile")
     return []

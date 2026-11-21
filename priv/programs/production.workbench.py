@@ -1,8 +1,10 @@
 # ana:description Bancada de produção: ordens em aberto, sugestões do planejamento e próximos passos
 # ana:command producao
+# ana:category Produção/Planejamento
 """Production workbench (H4–H6): each order shows the next step on its own row."""
 
 import datetime
+from ana_lib.docs.common import link as doc_link
 
 PARAMS = {}
 STATUS = {"planned": "planejada", "released": "liberada", "in_progress": "em andamento", "completed": "concluída"}
@@ -39,7 +41,7 @@ def main():
                      "ask": {"good_qty": {"type": "decimal", "label": "boas", "required": True},
                              "scrap_qty": {"type": "decimal", "label": "refugo"}}}]
         return [{"label": "Encerrar", "program": "production.close_order", "params": n, "style": "primary"}]
-    ana.table([{"ordem": r["number"], "item": f"{r['code']} — {r['description']}", "quantidade": r["quantity"],
+    ana.table([{"ordem": r["number"], "_open": doc_link("work_order", r["number"]), "item": f"{r['code']} — {r['description']}", "quantidade": r["quantity"],
                 "boas": r["good_qty"], "início": r["start_date"], "término": r["due_date"],
                 "situação": STATUS[r["status"]] + (" (atrasada)" if r["due_date"] < today and r["status"] != "completed" else ""),
                 "projeto": r["project"], "_actions": step(r)} for r in rows], title="Ordens de produção em aberto")

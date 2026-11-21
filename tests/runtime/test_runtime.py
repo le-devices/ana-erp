@@ -1,3 +1,5 @@
+# SPDX-FileCopyrightText: 2026 André Luis Pereira dos Santos
+# SPDX-License-Identifier: AGPL-3.0-or-later
 """Tests for the isolated Python runtime (specs 002 and 004), no database.
 
 A "fake core" speaks the protocol with the runtime process and answers its
@@ -127,6 +129,19 @@ class TestExecution(unittest.TestCase):
         end, _ = run("def main():\n    ana.actions([{'label': 'x'}])\n")
         self.assertFalse(end["ok"])
         self.assertEqual(end["error"]["code"], "INVALID_PARAMETER")
+
+    def test_rf_035_01_rows_that_open_a_document(self):
+        source = ("def main():\n"
+                  "    ana.table([{'doc': 'ORD-1', '_open': {'program': 'docs.view', 'params': {'kind': 'order', 'key': '1'}}},\n"
+                  "               {'doc': 'avulso'}])\n")
+        end, ev = run(source)
+        self.assertTrue(end["ok"], end)
+        t = [e["data"] for e in ev if e["type"] == "output" and e["kind"] == "table"][0]
+        self.assertEqual(t["columns"], ["doc"])                          # _open is not a column
+        self.assertEqual(t["row_open"][0], {"label": "Abrir", "program": "docs.view",
+                                            "params": {"kind": "order", "key": "1"}, "open": True})
+        self.assertIsNone(t["row_open"][1])
+        self.assertNotIn("row_actions", t)
 
     def test_ca_026_02_03_chart_validation_and_other(self):
         source = ("def main():\n"
@@ -336,6 +351,33 @@ class TestParams(unittest.TestCase):
         end, _ = run(self.SOURCE, {"a": "abc"})
         self.assertEqual(end["error"]["code"], "INVALID_PARAMETER")
 
+    def test_042_b02_rows_of_a_list_with_columns(self):
+        source = ('PARAMS = {"lines": {"type": "list", "label": "itens contados", "columns": {\n'
+                  '    "product": {"type": "str", "required": True, "label": "item"},\n'
+                  '    "counted": {"type": "decimal", "required": True, "label": "quantidade contada"}}}}\n'
+                  'def main(lines):\n    return [l["counted"] for l in lines]\n')
+        end, _ = run(source, {"lines": [{"product": "A", "counted": "2,5"}]})
+        self.assertEqual(end["result"], ["2,5"])                            # values are not changed
+        end, _ = run(source, {"lines": [{"product": "A", "counted": 1}, {"product": "B", "quantity": 3}]})
+        self.assertEqual(end["error"]["code"], "INVALID_PARAMETER")
+        self.assertIn("itens contados, linha 2: falta quantidade contada", end["error"]["message"])
+        end, _ = run(source, {"lines": [{"product": "A", "counted": "muito"}]})
+        self.assertIn("linha 1: quantidade contada não é do tipo decimal", end["error"]["message"])
+        end, _ = run(source, {"lines": ["A"]})
+        self.assertIn("linha 1: deve ser um objeto", end["error"]["message"])
+        one = ('PARAMS = {"terms": {"type": "list", "columns": {"term": {"type": "str", "required": True}}}}\n'
+               'def main(terms):\n    return terms\n')
+        end, _ = run(one, {"terms": ["AVISTA", {"term": "PIX"}]})
+        self.assertEqual(end["result"], ["AVISTA", {"term": "PIX"}])           # a single column accepts plain values
+
+    def test_decimal_accepts_brazilian_notation(self):
+        # Spec 031 usability: operators type "4,79" or "1.234,56" in money/quantity fields.
+        source = ('PARAMS = {"v": {"type": "decimal"}}\n'
+                  'def main(v):\n    return str(v)\n')
+        for typed, expected in (("4,79", "4.79"), ("1.234,56", "1234.56"), ("12.5", "12.5"), (3, "3")):
+            end, _ = run(source, {"v": typed})
+            self.assertEqual(end["result"], expected, typed)
+
 
 class TestInspection(unittest.TestCase):
     def inspect(self, source):
@@ -356,6 +398,13 @@ class TestInspection(unittest.TestCase):
         self.assertEqual(r["params"], {"a": {"type": "int", "order": 0}})   # declared order kept
         self.assertEqual(r["docs"], "Doc.")
         self.assertTrue(r["has_main"])
+
+    def test_grid_columns_keep_declared_order(self):
+        # JSON objects lose order on storage: the items grid needs "order" per column too.
+        r = self.inspect('PARAMS = {"items": {"type": "list", "columns": {"product": {}, "quantity": {}, "price": {}}}}\n'
+                         'def main(items): pass\n')
+        cols = r["params"]["items"]["columns"]
+        self.assertEqual([cols[c]["order"] for c in ("product", "quantity", "price")], [0, 1, 2])
 
     def test_lint_ok_marker_accepts_a_finding_on_purpose(self):
         r = self.inspect("def main(q):\n"

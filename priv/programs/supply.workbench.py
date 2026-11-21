@@ -1,11 +1,13 @@
 # ana:description Bancada de compras: aprovar, comprar, receber e acompanhar prazos
 # ana:command compras
+# ana:category Compras/Ordens de compra
 """Purchasing workbench (H2–H4): each view lists what waits for a decision, with the
 action on the row itself."""
 
 import datetime
 
 from ana_lib.supply import common
+from ana_lib.docs.common import link as doc_link
 
 PARAMS = {
     "view": {"type": "str", "default": "approve", "label": "visão",
@@ -42,7 +44,7 @@ def main(view="approve"):
             "JOIN base.product pr ON pr.id = l.product_id JOIN inventory.warehouse w ON w.id = r.warehouse_id "
             "LEFT JOIN projects.project pj ON pj.id = r.project_id WHERE r.status = 'submitted' "
             "GROUP BY r.id, pj.code, w.code ORDER BY r.need_date NULLS LAST, r.number LIMIT 200")
-        ana.table([{"solicitação": r["number"], "solicitante": r["requester"], "itens": r["items"], "motivo": r["reason"],
+        ana.table([{"solicitação": r["number"], "_open": doc_link("purchase_request", r["number"]), "solicitante": r["requester"], "itens": r["items"], "motivo": r["reason"],
                     "necessária em": r["need_date"], "projeto": r["project"], "total": r["total"],
                     "_actions": [] if r["requester"] == ana.context.user or (limit is not None and r["total"] > limit) else [
                         {"label": "Aprovar", "program": "supply.approve_request", "params": {"request": r["number"]}, "style": "primary"},
@@ -60,7 +62,7 @@ def main(view="approve"):
             "LEFT JOIN supply.supplier_item si ON si.product_id = l.product_id AND si.preferred "
             "LEFT JOIN base.party pa ON pa.id = COALESCE(l.supplier_id, si.supplier_id) "
             "WHERE r.status = 'approved' GROUP BY r.id ORDER BY r.need_date NULLS LAST, r.number LIMIT 200")
-        ana.table([{"solicitação": r["number"], "solicitante": r["requester"], "itens e fornecedores": r["items"],
+        ana.table([{"solicitação": r["number"], "_open": doc_link("purchase_request", r["number"]), "solicitante": r["requester"], "itens e fornecedores": r["items"],
                     "necessária em": r["need_date"], "aprovada por": r["approved_by"], "total": r["total"],
                     "_actions": [{"label": "Gerar ordem", "program": "supply.create_orders", "params": {"requests": [r["number"]]}}]}
                    for r in rows], title="Aprovadas, aguardando compra")
@@ -76,7 +78,7 @@ def main(view="approve"):
             "WHERE o.status IN ('sent', 'partially_received') GROUP BY o.id, pa.name "
             "HAVING $1 = false OR min(l.promised_date) FILTER (WHERE l.received_qty < l.quantity) < $2 "
             "ORDER BY next_date NULLS LAST, o.number LIMIT 200", view == "late", today)
-        ana.table([{"ordem": r["number"], "fornecedor": r["name"], "recebido/pedido": r["items"], "prometida para": r["next_date"],
+        ana.table([{"ordem": r["number"], "_open": doc_link("purchase_order", r["number"]), "fornecedor": r["name"], "recebido/pedido": r["items"], "prometida para": r["next_date"],
                     "atraso (dias)": (today - r["next_date"]).days if r["next_date"] and r["next_date"] < today else None,
                     "situação": "recebida em parte" if r["status"] == "partially_received" else "enviada", "total": r["total"],
                     "_actions": [{"label": "Receber tudo", "program": "supply.receive", "params": {"order": r["number"]},

@@ -1,0 +1,19 @@
+# SPDX-FileCopyrightText: 2026 André Luis Pereira dos Santos
+# SPDX-License-Identifier: AGPL-3.0-or-later
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: ana-config
+data:
+  ANA_INSTANCE: production
+  ANA_INSTANCE_NAME: ana-production
+  ANA_DEMO: "false"
+  ANA_TIMEZONE: America/Sao_Paulo
+  ANA_PUBLIC_URL: https://erp.empresa.com.br
+  ANA_HTTP_PORT: "8080"
+  ANA_DRAIN_DELAY_MS: "6000"
+  # Managed PostgreSQL 15+ (see INSTALL.md: role "ana", database "ana", deploy/initdb-managed.sql).
+  ANA_DB_HOST: postgres.empresa.internal
+  ANA_DB_PORT: "5432"
+  ANA_DB_NAME: ana
+  ANA_DB_USER: ana

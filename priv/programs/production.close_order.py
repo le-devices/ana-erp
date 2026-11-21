@@ -1,8 +1,11 @@
 # ana:description Encerra a ordem: apura o custo real, a variação contra o padrão e lança no estoque ou no projeto
 # ana:exposed yes
-"""RF-014-06/09, CA-014-03/06. Actual cost = components issued × unit cost + hours reported ×
-cost per hour (immutable after closing). D inventory (or project_costs + project expense when
-the order belongs to a project) / C work_in_process. Variance = actual − standard."""
+# ana:category Produção/Ordens de produção
+"""RF-014-06/09, CA-014-03/06. Actual cost = components issued (at the value they left the stock)
++ hours reported × cost per hour (immutable after closing). Order of a project: D project_costs +
+project expense / C work_in_process. Otherwise the finished goods already entered the stock at the
+standard cost (spec 038): what is left in work_in_process goes to production_variance.
+Variance = actual − standard."""
 
 from decimal import Decimal
 
@@ -15,12 +18,14 @@ def main(order):
     o = common.order(order, lock=True)
     if o["status"] != "completed":
         raise ana.Error("INVALID_STATE", f"ordem {o['number']} não está concluída")
-    comp = ana.sql_value("SELECT COALESCE(sum(issued_qty * unit_cost), 0) FROM production.order_component WHERE order_id = $1",
-                         o["id"])
+    doc = f"OP-{o['number']}"
+    comp = ana.sql_value("SELECT COALESCE(-sum(value), 0) FROM inventory.stock_movement WHERE document = $1 AND reason = 'production_issue'",
+                         doc)
+    delivered = ana.sql_value("SELECT COALESCE(sum(value), 0) FROM inventory.stock_movement WHERE document = $1 "
+                              "AND reason = 'production_receipt'", doc)
     hours = ana.sql_value("SELECT COALESCE(sum(cost), 0) FROM production.operation_report WHERE order_id = $1", o["id"])
     actual = common.money(Decimal(comp) + Decimal(hours))
     variance = common.money(actual - (o["std_cost"] or 0))
-    doc = f"OP-{o['number']}"
     if o["project_id"]:
         cc = ana.sql_value("SELECT cost_center FROM projects.project WHERE id = $1", o["project_id"])
         common.post(f"Custo da ordem de produção {o['number']} (protótipos) para o projeto", doc,
@@ -31,8 +36,10 @@ def main(order):
                      f"Ordem de produção {o['number']}: {o['description']} ({o['good_qty']} boas, {o['scrap_qty']} refugo)",
                      o["product_id"], units, (actual / units).quantize(Decimal("0.0001")), ana.context.user)
     else:
-        common.post(f"Produto acabado da ordem de produção {o['number']}", doc,
-                    [("@inventory", actual, 0, None), ("@work_in_process", 0, actual, None)])
+        rest = common.money(actual - Decimal(delivered))
+        common.post(f"Variação de custo da ordem de produção {o['number']}", doc,
+                    [("@production_variance", rest, 0, None), ("@work_in_process", 0, rest, None)] if rest > 0 else
+                    [("@work_in_process", -rest, 0, None), ("@production_variance", 0, -rest, None)])
     ana.sql_exec("UPDATE production.work_order SET actual_cost = $2, variance = $3, status = 'closed', closed_at = now() "
                  "WHERE id = $1", o["id"], actual, variance)
     unit = (actual / o["good_qty"]).quantize(Decimal("0.0001")) if o["good_qty"] else None

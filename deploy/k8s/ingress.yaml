@@ -1,0 +1,26 @@
+# SPDX-FileCopyrightText: 2026 André Luis Pereira dos Santos
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# HTTPS with cert-manager (automatic certificate). Adjust the host and the ingress class.
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: ana
+  annotations:
+    cert-manager.io/cluster-issuer: letsencrypt
+    nginx.ingress.kubernetes.io/proxy-body-size: 64m
+    # A synchronous run may last up to the execution ceiling (10 min) plus the core's margin (spec 042).
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "630"
+    nginx.ingress.kubernetes.io/proxy-send-timeout: "630"
+spec:
+  ingressClassName: nginx
+  tls:
+    - hosts: [erp.empresa.com.br]
+      secretName: ana-tls
+  rules:
+    - host: erp.empresa.com.br
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service: {name: ana, port: {name: http}}

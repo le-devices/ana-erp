@@ -1,5 +1,6 @@
 # ana:description Política de margem e cenários padrão das projeções (empresa)
 # ana:exposed yes
+# ana:category Projetos/Pessoas e políticas
 """RF-021-14a/15. Admin only. Without parameters, shows the current policy."""
 
 from ana_lib.projects import access

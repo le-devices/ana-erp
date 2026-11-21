@@ -3,8 +3,16 @@
 ERP com núcleo em **Erlang/OTP**, dados em **PostgreSQL** (com armazenamento
 **colunar** para análise) e regras de negócio em **Python** — guardadas,
 versionadas, executadas e **depuradas dentro do próprio ERP**, e chamáveis
-remotamente por JSON-RPC. Pensado como **produto licenciável** para muitos
-clientes.
+remotamente por JSON-RPC. Software livre sob a **GNU AGPL-3.0** (spec 066), com
+[permissão adicional para os programas do cliente](NOTICE) — programas próprios do
+cliente (fora dos namespaces do produto) e os pontos de extensão não obrigam a abrir o
+código; alterar os programas do produto, sim — e licença comercial, suporte, módulos premium e SaaS
+oferecidos pelo titular (André Luis Pereira dos Santos; a LE Devices,
+quando constituída).
+
+**Licença:** [LICENSE](LICENSE) (AGPL-3.0-or-later) · [NOTICE](NOTICE) ·
+[Como contribuir](CONTRIBUTING.md) e [Termo de contribuição](CLA.md) ·
+[Segurança](SECURITY.md) · [Código de conduta](CODE_OF_CONDUCT.md) · [Marca](TRADEMARKS.md).
 
 Desenvolvido com **Spec Driven Development**: tudo começa em
 [`specs/`](specs/README.md). Código em inglês; telas e documentação em português.
@@ -47,6 +55,12 @@ analítica — faixa de cabeçalho com filtros em linha, indicadores como chips
 de estado, gráficos lado a lado em cartões e tabelas em cartão com
 "Título (N)" e exportação; início em blocos. Tema claro e escuro, sem
 rolagem horizontal no celular.
+
+Formulários (spec 031): cliente, depósito, OS, técnico, conta, condição etc.
+são listas; linhas (itens de pedido, componentes, operações, faixas de frete,
+lançamentos) são grades com "Adicionar linha"; datas e horas têm botão de
+calendário/relógio e "hoje"/"agora"; números aceitam vírgula decimal. Todo
+campo tem rótulo em português (verificado por teste).
 
 ## Áreas da interface (spec 020)
 
@@ -162,6 +176,25 @@ por linha em `ana.table` (abrir rotina com parâmetros, ou pedir campos e
 executar na própria tela). O endereço `#/ops/<módulo>/<rotina>?param=valor`
 abre e executa a rotina.
 
+A **Operação** agrupa as rotinas por **área do negócio** (Vendas, Compras,
+Estoque, Produção, Financeiro, Contabilidade, Processos…) e **categoria**
+(declarada no programa: `# ana:category Financeiro/Conciliação bancária`).
+Marque uma ou mais rotinas e use **Copiar para categoria…** para montar as
+suas categorias (pessoais) — o administrador cria as **da empresa**, para
+todos ou para grupos. A categoria guarda atalhos: a rotina continua uma só;
+o atalho pode ter nome e parâmetros próprios. As categorias aparecem também
+no **Início**, com arrastar para ordenar e mover.
+
+O próximo passo do processo pode ser declarado no programa (spec 020):
+
+```python
+NEXT = [{"label": "Faturar este pedido", "program": "sales.invoice_order",
+         "params": {"number": "{{result.number}}"}, "confirm": "Faturar o pedido {{result.number}}?"}]
+```
+
+e `ana.steps` mostra as etapas de um processo; `etapas` (`flows.guide`) faz
+isso para venda, compra, atendimento e produção de qualquer documento.
+
 ## Execução paralela (spec 022)
 
 ```python
@@ -270,11 +303,13 @@ make eunit             # núcleo Erlang
 make dialyzer          # análise estática
 make teste-runtime     # runtime Python, depurador e limites (sem banco)
 make teste-integracao  # testes contra o ambiente, rastreados a CA-xxx-nn
+make teste-trilhas     # trilhas de processo de ponta a ponta: conciliações de controle iguais antes e depois
 make teste-estudio     # interface num DOM real (jsdom): áreas, rotina, depurador, administração
 make teste-cluster     # dois nós: agendamento exatamente uma vez, troca de líder, erpc
 make teste-pg-ha       # PostgreSQL primário + réplica: promoção com carga, console na réplica, primário antigo recusado
 make teste-caos        # dois nós + HAProxy: programas que falham, nó derrubado, desligamento
                        # gracioso, atualização rolling, banco reiniciado, restauração a um instante
+make licencas          # linhas SPDX em todo arquivo de código, licenças das dependências, credenciais
 ```
 
 ## Estrutura
@@ -305,7 +340,14 @@ clients/python/     cliente JSON-RPC        tests/          runtime, integration
   30 dias ou sempre; resolvidas somem sozinhas.
 - **Saúde e incidentes**: componentes verificados a cada 10 s, incidentes
   abertos/fechados automaticamente (inclusive com o banco fora), webhook
-  opcional (`ANA_ALERT_WEBHOOK`).
+  de contingência opcional (`ANA_ALERT_WEBHOOK`).
+- **E-mail (SMTP)**: conector de e-mail com TLS/STARTTLS verificado e senha no cofre; `ana.send_email`
+  só envia se a execução confirmar, com modelo HTML escapado e anexos do repositório; novas tentativas,
+  recusas permanentes em paradas; "Testar conexão" e "Enviar e-mail de teste".
+- **Alertas**: regras sobre a saúde dos componentes e as métricas de cada nó
+  (limiar, janela, gravidade), avisos no Estúdio e por conector de integração
+  (webhook ou e-mail via gateway, com novas tentativas) e silêncios com motivo
+  e prazo para manutenções.
 - **Execução detalhada**: linha do tempo do SQL, quadros e variáveis do erro
   (só para desenvolvedores, nomes sensíveis mascarados) e **perfil** sob
   demanda ("Perfilar uma execução").
@@ -347,6 +389,380 @@ ou comprar, prazo, lote, segurança, custo padrão).
   (horas × valor do perfil, deslocamento, peças) ou lançamento no projeto;
   indicadores (`sla`): SLA cumprido, atrasadas, resposta, horas em campo,
   visitas e retornos.
+
+## Instalação em produção (spec 036)
+
+Guia completo: [deploy/INSTALL.md](deploy/INSTALL.md) — servidor próprio,
+VM em qualquer nuvem ou Kubernetes. Em resumo:
+
+```bash
+sudo ./deploy/install.sh --domain erp.empresa.com.br --email ti@empresa.com.br
+sudo /opt/ana-erp/ana-ctl doctor
+```
+
+O instalador confere os requisitos, gera todas as senhas e chaves, sobe banco
+(com arquivamento contínuo), dois nós e o proxy HTTPS, faz a primeira cópia e
+agenda as cópias; o admin troca a senha inicial no primeiro acesso.
+`ana-ctl upgrade --source <pacote novo>` atualiza nó a nó sem parar (e volta
+atrás se falhar). O `docker-compose.yml` da raiz é o ambiente de
+**desenvolvimento** (senhas de exemplo, dados de demonstração).
+
+## Documentos navegáveis (spec 035)
+
+Onde uma lista mostra um documento — faturas, pedidos, OS, solicitações e
+ordens de compra, ordens de produção, expedições, transferências — a linha é
+clicável (ou Enter pelo teclado) e abre o documento (`doc`): cabeçalho,
+itens, valores, situação, histórico, documentos ligados (que também abrem) e
+o próximo passo. No portal, o cliente abre só os próprios pedidos, faturas e
+OS. A fatura de pedido ou de OS tem PDF (itens, parcelas, vencimentos e dados
+de pagamento), gerado no faturamento e guardado na pasta "Faturas" do
+cliente — o título e Minhas faturas abrem o PDF numa aba.
+
+## Processos — BPM (spec 039)
+
+A área **Processos** mostra o **mapa** da empresa (cadeias de valor →
+processos → subprocessos) com dono, situação, casos abertos e atrasos. Cada
+processo tem as abas:
+
+- **Diagrama** — editor visual próprio (SVG): elementos com o significado da
+  notação BPMN (início/fim, tarefa de pessoa, aprovação, tarefa automática
+  que chama um programa do ERP, envio, regra, espera por tempo ou por fato
+  do ERP, subprocesso, decisão, paralelo, inclusivo), raias por papel ou
+  grupo, condições montadas sem código, validação enquanto se desenha,
+  desfazer/refazer, teclado completo, zoom, alinhamento automático,
+  exportação SVG/PNG/PDF e **BPMN 2.0** (importar e exportar). Seis
+  **modelos prontos**: do pedido ao recebimento, da compra ao pagamento,
+  atendimento em campo, produção, projeto de P&D com protótipo e fechamento
+  do mês. Rascunho → publicada → aposentada.
+- **Simulação** — chegadas, durações, caminhos, pessoas por raia e custo;
+  prazo médio e de 90 %, custo por caso, vazão, ocupação e gargalo, com
+  animação; cenários guardados lado a lado; **calibração** pelos casos reais.
+- **Casos**, **Painel** (prazo × meta, vazão semanal, **mapa de calor** no
+  diagrama), **Descoberta** (variantes reais, etapas puladas, retrabalho,
+  ordem fora do modelo; criar um modelo da variante principal) e
+  **Versões** (comparação visual, migração de casos).
+
+O motor executa o processo publicado: casos começam sozinhos quando o
+documento é criado (pedido, solicitação de compra, OS, ordem de produção,
+projeto) ou manualmente; tarefas automáticas rodam como o robô do processo;
+tarefas de pessoa aparecem em **Minhas tarefas** (também no Início e no
+sino de avisos) com prazo em horas úteis, aviso e escalonamento; tarefas
+podem concluir sozinhas quando o ERP registra o resultado. As **esteiras**
+(spec 030) rodam no mesmo motor e aparecem no mapa.
+
+## Cadastros (spec 040)
+
+A área **Cadastros** reúne os dados mestres — clientes e fornecedores, itens,
+depósitos, centros de custo, contas bancárias, condições de pagamento,
+transportadoras, colaboradores, perfis, técnicos e recursos de produção —
+todos com a **mesma lista** (busca enquanto digita, ativos/inativos,
+exportar, desativar em lote) e a **mesma ficha** (abas, validação no campo,
+Salvar só quando algo mudou, histórico campo a campo e onde o cadastro é
+usado). Atalhos iguais em todos: `/` busca, `N` novo, `Ctrl+S` salva, `Esc`
+volta.
+
+- CPF/CNPJ conferido pelo dígito verificador e formatado — na tela, na API,
+  na importação e pelo banco.
+- Possível duplicado avisado antes de criar; o administrador **mescla**
+  duplicados (move pedidos, títulos e demais referências).
+- Desativar em vez de apagar; apagar só o que nunca foi usado.
+- Campos sensíveis (preço, custo, limite de crédito, dados bancários) podem
+  exigir **aprovação de outra pessoa** (Cadastros → Configuração).
+- **Importar planilha** (CSV): prévia linha a linha, gravação só das linhas
+  válidas; reimportar não duplica. Exportar gera o mesmo formato.
+- **Qualidade dos cadastros**: incompletos, sem custo, sem fornecedor… com a
+  lista para corrigir; a verificação periódica avisa.
+- **Campos próprios** da empresa em clientes e itens, sem mudar o banco.
+- API: `master.describe`, `master.search`, `master.get`, `master.save`,
+  `master.lookup` e demais `master.*` (mesmas regras da tela).
+
+## Processos integrados e conciliações (spec 038)
+
+Princípio P17: um fato de negócio é registrado uma vez e gera, na mesma
+transação, tudo o que dele decorre. O estoque tem **valor** (custo médio
+ponderado móvel por item): cada movimentação informa só o motivo (compra,
+venda, peça de OS, material de projeto, devolução, ajuste, perda, descarte,
+produção, transferência) e o **banco** calcula o custo e faz o lançamento
+contábil, por documento — inclusive o custo das mercadorias vendidas. Nenhum
+caminho, nem SQL direto, cria movimentação sem lançamento; movimentação
+gravada não se altera nem se apaga.
+
+- **Inventário físico** (`contagem`): digite o contado, veja saldo,
+  diferença e valor, confirme — sobras e faltas são lançadas sozinhas.
+  `baixa_estoque` (perda/descarte) e `quarentena` (liberar ou descartar
+  devoluções em inspeção).
+- **Frete**: a transportadora é também fornecedor; o frete da expedição vira
+  título a pagar e despesa; o frete cobrado do cliente vai para a receita de
+  frete.
+- **Conciliações** (`conciliacoes`): clientes, fornecedores, créditos de
+  clientes, estoque, recebimentos a faturar, produtos em elaboração e
+  documentos sem lançamento, cada um contra a contabilidade — verde quando
+  bate; quando não, o detalhe mostra os documentos e os lançamentos manuais
+  que explicam a diferença. A verificação periódica de integridade avisa o
+  administrador na hora.
+- **Fechamento** (`fechamento`, administrador): lançamentos com data até o
+  mês fechado são recusados pelo banco; reabrir pede motivo e fica no
+  histórico.
+- **Baixas exatas**: o que entra no extrato ou no gateway baixa o título
+  mais antigo primeiro; diferença dentro da tolerância (padrão R$ 1) vai para
+  juros ou tarifa; pagar menos deixa um **título residual** (`/R`); pagar a
+  mais vira **crédito** do cliente (ou adiantamento ao fornecedor). Créditos
+  de devolução e de pagamento a mais **compensam sozinhos** os títulos em
+  aberto do mesmo parceiro (`compensar`; política em
+  `finance.settlement_policy`).
+- **Extrato**: importar já concilia o que é certo; o saldo final (OFX ou
+  informado) é conferido com a conta contábil; **regras do extrato**
+  (`finance.statement_rules`) lançam tarifas, IOF e rendimentos; a
+  transferência entre contas próprias é casada sozinha. Formatos: OFX,
+  CNAB 240 (FEBRABAN, com o saldo final) e CSV — reconhecidos pelo conteúdo.
+- **Extrato sem ninguém importar** (`extratos_fontes`): cada conta escolhe a
+  fonte — **pasta de arquivos** (OFX ou CNAB 240 enviados por qualquer
+  pessoa ou sistema à pasta `/Extratos/<conta>` da área Arquivos; cada
+  arquivo é lido uma vez, arquivo com defeito fica registrado com o motivo)
+  ou **API do banco** (conector da spec 017 + programa adaptador; o genérico
+  lê JSON ou OFX, e cada banco pode ter o seu). A rotina `extratos.buscar`
+  (de hora em hora nos dias úteis, nasce desligada) ou "Buscar agora" lê
+  todas as fontes e concilia.
+- **Gateway**: a cobrança paga fica em "valores a receber do gateway" (líquido
+  da tarifa) até o **repasse** aparecer no extrato, que é casado sozinho.
+- **Cancelar fatura** (`cancelar_fatura` para pedido; `field.cancel_invoice`
+  para OS avulsa): estorno do lançamento, títulos e cobranças cancelados,
+  estoque de volta pelo mesmo custo.
+- **Nota do fornecedor por confronto** (opção em Suprimentos → política):
+  o recebimento só credita "recebimentos a faturar"; a nota (`nota_fornecedor`)
+  dentro da tolerância vira título; acima, fica pendente para outra pessoa
+  decidir (`supply.invoices`). **Devolução ao fornecedor**
+  (`supply.return_to_supplier`) sai pelo preço da compra e vira crédito
+  compensado nos títulos. Despesa de projeto com fornecedor gera o título.
+- **Projetos**: `projects.appropriate_labor` lança o custo das horas aprovadas
+  do mês; o marco ligado a um entregável fica pronto para faturar quando o
+  cliente aceita, e o modelo de processo "Faturamento do projeto" fatura
+  sozinho.
+- **Rotinas prontas** (Agendamento, nascem desligadas): conciliação bancária
+  diária, compensação de créditos, apropriação de mão de obra, rateio,
+  faturamento mensal de projetos e sugestão de reposição.
+- Instalação existente: depois de atualizar, rode uma vez
+  `finance.inventory_opening_adjustment` (ajuste inicial do estoque).
+
+## Licença (spec 009)
+
+Cada cliente tem a sua instância (banco próprio, local ou nuvem). A licença é
+um texto **assinado pelo fornecedor** (Ed25519) que funciona sem internet:
+o administrador cola em Administração → Licença, ou indica o arquivo em
+`ANA_LICENSE_FILE` (vale o mais novo; conferido na partida e a cada hora).
+
+- **Módulos**: o núcleo (plataforma, Estúdio, cadastros, financeiro, estoque,
+  agendamento, integrações e os programas do próprio cliente) está sempre
+  incluído; vendas, suprimentos, produção, logística e campo, projetos, BPM,
+  analítico, API pública e portal são contratados. Programa de módulo não
+  contratado responde `NOT_LICENSED`; as tabelas continuam legíveis.
+- **Usuários nomeados**: só pessoas internas ativas contam (robôs e contas do
+  portal não). No limite, criar ou reativar usuário é recusado.
+- **Vencimento**: aviso 30 dias antes, 15 dias de carência e depois **somente
+  consulta** — o banco recusa gravações, mas consultas, relatórios e
+  exportação continuam. Instalar a licença nova volta tudo na hora. Sem
+  licença: avaliação de 30 dias. Relógio do servidor atrasado não estende
+  nada.
+- **Versão**: a licença cobre versões até `max_version`; uma versão acima não
+  sobe (para antes das migrações) até a licença renovada ser indicada.
+- **Testes**: licença `non_production` para a instância de desenvolvimento e
+  testes (faixa na tela). Licenças da chave de teste valem só assim.
+- **Programas**: namespaces do produto (`sales`, `projects`, `finance`…) são
+  reservados; crie os seus em outro (ex.: `cli.*`). Programa do produto
+  editado aparece como **customizado — fora do suporte padrão**.
+- Fornecedor: `scripts/license.py keygen` gera o par de chaves (a privada
+  **fica fora do repositório**; a pública vai em `priv/license/keys.json`),
+  `issue` emite e `verify` confere uma licença.
+
+## Extensões e permissão por dado (spec 009, fase 2)
+
+- **Extensões** (Administração → Extensões): ligue um programa seu
+  (`main(point, data)`) a um ponto dos programas do produto — faturar
+  pedido, receber compra, aprovar compra, faturar projeto, baixar títulos —
+  sem copiar o programa. Os de "antes" recusam com `ana.Error` (nada é
+  gravado) ou ajustam os campos permitidos; os de "depois" recebem o
+  resultado, na mesma transação.
+- **Permissão por dado** (Administração → Grupos de acesso): limite os
+  membros a centros de custo (com os filhos), à própria carteira de clientes
+  (vendedor no cadastro do cliente) ou aos próprios projetos. O banco aplica
+  a regra (RLS) em qualquer programa; gravar fora dela é recusado
+  (`DATA_SCOPE`). Administradores veem tudo.
+
+## Marca e telemetria (spec 009, fase 3)
+
+- **Marca** (Administração → Empresa): nome de exibição e logotipo aparecem
+  ao lado da marca do ANA no topo do Estúdio e no timbre dos PDFs
+  (pedidos, faturas, recibos…); toda página termina com "Emitido com ANA
+  ERP". Qualquer imagem serve: o navegador reduz e converte.
+- **Telemetria** (Administração → Telemetria): desligada por padrão. Ligada,
+  envia uma vez por dia, pelo conector `telemetry`, só versões, situação da
+  licença, saúde e contagens de execuções e de códigos de erro — a tela
+  mostra exatamente o conteúdo e o último envio.
+
+## API pública (spec 010)
+
+Sites e sistemas de terceiros chamam programas **expostos** por `/rpc`
+(JSON-RPC 2.0). O administrador cadastra o cliente em Administração → API
+pública, escolhendo o **usuário robô** em nome de quem ele roda (papel e
+grupos do robô valem) e o **escopo** (`vendas.criar_pedido` ou `vendas.*`;
+cliente sem escopo não alcança nada):
+
+- **Servidor (segredo)** — o segredo `ana_sk_…` aparece uma única vez;
+  `POST /oauth/token` (`grant_type=client_credentials`, Basic
+  `client_id:segredo`) devolve um token de 10 minutos para
+  `Authorization: Bearer`. Troca de segredo sem parada (o anterior vale até
+  ser removido). Opcional: exigir requisição assinada (`X-Ana-Timestamp`,
+  `X-Ana-Nonce`, `X-Ana-Signature` = HMAC-SHA256 de
+  `método\ncaminho\ntimestamp\nnonce\nsha256(corpo)`; janela de 5 min,
+  nonce não se repete).
+- **Chave publicável (site)** — `X-Api-Key: ana_pk_…` no navegador, só das
+  origens cadastradas (CORS) e só para programas marcados **Público** no
+  programa.
+
+Cada cliente tem limite por minuto (429 com `Retry-After`), cota diária,
+lista de IPs, e `Idempotency-Key` evita pedido em dobro em repetições. As
+chamadas públicas usam no máximo `ANA_PUBLIC_EXEC_SHARE` (50 %) da
+capacidade. Em produção, `ANA_PUBLIC_MODE=true` recusa credenciais públicas
+sem HTTPS (atrás de proxy, declare-o em `ANA_TRUSTED_PROXIES`) e liga HSTS.
+Toda chamada fica em Administração → API pública → Chamadas. Teste de carga:
+`python3 tests/load/public_api_load.py`.
+
+## Documentos para clientes e fornecedores (spec 037)
+
+Pedido, fatura, comprovante de entrega, relatório de atendimento da OS,
+recibo, extrato e ordem de compra têm PDF, gerado nos eventos (pedido criado,
+expedição, aceite da OS, ordem enviada, pagamento) ou sob demanda, e
+**publicado** numa subpasta da pasta do parceiro feita para ele (Pedidos,
+Faturas, Entregas, Atendimentos, Recibos, Extratos, Ordens de compra). No
+portal, **Meus documentos** (`documentos`) lista e baixa esses PDFs; para
+quem não tem conta, **Link para o cliente** (`link_doc`) cria um endereço de
+download com validade, limite e senha; o endereço usado nos links é o
+"Endereço público do ERP" (Administração → Empresa; valor inicial do
+instalador, `ANA_PUBLIC_URL`).
+
+**Regra**: clientes e fornecedores nunca alcançam documento interno. O núcleo
+só publica tipos externos de uma lista fechada e recusa dar acesso a conta
+externa — ou criar link de download — fora das pastas para parceiros. Só um
+administrador marca outra pasta como "para parceiros" (Arquivos), e isso fica
+na auditoria.
+
+## Distâncias (spec 032)
+
+Empresa (Administração → Empresa), depósitos (`inventory.save_warehouse`) e
+clientes (`party`) têm latitude e longitude (vírgula ou ponto). `distancia`
+mostra a distância em linha reta (haversine, no banco), a rodoviária
+aproximada (reta × fator, padrão 1,3) e o tempo estimado (velocidade média,
+padrão 50 km/h) — sem serviço externo; `clientes_distancia` lista clientes
+por raio e quem ainda não tem coordenadas. Ao agendar uma OS sem informar
+distância, o ERP calcula a partir da base do técnico; a tabela de frete pode
+ter faixas de distância. Parâmetros e geocodificação opcional (por conector,
+spec 017) em `base.geo_settings`.
+
+## Esteiras de processos (spec 030)
+
+Operação → Esteiras: cada documento segue sua esteira e a etapa seguinte
+acontece sozinha quando a anterior termina — ou espera uma pessoa, conforme
+a regra da empresa.
+
+- **Venda**: pedido → expedição (baixa e movimentação do estoque) →
+  faturamento (títulos por parcela) → cobrança (PIX/boleto/cartão pelo
+  gateway) → recebimento. **Compras**: solicitação → aprovação → ordem ao
+  fornecedor → recebimento → pagamento. **Campo**: chamado → agendamento →
+  execução e aceite → faturamento → cobrança → recebimento. **Produção**:
+  ordem → liberação → requisição dos componentes → fabricação →
+  encerramento.
+- Em `esteira_config` (administrador): ligar (nasce desligada), incluir os
+  documentos em aberto, escolher o robô que executa e, por etapa, automática
+  ou manual, com condições sobre o documento (ex.: faturar sozinho só até
+  R$ 5.000; condição não cumprida = espera uma pessoa).
+- O quadro (`esteiras`) mostra cada documento na sua etapa, por que espera,
+  falhas com o motivo (cliente bloqueado, falta de estoque…) e as ações:
+  fazer agora (abre a rotina com o documento preenchido), executar
+  automaticamente, reprocessar, pular com motivo. O que alguém fizer à mão,
+  fora da esteira, também a faz andar.
+- **Recebimento e pagamento** são etapas automáticas: a esteira procura os
+  títulos do documento no extrato (todas as contas) e baixa o que é certo
+  (cobrança ou documento citado, valor exato); o resto espera dizendo o quê —
+  o pagamento ainda não chegou, ou um crédito que pode ser dele para alguém
+  confirmar na bancada. Pagamentos que chegam depois são baixados na
+  importação do extrato e a esteira anda sozinha.
+- A esteira começa na mesma transação que cria o documento; o motor roda no
+  nó líder, com nova tentativa em falhas técnicas e retomada se um nó cair.
+
+## Condições de pagamento e crédito (spec 031)
+
+- **Condições** (`condicao`): forma (PIX, boleto, cartão de crédito/débito,
+  crédito direto, dinheiro, transferência), prazos "30/60/90" ou parcelas com
+  percentuais (o banco confere a soma de 100 %), entrada, desconto/acréscimo,
+  taxa da operadora, valor mínimo e conector de cobrança (spec 017). O
+  faturamento gera um título por parcela (centavos na última) e, com
+  conector, a cobrança de cada parcela. Condições permitidas e padrão por
+  cliente.
+- **Crédito** (`credito`): limite por cliente, tolerância de atraso e
+  bloqueio automático por inadimplência — **desligado de fábrica** (ligar de
+  saída bloquearia clientes com títulos antigos); bloqueio manual com motivo
+  e validade; liberação pontual de um pedido ou faturamento, usada uma vez.
+  O bloqueio impede novos pedidos, faturamentos e ordens de serviço
+  (`CUSTOMER_BLOCKED`); tudo registra quem, quando e por quê.
+- **Tela de venda** (`order`): itens numa grade com saldo no depósito e nos
+  outros; se faltar, só avisa (com "Transferir de X"), pede a transferência
+  ou recusa; mostra as parcelas e leva a "Faturar agora" ou "Expedir".
+
+## Verificações periódicas (spec 033)
+
+Administração → Observabilidade → **Verificações**: o robô `system` confere,
+no nó líder, a **segurança** da configuração (senha trivial em conta
+privilegiada, chave mestra/senha do banco/cookie de exemplo, política de
+senha e sessão, administradores demais, chaves de API paradas ou sem
+validade, links abertos, conectores sem hosts permitidos, retenção curta), os
+**componentes** com vulnerabilidade conhecida, a **integridade** dos arquivos
+do produto (manifesto SHA-256 gerado na construção da imagem), a
+**robustez** (arquivamento do WAL, idade da última cópia completa e do último
+teste de restauração — registradas por `scripts/backup.sh` e
+`scripts/restore-test.sh` —, filas de falha, disjuntores, falhas técnicas,
+disco do repositório) e o **desempenho** (sondas a cada 5 min; aviso quando o
+p95 da última hora passa do fator da linha de base de 7 dias). Segurança,
+integridade e componentes rodam diariamente; robustez a cada 15 min;
+desempenho a cada hora; e sob demanda. Achado crítico novo acende o sino dos
+administradores; achados podem ser dispensados (voltam se piorarem).
+
+O **inventário** lista ANA, OTP e bibliotecas, Python, PostgreSQL e
+extensões e os pacotes Debian da imagem. A **base de vulnerabilidades** está
+no formato OSV: baixe em osv.dev os avisos de Hex, Debian e PyPI e envie em
+Verificações → Inventário (nada é consultado na internet sem o administrador
+pedir). Avisos retirados (`withdrawn`) removem o aviso anterior.
+
+## Desenvolvimento, testes e transporte para produção (spec 034)
+
+Cada instalação tem um papel: `ANA_INSTANCE=production` (padrão), `test` ou
+`development` (o `docker-compose.yml` deste repositório é `development`).
+Fora da produção uma faixa "DESENVOLVIMENTO"/"TESTES" aparece em todas as
+telas. Com o parâmetro `transport_required = 1`, a produção só aceita
+mudanças de programas por pacote.
+
+- **Transportes** (Administração → Sistema): na instância de desenvolvimento
+  monte o pacote (programas, comandos, parâmetros, o que muda, testes feitos)
+  e gere o arquivo assinado com a chave Ed25519 da instância (guardada no
+  cofre). Na produção, cadastre a origem (nome + chave pública), receba o
+  arquivo: assinatura, hashes e versão do produto são conferidos e a
+  verificação prévia mostra o que é novo, igual, atualização ou **conflito**
+  (programa alterado na produção depois da origem — só segue com aceite
+  explícito, com comparação lado a lado) e dependências ausentes. Importar
+  grava tudo numa transação, como versões novas, sem parar o sistema
+  (execuções em andamento terminam na versão em que começaram); desfazer
+  volta tudo ao estado anterior. Quatro olhos opcional
+  (`transport_four_eyes`).
+- **Cópia de dados para testes**: na produção, "Exportar dados mascarados"
+  gera um retrato consistente dos esquemas de negócio com nomes, e-mails,
+  telefones, documentos, endereços, coordenadas e observações **mascarados
+  na origem** (determinístico dentro da cópia: o mesmo cliente é o mesmo em
+  todas as tabelas), comprimido e cifrado; a chave aparece uma vez e o
+  arquivo fica 48 h. Na instância de testes, envie o arquivo, ensaie (carga
+  completa desfeita ao final) e importe: tudo numa transação, contagens e
+  totais conferidos; depois os conectores são desligados e as chamadas
+  externas bloqueadas (`outbound_blocked`). Tabelas do sistema, cofre,
+  integrações, arquivos e senhas nunca entram. A aba Máscaras mostra e ajusta
+  o catálogo por coluna.
 
 ## Repositório de arquivos e portal do cliente (spec 016)
 
@@ -424,8 +840,10 @@ confirmação explícita; "aceitar as não alteradas" atualiza o resto de uma ve
   o da linha do tempo mais nova — um primário antigo que volte sem ser
   rebaixado nunca recebe gravações; testado com cluster local em
   `make teste-pg-ha`); `ANA_DB_READ_HOSTS` leva o console SQL
-  às réplicas; banco fora → erro imediato (`DB_UNAVAILABLE`, 503) e volta
-  sozinho em segundos.
+  às réplicas; banco fora → erro imediato (`DB_UNAVAILABLE`, 503 com
+  `Retry-After`) e volta sozinho em segundos. Durante a queda ou a troca de
+  primário ninguém é deslogado: sessão, chaves e tokens nunca viram
+  "credencial inválida" (401) por falha momentânea do banco.
 - **Execuções interrompidas** pela queda de um nó ficam registradas como
   `INTERRUPTED`; sistemas remotos com falha abrem um disjuntor
   (`REMOTE_UNAVAILABLE`) em vez de prender execuções.
@@ -466,6 +884,7 @@ verdes (`make testes`); `dev → qa` quando há uma versão candidata;
 | `ANA_DB_HOST` (lista), `ANA_DB_READ_HOSTS` | `localhost`, — | primário com troca automática; réplicas de leitura |
 | `ANA_DRAIN_DELAY_MS`, `ANA_DRAIN_TIMEOUT_MS` | `2000`, `25000` | desligamento gracioso |
 | `ANA_BREAKER_OPEN_MS` | `30000` | tempo do disjuntor aberto |
+| `ANA_API_BREAKER_FAILURES`, `ANA_API_BREAKER_RATIO`, `ANA_API_BREAKER_OPEN_S` | `20`, `50`, `120` | disjuntor por cliente da API pública (padrões; ajustáveis em Parâmetros) |
 
 Prazos, limites, tetos, cotas, sessão e política de senha são **parâmetros**
 editáveis em Administração → Sistema → Parâmetros (as variáveis `ANA_*`
@@ -473,8 +892,6 @@ correspondentes são só o valor inicial).
 
 ## Situação das specs
 
-Implementadas: 001–008, 011 (com usuários robô e dono obrigatório), 012, 018, 021, 019 (faltam alertas configuráveis e OpenTelemetry), 013, 014, 015, 016 (faltam S3 e antivírus), 017 (faltam SFTP/pasta/e-mail, mTLS, CNAB e pacotes de modelos), 022, 023, 024, 025, 026, 027, 028, 029; 020 parcial (falta próxima ação
-sugerida, fluxos guiados e auditoria de acessibilidade).
+Implementadas: 001–008, 011 (com usuários robô e dono obrigatório), 012, 018, 021, 019 (com regras de alerta e silêncios; falta OpenTelemetry), 013, 014, 015, 016 (faltam S3 e antivírus), 017 (faltam SFTP/pasta/e-mail, mTLS, CNAB e pacotes de modelos), 022, 023, 024, 025, 026, 027, 028, 029, 030, 031, 032, 033, 035, 036, 037 (falta base OSV por conector), 034 (faltam agendamentos e migrações no pacote, envio por conector), 039 (BPM: modelar, simular, executar e acompanhar processos), 040 (cadastros padronizados; falta importação em lote rápida), 038 (processos integrados: estoque valorizado com lançamento automático, inventário, frete, conciliações, fechamento, baixas exatas e compensação, extrato completo, gateway, cancelamento de faturas, nota do fornecedor por confronto, custo das horas, rotinas prontas), 009 (licença assinada, módulos, usuários nomeados, modo somente consulta, namespaces do produto, pontos de extensão, permissão por dado, marca conjunta, telemetria opcional), 010 (com disjuntor por cliente; faltam PKCE com consentimento, TOTP, HTTP/2 e cache; vazão de 1.000 chamadas/s aguarda decisão), 020 (próxima ação declarada nos programas, etapas do processo, acessibilidade auditada, rotinas por área e categoria, barra de tabela com variantes, construtor de condições, simulação ao lado, grade de planejamento com gráfico), 063 fase 1 (vida útil do disco: orçamento de escrita testado na bateria, painel Disco com projeção de desgaste do SSD, alertas de salto de escrita com tabela e programa, desgaste lido pelo ana-ctl), 062 fases 1 e 2 (núcleo por áreas supervisionadas, eventos no lugar de consultas repetidas, telas ao vivo, um processo por conector, tela Núcleo), 050 fases 1 e 2 (experiência premium verificada nos testes, mensagens de erro claras, desempenho das telas medido; paleta de comandos Ctrl+K com rotinas, ações da tela, documentos pelo número e clientes pelo CNPJ; atalhos com ?; desfazer padronizado — cancelar pedido e desfazer restaura por documento; confirmação dizendo a consequência; valores pelo contexto e último uso; código de barras e QR pela câmera), 044 (e-mail por SMTP: conector, `ana.send_email` na transação, anexos, alertas e links de documentos por e-mail), 049 fases 1 e 3 (motor de impostos genérico — legislação é dado: tributos, atributos com vigência, tabelas, faixas, indicadores da contabilidade e fórmulas fechadas; Simples Nacional com fator R, ISS e retenções em pacote de regras; casos de teste antes de cada mudança; fatura de projeto pelo motor; reforma tributária — CBS e IBS de 2026 a 2033, por fora, com créditos nas compras — só como pacote de regras), 064 fase 1 (portão de qualidade dos programas: inspeção por categoria enquanto se digita, aceite no código com motivo, linha de base, isenções aprovadas por outra pessoa, relatório do portão assinado no pacote de transporte e exigível na produção), 045 (variantes de execução: parâmetros com nome, pessoais ou da empresa com publicação e versão anterior, campos com valor fixo, expressão ou valor da empresa resolvidos a cada execução, campos travados e ocultos respeitados na tela, na API e no agendamento, padrão por usuário e da empresa, conferidas a cada mudança do programa), 065 fases 1 e 2 (valores da empresa: valores com nome, tipo, vigência, ambiente e empresa — simples, lista, seleção ou referência a cadastro — lidos da memória por `ana.value` e `base.company_value`, sem escrita; expressões de lista fechada num só lugar, também no agendador; tela com linha do tempo, prévia e histórico; permissão por área, quatro olhos para valores sensíveis e recusa de credenciais; valores mantidos por rotinas com `ana.set_value` depois do COMMIT — período aberto no fechamento, último inventário na contagem; `{{valor:nome}}` em agendamentos, esteiras, processos e limites de alerta; `company_value` nas fórmulas de impostos; onde é usado, nomes desconhecidos e constantes no portão de qualidade; transporte da definição e do conteúdo; aviso de vigência próxima e de valor sem uso; falta assistente, paleta e autocompletar), 056 (ensaio universal: toda rotina que grava pode ser ensaiada — roda inteira e é desfeita, com o efeito em nomes de negócio e documentos para abrir, e-mails, conectores, arquivos e agendamentos retidos e listados; o catálogo sabe quais rotinas gravam), 043 (cadastro fiscal: CNPJ alfanumérico, CPF, inscrições, contribuinte e regime, filiais, consulta de CNPJ por conector; falta dígito da IE por UF), 066 fase 1 (núcleo aberto: AGPL-3.0 com permissão para os programas do cliente, linhas SPDX, termo de contribuição verificado nos pull requests, licenças das dependências e credenciais conferidas em todo pull request; falta a publicação), 041 (atendimento do pedido pela política da empresa: recusar, reter, comprar, produzir com compra de insumos, conforme o item ou aceitar; exceções por item, grupo, cliente e cliente + item; reserva por linha; suprimento vinculado e rastreável; liberação automática; cancelamento com efeito mostrado).
 Na fila (ordem em [scripts/pending-work.prompt.md](scripts/pending-work.prompt.md)):
-010 API pública; 009 licenciamento
-aguarda decisões.
+as tarefas adiadas (T-…b).

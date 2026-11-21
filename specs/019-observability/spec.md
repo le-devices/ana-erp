@@ -115,3 +115,29 @@ fazer. O monitor atual (spec 011) mostra só o estado instantâneo.
   dentro de laço recebe os apontamentos estáticos com as linhas corretas.
 - **CA-019-09** Varredura completa em tabela que cresce gera dica preventiva
   com a projeção.
+- **CA-019-10** Regra de alerta sobre métrica com janela de 20 s só abre o
+  incidente depois que a condição dura a janela inteira; o aviso chega ao
+  Estúdio e ao conector escolhido (com os e-mails destinatários), e o
+  encerramento também chega ao conector quando a condição passa ou a regra é
+  desativada. Silêncio em vigor registra o incidente sem avisar ninguém; ao
+  encerrar o silêncio, o incidente ainda aberto avisa. Remover a regra encerra
+  os incidentes dela e mantém o histórico (T-019-08b).
+
+## Alertas configuráveis (T-019-08b)
+- Regra: nome, origem (saúde de componente — qualquer um ou um específico, a
+  partir de amarelo ou de vermelho — ou métrica do nó: execuções em andamento,
+  falhas por minuto, memória do núcleo, processos Erlang, espera por conexão
+  com o banco, processos Python prontos), comparação e limiar, janela
+  (0 a 86.400 s), gravidade (informação, atenção, sério, crítico) e destinos.
+- Destinos: aviso no Estúdio; mensagem `alert.opened`/`alert.closed` na fila de
+  saída de um conector de integração (spec 017: novas tentativas, assinatura,
+  hosts permitidos), que entrega por webhook ou por gateway de e-mail aos
+  destinatários informados. A variável `ANA_ALERT_WEBHOOK` continua valendo
+  como destino de contingência, chamado na hora.
+- Avaliação a cada 10 s em cada nó; incidente por regra, alvo e nó. Com o
+  banco fora do ar, as regras já lidas continuam valendo e as gravações
+  esperam em memória, na ordem. O comportamento anterior (componente vermelho
+  abre incidente crítico) virou a regra inicial "Componente em falha".
+- Silêncio: por regra, alvo e nó (vazio = todos), de 1 minuto a 30 dias, com
+  motivo; é encerrado, nunca apagado. Regras e silêncios ficam no registro de
+  administração.

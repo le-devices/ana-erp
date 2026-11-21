@@ -3,7 +3,11 @@
 # ana:menu no
 """Lookup for forms: [{"value", "label"}]. kind: cost_centers | accounts | rules | bank_accounts | connectors."""
 
-PARAMS = {"kind": {"type": "str", "required": True, "choices": ["cost_centers", "accounts", "rules", "bank_accounts"]}}
+from ana_lib.master import core  # spec 040: the single lookup of master records
+
+PARAMS = {
+    "kind": {"type": "str", "required": True, "label": "tipo", "choices": ["cost_centers", "accounts", "rules", "bank_accounts", "payment_terms"]},
+}
 
 
 def main(kind):
@@ -17,8 +21,9 @@ def main(kind):
     if kind == "accounts":
         rows = ana.sql("SELECT code, description FROM finance.account WHERE postable ORDER BY code")
         return [{"value": r["code"], "label": f"{r['code']} {r['description']}"} for r in rows]
+    if kind == "payment_terms":
+        return core.options("payment_term")
     if kind == "bank_accounts":
-        rows = ana.sql("SELECT code, name FROM finance.bank_account WHERE active ORDER BY code LIMIT 500")
-        return [{"value": r["code"], "label": f"{r['code']} — {r['name']}"} for r in rows]
+        return core.options("bank_account")
     rows = ana.sql("SELECT code, name FROM finance.allocation_rule WHERE active ORDER BY code")
     return [{"value": r["code"], "label": f"{r['code']} — {r['name']}"} for r in rows]

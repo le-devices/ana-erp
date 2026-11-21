@@ -1,5 +1,6 @@
 # ana:description Cancela solicitação ou ordem de compra
 # ana:exposed yes
+# ana:category Compras/Solicitações
 """Requests: the requester or an admin, before ordering. Orders: an admin or whoever created
 them; an order partly received keeps what came and only the rest is cancelled."""
 

@@ -1,3 +1,5 @@
+%% SPDX-FileCopyrightText: 2026 André Luis Pereira dos Santos
+%% SPDX-License-Identifier: AGPL-3.0-or-later
 %% Cron expressions and business-day calendars (spec 018, RF-018-02).
 %%
 %% Pure functions over *local* naive datetimes; time zone conversion happens

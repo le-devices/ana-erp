@@ -1,3 +1,5 @@
+# SPDX-FileCopyrightText: 2026 André Luis Pereira dos Santos
+# SPDX-License-Identifier: AGPL-3.0-or-later
 """ANA program runtime (specs 002 and 004).
 
 Isolated process started by the Erlang core as a {packet, 4} port. It speaks
@@ -238,6 +240,18 @@ _DB_RULE = re.compile(r"([A-Z][A-Z0-9_]{2,40}): (.+)", re.S)
 
 class SqlError(Error):
     def __init__(self, message, sqlstate=None, detail=None):
+        if sqlstate == "25006":
+            # Spec 009 (RF-009-05): the license is in restricted mode, executions are read-only.
+            super().__init__("LICENSE_RESTRICTED", "licença vencida ou inválida: o ERP está somente para consulta "
+                             "(peça ao administrador para instalar a licença)", {"sqlstate": sqlstate})
+            self.sqlstate = sqlstate
+            return
+        if sqlstate == "42501" and "row-level security" in (message or ""):
+            # Spec 009 (D10): the document falls outside the user's data scope.
+            super().__init__("DATA_SCOPE", "o registro fica fora dos dados que você pode ver (centro de custo, carteira ou projetos)",
+                             {"sqlstate": sqlstate})
+            self.sqlstate = sqlstate
+            return
         rule = _DB_RULE.fullmatch(message or "") if sqlstate in ("23514", "P0001") else None
         if rule:
             super().__init__(rule.group(1), rule.group(2), {"sqlstate": sqlstate, "detail": detail})
@@ -353,15 +367,84 @@ class Context:
         self.user = d.get("user")
         self.role = d.get("role")
         self.party = d.get("party")          # external portal accounts (spec 016)
+        self.public_url = d.get("public_url") or ""   # e.g. https://erp.empresa.com.br (spec 037)
         self.execution_id = d.get("execution_id")
         self.program = d.get("program")
         self.version = d.get("version")
         self.origin = d.get("origin")
         self.depth = d.get("depth", 0)
+        # Spec 056: a rehearsal — everything is undone at the end and external calls are held.
+        self.rehearsal = bool(d.get("rehearsal", False))
 
     def __repr__(self):
         return (f"Context(user={self.user!r}, program={self.program!r}, "
                 f"version={self.version!r}, origin={self.origin!r})")
+
+
+class Selection:
+    """A company value of the "seleção" form (spec 065, D1): include, ranges, prefixes and exclude. `x in sel` tells
+    whether x is selected; numbers are compared as numbers, the rest as text. Nothing to include = all but the
+    excluded. The same rule as base.company_value_matches() in SQL."""
+
+    _NUM = re.compile(r"^-?[0-9]+(\.[0-9]+)?$")
+
+    def __init__(self, d):
+        d = d or {}
+        self.include = list(d.get("include") or [])
+        self.exclude = list(d.get("exclude") or [])
+        self.ranges = [tuple(r) for r in (d.get("ranges") or [])]
+        self.prefixes = list(d.get("prefixes") or [])
+
+    def __contains__(self, x):
+        if x is None:
+            return False
+        s = str(x)
+        if s in (str(e) for e in self.exclude):
+            return False
+        if not (self.include or self.ranges or self.prefixes):
+            return True
+        if s in (str(i) for i in self.include) or any(s.startswith(p) for p in self.prefixes):
+            return True
+        for lo, hi in self.ranges:
+            lo, hi = str(lo), str(hi)
+            if self._NUM.match(s) and self._NUM.match(lo) and self._NUM.match(hi):
+                if decimal.Decimal(lo) <= decimal.Decimal(s) <= decimal.Decimal(hi):
+                    return True
+            elif lo.encode() <= s.encode() <= hi.encode():
+                return True
+        return False
+
+    matches = __contains__
+
+    def __repr__(self):
+        return (f"Selection(include={self.include!r}, ranges={self.ranges!r}, prefixes={self.prefixes!r}, "
+                f"exclude={self.exclude!r})")
+
+
+def company_value(reply):
+    """The value of ana.value() in its type: int, Decimal, date, bool, text, month "AAAA-MM", list or Selection."""
+    v, kind, shape = reply.get("value"), reply.get("type"), reply.get("shape")
+    if v is None:
+        return None
+
+    def one(x):
+        if x is None:
+            return None
+        if kind == "integer":
+            return int(x)
+        if kind == "decimal":
+            return decimal.Decimal(str(x))
+        if kind == "date" and isinstance(x, str) and len(x) == 10:
+            return datetime.date.fromisoformat(x)
+        return x
+
+    if shape == "selection" and isinstance(v, dict):
+        return Selection({k: [one(i) for i in v.get(k) or []] if k != "ranges" else
+                          [(one(a), one(b)) for a, b in v.get(k) or []] for k in ("include", "exclude", "ranges")} |
+                         {"prefixes": v.get("prefixes") or []})
+    if isinstance(v, list):
+        return [one(x) for x in v]
+    return one(v)
 
 
 class Part:
@@ -388,6 +471,43 @@ class _Savepoint:
         action = "release" if exc_type is None else "rollback"
         self._channel.request("savepoint", {"action": action, "name": self._name})
         return False
+
+
+_NEXT_FIELD = re.compile(r"\{\{(result|params)\.([A-Za-z_][A-Za-z0-9_]*)\}\}")
+
+
+def _next_actions(spec, result, params, output):
+    """RF-020-10: `NEXT = [{"program", "label", "params": {"field": "{{result.x}}" | "{{params.y}}" | value},
+    "when"?: "result.x", "style"?, "confirm"?, "open"?}]` becomes the "Próximo passo" buttons with the context
+    filled in. An action whose value is missing (or whose `when` is false) is left out."""
+    if not spec or not isinstance(spec, (list, tuple)):
+        return
+    sources = {"result": result if isinstance(result, dict) else {}, "params": params or {}}
+
+    def value(v):
+        if isinstance(v, str):
+            whole = _NEXT_FIELD.fullmatch(v)
+            if whole:
+                return sources[whole.group(1)].get(whole.group(2))
+            return _NEXT_FIELD.sub(lambda m: str(sources[m.group(1)].get(m.group(2), "")), v)
+        return v
+
+    items = []
+    for a in spec:
+        if not isinstance(a, dict) or not a.get("program") or not a.get("label"):
+            continue
+        when = a.get("when")
+        if when and not value("{{" + when + "}}"):
+            continue
+        filled = {k: value(v) for k, v in (a.get("params") or {}).items()}
+        if any(v is None or v == "" for v in filled.values()):
+            continue
+        items.append({**{k: a[k] for k in ("style", "open") if k in a},
+                      **({"confirm": str(value(a["confirm"]))} if a.get("confirm") else {}),
+                      "label": str(value(a["label"])), "program": a["program"], "params": filled})
+    if items:
+        output.flush()
+        output.emit("actions", {"title": "Próximo passo", "items": items})
 
 
 def make_ana_module(channel, output, context):
@@ -431,6 +551,63 @@ def make_ana_module(channel, output, context):
         """Run another program in the same execution transaction (RF-002-08)."""
         return channel.request("call", {"program": program, "params": params})
 
+    def schedule_job(name, program, params=None, cron=None, active=True, description=""):
+        """Keeps a scheduler job of the program's own module (spec 039, T-039-17b): name "bpm.x" from a bpm.* program.
+        cron None or active False stops it. Validated by the scheduler as for the user running the program; done
+        outside the program's transaction (call it last). Returns {"job": id | None}."""
+        return channel.request("schedule", {"name": name, "program": program, "params": params or {}, "cron": cron,
+                                             "active": bool(active), "description": description})
+
+    def extend(point, data):
+        """Extension point of a product program (spec 009, D9). Runs the customer programs registered for
+        `point` (main(point, data)), in order, in the same transaction. A before_* program may refuse by
+        raising ana.Error, or return a dict whose allowed fields adjust `data`; after_* only receives it.
+        Returns the (possibly adjusted) data."""
+        reg = channel.request("extensions", {"point": point}) or {}
+        if not reg.get("programs"):
+            return dict(data or {})
+        data = json.loads(json.dumps(data or {}, default=str))      # dates and decimals travel as text
+        for program in reg.get("programs") or []:
+            r = channel.request("call", {"program": program, "params": {"point": point, "data": data}})
+            if point.startswith("before_") and isinstance(r, dict):
+                data.update({k: v for k, v in r.items() if k in (reg.get("adjust") or [])})
+        return data
+
+    def value(name, at=None, company=None):
+        """A company value by name (spec 065): in effect today in the company's time zone, or on `at` (a date or
+        "AAAA-MM-DD") to reprocess the past; `company` for a value that differs per company of the group. Comes in
+        its type (int, Decimal, date, bool, text, list, ana.Selection); None when nothing is in effect. Kept in the
+        execution's record. An unknown name raises VALUE_NOT_FOUND."""
+        if isinstance(at, (datetime.date, datetime.datetime)):
+            at = at.isoformat()[:10]
+        return company_value(channel.request("value", {"name": str(name), "at": at,
+                                                       "company": int(company) if company is not None else None}))
+
+    def set_value(name, value, reason=None, valid_from=None):
+        """Keeps a company value (spec 065, D4) — only a routine listed in "Mantido pelas rotinas" of the value may.
+        Checked now (type, credentials) and written right after this execution's COMMIT, as a new version from today
+        (or `valid_from`), recorded with the routine and the user it ran for. A rehearsal only lists it."""
+        if isinstance(valid_from, (datetime.date, datetime.datetime)):
+            valid_from = valid_from.isoformat()[:10]
+        if isinstance(value, (datetime.date, datetime.datetime)):
+            value = value.isoformat()[:10]
+        if isinstance(value, decimal.Decimal):
+            value = str(value)
+        return channel.request("set_value", {"name": str(name), "value": value, "reason": reason, "valid_from": valid_from})
+
+    def offer_undo(program, params=None, label=None, seconds=30):
+        """Offers the undo of what this routine did (spec 050, D5): the screen shows "Desfazer" for `seconds`
+        (5 to 600) and, if clicked, runs `program` with `params` as the same user — once, as an ordinary execution
+        (permission, audit, validation). Only the routine that was run offers it; nothing is offered in a simulation,
+        a rehearsal or a run that does not keep anything. The offer is recorded right after this run's COMMIT."""
+        data = json.loads(json.dumps(params or {}, default=str))      # dates and decimals travel as text
+        return channel.request("offer_undo", {"program": str(program), "params": data, "label": label,
+                                              "seconds": int(seconds)})
+
+    def can_run(program):
+        """True when the user of this execution may run `program` (role, groups, license) — spec 050."""
+        return channel.request("can_run", {"program": str(program)}) is True
+
     def remote(system, function, **params):
         """Call an exposed program on a registered remote system (RF-003-08)."""
         return channel.request("remote", {"system": system, "function": function, "params": params})
@@ -463,6 +640,56 @@ def make_ana_module(channel, output, context):
         return sql_value("SELECT integration.enqueue($1, $2, $3::text::jsonb, $4) AS id", str(connector), str(kind),
                          to_json(payload), key)
 
+    _EMAIL = re.compile(r"[^@\s<>\"(),;:\\\[\]]{1,64}@[A-Za-z0-9.-]{1,190}\.[A-Za-z]{2,}")
+
+    def send_email(to, subject, text=None, html_template=None, data=None, attachments=None, cc=None, bcc=None,
+                   connector=None, reply_to=None):
+        """E-mail in this same transaction (spec 044): queued in the outbox and delivered by the core
+        through an SMTP connector (the default one when none is named) only if the execution commits.
+        html_template is a string.Template ("Olá, $name"): every value of data is HTML-escaped.
+        attachments: file ids of the repository (or {"file": id, "version": n}), read at delivery with
+        the permissions of this execution's user. Returns the message id."""
+        import html as _html
+        import string as _string
+
+        def addresses(v, field):
+            items = [v] if isinstance(v, str) else list(v or [])
+            out = []
+            for a in items:
+                a = str(a).strip()
+                if not _EMAIL.fullmatch(a):
+                    raise Error("INVALID_EMAIL", f"{field}: endereço inválido: {a!r}")
+                out.append(a)
+            return out
+
+        rcpt_to, rcpt_cc, rcpt_bcc = addresses(to, "para"), addresses(cc, "cópia"), addresses(bcc, "cópia oculta")
+        if not rcpt_to:
+            raise Error("INVALID_EMAIL", "informe ao menos um destinatário")
+        if len(rcpt_to) + len(rcpt_cc) + len(rcpt_bcc) > 100:
+            raise Error("INVALID_EMAIL", "no máximo 100 destinatários por mensagem")
+        subject = str(subject or "")
+        if "\r" in subject or "\n" in subject or not subject.strip() or len(subject) > 250:
+            raise Error("INVALID_EMAIL", "assunto obrigatório, numa linha só, até 250 caracteres")
+        if reply_to is not None:
+            reply_to = addresses(reply_to, "responder para")[0]
+        body_html = None
+        if html_template is not None:
+            values = {str(k): _html.escape("" if v is None else str(v)) for k, v in dict(data or {}).items()}
+            try:
+                body_html = _string.Template(str(html_template)).substitute(values)
+            except (KeyError, ValueError) as e:
+                raise Error("INVALID_EMAIL", f"modelo HTML: valor ausente ou marcador inválido ({e})") from None
+        if text is None and body_html is None:
+            raise Error("INVALID_EMAIL", "informe o texto ou o modelo HTML")
+        files = []
+        for a in attachments or []:
+            ref = {"file": int(a)} if not isinstance(a, dict) else {"file": int(a["file"]),
+                                                                     **({"version": int(a["version"])} if a.get("version") else {})}
+            files.append(ref)
+        message = {"to": rcpt_to, "cc": rcpt_cc, "bcc": rcpt_bcc, "subject": subject, "text": None if text is None else str(text),
+                   "html": body_html, "reply_to": reply_to, "attachments": files}
+        return sql_value("SELECT integration.enqueue_email($1, $2::text::jsonb) AS id", connector, to_json(message))
+
     class Files:
         """Repository (spec 016), with the permissions of the execution's user.
         Writes are immediate (like ana.remote), not part of the execution transaction."""
@@ -485,6 +712,24 @@ def make_ana_module(channel, output, context):
             return channel.request("files", {"action": "put", "name": str(name), "comment": comment,
                                              "data": base64.b64encode(raw).decode("ascii"),
                                              **self._where(folder, entity, subfolder)})
+
+        def publish(self, kind, party, name, data, comment=None):
+            """Spec 037: a document for a customer/supplier, in the partner's folder for that kind
+            (Pedidos, Faturas, Entregas, Atendimentos, Recibos, Extratos, Ordens de compra), which only
+            that partner's accounts reach. Internal kinds are refused (INTERNAL_DOCUMENT)."""
+            raw = data.encode("utf-8") if isinstance(data, str) else bytes(data)
+            return channel.request("files", {"action": "publish", "kind": str(kind), "party": int(party), "name": str(name),
+                                             "comment": comment, "data": base64.b64encode(raw).decode("ascii")})
+
+        def link(self, file, hours=72, max_downloads=None, password=None):
+            """Spec 037: download link without an account ({id, token, url}); only for files in
+            folders made for partners."""
+            body = {"action": "link", "file": int(file), "hours": int(hours)}
+            if max_downloads:
+                body["max_downloads"] = int(max_downloads)
+            if password:
+                body["password"] = str(password)
+            return channel.request("files", body)
 
         def get(self, file, version=None):
             """{name, mime, version, data: bytes}."""
@@ -514,13 +759,14 @@ def make_ana_module(channel, output, context):
         output.emit("log", {"level": str(level), "message": str(message)})
 
     def table(rows, title=None):
-        """Rows are dicts; the optional key `_actions` holds per-row actions."""
+        """Rows are dicts; the optional key `_actions` holds per-row actions and `_open` the
+        document the row opens when clicked (spec 035: {"program", "params"})."""
         output.flush()
         rows = list(rows)
         columns = []
         for rec in rows:
             for k in rec.keys():
-                if k not in columns and k != "_actions":
+                if k not in columns and k not in ("_actions", "_open"):
                     columns.append(k)
         data = {
             "title": title,
@@ -529,6 +775,9 @@ def make_ana_module(channel, output, context):
         }
         if any(rec.get("_actions") for rec in rows):
             data["row_actions"] = [_actions(rec.get("_actions") or []) for rec in rows]
+        if any(rec.get("_open") for rec in rows):
+            data["row_open"] = [_actions([{"label": "Abrir", **rec["_open"], "open": True}])[0] if rec.get("_open") else None
+                                for rec in rows]
         output.emit("table", data)
 
     # Rich views (spec 021): rendered by the UI for any program.
@@ -537,7 +786,7 @@ def make_ana_module(channel, output, context):
         for a in items:
             if not isinstance(a, dict) or not a.get("label") or not a.get("program"):
                 raise ParamError("ação exige label e program")
-            out.append({k: a[k] for k in ("label", "program", "params", "ask", "open", "style", "confirm")
+            out.append({k: a[k] for k in ("label", "program", "params", "ask", "open", "style", "confirm", "download")
                         if k in a})
         return out
 
@@ -545,6 +794,39 @@ def make_ana_module(channel, output, context):
         """KPI cards: [{"label", "value", "hint"?, "status"?: ok|warn|bad}]."""
         output.flush()
         output.emit("metrics", {"title": title, "items": list(items)})
+
+    def grid(rows, dimensions, periods, title=None, value_label="Planejado", consumed_label=None, available_label=None,
+             save=None, version=None, negative=False, decimals=2, statuses=None, comments=False, add=None, unit=None):
+        """Planning grid by period (spec 020, RF-020-15/16). dimensions: [{"key", "label"}] fixed on the left;
+        periods: [{"key", "label"}]; rows: [{"key": {dim: value}, "labels"?: {dim: text}, "values": {period: n},
+        "consumed"?: {period: n}, "status"?, "comment"?}]. save: {"program", "params"?} receives
+        {"changes": [{"key", "values"?: {period: n|None}, "status"?, "comment"?}], "version"} and saves only
+        what changed; version: token of what was read (concurrent editing). add: {dim: lookup} to include rows."""
+        output.flush()
+        dims = [{"key": str(d["key"]), "label": str(d.get("label") or d["key"])} for d in dimensions]
+        pers = [{"key": str(p["key"]), "label": str(p.get("label") or p["key"])} for p in periods]
+        if not dims or not pers:
+            raise ParamError("grid exige dimensões e períodos")
+        if save is not None and (not isinstance(save, dict) or not save.get("program")):
+            raise ParamError("save da grade exige program")
+        num = lambda v: None if v is None else str(v) if isinstance(v, decimal.Decimal) else v
+        out = []
+        for r in rows:
+            key = {d["key"]: r["key"].get(d["key"]) for d in dims}
+            out.append({"key": key, "labels": {k: str(v) for k, v in (r.get("labels") or {}).items()},
+                        "values": {str(k): num(v) for k, v in (r.get("values") or {}).items()},
+                        **({"consumed": {str(k): num(v) for k, v in r["consumed"].items()}} if r.get("consumed") is not None else {}),
+                        **({"status": r.get("status")} if statuses else {}),
+                        **({"comment": r.get("comment") or ""} if comments else {})})
+        output.emit("grid", {"title": title, "dimensions": dims, "periods": pers, "rows": out, "value_label": value_label,
+                             "consumed_label": consumed_label, "available_label": available_label, "save": save,
+                             "version": version, "negative": bool(negative), "decimals": int(decimals), "unit": unit,
+                             "statuses": statuses, "comments": bool(comments), "add": add})
+
+    def steps(items, title=None):
+        """Stages of a process (RF-020-11): [{"label", "status": done|current|todo, "hint"?}]."""
+        output.flush()
+        output.emit("steps", {"title": title, "items": [{k: i.get(k) for k in ("label", "status", "hint")} for i in items]})
 
     def board(columns, cards, title=None):
         """Kanban: columns [{"key", "label"}]; cards [{"column", "title", "subtitle"?,
@@ -678,9 +960,19 @@ def make_ana_module(channel, output, context):
     m.sql_exec = sql_exec
     m.sql_batch = sql_batch
     m.call = call
+    m.steps = steps
+    m.grid = grid
+    m.extend = extend
+    m.schedule_job = schedule_job
+    m.value = value
+    m.set_value = set_value
+    m.offer_undo = offer_undo
+    m.can_run = can_run
+    m.Selection = Selection
     m.remote = remote
     m.http = http
     m.send = send
+    m.send_email = send_email
     m.files = Files()
     m.log = log
     m.table = table
@@ -788,22 +1080,72 @@ def _to_dict(v):
     return v
 
 
+def _to_condition(v):
+    """Restricted rule (spec 020, RF-020-14): a list of rules or {"any": [[rule]], "except": [rule]}; JSON text too."""
+    if isinstance(v, str):
+        v = json.loads(v) if v.strip() else []
+    if not isinstance(v, (list, dict)):
+        raise ValueError
+    return v
+
+
 def _to_str(v):
     if isinstance(v, (dict, list)):
         raise ValueError
     return str(v)
 
 
+def _to_decimal(v):
+    """Decimal from JSON numbers or typed text; Brazilian notation ("1.234,56", "4,79") accepted."""
+    if isinstance(v, (int, float, decimal.Decimal)) and not isinstance(v, bool):
+        return decimal.Decimal(str(v))
+    s = str(v).strip()
+    if "," in s:
+        s = s.replace(".", "").replace(",", ".")
+    return decimal.Decimal(s)
+
+
 PARAM_TYPES = {
     "int": _to_int,
     "float": float,
-    "decimal": lambda v: decimal.Decimal(str(v)),
+    "decimal": _to_decimal,
     "str": _to_str,
     "bool": _to_bool,
     "date": lambda v: v if isinstance(v, datetime.date) else datetime.date.fromisoformat(v),
+    # Spec 029: date and time pickers on screen send ISO text ("2026-10-05T14:30", "14:30").
+    "datetime": lambda v: v if isinstance(v, datetime.datetime) else datetime.datetime.fromisoformat(str(v).replace(" ", "T")),
+    "time": lambda v: v if isinstance(v, datetime.time) else datetime.time.fromisoformat(str(v)),
     "list": _to_list,
     "dict": _to_dict,
+    "condition": _to_condition,
 }
+
+
+def _check_rows(name, spec, rows):
+    """Rows of a list with declared columns (spec 042, B-02): each one an object with its required columns, each
+    value of the column's type — the program never meets a malformed row (the values themselves are not changed)."""
+    label = spec.get("label") or name
+    single = next(iter(spec["columns"])) if len(spec["columns"]) == 1 else None
+    for i, row in enumerate(rows, start=1):
+        if not isinstance(row, dict):
+            if single is None or isinstance(row, list):
+                raise ParamError(f"{label}, linha {i}: deve ser um objeto com as colunas")
+            row = {single: row}              # one column: a plain value stands for it (["AVISTA"] = [{"term": "AVISTA"}])
+        for col, cs in spec["columns"].items():
+            cs = cs or {}
+            v = row.get(col)
+            if v is None or v == "":
+                if cs.get("required") and cs.get("default") is None:
+                    known = ", ".join(spec["columns"])
+                    raise ParamError(f"{label}, linha {i}: falta {cs.get('label') or col} (colunas: {known})")
+                continue
+            conv = PARAM_TYPES.get(cs.get("type", "str"))
+            if conv is None:
+                continue
+            try:
+                conv(v)
+            except (ValueError, TypeError, decimal.InvalidOperation):
+                raise ParamError(f"{label}, linha {i}: {cs.get('label') or col} não é do tipo {cs.get('type', 'str')}") from None
 
 
 def validate_params(declaration, received):
@@ -831,6 +1173,8 @@ def validate_params(declaration, received):
             out[name] = conv(received[name])
         except (ValueError, TypeError, decimal.InvalidOperation):
             raise ParamError(f"parâmetro {name} não é do tipo {kind}") from None
+        if kind == "list" and isinstance(spec.get("columns"), dict):
+            _check_rows(name, spec, out[name])
         choices = spec.get("choices")
         if choices:
             allowed = [c[0] if isinstance(c, (list, tuple)) else c for c in choices]
@@ -1089,6 +1433,8 @@ def run(channel, msg, output_limit):
             finally:
                 if profiler:
                     profiler.disable()
+        if (msg.get("context") or {}).get("depth", 0) == 0:
+            _next_actions(module_globals.get("NEXT"), result, params, output)
         output.flush()
         try:
             to_json(result)
@@ -1152,7 +1498,14 @@ def with_order(params):
     """The declared order survives storage (JSON objects have no order): "order" per parameter."""
     if not isinstance(params, dict):
         return params
-    return {k: ({**v, "order": i} if isinstance(v, dict) else v) for i, (k, v) in enumerate(params.items())}
+    out = {}
+    for i, (k, v) in enumerate(params.items()):
+        if isinstance(v, dict):
+            v = {**v, "order": i}
+            if isinstance(v.get("columns"), dict):
+                v["columns"] = with_order(v["columns"])  # grid columns keep their order too
+        out[k] = v
+    return out
 
 
 def inspect(channel, msg):
@@ -1179,8 +1532,90 @@ def inspect(channel, msg):
                 resp["params"] = with_order(ast.literal_eval(node.value))
             except ValueError:
                 resp["error"] = {"line": node.lineno, "message": "PARAMS deve ser um literal"}
-    resp["lint"] = lint_sql(tree, source)
+    resp["lint"] = lint_program(tree, source)
+    resp["writing"], resp["uses"] = program_effects(tree)
     channel.send(resp)
+
+
+# Spec 056 (RF-056-03): does the program write, and through what? Per top-level function: the ones that write by
+# themselves (SQL that changes data, e-mail, files, remote calls, HTTP other than reading) or call a local one that
+# does; and the edges "function>library:function" (or ">program" for ana.call) to what it uses. The catalog joins
+# the edges of all programs, so a report that only reads through a library is not taken for one that writes.
+WRITE_SQL_RE = re.compile(r"\b(INSERT\s+INTO|UPDATE\s+[\w.\"]+\s+SET|DELETE\s+FROM|MERGE\s+INTO|TRUNCATE)\b", re.I)
+WRITE_CALLS = {"sql_exec", "sql_batch", "send_email", "schedule_job", "remote", "set_value"}
+READ_FILE_CALLS = {"get", "list", "folder"}
+DB_CALL_RE = re.compile(r"\b([a-z_][a-z0-9_]*\.[a-z_][a-z0-9_]*)\s*\(", re.I)
+
+
+def program_effects(tree):
+    """(writing functions — "*" for module-level code —, edges "src>target")."""
+    import ast
+
+    def is_ana(node, name=None):
+        if name is None:
+            return isinstance(node, ast.Name) and node.id == "ana"
+        return isinstance(node, ast.Attribute) and node.attr == name and is_ana(node.value)
+
+    modules, functions = {}, {}                       # alias → "lib.mod"; alias → ["lib.mod:func", …]
+    for node in ast.walk(tree):
+        if isinstance(node, ast.ImportFrom) and (node.module or "").startswith("ana_lib."):
+            rest = node.module[len("ana_lib."):]
+            for a in node.names:
+                alias = a.asname or a.name
+                modules[alias] = f"{rest}.{a.name}"                       # from ana_lib.x import mod
+                functions[alias] = [f"{rest}:{a.name}", f"{rest}.{a.name}:{a.name}"]   # from ana_lib.x.mod import f
+        elif isinstance(node, ast.Import):
+            for a in node.names:
+                if a.name.startswith("ana_lib.") and a.asname:
+                    modules[a.asname] = a.name[len("ana_lib."):]
+
+    def writes_here(node):
+        if isinstance(node, ast.Constant) and isinstance(node.value, str):
+            return bool(WRITE_SQL_RE.search(node.value))
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute):
+            f = node.func
+            if is_ana(f.value) and f.attr in WRITE_CALLS:
+                return True
+            if is_ana(f.value) and f.attr == "http":
+                method = node.args[1] if len(node.args) > 1 else next((k.value for k in node.keywords if k.arg == "method"), None)
+                return not (isinstance(method, ast.Constant) and str(method.value).upper() in ("GET", "HEAD"))
+            if is_ana(f.value, "files") and f.attr not in READ_FILE_CALLS:
+                return True
+        return False
+
+    tops = {}
+    for node in tree.body:
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            tops[node.name] = node
+    writing, calls, edges = set(), {}, set()
+    module_level = [n for n in tree.body if not isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef))]
+    for src, body in list(tops.items()) + [("*", module_level)]:
+        nodes = (x for n in body for x in ast.walk(n)) if isinstance(body, list) else ast.walk(body)
+        local = calls.setdefault(src, set())
+        for x in nodes:
+            if writes_here(x):
+                writing.add(src)
+            if isinstance(x, ast.Constant) and isinstance(x.value, str):
+                # Database functions the SQL calls ("SELECT flow.skip(…)"): the catalog reads whether they write.
+                edges.update(f"{src}>db:{m.lower()}" for m in DB_CALL_RE.findall(x.value))
+            if isinstance(x, ast.Name) and isinstance(x.ctx, ast.Load):
+                if x.id in tops and x.id != src:
+                    local.add(x.id)
+                for t in functions.get(x.id, []):
+                    edges.add(f"{src}>{t}")
+            elif isinstance(x, ast.Attribute) and isinstance(x.value, ast.Name) and x.value.id in modules:
+                edges.add(f"{src}>{modules[x.value.id]}:{x.attr}")
+            elif (isinstance(x, ast.Call) and isinstance(x.func, ast.Attribute) and is_ana(x.func.value)
+                  and x.func.attr in ("call", "spawn") and x.args and isinstance(x.args[0], ast.Constant)):
+                edges.add(f"{src}>{x.args[0].value}")
+    changed = True
+    while changed:                                    # a function that calls a local writing one writes too
+        changed = False
+        for src, called in calls.items():
+            if src not in writing and called & writing:
+                writing.add(src)
+                changed = True
+    return sorted(writing), sorted(edges)
 
 
 # ---------------------------------------------------------------------------
@@ -1339,6 +1774,150 @@ def lint_sql(tree, source=""):
 
     visit(tree, False)
     return sorted(findings, key=lambda f: (f["line"], f["rule"]))
+
+
+# ---------------------------------------------------------------------------
+# Quality gate inspection (spec 064, RF-064-01): security, performance, robustness, product standards and
+# disk, on top of the SQL analysis. Every finding has a category and a fingerprint (rule + the text of its
+# line), stable when lines move: the baseline and the exemptions refer to it.
+# ---------------------------------------------------------------------------
+
+CATEGORY = {"dynamic_sql": "security", "hardcoded_secret": "security", "eval_exec": "security",
+            "dynamic_import": "security", "forbidden_import": "security", "file_access": "security",
+            "sensitive_output": "security",
+            "no_where": "robustness", "swallowed_exception": "robustness", "generic_error": "robustness",
+            "endless_loop": "robustness",
+            "error_code": "standards", "param_label": "standards", "foreign_terms": "standards",
+            "write_in_loop": "disk"}
+SEVERITY_ORDER = {"info": 0, "warning": 1, "serious": 2, "critical": 3}
+SECRET_NAME_RE = re.compile(r"(passw|passwd|senha|secret|segredo|token|api_?key|private_?key|credential)", re.I)
+FORBIDDEN_MODULES = {"os", "subprocess", "socket", "shutil", "urllib", "http", "requests", "ctypes", "multiprocessing",
+                     "pickle", "marshal", "ftplib", "smtplib", "telnetlib", "paramiko", "pathlib", "tempfile", "signal",
+                     "threading", "asyncio", "importlib", "sys", "builtins"}
+EXTERNAL_CALLS = {"http", "remote", "send_email"}
+ERROR_CODE_RE = re.compile(r"^[A-Z][A-Z0-9_]*$")
+# P2: the product never uses another vendor's nomenclature (identifiers, texts, comments).
+FOREIGN_TERMS_RE = re.compile(r"\b(ABAP|BAPI|IDoc|mandante|LUW|transaction code|business partner)\b", re.I)
+
+
+def fingerprint(rule, line_text):
+    import hashlib
+    return hashlib.sha1((rule + "|" + " ".join(line_text.split())).encode()).hexdigest()[:16]
+
+
+def lint_program(tree, source=""):
+    """All findings of a program: [{line, rule, category, severity, message, suggestion, fingerprint, ...}]."""
+    import ast
+    lines = source.splitlines()
+    findings = lint_sql(tree, source)
+    for f in findings:
+        if f["rule"] == "sql_in_loop" and f.get("sql", "").split(" ", 1)[0].upper() in ("INSERT", "UPDATE", "DELETE"):
+            f.update(rule="write_in_loop", message="Gravação dentro de laço: uma escrita por item gasta disco e tempo (P15).",
+                     suggestion="Grave em lote com ana.sql_batch, ou num só comando com unnest($1::…[]).")
+    accepted = {}
+    for n, text in enumerate(lines, start=1):
+        m = LINT_OK_RE.search(text)
+        if m:
+            accepted[n] = {r.strip() for r in m.group(1).split(",") if r.strip()}
+    extra = []
+
+    def add(node, rule, severity, message, suggestion):
+        line = getattr(node, "lineno", 1)
+        span = range(line - 1, (getattr(node, "end_lineno", None) or line) + 1)
+        if any(rule in accepted.get(n, ()) for n in span):
+            return
+        extra.append({"line": line, "rule": rule, "severity": severity, "message": message, "suggestion": suggestion,
+                      "sql": "", "tables": []})
+
+    def is_ana(node, names):
+        return isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute) and node.func.attr in names \
+            and isinstance(node.func.value, ast.Name) and node.func.value.id == "ana"
+
+    def in_loops(tree):
+        """Calls inside for/while bodies (comprehension sources excluded, like the SQL rule)."""
+        out = set()
+        for loop in ast.walk(tree):
+            if isinstance(loop, (ast.For, ast.AsyncFor, ast.While)):
+                for part in loop.body:
+                    for n in ast.walk(part):
+                        out.add(id(n))
+        return out
+    looped = in_loops(tree)
+
+    for node in ast.walk(tree):
+        # ---------------- security
+        if isinstance(node, ast.Assign) and isinstance(node.value, ast.Constant) and isinstance(node.value.value, str) \
+                and len(node.value.value) >= 8:
+            for t in node.targets:
+                name = t.id if isinstance(t, ast.Name) else (t.attr if isinstance(t, ast.Attribute) else "")
+                if SECRET_NAME_RE.search(name) and not node.value.value.isupper():
+                    add(node, "hardcoded_secret", "critical", "Segredo ou senha escrito no código: vaza em versões, pacotes e cópias.",
+                        "Guarde no cofre (conector com segredo, spec 017) e leia em tempo de execução.")
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Name):
+            if node.func.id in ("eval", "exec", "compile", "__import__"):
+                add(node, "eval_exec", "critical", f"{node.func.id}() executa texto como código: porta para injeção e impossível de revisar.",
+                    "Use estruturas de dados e funções conhecidas; para expressões de negócio, a linguagem fechada do ANA.")
+            elif node.func.id == "open":
+                add(node, "file_access", "serious", "Arquivo aberto direto no disco do servidor: fora do controle de acesso e da auditoria.",
+                    "Use ana.files (repositório de arquivos, spec 016).")
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute) and node.func.attr == "import_module" \
+                and node.args and not isinstance(node.args[0], ast.Constant):
+            add(node, "dynamic_import", "serious", "Importação com nome calculado: o código que roda depende de um texto.",
+                "Importe pelo nome fixo; se precisar escolher, use uma lista fechada de módulos.")
+        if isinstance(node, (ast.Import, ast.ImportFrom)):
+            mods = [a.name for a in node.names] if isinstance(node, ast.Import) else [node.module or ""]
+            bad = sorted({m.split(".")[0] for m in mods if m.split(".")[0] in FORBIDDEN_MODULES})
+            if bad:
+                add(node, "forbidden_import", "serious",
+                    f"Acesso a rede, arquivos ou processos fora das APIs do ANA ({', '.join(bad)}).",
+                    "Use as APIs do ANA: ana.http/ana.remote (conectores), ana.files, ana.spawn.")
+        if (is_ana(node, {"log"}) or isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id == "print") \
+                and any(isinstance(n, ast.Name) and SECRET_NAME_RE.search(n.id) for a in node.args for n in ast.walk(a)):
+            add(node, "sensitive_output", "serious", "Senha, token ou segredo vai para o log ou para a saída.",
+                "Não registre o valor; registre só que existe (ex.: 'token definido').")
+        # ---------------- performance: external calls in loops
+        if is_ana(node, EXTERNAL_CALLS) and id(node) in looped:
+            add(node, "external_in_loop", "warning", "Chamada externa dentro de laço: uma ida e volta por item.",
+                "Junte os itens numa chamada só, ou enfileire (ana.call com fila) e processe em lote.")
+        # ---------------- robustness
+        if isinstance(node, ast.ExceptHandler) and all(isinstance(b, (ast.Pass, ast.Continue)) or
+                                                       isinstance(b, ast.Expr) and isinstance(b.value, ast.Constant)
+                                                       for b in node.body):
+            broad = node.type is None or isinstance(node.type, ast.Name) and node.type.id in ("Exception", "BaseException")
+            add(node, "swallowed_exception", "serious" if broad else "warning",
+                "Exceção engolida: o erro some e o resultado fica errado sem ninguém saber.",
+                "Trate o caso esperado, registre com ana.log ou deixe o erro subir com ana.Error(código, mensagem).")
+        if isinstance(node, ast.Raise) and isinstance(node.exc, ast.Call) and isinstance(node.exc.func, ast.Name) \
+                and node.exc.func.id in ("Exception", "ValueError", "RuntimeError", "KeyError", "TypeError", "AssertionError"):
+            add(node, "generic_error", "warning", "Erro sem código de negócio: a tela e a API não sabem o que aconteceu nem como resolver.",
+                "Use ana.Error(\"CODIGO\", \"mensagem que diz como resolver\").")
+        if isinstance(node, ast.While) and isinstance(node.test, ast.Constant) and node.test.value is True:
+            exits = [n for part in node.body for n in ast.walk(part) if isinstance(n, (ast.Break, ast.Return, ast.Raise))]
+            if not exits:
+                add(node, "endless_loop", "serious", "Laço sem condição de parada: a execução só termina pelo limite de tempo.",
+                    "Dê uma condição ao while ou um break/return alcançável.")
+        # ---------------- product standards (P2, P2a)
+        if is_ana(node, {"Error"}) and node.args and isinstance(node.args[0], ast.Constant) \
+                and isinstance(node.args[0].value, str) and not ERROR_CODE_RE.match(node.args[0].value):
+            add(node, "error_code", "warning", "Código de erro fora do padrão: códigos são em inglês, maiúsculas e sublinhado.",
+                "Ex.: ana.Error(\"ORDER_NOT_FOUND\", \"pedido 12 não encontrado\").")
+        if isinstance(node, ast.Assign) and any(isinstance(t, ast.Name) and t.id == "PARAMS" for t in node.targets) \
+                and isinstance(node.value, ast.Dict):
+            for k, v in zip(node.value.keys, node.value.values):
+                if isinstance(v, ast.Dict) and not any(isinstance(x, ast.Constant) and x.value == "label" for x in v.keys):
+                    add(k or node, "param_label", "info", "Parâmetro sem rótulo: a tela mostra o nome técnico.",
+                        "Inclua \"label\": \"texto para a pessoa\".")
+    for n, text in enumerate(lines, start=1):
+        if FOREIGN_TERMS_RE.search(text) and "foreign_terms" not in accepted.get(n, ()) and "foreign_terms" not in accepted.get(n - 1, ()):
+            extra.append({"line": n, "rule": "foreign_terms", "severity": "warning",
+                          "message": "Nomenclatura de outro fornecedor: o ANA usa os próprios termos (P2).",
+                          "suggestion": "Troque pelo termo do ANA (ex.: empresa, pessoa, rotina).", "sql": "", "tables": []})
+    out = findings + extra
+    for f in out:
+        f["category"] = CATEGORY.get(f["rule"], "performance")
+        text = lines[f["line"] - 1] if 0 < f["line"] <= len(lines) else ""
+        f["fingerprint"] = fingerprint(f["rule"], text)
+    return sorted(out, key=lambda f: (f["line"], f["rule"]))
 
 
 def _all_literal(node):

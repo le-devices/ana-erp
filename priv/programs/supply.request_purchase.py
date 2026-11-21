@@ -1,6 +1,7 @@
 # ana:description Solicitação de compra (mercadorias ou serviços), com envio para aprovação
 # ana:exposed yes
 # ana:command solicitar
+# ana:category Compras/Solicitações
 """RF-013-02. One item through the form (product/quantity) or several through `items`
 ([{"product", "quantity", "price"?, "supplier"?, "rebillable"?}]). Estimated price = the
 preferred supplier's catalog price. Cost center: project → warehouse → company (spec 027)."""
@@ -21,9 +22,15 @@ PARAMS = {
                 "lookup": {"program": "supply.lookup", "params": {"kind": "projects"}}},
     "rebillable": {"type": "bool", "default": False, "label": "refaturável ao cliente", "order": 7},
     "submit": {"type": "bool", "default": True, "label": "enviar para aprovação", "order": 8},
-    "items": {"type": "list", "label": "vários itens (integração)", "order": 9},
+    "items": {"type": "list", "label": "vários itens de uma vez", "order": 9, "add_label": "Adicionar item", "columns": {
+        "product": {"type": "str", "required": True, "label": "item", "lookup": {"program": "supply.lookup", "params": {"kind": "products"}}},
+        "quantity": {"type": "decimal", "required": True, "default": 1, "label": "quantidade"},
+        "price": {"type": "decimal", "label": "preço estimado (vazio = catálogo)"},
+        "supplier": {"type": "int", "label": "fornecedor (vazio = o preferido)", "lookup": {"program": "supply.lookup", "params": {"kind": "suppliers"}}},
+        "rebillable": {"type": "bool", "label": "refaturável"}}},
     "origin": {"type": "str", "default": "manual", "label": "origem", "order": 10,
-               "choices": [["manual", "Manual"], ["replenishment", "Reposição"], ["planning", "Planejamento"], ["project", "Projeto"]]},
+               "choices": [["manual", "Manual"], ["replenishment", "Reposição"], ["planning", "Planejamento"], ["project", "Projeto"],
+                           ["sales", "Pedido de venda (política de atendimento)"]]},
     "cost_center": {"type": "str", "label": "centro de custo (vazio = do projeto ou do depósito)", "order": 11,
                     "lookup": {"program": "finance.lookup", "params": {"kind": "cost_centers"}}},
 }

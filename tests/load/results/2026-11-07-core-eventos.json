@@ -1,0 +1,25 @@
+{
+ "label": "depois: eventos, processo por conector, áreas",
+ "date": "2026-11-07 16:20",
+ "head": "a563589",
+ "outbox": {
+  "messages": 40,
+  "p50_ms": 15.0,
+  "p95_ms": 27.4
+ },
+ "execution": {
+  "runs": 100,
+  "p50_ms": 7.4,
+  "p95_ms": 89.5
+ },
+ "load": {
+  "users": 60,
+  "actions_per_s": 7.5,
+  "errors": 0,
+  "worst_interactive_p95_ms": 101.0
+ },
+ "idle": {
+  "beam_memory_mb": 71.6,
+  "beam_processes": 170
+ }
+}

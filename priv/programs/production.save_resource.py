@@ -1,5 +1,6 @@
 # ana:description Recurso de produção (máquina, bancada, linha ou pessoas) com capacidade e exceções
 # ana:exposed yes
+# ana:category Produção/Engenharia do produto
 """RF-014-03. Exceptions override the hours of a day (holiday, maintenance, vacation)."""
 
 PARAMS = {

@@ -1,3 +1,5 @@
+%% SPDX-FileCopyrightText: 2026 André Luis Pereira dos Santos
+%% SPDX-License-Identifier: AGPL-3.0-or-later
 %% Access log (spec 024, RF-024-01..03, RNF-024-01).
 %%
 %% Requests are recorded through cowboy_metrics_h: the HTTP handlers attach
@@ -22,7 +24,7 @@ start_link() ->
 %% Entry: #{username, auth, api_key_id, ip, method, path, status, duration_ms, detail}
 -spec record(map()) -> ok.
 record(Entry) ->
-    gen_server:cast(?MODULE, {record, Entry#{at => erlang:system_time(microsecond)}}).
+    ana_bounded:cast(?MODULE, {record, Entry#{at => erlang:system_time(microsecond)}}, 50000).   % spec 062 (D7)
 
 %% Attaches caller data to the current request (merged by cowboy_metrics_h).
 -spec tag(map(), cowboy_req:req()) -> ok.
@@ -137,6 +139,14 @@ write_batches(Entries) ->
     end,
     case catch ana_db:transaction(Insert) of
         {ok, _} -> write_batches(Rest);
+        {error, #{sqlstate := <<"2", C, _/binary>>} = E} when (C =:= $2 orelse C =:= $3), length(Batch) > 1 ->
+            %% Data error (class 22/23): one bad entry must not hold back the others forever.
+            logger:warning("access log batch refused, writing one by one: ~0p", [E]),
+            _ = [write_batches([One]) || One <- Batch],
+            write_batches(Rest);
+        {error, #{sqlstate := <<"2", C, _/binary>>} = E} when C =:= $2; C =:= $3 ->
+            logger:warning("access log entry dropped: ~0p", [E]),
+            write_batches(Rest);
         {error, E} ->
             logger:warning("access log write failed: ~0p", [E]),
             error

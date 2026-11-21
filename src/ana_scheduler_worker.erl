@@ -1,3 +1,5 @@
+%% SPDX-FileCopyrightText: 2026 André Luis Pereira dos Santos
+%% SPDX-License-Identifier: AGPL-3.0-or-later
 %% Runs one scheduler occurrence (spec 018): executes the program as the job's
 %% technical user with the job's limits, records the result, retries with
 %% exponential backoff, notifies, pauses on exhaustion and fires dependent
@@ -7,7 +9,7 @@
 
 run(OccId) ->
     {ok, O} = ana_db:one(
-        "SELECT o.id, o.job_id, o.attempt, o.scheduled_at, o.params AS override, j.name, j.program, j.params, "
+        "SELECT o.id, o.job_id, o.attempt, o.scheduled_at, o.params AS override, j.name, j.program, j.params, j.variant_id, "
         "  j.run_as, j.limits, j.retries, j.retry_backoff_s, j.on_exhausted, j.timezone, u.role "
         "FROM scheduler.occurrence o JOIN scheduler.job j ON j.id = o.job_id "
         "JOIN ana_system.app_user u ON u.username = j.run_as "
@@ -15,10 +17,20 @@ run(OccId) ->
     User = #{username => maps:get(<<"run_as">>, O), role => maps:get(<<"role">>, O)},
     Params = render(maps:merge(maps:get(<<"params">>, O),
                                case maps:get(<<"override">>, O) of M when is_map(M) -> M; _ -> #{} end),
-                    maps:get(<<"timezone">>, O)),
+                    maps:get(<<"timezone">>, O), maps:get(username, User)),
     Started = erlang:monotonic_time(millisecond),
-    Result = ana_execution:run(maps:get(<<"program">>, O), Params, User,
-                               #{origin => <<"internal">>, limits => maps:get(<<"limits">>, O)}),
+    %% Spec 045 (CA-045-03): a job with a variant runs with its values resolved on the day of the run; the job's own
+    %% parameters fill the free fields only.
+    Result = case maps:get(<<"variant_id">>, O) of
+        null -> ana_execution:run(maps:get(<<"program">>, O), Params, User,
+                                  #{origin => <<"internal">>, limits => maps:get(<<"limits">>, O)});
+        V ->
+            case ana_variants:apply(maps:get(<<"program">>, O), V, Params, User) of
+                {ok, P2, Info} -> ana_execution:run(maps:get(<<"program">>, O), P2, User,
+                                                    #{origin => <<"internal">>, limits => maps:get(<<"limits">>, O), variant => Info});
+                {error, Code, Msg} -> {error, #{<<"code">> => Code, <<"message">> => Msg}}
+            end
+    end,
     Duration = erlang:monotonic_time(millisecond) - Started,
     finish(O, Result, Duration).
 
@@ -119,18 +131,33 @@ notify(Job, Kind, Message, OccId) ->
         _ -> ok
     end.
 
-%% Date templates in string parameters, in the job's time zone.
-render(Params, Tz) ->
-    case ana_db:one(
-           "SELECT (now() AT TIME ZONE $1)::date::text AS today, "
-           "  ((now() AT TIME ZONE $1)::date - 1)::text AS yesterday, "
-           "  to_char(now() AT TIME ZONE $1, 'YYYY-MM-DD\"T\"HH24:MI:SS') AS now, "
-           "  date_trunc('month', now() AT TIME ZONE $1)::date::text AS month_start, "
-           "  (date_trunc('month', now() AT TIME ZONE $1) - interval '1 month')::date::text AS last_month_start, "
-           "  (date_trunc('month', now() AT TIME ZONE $1)::date - 1)::text AS last_month_end", [Tz]) of
-        {ok, #{} = Vars} -> subst(Params, Vars);
-        _ -> Params
-    end.
+%% Date templates in string parameters, in the job's time zone. Spec 065 (RF-065-11): "{{today}}" and the others
+%% are cases of the closed list of expressions, resolved by its only implementation in the database; what is not
+%% in the list stays as it was.
+render(Params, Tz) -> render(Params, Tz, null).
+
+%% Spec 065 (T-065-07): "{{valor:nome}}" is the company value in effect, for the job's user. A parameter that is only
+%% the reference receives the value in its type (a list stays a list); inside a text, its text.
+render(Params, Tz, User) ->
+    P1 = case lists:usort(tokens(Params)) of
+        [] -> Params;
+        Tokens ->
+            case ana_db:rows("SELECT t, ana_system.value_expression(t, NULL, $2, false, $3) AS v FROM unnest($1::text[]) t",
+                             [Tokens, Tz, User]) of
+                {ok, Rows} -> subst(Params, maps:from_list([{T, V} || #{<<"t">> := T, <<"v">> := V} <- Rows, V =/= null]));
+                _ -> Params
+            end
+    end,
+    ana_flows:company_values(P1, User).
+
+tokens(M) when is_map(M) -> lists:append([tokens(V) || V <- maps:values(M)]);
+tokens(L) when is_list(L) -> lists:append([tokens(V) || V <- L]);
+tokens(B) when is_binary(B) ->
+    case re:run(B, <<"\\{\\{([a-z_]+(?:[+-][0-9]{1,4})?)\\}\\}">>, [global, {capture, all_but_first, binary}]) of
+        {match, Ms} -> [T || [T] <- Ms];
+        nomatch -> []
+    end;
+tokens(_) -> [].
 
 subst(M, Vars) when is_map(M) -> maps:map(fun(_, V) -> subst(V, Vars) end, M);
 subst(L, Vars) when is_list(L) -> [subst(V, Vars) || V <- L];

@@ -1,6 +1,7 @@
 # ana:description Regra de rateio de custos entre centros
 # ana:exposed yes
 # ana:role admin
+# ana:category Contabilidade/Custos e orçamento
 """RF-027-06. targets: [{"cost_center": "ENG", "pct": 60}, {"cost_center": "COM", "pct": 40}] (sum = 100)."""
 
 from decimal import Decimal
@@ -10,7 +11,10 @@ PARAMS = {
     "name": {"type": "str", "required": True, "label": "nome"},
     "source": {"type": "str", "required": True, "label": "centro de origem",
                "lookup": {"program": "finance.lookup", "params": {"kind": "cost_centers"}}},
-    "targets": {"type": "list", "required": True, "label": "destinos com percentuais"},
+    "targets": {"type": "list", "required": True, "label": "destinos com percentuais (somam 100)", "add_label": "Adicionar destino", "columns": {
+        "cost_center": {"type": "str", "required": True, "label": "centro de destino",
+                        "lookup": {"program": "finance.lookup", "params": {"kind": "cost_centers"}}},
+        "pct": {"type": "decimal", "required": True, "label": "percentual"}}},
     "account_prefix": {"type": "str", "default": "5", "label": "contas que começam com"},
     "active": {"type": "bool", "default": True, "label": "ativa"},
 }

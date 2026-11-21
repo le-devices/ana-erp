@@ -1,5 +1,7 @@
 # 020 — Arquitetura da informação e experiência de uso
 
+Situação: implementada (RF-020-01..12); organização por áreas e categorias (RF-020-19..23) implementada; padrões de telas de produtividade: barra de tabela e painéis com estado (RF-020-17/18), simulação ao lado e construtor de condições (RF-020-13/14), grade de planejamento e gráfico ligado (RF-020-15/16) implementados.
+
 ## Problema
 A interface cresceu por acréscimo: propriedades acima do editor, versões e
 execuções misturadas com a saída, administração numa lista longa e plana,
@@ -105,3 +107,183 @@ desenvolvedor e administrador —, com as coisas relacionadas juntas.
   ao clicar, abre o faturamento com o número preenchido.
 - **CA-020-07** O fluxo "Venda" mostra as etapas e destaca a etapa atual de um
   pedido escolhido.
+
+## Notas da implementação (T-020-07, 09..11)
+- `NEXT` é declarativo: `{{result.campo}}` e `{{params.campo}}` preenchem os
+  parâmetros, o rótulo e a confirmação; ação sem valor (ou com `when` falso)
+  não aparece; só o programa da tela mostra os seus (chamadas aninhadas não).
+  `ana.actions` continua para os casos dinâmicos.
+- `flows.guide` calcula as etapas pelos fatos do próprio documento (as mesmas
+  regras das esteiras), com a esteira ligada ou não; `ana.steps` desenha as
+  etapas (`aria-current="step"` na atual). O documento e o pedido levam a ele.
+- Acessibilidade: tokens de cor auditados nos dois temas (texto 4,5:1, partes
+  da interface 3:1; borda dos campos escurecida; `--on-ok`); um só ponto
+  (`AnaUI.enhance`) dá papéis e setas às abas, foco e Enter às árvores e nome
+  acessível aos campos sem rótulo, também no que é desenhado depois.
+- Voltar devolve a rolagem da tela de onde se saiu.
+
+## Padrões de telas de produtividade (out/2026)
+Referência de usabilidade pedida pelo dono do produto: telas de planejamento e
+definição de conjuntos de ERPs de mercado (definição de um conjunto por
+critérios com a simulação ao lado; grade de planejamento por período com
+gráfico de consumo). O ANA adota os **padrões de uso**, com nomes e desenho
+próprios (sem nomenclatura de terceiros). Valem para todo o ERP; cada um é um
+componente único, usado por todas as telas que precisarem dele.
+
+- **RF-020-13 Definição com simulação ao lado.** Quem define algo que
+  seleciona registros (regras do extrato, condições das esteiras, escopo de
+  dados dos grupos, regras de rateio, reposição de estoque, público de uma
+  campanha…) edita à esquerda e vê à direita, **sem salvar**, o resultado:
+  "Simular" mostra a tabela dos registros que a definição pega (contagem no
+  título, busca, colunas da entidade, chave clicável que abre o documento),
+  com data e hora da simulação. Salvar é um passo separado. Painéis
+  redimensionáveis e recolhíveis (o da simulação pode ocupar a tela).
+- **RF-020-14 Construtor de condições padronizado.** Linhas "campo ·
+  operador · valor", com o valor por ajuda de valores (a mesma busca dos
+  cadastros, spec 040) e operadores do tipo do campo (é, não é, entre,
+  contém, maior que…); adicionar e remover linha ao lado de cada uma;
+  vários **critérios** (abas "Critério 1, 2…"): dentro de um critério as
+  linhas valem juntas (E), entre critérios basta um (OU); **condições de
+  exclusão** separadas ("exceto…"). O resultado vira a regra restrita já
+  usada pelas esteiras e pelo BPM (nunca código); o texto da regra aparece em
+  português ("Filial é AK01 ou AK02, exceto cliente bloqueado").
+- **RF-020-15 Grade de planejamento por período.** Linhas = combinações de
+  dimensões (ex.: canal × região, centro de custo × conta, item × depósito),
+  com as colunas de dimensões **fixas à esquerda** e ajuda de valores nas
+  células; colunas de **períodos** geradas pelo intervalo escolhido (mês,
+  semana) com rolagem horizontal; colunas de situação e comentário; edição
+  em linha com validação (números no formato brasileiro, negativos
+  recusados onde não cabem); seleção de linhas para ações em lote (incluir,
+  copiar, mudar situação, excluir); totais por período e por linha; colar um
+  bloco vindo de planilha; exportar e importar planilha; salvar grava só o
+  que mudou (com aviso de alterações não salvas e controle de edição
+  concorrente).
+- **RF-020-16 Gráfico ligado à grade.** Abaixo da grade, o gráfico da linha
+  selecionada (ou da soma da seleção): por período, **planejado × consumido
+  × disponível**, com o disponível negativo destacado (cor de alerta e
+  rótulo), legenda e dica ao passar o mouse; **um só eixo** (as séries têm a
+  mesma unidade — regra do guia de gráficos do ANA: nunca dois eixos);
+  alternar gráfico/tabela, ampliar e tela cheia; seguir a seleção sem
+  recarregar a tela.
+- **RF-020-17 Barra da tabela padronizada.** Toda tabela de trabalho tem:
+  título com contagem, busca, filtros por coluna, escolha e ordem das colunas
+  e ordenação **lembradas por usuário** (variantes com nome, uma padrão),
+  exportar planilha e ações sobre a seleção; o mesmo componente na Operação,
+  nos Cadastros e na Administração.
+- **RF-020-18 Cabeçalho e painéis com estado.** Cabeçalho da tela fixável
+  (filtros e intervalo sempre à vista ao rolar), painéis com divisor
+  arrastável e botão de recolher; a posição dos divisores e o cabeçalho
+  fixado ficam lembrados por tela e usuário.
+
+Decisões de implementação (RF-020-17/18): o estado deixado na tela (colunas, ordem,
+ordenação, filtros; divisores, painéis recolhidos, cabeçalho fixado) fica **no
+servidor, por usuário** — volta em qualquer computador; variantes são retratos
+com nome desse estado (até 30 por tela, uma padrão). Filtro por coluna aceita
+`texto` (contém), `=texto`, `!texto`, `>10`, `<=5`, `10..20`; números no formato
+brasileiro. A tabela desenha 2000 linhas por vez ("Mostrar todas"); busca,
+filtro e exportação valem para todas.
+
+Decisões de implementação (RF-020-13/14): a regra restrita ganhou a forma
+`{"any": [[linha…]…], "except": [linha…]}` (a lista antiga continua valendo e é
+o que se grava quando há um só critério sem exceção), com os operadores é, não
+é, menor/maior, até, a partir de, entre, contém, não contém, começa com, é um
+de, não é nenhum de, vazio e preenchido; avaliada igual no núcleo
+(`ana_flows:condition/2`) e nos programas (`util.conditions`). Um programa de
+definição declara o parâmetro `{"type": "bool", "simulate": true}`: a tela
+mostra "Simular (F9)" e "Salvar (F8)", e o núcleo executa a simulação numa
+transação **somente leitura** — mesmo que o programa tente, nada é gravado.
+Abrir uma definição já preenchida simula; nunca salva sozinho.
+
+Decisões de implementação (RF-020-15/16): o programa descreve a grade com
+`ana.grid` (dimensões, períodos, linhas com planejado e consumido, situação e
+comentário opcionais, programa de gravação e a **versão** do que leu); a tela
+edita uma célula por vez (teclado como planilha), cola blocos, exporta e importa
+CSV no mesmo layout e grava só as células mudadas — se outra pessoa gravou o
+mesmo escopo depois da leitura, a gravação é recusada (CONFLICT) e nada muda.
+Sair da tela com alterações pede confirmação. O gráfico usa o mesmo componente
+de gráficos (spec 026): colunas planejado × consumido × disponível num eixo, o
+disponível negativo em cor de alerta com rótulo "⚠" e legenda própria.
+
+### Onde o ANA usa esses padrões primeiro
+- Grade de planejamento + gráfico: orçamento por centro de custo × conta
+  (spec 027, orçado × realizado × saldo), previsão de vendas e produção por
+  item × semana (spec 014, previsto × consumido), alocação de horas por
+  pessoa × semana (spec 021, planejado × apontado × disponível) e cotas de
+  venda por canal × região (planejado × vendido × disponível).
+- Definição + simulação: regras do extrato (quais linhas a regra pega),
+  condições das esteiras e do BPM (quais documentos entrariam), escopo de
+  dados dos grupos (o que o membro passaria a ver), regras de rateio (quanto
+  iria a cada centro) e regras de reposição.
+
+### Critérios de aceite (RF-020-13..18)
+- **CA-020-08** Ao editar uma regra do extrato, "Simular" mostra as linhas
+  abertas que ela pegaria, com contagem, sem gravar nada; salvar grava a
+  regra.
+- **CA-020-09** Duas linhas no critério 1 (E), um critério 2 (OU) e uma
+  exclusão produzem a regra restrita equivalente e o texto em português; a
+  mesma regra roda na esteira.
+- **CA-020-10** No orçamento, escolher o intervalo gera as colunas de meses;
+  editar células, colar um bloco da planilha e salvar grava só as mudadas; o
+  total por mês acompanha a edição.
+- **CA-020-11** Selecionar uma linha da grade mostra o gráfico planejado ×
+  consumido × disponível dessa linha, com o disponível negativo em
+  destaque, em um só eixo.
+- **CA-020-12** Colunas escolhidas, ordem e uma variante salva voltam ao
+  reabrir a tela; o divisor dos painéis volta à posição deixada.
+
+## Organização das rotinas por áreas e categorias (out/2026)
+Hoje a Operação mostra todas as rotinas numa grade só, com o módulo técnico
+como rótulo, e os favoritos do Início são uma lista sem divisão. Quem usa o
+ERP pensa por **área do negócio** e pelo **próprio trabalho** ("fechamento do
+mês", "rotina da expedição") — e cada empresa e cada pessoa organiza isso do
+seu jeito.
+
+- **RF-020-19 Áreas do negócio e categorias do produto.** A Operação agrupa
+  as rotinas por **área do negócio** (Vendas, Compras, Estoque, Produção,
+  Logística e campo, Projetos, Financeiro, Contabilidade, Cadastros,
+  Processos, Analítico, Integrações) e, dentro de cada área, por
+  **categoria** (ex.: Financeiro → Contas a receber, Conciliação bancária,
+  Contabilidade, Fechamento). Cada programa do produto declara área e
+  categoria no cabeçalho (`# ana:category Financeiro/Conciliação bancária`);
+  sem declaração, vale a área do namespace. Nenhum rótulo técnico aparece
+  ("bpm", "master"): sempre o nome da área.
+- **RF-020-20 Categorias criadas pela empresa e pela pessoa.** Qualquer
+  usuário cria **categorias pessoais** (só ele vê); o administrador — ou quem
+  tiver a permissão — cria **categorias da empresa**, visíveis a todos ou a
+  grupos de acesso escolhidos. Categorias podem ser renomeadas, reordenadas
+  (arrastar), recolhidas e excluídas (excluir a categoria nunca exclui a
+  rotina).
+- **RF-020-21 Copiar rotinas para uma categoria.** Na grade da Operação (e
+  na lista lateral) o operador **seleciona uma ou mais rotinas** e escolhe
+  "Copiar para categoria…" — uma existente ou uma nova criada ali mesmo.
+  Copiar cria um **atalho**: a rotina continua uma só (mesma versão,
+  permissões e histórico) e passa a aparecer também na categoria; o mesmo
+  atalho pode estar em várias categorias. Opcionalmente o atalho guarda
+  **parâmetros pré-preenchidos** e um nome próprio ("Faturar pedidos da
+  filial SP"), abrindo a rotina com eles.
+- **RF-020-22 Favoritos por categoria no Início.** Os favoritos do Início se
+  organizam nas mesmas categorias (pessoais e da empresa): ☆ fixa em
+  "Favoritas" com um clique e, ao lado, "Copiar para categoria…" leva a
+  rotina a qualquer outra categoria; a tela de Início mostra as
+  categorias como seções recolhíveis, com arrastar para reordenar e mover
+  atalhos entre elas, e o mesmo "Copiar para categoria…" com seleção de
+  várias.
+- **RF-020-23 Nunca mostra o que a pessoa não pode usar.** Uma categoria da
+  empresa só exibe as rotinas que o usuário pode executar (papel, grupos de
+  acesso, licença — spec 009); uma rotina desativada ou excluída some do
+  atalho com aviso discreto; a busca do topo ("Ir para…") encontra também os
+  atalhos pelo nome dado.
+
+### Critérios de aceite (RF-020-19..23)
+- **CA-020-13** A Operação abre agrupada por área do negócio e categoria; o
+  rótulo de cada rotina é o nome da área (nenhum "bpm" ou "master").
+- **CA-020-14** O operador seleciona três rotinas, escolhe "Copiar para
+  categoria…", cria "Fechamento do mês" e as três aparecem lá, continuando
+  nas áreas de origem; remover a categoria não remove as rotinas.
+- **CA-020-15** O administrador cria a categoria da empresa "Expedição" para
+  o grupo da logística: quem é do grupo a vê; quem não é, não; uma rotina
+  sem permissão para o usuário não aparece nela.
+- **CA-020-16** No Início, uma rotina copiada para uma categoria aparece nela; arrastar
+  muda a ordem e move entre categorias; a ordem volta ao recarregar.
+- **CA-020-17** Um atalho com parâmetros pré-preenchidos e nome próprio abre
+  a rotina com esses parâmetros e é encontrado pela busca do topo.

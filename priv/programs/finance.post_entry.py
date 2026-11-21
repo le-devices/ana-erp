@@ -1,6 +1,7 @@
 # ana:description Lançamento contábil manual com centro de custo por linha
 # ana:exposed yes
 # ana:role developer
+# ana:category Contabilidade/Lançamentos e fechamento
 """RF-027-04. lines: [{"account": "5.1.1", "debit": 100, "cost_center": "ADM"},
 {"account": "1.1.1", "credit": 100}]. Double entry checked here (friendly) and at COMMIT
 (database); cost center policies are enforced by the database for every program."""
@@ -9,7 +10,11 @@ from decimal import Decimal
 
 PARAMS = {
     "memo": {"type": "str", "required": True, "label": "histórico"},
-    "lines": {"type": "list", "required": True, "label": "linhas"},
+    "lines": {"type": "list", "required": True, "label": "linhas (débitos = créditos)", "columns": {
+        "account": {"type": "str", "required": True, "label": "conta", "lookup": {"program": "finance.lookup", "params": {"kind": "accounts"}}},
+        "debit": {"type": "decimal", "label": "débito"},
+        "credit": {"type": "decimal", "label": "crédito"},
+        "cost_center": {"type": "str", "label": "centro de custo", "lookup": {"program": "finance.lookup", "params": {"kind": "cost_centers"}}}}},
     "entry_date": {"type": "date", "label": "data (vazio = hoje)"},
     "document": {"type": "str", "label": "documento"},
 }
@@ -33,8 +38,8 @@ def main(memo, lines, entry_date=None, document=None):
         raise ana.Error("UNBALANCED", f"débitos ({sum(x[1] for x in clean)}) diferentes dos créditos ({sum(x[2] for x in clean)})")
     if document and document.upper().startswith("RATEIO-"):
         raise ana.Error("INVALID_PARAMETER", "documentos RATEIO- são reservados ao rateio")
-    entry = ana.sql_value("INSERT INTO finance.journal_entry (entry_date, memo, document, created_by) "
-                          "VALUES (COALESCE($1, current_date), $2, $3, $4) RETURNING id",
+    entry = ana.sql_value("INSERT INTO finance.journal_entry (entry_date, memo, document, created_by, manual) "
+                          "VALUES (COALESCE($1, current_date), $2, $3, $4, true) RETURNING id",
                           entry_date, memo.strip(), document, ana.context.user)
     try:
         ana.sql_batch("INSERT INTO finance.journal_line (entry_id, account, debit, credit, cost_center) "

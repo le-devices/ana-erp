@@ -1,3 +1,5 @@
+# SPDX-FileCopyrightText: 2026 André Luis Pereira dos Santos
+# SPDX-License-Identifier: AGPL-3.0-or-later
 # Two-node cluster for tests (spec 018 CA-018-01, spec 003 T-003-06).
 # Usage: tests/cluster/run.sh
 x-cluster-env: &cluster-env
@@ -31,7 +33,7 @@ services:
       ANA_NODE_NAME: ana@ana2.cluster
       <<: *cluster-env
     ports:
-      - "8081:8080"
+      - "${ANA2_PORT:-8081}:8080"
     depends_on:
       db:
         condition: service_healthy

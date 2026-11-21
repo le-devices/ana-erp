@@ -1,5 +1,6 @@
 # ana:description Fornecedor confirma ou altera o prazo de entrega de uma ordem de compra
 # ana:exposed yes
+# ana:category Compras/Ordens de compra
 """RF-013-10: exposed for integration (e.g. a supplier portal through a robot key).
 Without `line`, applies to every line still pending."""
 

@@ -1,3 +1,5 @@
+%% SPDX-FileCopyrightText: 2026 André Luis Pereira dos Santos
+%% SPDX-License-Identifier: AGPL-3.0-or-later
 %% Passwords and roles (spec 001: RF-001-03, RF-001-10, RNF-001-06).
 -module(ana_security_tests).
 -include_lib("eunit/include/eunit.hrl").

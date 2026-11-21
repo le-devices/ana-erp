@@ -1,3 +1,5 @@
+%% SPDX-FileCopyrightText: 2026 André Luis Pereira dos Santos
+%% SPDX-License-Identifier: AGPL-3.0-or-later
 %% Type conversion tests (spec 001, T-001-04).
 -module(ana_types_tests).
 -include_lib("eunit/include/eunit.hrl").

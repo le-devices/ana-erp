@@ -1,3 +1,5 @@
+%% SPDX-FileCopyrightText: 2026 André Luis Pereira dos Santos
+%% SPDX-License-Identifier: AGPL-3.0-or-later
 %% Outbound HTTP through connectors (spec 017, RF-017-03, RNF-017-01).
 %%
 %% Programs name a connector and a path; the core builds the URL from the
@@ -6,7 +8,7 @@
 %% timeout, per-minute rate limit and circuit breaker, verifies TLS and logs each
 %% call (without secrets).
 -module(ana_connector).
--export([init_tables/0, http/5, lookup/1, target_url/3]).
+-export([init_tables/0, http/5, lookup/1, target_url/3, rate_ok/1]).
 
 -define(TOKENS, ana_connector_tokens).
 -define(RATE, ana_connector_rate).
@@ -29,7 +31,10 @@ lookup(Name) ->
 -spec http(binary(), binary(), binary(), map(), binary() | null) -> {ok, map()} | {error, map()}.
 http(Name, Method0, Path, Opts, ExecId) when is_binary(Name), is_binary(Method0), is_binary(Path), is_map(Opts) ->
     Method = string:uppercase(Method0),
-    case lookup(Name) of
+    %% Spec 034 (RF-034-07): a test instance with copied data calls nothing outside.
+    Blocked = ana_settings:get(outbound_blocked) =:= 1,
+    case Blocked orelse lookup(Name) of
+        true -> fail(<<"OUTBOUND_BLOCKED">>, <<"chamadas externas bloqueadas nesta instância (dados copiados da produção)"/utf8>>);
         {ok, #{<<"active">> := true, <<"kind">> := <<"http_api">>} = C} ->
             case {lists:member(Method, ?METHODS), target_url(C, Path, maps:get(<<"params">>, Opts, #{}))} of
                 {false, _} -> fail(<<"INVALID_METHOD">>, <<"método HTTP não permitido: "/utf8, Method/binary>>);

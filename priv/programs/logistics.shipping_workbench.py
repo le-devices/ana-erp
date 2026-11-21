@@ -1,6 +1,9 @@
 # ana:description Bancada de expedição: pedidos a expedir, expedições em trânsito e transferências
 # ana:command expedicao
+# ana:category Logística e campo/Expedição
 """H1–H3: what waits for picking, what is on the road and the transfers in transit."""
+
+from ana_lib.docs.common import link as doc_link
 
 PARAMS = {}
 
@@ -20,7 +23,7 @@ def main():
                    "JOIN sales.sales_order o ON o.id = s.sales_order_id JOIN base.party p ON p.id = o.customer_id "
                    "WHERE o.status <> 'CANCELLED' AND s.state <> 'full' AND o.order_date > current_date - 180 "
                    "ORDER BY o.number LIMIT 200")
-    ana.table([{"pedido": r["number"], "cliente": r["name"], "UF": r["state"], "pedido (qtd)": r["ordered"], "expedido": r["shipped"],
+    ana.table([{"pedido": r["number"], "_open": doc_link("order", r["number"]), "cliente": r["name"], "UF": r["state"], "pedido (qtd)": r["ordered"], "expedido": r["shipped"],
                 "_actions": [{"label": "Expedir tudo", "program": "logistics.ship", "params": {"order": r["number"]}, "style": "primary",
                               "ask": {"carrier": {"type": "int", "label": "transportadora", "required": True,
                                                   "lookup": {"program": "logistics.lookup", "params": {"kind": "carriers"}}},
@@ -30,7 +33,7 @@ def main():
     road = ana.sql("SELECT s.number, o.number AS order_number, p.name, c.name AS carrier, s.tracking, s.expected_date "
                    "FROM logistics.shipment s JOIN sales.sales_order o ON o.id = s.sales_order_id JOIN base.party p ON p.id = o.customer_id "
                    "LEFT JOIN logistics.carrier c ON c.id = s.carrier_id WHERE s.status = 'shipped' ORDER BY s.expected_date LIMIT 200")
-    ana.table([{"expedição": r["number"], "pedido": r["order_number"], "cliente": r["name"], "transportadora": r["carrier"],
+    ana.table([{"expedição": r["number"], "_open": doc_link("shipment", r["number"]), "pedido": r["order_number"], "cliente": r["name"], "transportadora": r["carrier"],
                 "rastreio": r["tracking"], "previsão": r["expected_date"],
                 "_actions": [{"label": "Entregue", "program": "logistics.deliver", "params": {"shipment": r["number"]}, "style": "primary",
                               "ask": {"received_by": {"type": "str", "label": "recebido por", "required": True}}},

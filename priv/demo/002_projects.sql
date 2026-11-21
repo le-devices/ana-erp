@@ -2,9 +2,9 @@
 -- Applied only with ANA_DEMO=true.
 
 INSERT INTO base.party (kind, name, tax_id, email, city, state) VALUES
-    ('customer', 'Indústria de Sensores Alfa S.A.', '55.555.555/0001-55', 'engenharia@alfa.example', 'São José dos Campos', 'SP'),
-    ('supplier', 'Componentes Eletrônicos Beta', '66.666.666/0001-66', 'vendas@beta.example', 'São Paulo', 'SP'),
-    ('supplier', 'PCB Rápida Ltda', '77.777.777/0001-77', 'orcamento@pcbrapida.example', 'Joinville', 'SC')
+    ('customer', 'Indústria de Sensores Alfa S.A.', '55.555.555/0001-91', 'engenharia@alfa.example', 'São José dos Campos', 'SP'),
+    ('supplier', 'Componentes Eletrônicos Beta', '66.666.666/0001-91', 'vendas@beta.example', 'São Paulo', 'SP'),
+    ('supplier', 'PCB Rápida Ltda', '77.777.777/0001-91', 'orcamento@pcbrapida.example', 'Joinville', 'SC')
 ON CONFLICT DO NOTHING;
 
 INSERT INTO base.product (code, description, unit, price, kind) VALUES
@@ -17,8 +17,9 @@ ON CONFLICT DO NOTHING;
 INSERT INTO inventory.warehouse (code, description) VALUES ('LAB', 'Almoxarifado do laboratório')
 ON CONFLICT DO NOTHING;
 
-INSERT INTO inventory.stock_movement (product_id, warehouse_id, quantity, kind, document, created_by)
-SELECT p.id, w.id, q.qty, 'in', 'OPENING-BALANCE', 'system'
+-- Spec 038: opening balance at an estimated cost (60 % of the price); the database posts it against opening balances.
+INSERT INTO inventory.stock_movement (product_id, warehouse_id, quantity, kind, document, created_by, reason, unit_cost)
+SELECT p.id, w.id, q.qty, 'in', 'OPENING-BALANCE', 'system', 'opening', round(p.price * 0.6, 2)
 FROM (VALUES ('MCU-ARM-M4', 50), ('SENSOR-IMU', 40), ('MOD-LORA', 20)) AS q(product, qty)
 JOIN base.product p ON p.code = q.product
 JOIN inventory.warehouse w ON w.code = 'LAB';
@@ -43,7 +44,7 @@ INSERT INTO projects.project (code, name, customer_id, manager, billing, status,
 SELECT 'PRJ-001', 'Módulo de telemetria IoT — hardware e firmware', p.id, 'admin', 'mixed', 'active',
        current_date - 30, current_date + 90, 600, 140000, 0.05,
        'Projeto e prototipagem de módulo de telemetria com rádio LoRa e sensor inercial'
-FROM base.party p WHERE p.tax_id = '55.555.555/0001-55'
+FROM base.party p WHERE p.tax_id = '55.555.555/0001-91'
 ON CONFLICT DO NOTHING;
 
 INSERT INTO projects.task (project_id, code, name, planned_hours, billable)

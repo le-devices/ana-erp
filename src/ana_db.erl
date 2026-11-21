@@ -1,3 +1,5 @@
+%% SPDX-FileCopyrightText: 2026 André Luis Pereira dos Santos
+%% SPDX-License-Identifier: AGPL-3.0-or-later
 %% PostgreSQL connection pools and query helpers (spec 001).
 %%
 %% - RF-001-02: pool size configurable (ANA_DB_POOL / ANA_DB_POOL_EXEC).
@@ -12,7 +14,7 @@
 -export([start_link/3, wait_for_database/0, connect/1, connect/2, connect_read/2, hosts/1]).
 -export([with_connection/1, with_connection/3, checkout/2, checkin/2, transaction/1,
          query/3, batch/3, squery/2, query_limited/3,
-         rows/2, one/2, exec/2, status/1, sql_error/1]).
+         rows/2, rows/3, one/2, exec/2, status/1, sql_error/1]).
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2, terminate/2]).
 
 -define(CACHE, ana_stmt_cache).
@@ -28,7 +30,7 @@
     size :: pos_integer(),
     open = 0 :: non_neg_integer(),
     refill :: reference() | undefined,      % single reconnection timer
-    backoff = 500 :: pos_integer()          % exponential backoff (ms)
+    backoff = 250 :: pos_integer()          % exponential backoff (ms)
 }).
 
 %% ==========================================================================
@@ -166,7 +168,8 @@ first_ok([H | Rest], Config, _) ->
     end.
 
 probe(H, Config) ->
-    case safe_connect(Config#{host => H}) of
+    %% A host going down (or shutting down) must not hold the switch-over: 3 s at most per address.
+    case safe_connect(Config#{host => H, timeout => min(maps:get(timeout, Config, 5000), 3000)}) of
         {ok, C} ->
             case epgsql:squery(C, "SELECT pg_is_in_recovery(), CASE WHEN pg_is_in_recovery() THEN 0 ELSE "
                                   "('x' || substring(pg_walfile_name(pg_current_wal_lsn()) from 1 for 8))::bit(32)::int END") of
@@ -281,6 +284,14 @@ rows(Sql, Params) ->
             E -> E
         end
     end).
+
+%% The same inside a transaction (spec 039: the BPM engine moves a case under its lock).
+-spec rows(pid(), iodata(), [term()]) -> {ok, [map()]} | {error, map()}.
+rows(C, Sql, Params) ->
+    case query(C, Sql, Params) of
+        {ok, R} -> {ok, as_maps(R)};
+        E -> E
+    end.
 
 -spec one(iodata(), [term()]) -> {ok, map() | undefined} | {error, map()}.
 one(Sql, Params) ->
@@ -443,7 +454,7 @@ discard(C) ->
     unlink(C),
     catch epgsql:close(C).
 
-open_up_to(St = #st{open = O, size = S}) when O >= S -> St#st{backoff = 500};
+open_up_to(St = #st{open = O, size = S}) when O >= S -> St#st{backoff = 250};
 open_up_to(St = #st{open = O, config = Config, name = Name}) ->
     case connect(Config()) of
         {ok, C} ->
@@ -454,10 +465,10 @@ open_up_to(St = #st{open = O, config = Config, name = Name}) ->
             schedule_refill(St)
     end.
 
-%% A single pending timer, exponential backoff up to 5 s (RNF-023-02: the core
-%% is back within seconds after the database returns).
+%% A single pending timer, exponential backoff up to 2 s (RNF-023-02: the core is back within seconds
+%% after the database returns or a replica is promoted; a longer pause only delays the recovery).
 schedule_refill(St = #st{refill = undefined, backoff = B}) ->
-    St#st{refill = erlang:send_after(B, self(), refill), backoff = min(B * 2, 5000)};
+    St#st{refill = erlang:send_after(B, self(), refill), backoff = min(B * 2, 2000)};
 schedule_refill(St) ->
     St.
 
@@ -520,6 +531,21 @@ as_maps(#{columns := Cols, rows := Rows}) ->
     Names = [N || #{name := N} <- Cols],
     [maps:from_list(lists:zip(Names, R)) || R <- Rows].
 
+sql_error(#error{code = <<"25006">>}) ->
+    case ana_license:restricted() of
+        true ->
+            %% Spec 009 (RF-009-05): the license's restricted mode opens read-only execution transactions.
+            #{code => <<"LICENSE_RESTRICTED">>, sqlstate => <<"25006">>,
+              message => <<"licença vencida ou inválida: o ERP está somente para consulta (peça ao administrador para instalar a licença)"/utf8>>};
+        false ->
+            %% Spec 020 (RF-020-13): so does a simulation.
+            #{code => <<"SIMULATION_READ_ONLY">>, sqlstate => <<"25006">>,
+              message => <<"simulação não grava nada: o programa tentou gravar durante a simulação"/utf8>>}
+    end;
+sql_error(#error{code = <<"42501">>, message = <<"new row violates row-level security", _/binary>>}) ->
+    %% Spec 009 (D10): writing a document outside the user's data scope.
+    #{code => <<"DATA_SCOPE">>, sqlstate => <<"42501">>,
+      message => <<"o registro fica fora dos dados que você pode ver (centro de custo, carteira ou projetos)"/utf8>>};
 sql_error(#error{code = Code, message = Msg, extra = Extra}) ->
     Base = #{code => <<"SQL">>, sqlstate => Code, message => Msg},
     case proplists:get_value(detail, Extra) of

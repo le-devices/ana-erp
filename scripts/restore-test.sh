@@ -1,4 +1,6 @@
 #!/bin/sh
+# SPDX-FileCopyrightText: 2026 André Luis Pereira dos Santos
+# SPDX-License-Identifier: AGPL-3.0-or-later
 # Verified restore (spec 023, RF-023-06): restores the latest base backup in a
 # throwaway container, replays the archived WAL up to a point in time and
 # checks the restored database. Nothing touches the running database.
@@ -35,13 +37,26 @@ docker run -d --name "$NAME" -v "$VOLUME":/archive:ro -e POSTGRES_PASSWORD=resto
     exec su postgres -c 'postgres -D /tmp/pg -c archive_mode=off -c shared_preload_libraries=citus $PG_ARGS'
   " >/dev/null
 trap 'docker rm -f "$NAME" >/dev/null 2>&1 || true' EXIT
+# Spec 033: the ERP checks the age of the last good restore test (Administração → Verificações).
+COMPOSE=${COMPOSE:-docker compose}
+record() {
+  $COMPOSE exec -T db psql -U postgres -d "${ANA_DB_NAME:-ana}" -q -v ON_ERROR_STOP=1 \
+    -c "INSERT INTO ana_system.ops_event (kind, ok, detail) VALUES ('restore_test', $1, left(\$\$$2\$\$, 2000))" >/dev/null 2>&1 \
+    || echo "warning: could not record the restore test in the ERP" >&2
+}
 for i in $(seq 1 90); do
   if docker exec "$NAME" su postgres -c "psql -At -d ana -c 'SELECT NOT pg_is_in_recovery()'" 2>/dev/null | grep -q t; then
-    docker exec "$NAME" su postgres -c "psql -At -d ana -c \"$CHECK\""
-    exit 0
+    if OUT=$(docker exec "$NAME" su postgres -c "psql -At -d ana -c \"$CHECK\""); then
+      echo "$OUT"
+      record true "check: $OUT"
+      exit 0
+    fi
+    record false "check failed"
+    exit 1
   fi
   sleep 1
 done
 echo "restore did not finish" >&2
+record false "restore did not finish"
 docker logs --tail 30 "$NAME" >&2
 exit 1

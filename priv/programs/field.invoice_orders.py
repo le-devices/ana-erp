@@ -1,5 +1,6 @@
 # ana:description Fatura ordens de serviço concluídas (horas, deslocamento e peças) ou lança no projeto
 # ana:exposed yes
+# ana:category Logística e campo/Serviços em campo
 """RF-015-09, CA-015-04. Standalone order: lines hours (work hours × the technician profile's
 rate), travel (hours × travel rate + km × km rate, logistics.policy) and parts (× price); bill
 and entry (D customers / C service_revenue and sales_revenue), document OS-n. Order of a
@@ -10,6 +11,8 @@ import datetime
 from decimal import Decimal, ROUND_HALF_UP
 
 from ana_lib.logistics import common as lc
+from ana_lib.docs.common import link as doc_link
+from ana_lib.finance import invoice_pdf
 
 PARAMS = {
     "orders": {"type": "list", "label": "OS (vazio = todas as concluídas)"},
@@ -97,6 +100,10 @@ def main(orders=None, payment_days=30):
     ana.sql_exec("UPDATE field.service_order o SET status = 'invoiced', invoiced_at = now(), entry_id = x.e, bill_id = x.b "
                  "FROM unnest($1::int[], $2::bigint[], $3::bigint[]) AS x(id, e, b) WHERE o.id = x.id",
                  ids, [o["entry"] for o in out], [o["bill"] for o in out])
-    ana.table([{"OS": o["order"], "destino": "projeto" if o["project"] else "fatura", "linhas": o["lines"], "total": o["total"]}
+    for o in out:
+        if o["bill"]:
+            # ana:lint-ok sql_in_loop — one PDF per invoiced order (a document of its own)
+            o["pdf"] = invoice_pdf.store(f"OS-{o['order']}")   # spec 035: the invoice PDF in the customer's folder
+    ana.table([{"OS": o["order"], "_open": doc_link("service_order", o["order"]), "destino": "projeto" if o["project"] else "fatura", "linhas": o["lines"], "total": o["total"]}
                for o in out], title="Ordens faturadas")
     return {"orders": out}

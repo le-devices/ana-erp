@@ -1,3 +1,5 @@
+// SPDX-FileCopyrightText: 2026 André Luis Pereira dos Santos
+// SPDX-License-Identifier: AGPL-3.0-or-later
 // ANA shell (spec 020): authentication, areas by role, hash routing (#/…) and
 // the global "go to" bar. Area contents live in ops.js, dev.js and admin.js.
 "use strict";
@@ -11,10 +13,12 @@
     users: "Usuários", groups: "Grupos de acesso", limits: "Limites e cotas", company: "Empresa",
     settings: "Parâmetros", accounts: "Contas padrão", commands: "Comandos", remote: "Sistemas remotos",
     scheduler: "Agendamento", monitor: "Monitor", consumption: "Consumo", audit: "Auditoria", retention: "Retenção",
-    health: "Saúde", sqlperf: "Desempenho do SQL", advice: "Dicas de otimização", updates: "Atualizações do produto",
-    integrations: "Integrações",
+    health: "Saúde", alerts: "Alertas", core: "Núcleo", uiperf: "Desempenho das telas", sqlperf: "Desempenho do SQL", advice: "Dicas de otimização", updates: "Atualizações do produto",
+    license: "Licença", extensions: "Extensões", telemetry: "Telemetria",
+    integrations: "Integrações", checks: "Verificações", transports: "Transportes", datacopy: "Cópia de dados para testes",
+    publicapi: "API pública",
   };
-  const state = { user: null, targets: new Map(), trail: [] };
+  const state = { user: null, targets: new Map(), trail: [], scroll: new Map(), here: null };
 
   // ------------------------------------------------------------------ shell menus (spec 029)
   function closeMenus() {
@@ -30,8 +34,17 @@
     if (!window.AnaScheduler || isExternal()) return;
     try {
       const n = await window.AnaScheduler.notifications(document.createElement("div"), true);
-      $("#notices-dot").hidden = !n;
-      $("#notices-btn").title = n ? `${n} aviso(s) das rotinas agendadas` : "Nenhum aviso das rotinas agendadas";
+      // Spec 039: notices of the processes (new task, near the deadline, escalated).
+      const tasks = window.AnaBpm ? await window.AnaBpm.unread() : 0;
+      // Spec 033: administrators also see the system's notices (new critical findings of the checks).
+      const sys = canSee("admin") ? (await API.admin.notices(true).catch(() => [])).length : 0;
+      state.systemNotices = sys;
+      $("#notices-dot").hidden = !(n || sys || tasks);
+      const parts = [n ? `${n} aviso(s) das rotinas agendadas` : "", sys ? `${sys} aviso(s) das verificações do sistema` : "",
+                     tasks ? `${tasks} aviso(s) de tarefas dos processos` : ""].filter(Boolean);
+      $("#notices-btn").title = parts.length ? parts.join(" · ") : "Nenhum aviso";
+      const badge = $("#checks-count");
+      if (badge) { badge.hidden = !sys; badge.textContent = String(sys); }
     } catch (_) { /* notices are a convenience */ }
   }
 
@@ -58,6 +71,36 @@
     $("#password-form").elements.namedItem("current").focus();
   }
 
+  // Spec 009 (RF-009-08): evaluation, expiring, grace, restricted and test licenses are shown on every screen.
+  const LICENSE_REASON = { expired: "licença vencida", trial_over: "avaliação encerrada", clock: "relógio do servidor atrasado",
+                           version: "licença não cobre esta versão", not_yet: "licença ainda não começou a valer" };
+  async function refreshLicense() {
+    const band = $("#license-band");
+    if (!band || isExternal()) return;
+    let l;
+    try { l = await API.license(); } catch (_) { band.hidden = true; return; }
+    const d = l.days_left;
+    // Short labels: the band only competes for room when it asks for attention; the detail is in the tooltip.
+    const long = {
+      trial: `Avaliação: ${d} dia(s) restantes`,
+      expiring: `A licença vence em ${d} dia(s)`,
+      grace: `Licença vencida há ${-d} dia(s): ${15 + d} dia(s) até o modo somente consulta`,
+      restricted: `Somente consulta — ${LICENSE_REASON[l.reason] || "licença inválida"}`,
+    }[l.state];
+    const short = { trial: `Avaliação: ${d} d`, expiring: `Licença: ${d} d`, grace: "Licença vencida", restricted: "Somente consulta" }[l.state];
+    const inst = $("#instance-band");
+    const test = l.environment === "non_production";
+    // A test license on a development/test instance is already said by the instance band.
+    if (inst && !inst.hidden && test) inst.title = (inst.title ? inst.title + " · " : "") + "licença de testes (não usar em produção)";
+    const text = short || (test && (!inst || inst.hidden) ? "Licença de testes" : "");
+    band.hidden = !text;
+    band.textContent = text;
+    band.setAttribute("aria-label", long || (test ? "Licença de testes — não usar em produção" : ""));
+    band.className = "license-band " + (l.state === "restricted" ? "bad" : l.state === "valid" ? "test" : "warn");
+    band.title = (long || "Licença de testes — não usar em produção") + (state.user.role === "admin" ? " (Administração → Licença)" : " (fale com o administrador)");
+    band.onclick = state.user.role === "admin" ? () => go("#/admin/license") : null;
+  }
+
   async function start() {
     try { state.user = await API.me(); } catch (_) { showLogin(); return; }
     if (state.user.must_change_password) { showPassword(true); return; }
@@ -77,14 +120,31 @@
     $("#user-avatar").title = `${display} — minha conta`;
     $("#notices-btn").hidden = isExternal();
     refreshNotices();
-    refreshTitle(state.user.company);
+    if (window.AnaLive && !isExternal()) window.AnaLive.start();          // spec 062: live bell and tasks
+    refreshTitle(state.user.company, state.user.company_logo);
+    // Spec 034 (RF-034-01): development and test instances are marked on every screen.
+    const inst = state.user.instance || {};
+    const band = $("#instance-band");
+    band.hidden = !inst.role || inst.role === "production";
+    band.textContent = { development: "DESENVOLVIMENTO", test: "TESTES" }[inst.role] || "";
+    band.className = "instance-band " + (inst.role || "");
+    band.title = inst.name ? `Instância ${inst.name} — não é a produção` : "";
+    document.body.dataset.instance = inst.role || "production";
+    refreshLicense();
+    await window.AnaPrefs.load();
     showScreen("#app-screen");
     if (!isExternal()) await buildTargets();
     route();
   }
 
-  function refreshTitle(company) {
+  // Spec 009 (D11): the customer's logo and name beside ANA's brand.
+  function refreshTitle(company, logo) {
     $("#brand-company").textContent = company || "ERP";
+    const img = $("#brand-logo");
+    if (img && logo !== undefined) {
+      img.hidden = !logo;
+      if (logo) img.src = "/api/company/logo?v=" + Date.now();
+    }
     document.title = company ? `ANA — ${company}` : "ANA";
   }
 
@@ -99,11 +159,33 @@
   // one level: routine → module → Operation → Home.
   function noteNav(hash) {
     const t = state.trail;
-    if (t.length >= 2 && t[t.length - 2] === hash) t.pop();
+    let back = false;
+    if (t.length >= 2 && t[t.length - 2] === hash) { t.pop(); back = true; }
     else if (t[t.length - 1] !== hash) t.push(hash);
     if (t.length > 50) t.splice(0, t.length - 50);
     const parent = parentOf(hash);
     $("#back").hidden = t.length < 2 && !parent;
+    return back;
+  }
+
+  // RF-020-12: coming back to a list returns to where it was (scroll of the area's panels and of the page).
+  const SCROLLERS = ".page-main, .home, .page-pad, .data-view";
+  function scrollers() {
+    const area = [...$$(".area-page")].find((a) => !a.hidden);
+    if (!area) return [document.scrollingElement].filter(Boolean);
+    return [document.scrollingElement, ...(area.matches(SCROLLERS) ? [area] : []), ...area.querySelectorAll(SCROLLERS)].filter(Boolean);
+  }
+  function saveScroll(hash) {
+    if (hash) state.scroll.set(hash, scrollers().map((e) => e.scrollTop));
+    if (state.scroll.size > 100) state.scroll.delete(state.scroll.keys().next().value);
+  }
+  function restoreScroll(hash) {
+    const want = state.scroll.get(hash);
+    if (!want || !want.some((v) => v > 0)) return;
+    // Results arrive after the screen: try a few times, never pulling back someone who already scrolled further.
+    for (const ms of [0, 150, 400, 900, 1600]) setTimeout(() => {
+      scrollers().forEach((e, i) => { if (want[i] && e.scrollTop < want[i]) e.scrollTop = want[i]; });
+    }, ms);
   }
 
   function parentOf(hash) {
@@ -113,6 +195,8 @@
     if (parts[0] === "ops") return parts.length > 2 ? `#/ops/${parts[1]}` : parts.length === 2 ? "#/ops" : "#/home";
     if (parts[0] === "dev") return parts.length > 1 ? "#/dev" : "#/home";
     if (parts[0] === "files") return parts.length > 1 ? "#/files" : isExternal() ? null : "#/home";
+    if (parts[0] === "master") return parts.length > 2 ? `#/master/${parts[1]}` : "#/home";
+    if (parts[0] === "bpm") return parts.length > 1 ? "#/bpm" : "#/home";
     if (parts[0] === "portal") return null;
     return "#/home";
   }
@@ -128,13 +212,20 @@
 
   async function route() {
     if ($("#app-screen").hidden) return;
-    noteNav(location.hash || "#/home");
+    // RF-020-15: a screen with unsaved changes (planning grid) asks before leaving it.
+    if (state.here && location.hash !== state.here && window.AnaLeave && window.AnaLeave.dirty() && !confirm(window.AnaLeave.message())) {
+      window.history.replaceState(null, "", state.here);
+      return;
+    }
+    saveScroll(state.here);
+    state.here = location.hash || "#/home";
+    const back = noteNav(state.here);
     // RF-020-12: "#/ops/m/routine?project=PRJ-001" carries routine parameters.
     const [path, search] = location.hash.replace(/^#\/?/, "").split("?");
     const query = Object.fromEntries(new URLSearchParams(search || ""));
     const parts = path.split("/").filter(Boolean).map(decodeURIComponent);
     let [area, ...rest] = parts;
-    const allowed = { home: "user", ops: "user", files: "user", dev: "developer", admin: "admin" };
+    const allowed = { home: "user", ops: "user", bpm: "user", master: "user", files: "user", dev: "developer", admin: "admin" };
     const ok = isExternal() ? ["files", "portal"].includes(area) : (allowed[area] && canSee(allowed[area]));
     if (!ok) {
       area = isExternal() ? "portal" : "home";
@@ -143,14 +234,19 @@
     }
     for (const b of $$(".area")) b.classList.toggle("active", b.dataset.area === area);
     closeMenus();
-    for (const a of ["home", "ops", "files", "portal", "dev", "admin"]) $("#area-" + a).hidden = a !== area;
+    for (const a of ["home", "ops", "bpm", "master", "files", "portal", "dev", "admin"]) $("#area-" + a).hidden = a !== area;
+    if (window.AnaPerf) window.AnaPerf.opening(location.hash);                      // spec 050 (T-050-03)
     try {
       if (area === "files") await window.AnaFiles.show(rest);
       else if (area === "portal") await window.AnaFiles.portal(rest);
       else if (area === "home") await window.AnaOps.home();
       else if (area === "ops") await window.AnaOps.ops(rest[0], rest[1], query);
+      else if (area === "master") await window.AnaMaster.show(rest, query);
+      else if (area === "bpm") await window.AnaBpm.show(rest, query);
       else if (area === "dev") await window.AnaDev.show(rest);
-      else if (area === "admin") window.AnaAdmin.show(rest[0] || "users");
+      else if (area === "admin") await window.AnaAdmin.show(rest[0] || "users");
+      if (window.AnaPerf) window.AnaPerf.opened();
+      if (back) restoreScroll(state.here);
     } catch (e) { toast(window.AnaUI.errorText(e), true); }
   }
 
@@ -164,6 +260,9 @@
       if (r.command) add(r.command, hash);
       add(`${r.description || r.name} — ${R.moduleLabel(R.moduleOf(r.name))}`, hash);
     }
+    // RF-020-23: shortcuts of the categories are found by the name given to them.
+    await window.AnaCategories.load();
+    for (const [label, hash] of window.AnaCategories.targets(window.AnaOps.routineOf, window.AnaOps.routineHash)) add(label, hash);
     if (canSee("developer")) {
       const programs = await API.programs(false).catch(() => []);
       for (const p of programs) add(p.name, `#/dev/program/${p.name}`);
@@ -216,6 +315,8 @@
     $("#password-cancel").addEventListener("click", () => showScreen("#app-screen"));
     $("#change-password").addEventListener("click", () => showPassword(false));
     $("#back").addEventListener("click", back);
+    $("#back").setAttribute("aria-keyshortcuts", "F3");
+    $("#palette-btn").addEventListener("click", () => window.AnaPalette.open());
     document.addEventListener("keydown", (e) => {
       if (e.key === "F3" && !$("#app-screen").hidden) { e.preventDefault(); back(); }
     });
@@ -227,7 +328,7 @@
     $("#logout").addEventListener("click", async () => { await API.logout(); location.hash = ""; location.reload(); });
     for (const b of $$(".area")) b.addEventListener("click", () => go("#/" + b.dataset.area));
     $("#user-avatar").addEventListener("click", (e) => { e.stopPropagation(); toggle($("#user-avatar"), () => { $("#user-menu").hidden = false; }); });
-    $("#notices-btn").addEventListener("click", () => go("#/home"));
+    $("#notices-btn").addEventListener("click", () => go(state.systemNotices ? "#/admin/checks" : "#/home"));
     document.addEventListener("click", (e) => { if (!e.target.closest("#user-menu")) closeMenus(); });
     document.addEventListener("keydown", (e) => { if (e.key === "Escape") closeMenus(); });
     $("#command-form").addEventListener("submit", (e) => {
@@ -236,9 +337,18 @@
       $("#command").value = "";
     });
     window.addEventListener("hashchange", route);
+    // RF-020-09: keyboard users jump over the top bar to the screen's content.
+    $("#skip-link").addEventListener("click", () => {
+      const area = [...$$(".area-page")].find((a) => !a.hidden);
+      const target = area && (area.querySelector("main, .page-main, .home") || area);
+      if (!target) return;
+      if (!target.hasAttribute("tabindex")) target.tabIndex = -1;
+      target.focus();
+    });
   }
 
-  window.AnaStudio = { go, replace, back, noteNav, refreshTitle, user: () => state.user, refreshTargets: buildTargets };
+  window.AnaStudio = { go, replace, back, noteNav, refreshTitle, user: () => state.user, refreshTargets: buildTargets, canSee, refreshNotices,
+                       targets: () => state.targets };
 
   document.addEventListener("DOMContentLoaded", () => {
     wire();

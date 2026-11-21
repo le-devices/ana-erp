@@ -1,6 +1,7 @@
 # ana:description Transferência entre depósitos com trânsito: criar, despachar e receber
 # ana:exposed yes
 # ana:command transferir
+# ana:category Logística e campo/Expedição
 """RF-015-01, CA-015-01. ship: origin → TRANSITO; receive: TRANSITO → destination, with the
 received quantities (divergence = shipped − received, recorded; the difference stays in
 transit until an adjustment)."""
@@ -13,11 +14,17 @@ PARAMS = {
     "action": {"type": "str", "default": "ship", "label": "ação",
                "choices": [["create", "Criar (rascunho)"], ["ship", "Criar e despachar"], ["dispatch", "Despachar rascunho"],
                            ["receive", "Receber"]]},
-    "number": {"type": "int", "label": "transferência (despachar/receber)"},
+    "number": {"type": "int", "label": "transferência (despachar/receber)", "lookup": {"program": "logistics.lookup", "params": {"kind": "transfers"}}},
     "from_wh": {"type": "str", "label": "depósito de origem", "lookup": {"program": "logistics.lookup", "params": {"kind": "warehouses"}}},
     "to_wh": {"type": "str", "label": "depósito de destino", "lookup": {"program": "logistics.lookup", "params": {"kind": "warehouses"}}},
-    "items": {"type": "list", "label": "itens", "help": '[{"product": "MCU-ARM-M4", "quantity": 10}]'},
-    "received": {"type": "list", "label": "recebido (vazio = tudo)", "help": '[{"line": 1, "quantity": 9, "note": "1 avariada"}]'},
+    "items": {"type": "list", "label": "itens", "add_label": "Adicionar item", "columns": {
+        "product": {"type": "str", "required": True, "label": "item",
+                    "lookup": {"program": "sales.lookup", "params": {"kind": "products"}, "depends": ["from_wh"]}},
+        "quantity": {"type": "decimal", "required": True, "default": 1, "label": "quantidade"}}},
+    "received": {"type": "list", "label": "recebido (vazio = tudo)", "columns": {
+        "line": {"type": "int", "required": True, "label": "linha"},
+        "quantity": {"type": "decimal", "label": "quantidade recebida (vazio = a enviada)"},
+        "note": {"type": "str", "label": "observação (ex.: 1 avariada)"}}},
     "notes": {"type": "str", "label": "observação"},
 }
 
@@ -49,8 +56,8 @@ def main(action="ship", number=None, from_wh=None, to_wh=None, items=None, recei
         wanted = {}
         for l in lines:
             wanted[l["product_id"]] = wanted.get(l["product_id"], Decimal(0)) + l["quantity"]
-        common.take_stock(t["from_wh"], wanted, doc)
-        common.put_stock(transit["id"], wanted, doc)
+        common.take_stock(t["from_wh"], wanted, doc, "transfer")
+        common.put_stock(transit["id"], wanted, doc, "transfer")
         ana.sql_exec("UPDATE logistics.transfer SET status = 'shipped', shipped_at = now() WHERE id = $1", t["id"])
         return {"number": t["number"], "status": "shipped"}
     if action == "receive":
@@ -67,8 +74,8 @@ def main(action="ship", number=None, from_wh=None, to_wh=None, items=None, recei
             back[l["product_id"]] = back.get(l["product_id"], Decimal(0)) + q
             if q != l["quantity"]:
                 divergences.append({"linha": l["line"], "enviado": l["quantity"], "recebido": q, "observação": r.get("note")})
-        common.take_stock(transit["id"], {p: q for p, q in back.items() if q > 0}, doc)
-        common.put_stock(t["to_wh"], back, doc)
+        common.take_stock(transit["id"], {p: q for p, q in back.items() if q > 0}, doc, "transfer")
+        common.put_stock(t["to_wh"], back, doc, "transfer")
         ana.sql_exec("UPDATE logistics.transfer_line l SET received_qty = x.q::numeric, divergence = x.note "
                      "FROM unnest($2::int[], $3::text[], $4::text[]) AS x(line, q, note) WHERE l.transfer_id = $1 AND l.line = x.line",
                      t["id"], [r[1] for r in rows], [str(r[2]) for r in rows], [r[3] for r in rows])

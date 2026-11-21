@@ -1,13 +1,17 @@
 # ana:description Roteiro do item: operações em sequência com recurso, preparação e tempo por unidade
 # ana:exposed yes
+# ana:category Produção/Engenharia do produto
 """RF-014-02. Each save creates a new active version."""
 
 from ana_lib.production import common
 
 PARAMS = {
     "product": {"type": "str", "required": True, "label": "item", "lookup": {"program": "production.lookup", "params": {"kind": "made"}}},
-    "operations": {"type": "list", "required": True, "label": "operações",
-                   "help": '[{"resource": "SMD", "description": "montagem", "setup_min": 30, "run_min": 6}]'},
+    "operations": {"type": "list", "required": True, "label": "operações", "add_label": "Adicionar operação", "columns": {
+        "resource": {"type": "str", "required": True, "label": "recurso", "lookup": {"program": "production.lookup", "params": {"kind": "resources"}}},
+        "description": {"type": "str", "label": "descrição"},
+        "setup_min": {"type": "decimal", "label": "preparação (min)"},
+        "run_min": {"type": "decimal", "label": "por unidade (min)"}}},
 }
 
 

@@ -1,0 +1,214 @@
+# Instalação do ANA ERP
+
+Guia para o técnico do cliente. Escolha um caminho:
+
+| Caminho | Quando usar |
+|---------|-------------|
+| **A. Servidor próprio (on-premise)** | servidor Linux na empresa, acesso pela rede interna ou pela internet |
+| **B. Máquina virtual na nuvem** | qualquer provedor (AWS, Azure, Google Cloud, Oracle, Magalu, Locaweb…) |
+| **C. Kubernetes** | a empresa já opera um cluster; banco PostgreSQL gerenciado |
+
+Os caminhos A e B usam o mesmo instalador (`deploy/install.sh`) e a mesma
+ferramenta de operação (`ana-ctl`).
+
+## Requisitos
+
+- Linux de 64 bits (Ubuntu 22.04/24.04, Debian 12, RHEL/Rocky/Alma 9 ou similar).
+- Docker Engine 24 ou mais novo com o plugin `docker compose` (v2) —
+  instalação: <https://docs.docker.com/engine/install/>.
+- Servidor dimensionado pela tabela abaixo (mínimo comercial: 2 vCPUs,
+  4 GB de memória e 50 GB de disco SSD). Com 2 GB o ERP funciona, mas só para
+  demonstração e avaliação.
+- Portas 80 e 443 livres no servidor (ou escolha outras).
+- Para certificado automático: um nome (ex.: `erp.empresa.com.br`) apontando
+  para o servidor e as portas 80/443 acessíveis pela internet.
+
+## Dimensionamento
+
+Números **medidos** com o teste de carga do produto (7/11/2026, versão 0.1.0),
+com o ERP e o banco no mesmo servidor e uma base com ~135 mil parceiros,
+15 mil itens e 10 mil pedidos. "Usuários trabalhando ao mesmo tempo" são
+pessoas usando o ERP sem parar — uma ação a cada ~8 s, com 20 % das ações
+gravando (pedidos e faturamento) —, o que é mais intenso que o uso comum.
+Passar significa: toda ação de tela respondendo em até 1 s para 95 % das vezes
+e nenhum erro.
+
+| Porte | Servidor | Usuários trabalhando ao mesmo tempo — medido | Recomendado (com folga) |
+|---|---|---|---|
+| Pequeno (mínimo comercial) | 2 vCPUs, 4 GB, SSD 50 GB | 80 (com 100 já passa de 1 s) | até **50** |
+| Médio | 4 vCPUs, 8 GB, SSD 100 GB; `ANA_PG_SHARED_BUFFERS=2GB`, `ANA_PG_EFFECTIVE_CACHE=5GB` | 140 (com 160 já passa de 1 s) | até **90** |
+| Missão crítica (24/7, atualizar sem parar) | 2 nós do ERP com 2–4 vCPUs e 4 GB cada; banco com 4 vCPUs e 16 GB e uma réplica (ou banco gerenciado); SSD | estimado: até ~2× o médio | medir no ambiente do cliente |
+
+- A folga recomendada (cerca de 60 % do medido) cobre picos, relatórios mais
+  pesados que os do teste e o crescimento da base.
+- No limite, o gargalo é o processador: cada execução de programa roda num
+  processo Python isolado. A memória ficou folgada nos dois portes (ERP
+  ~250 MB, banco ~1 GB).
+- Missão crítica não foi medida com dois nós: o valor é estimativa a partir de
+  um nó. Meça no ambiente do cliente com o mesmo teste.
+- Para repetir a medição no servidor do cliente (com dados de teste, nunca na
+  produção em uso):
+  ```bash
+  ANA_URL=https://erp.empresa.com.br ANA_ADMIN_PASSWORD=… \
+    python3 tests/load/sizing_load.py --steps 20,40,60,80,100,120 --step-seconds 60
+  ```
+  Resultados desta medição: `tests/load/results/2026-11-07-sizing.json`.
+
+### Vida útil do disco (SSD)
+
+O ERP mede quanto o banco grava e mostra em **Administração → Disco**: escrita
+por hora e por dia, quem mais escreveu e, informando o TBW do SSD (ficha do
+fabricante), a projeção de anos restantes. Medido em 7/11/2026 (bytes de WAL):
+sistema ocioso ~0,2 MB por hora; criar ou faturar um pedido ~20 KB; rotina
+curta ou chamada da API ~5 KB; importar 1.000 cadastros ~2 MB. Esses valores
+são o orçamento de escrita do produto (`priv/disk_budget.json`), testado a
+cada versão. Mesmo com centenas de pedidos por dia, um SSD comum de 300 TBW
+dura décadas; o que gasta disco é carga anormal, e um salto de escrita pode
+virar alerta (métrica "Escrita de WAL no banco").
+
+A instalação padrão já vem ajustada: WAL comprimido, checkpoints espaçados,
+temporários do ERP em memória, logs com rotação e limite de tamanho. O ERP
+nunca desliga proteções do banco (`fsync`, `full_page_writes`). No servidor,
+recomendamos montar o disco com `noatime`, deixar o TRIM periódico ligado
+(`systemctl enable --now fstrim.timer`), guardar as cópias em outro disco e,
+com dois discos, pôr o WAL num volume próprio. Com o arquivo de WAL ligado
+(produção), `archive_timeout` troca de segmento sempre que houve escrita: cada
+troca copia 16 MB. Esse intervalo é a **janela máxima de perda** (RPO) se o
+servidor inteiro se perder, escolhida na instalação com `--archive-minutes N`
+(1 a 60, padrão 5) e trocada depois com `ana-ctl archive-minutes N`, que
+reinicia só o banco (pausa de alguns segundos). Pior caso, com escrita o tempo
+todo: 1 min ≈ 23 GB/dia; 5 min ≈ 4,6 GB/dia; 15 min ≈ 1,5 GB/dia; 60 min ≈
+0,4 GB/dia. A janela só protege se as cópias ficarem fora do servidor; com uma
+réplica em streaming a perda já fica perto de zero e vale usar 15 min ou mais.
+
+## A. Servidor próprio (on-premise)
+
+1. **Copie o pacote** do ANA para o servidor e descompacte:
+   ```bash
+   tar xzf ana-erp-<versão>.tar.gz && cd ana-erp-<versão>
+   ```
+2. **Rode o instalador** como root, escolhendo uma das formas de acesso:
+   - com nome na internet e certificado automático:
+     ```bash
+     sudo ./deploy/install.sh --domain erp.empresa.com.br --email ti@empresa.com.br
+     ```
+   - só na rede interna, pelo IP (certificado interno):
+     ```bash
+     sudo ./deploy/install.sh --ip 192.168.0.10
+     ```
+   - com o certificado da própria empresa:
+     ```bash
+     sudo ./deploy/install.sh --domain erp.empresa.local --cert fullchain.pem --key privkey.pem
+     ```
+   O instalador confere os requisitos, **gera todas as senhas e chaves**
+   (nenhuma senha de exemplo fica em uso), constrói a imagem, sobe banco,
+   dois nós do ERP e o proxy HTTPS, faz a primeira cópia do banco e agenda as
+   cópias diárias e o teste de restauração mensal.
+3. **Anote a senha inicial** mostrada no fim. Entre em `https://<endereço>`
+   com o usuário `admin`: o ERP pede a troca da senha no primeiro acesso.
+4. **Guarde uma cópia de `/opt/ana-erp/.env`** em local seguro (cofre de
+   senhas ou mídia off-line). Ele contém a chave mestra: sem ela os segredos
+   dos conectores não podem ser lidos.
+5. **Confira**:
+   ```bash
+   sudo /opt/ana-erp/ana-ctl doctor
+   ```
+6. **Endereço público**: o instalador grava `ANA_PUBLIC_URL` (usado nos
+   links de download enviados a clientes) como valor inicial; depois, um
+   administrador muda em Administração → Empresa → "Endereço público do ERP",
+   sem reiniciar.
+7. **Configure**: Administração → Empresa (dados e coordenadas), Usuários,
+   Parâmetros; Administração → Verificações mostra o que ainda precisa de
+   atenção.
+
+Opções úteis do instalador: `--nodes 1` (um nó só; atualização com parada
+curta), `--dir`, `--http-port`/`--https-port`, `--timezone`,
+`--non-interactive` (automação). `./deploy/install.sh --help` lista todas.
+
+Com certificado interno, os navegadores avisam até que a autoridade do proxy
+seja instalada nas máquinas (`docker compose … cp proxy:/data/caddy/pki/authorities/local/root.crt .`)
+ou até usar `--cert`.
+
+## B. Máquina virtual na nuvem
+
+1. Crie uma VM Linux (requisitos acima) com disco SSD; anexe um disco de
+   dados se o provedor separar.
+2. Libere no firewall do provedor (grupo de segurança) **apenas** as portas
+   22 (de preferência só do IP da empresa/VPN), 80 e 443.
+3. Aponte o nome (DNS) para o IP público da VM.
+4. Instale o Docker e siga os passos do caminho A com `--domain` e `--email`.
+5. Cópias fora da VM: copie periodicamente o volume `ana-erp_wal_archive`
+   (ou o diretório de cópias) para armazenamento de objetos do provedor
+   (S3, Blob, GCS) — uma cópia no mesmo disco não é cópia de segurança.
+
+**Banco gerenciado (opcional)**: em vez do banco em contêiner, use o
+PostgreSQL 15+ do provedor:
+1. Crie a instância (com cópias automáticas e recuperação a um instante).
+2. Como administrador do serviço, rode `deploy/initdb-managed.sql`:
+   ```bash
+   psql "host=<host> user=<admin> dbname=postgres sslmode=require" -v ana_password='<senha>' -f deploy/initdb-managed.sql
+   ```
+3. Instale apontando para ele:
+   ```bash
+   sudo ANA_DB_PASSWORD_MANAGED='<senha>' ./deploy/install.sh --domain erp.empresa.com.br --email ti@empresa.com.br --db-host <host>
+   ```
+   As análises colunares (extensão Citus) são opcionais: sem elas o ERP usa
+   tabelas comuns.
+
+## C. Kubernetes
+
+1. Construa e publique a imagem no registro da empresa:
+   ```bash
+   docker build -t registry.empresa.com.br/ana-erp:<versão> .
+   docker push registry.empresa.com.br/ana-erp:<versão>
+   ```
+2. Prepare o banco gerenciado (passo "Banco gerenciado" acima).
+3. Edite `deploy/k8s/`: `kustomization.yaml` (imagem), `config.yaml` (banco,
+   fuso, nome da instância), `secret.yaml` (senhas e chave mestra — gere os
+   valores como indicado no arquivo), `files-pvc.yaml` (classe de
+   armazenamento ReadWriteMany), `ingress.yaml` (nome e emissor de
+   certificado).
+4. Aplique e acompanhe:
+   ```bash
+   kubectl apply -k deploy/k8s
+   kubectl -n ana-erp rollout status deploy/ana
+   ```
+5. Atualização sem parada: troque `newTag` no `kustomization.yaml` e aplique
+   de novo (dois pods, `maxUnavailable: 0`, nó sai do balanceamento antes de
+   parar).
+
+## Operação (caminhos A e B)
+
+| Comando | O que faz |
+|---------|-----------|
+| `ana-ctl status` | contêineres e prontidão de cada nó |
+| `ana-ctl doctor` | diagnóstico completo (HTTPS, nós, disco, idade da última cópia, achados críticos das Verificações) |
+| `ana-ctl backup` | cópia completa do banco agora (diária pelo agendamento) |
+| `ana-ctl restore-test` | restaura a última cópia num contêiner descartável e confere (mensal pelo agendamento) |
+| `ana-ctl upgrade --source <pacote novo>` | constrói a versão nova, faz cópia do banco e atualiza **nó a nó, sem parar**; se um nó não ficar pronto, volta à versão anterior |
+| `ana-ctl rollback` | volta à versão anterior |
+| `ana-ctl logs [ana1\|ana2\|db\|proxy]` | registros |
+| `ana-ctl uninstall` | para tudo e **mantém os dados**; `ana-ctl up` volta |
+| `ana-ctl uninstall --purge` | apaga também banco, arquivos e cópias (pede confirmação) |
+
+**Atualizar para uma versão nova**:
+```bash
+tar xzf ana-erp-<nova>.tar.gz
+sudo /opt/ana-erp/ana-ctl upgrade --source ./ana-erp-<nova>
+```
+As migrações do banco rodam no primeiro nó atualizado; programas do produto
+alterados aparecem como "Atualizações do produto" para o administrador
+aceitar (nada é sobrescrito sem aviso).
+
+**Restaurar** (desastre): reinstale no mesmo diretório (o `.env` é mantido)
+e restaure o volume de cópias; o procedimento de recuperação a um instante
+está em `scripts/restore-test.sh` (o mesmo usado pelo teste mensal).
+
+## Problemas comuns
+
+| Sintoma | Verifique |
+|---------|-----------|
+| HTTPS não responde | `ana-ctl logs proxy`; portas 80/443 abertas; DNS apontando para o servidor |
+| "certificado inválido" | certificado interno: instale a autoridade ou use `--cert`; automático: o nome precisa ser público |
+| nó não fica pronto | `ana-ctl logs ana1`; memória livre; banco acessível |
+| achado crítico em Verificações | siga a sugestão de cada achado (senha, chave, cópia, componente vulnerável) |

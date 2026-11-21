@@ -1,5 +1,7 @@
 # ana:description Emite cobrança (PIX, boleto ou link de cartão) de um título a receber por um gateway
 # ana:exposed yes
+# ana:category Financeiro/Contas a receber e a pagar
+# ana:confirm A cobrança vai ao gateway de pagamento e o cliente recebe o PIX, o boleto ou o link: isso não se desfaz por aqui.
 """RF-017-08. The request goes to the connector's outbox in this same transaction; the
 connector's delivery program talks to the gateway and fills the charge (id, QR code, line).
 One open charge per bill."""

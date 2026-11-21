@@ -1,3 +1,5 @@
+%% SPDX-FileCopyrightText: 2026 André Luis Pereira dos Santos
+%% SPDX-License-Identifier: AGPL-3.0-or-later
 %% Real content type of an upload (spec 016, RF-016-07, CA-016-04).
 %%
 %% The extension says what the file claims to be; the first bytes say what it is.
@@ -54,7 +56,7 @@ detect(Name, Head) ->
                         true ->
                             case text(Head) of
                                 true -> {ok, text_mime(Ext)};
-                                false -> {error, <<"o conteúdo não é texto, como .", Ext/binary, " exige"/utf8>>}
+                                false -> {error, <<"o conteúdo não é texto, como ."/utf8, Ext/binary, " exige"/utf8>>}
                             end;
                         false -> {ok, <<"application/octet-stream">>}   % firmware images, CAD and the like
                     end

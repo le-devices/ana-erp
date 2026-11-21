@@ -1,11 +1,12 @@
 # ana:description Programa de demonstração (bom para experimentar o depurador)
 # ana:exposed yes
 # ana:command hello
+# ana:category Demonstração/Exemplos
 """Greets and does a little math — set a breakpoint and debug it!"""
 
 PARAMS = {
-    "name": {"type": "str", "default": "mundo"},
-    "times": {"type": "int", "default": 3},
+    "name": {"type": "str", "default": "mundo", "label": "seu nome"},
+    "times": {"type": "int", "default": 3, "label": "repetições"},
 }
 
 

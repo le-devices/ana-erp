@@ -1,3 +1,5 @@
+%% SPDX-FileCopyrightText: 2026 André Luis Pereira dos Santos
+%% SPDX-License-Identifier: AGPL-3.0-or-later
 %% Runtime settings editable by administrators (spec 011, RF-011-05).
 %%
 %% Each setting has a type, a range and a default taken from an environment
@@ -6,7 +8,7 @@
 %% NOTIFY "ana_setting" (handled by ana_listener).
 -module(ana_settings).
 -compile({no_auto_import, [get/1]}).
--export([init_cache/0, load/0, get/1, list/0, set/3, on_notify/2, definitions/0]).
+-export([init_cache/0, load/0, get/1, list/0, set/3, on_notify/2, definitions/0, valid/2]).
 
 -define(TAB, ana_settings_cache).
 
@@ -109,7 +111,41 @@ definitions() ->
      {trace_sample_pct, integer, 0, 100, "ANA_TRACE_SAMPLE_PCT", 5,
       <<"Rastros guardados das demais execuções (%)"/utf8>>},
      {n_plus_one_threshold, integer, 2, 100000, "ANA_N_PLUS_ONE", 50,
-      <<"Mesmo comando SQL repetido numa execução a partir de (vezes): dica N+1"/utf8>>}].
+      <<"Mesmo comando SQL repetido numa execução a partir de (vezes): dica N+1"/utf8>>},
+     %% Spec 033: periodic checks.
+     {checks_backup_max_hours, integer, 1, 8760, "ANA_CHECKS_BACKUP_MAX_HOURS", 26,
+      <<"Verificações: idade máxima da cópia completa do banco (horas)"/utf8>>},
+     {checks_restore_max_days, integer, 1, 365, "ANA_CHECKS_RESTORE_MAX_DAYS", 35,
+      <<"Verificações: idade máxima do último teste de restauração (dias)"/utf8>>},
+     {checks_key_max_days, integer, 30, 3650, "ANA_CHECKS_KEY_MAX_DAYS", 365,
+      <<"Verificações: idade máxima de chave de API sem validade (dias)"/utf8>>},
+     {checks_perf_factor_pct, integer, 110, 1000, "ANA_CHECKS_PERF_FACTOR_PCT", 200,
+      <<"Verificações: piora de desempenho a partir de (% da linha de base)"/utf8>>},
+     %% Spec 034: development/test instance and transports.
+     {transport_required, integer, 0, 1, "ANA_TRANSPORT_REQUIRED", 0,
+      <<"Produção: programas só mudam por pacote de transporte (1 = sim)"/utf8>>},
+     {transport_four_eyes, integer, 0, 1, "ANA_TRANSPORT_FOUR_EYES", 0,
+      <<"Transporte: quem recebeu o pacote não pode importá-lo (1 = sim)"/utf8>>},
+     %% Spec 064: quality gate of programs.
+     {quality_gate_level, integer, 0, 3, "ANA_QUALITY_GATE_LEVEL", 2,
+      <<"Portão de qualidade: severidade que bloqueia o transporte (0 informação, 1 atenção, 2 sério, 3 crítico)"/utf8>>},
+     {quality_gate_required, integer, 0, 1, "ANA_QUALITY_GATE_REQUIRED", 0,
+      <<"Portão de qualidade: recusar pacote de programas sem relatório do portão verde (1 = sim)"/utf8>>},
+     {quality_exemption_max_days, integer, 1, 365, "ANA_QUALITY_EXEMPTION_MAX_DAYS", 90,
+      <<"Portão de qualidade: prazo máximo de uma isenção (dias)"/utf8>>},
+     {outbound_blocked, integer, 0, 1, "ANA_OUTBOUND_BLOCKED", 0,
+      <<"Bloquear chamadas a sistemas externos (instância de testes com dados copiados)"/utf8>>},
+     {api_breaker_failures, integer, 1, 100000, "ANA_API_BREAKER_FAILURES", 20,
+      <<"API pública: falhas técnicas (erro interno, tempo esgotado) em 2 min que suspendem o cliente"/utf8>>},
+     {api_breaker_ratio, integer, 1, 100, "ANA_API_BREAKER_RATIO", 50,
+      <<"API pública: proporção mínima de falhas nas chamadas do cliente para suspender (%)"/utf8>>},
+     {api_breaker_open_s, integer, 10, 86400, "ANA_API_BREAKER_OPEN_S", 120,
+      <<"API pública: duração da suspensão do cliente (s)"/utf8>>},
+     %% Spec 063 (D3): the endurance of the server SSD, for the wear projection of the "Disco" panel.
+     {disk_tbw_tb, integer, 0, 1000000, "ANA_DISK_TBW_TB", 0,
+      <<"Disco: resistência do SSD informada pelo fabricante (TBW, em TB; 0 = não informada)"/utf8>>},
+     {disk_used_pct, integer, 0, 100, "ANA_DISK_USED_PCT", 0,
+      <<"Disco: desgaste já usado do SSD (%), quando o ana-ctl não consegue ler"/utf8>>}].
 
 init_cache() ->
     _ = ets:new(?TAB, [named_table, public, set, {read_concurrency, true}]),
@@ -170,6 +206,14 @@ set(KeyBin, Value, #{username := Who}) ->
                 {error, _} = E -> E
             end;
         error -> {error, unknown_setting}
+    end.
+
+%% Spec 034: a transported parameter must exist here and be inside its range.
+-spec valid(binary(), term()) -> boolean().
+valid(KeyBin, Value) ->
+    case find(KeyBin) of
+        {ok, {_, Type, Min, Max, _, _, _}} -> validate(Type, Min, Max, Value) =:= ok;
+        error -> false
     end.
 
 on_notify(_Channel, all) -> load();

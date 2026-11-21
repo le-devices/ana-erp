@@ -1,3 +1,5 @@
+%% SPDX-FileCopyrightText: 2026 André Luis Pereira dos Santos
+%% SPDX-License-Identifier: AGPL-3.0-or-later
 %% Execution governance (spec 012): effective limits, limit profiles and quotas.
 %%
 %% Effective limit for each key (RF-012-02):
@@ -105,7 +107,7 @@ validate(Limits) when is_map(Limits) ->
     Errors = lists:filtermap(fun({K, V}) ->
         case lists:keyfind(K, 1, keys()) of
             false -> {true, [K, " desconhecido"]};
-            _ when not is_integer(V); V < 0 -> {true, [K, " deve ser inteiro ≥ 0"]};
+            _ when not is_integer(V); V < 0 -> {true, [K, <<" deve ser inteiro ≥ 0"/utf8>>]};
             {_, _, Ceil, _} ->
                 C = ana_settings:get(Ceil),
                 case C > 0 andalso V > C of

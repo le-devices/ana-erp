@@ -1,3 +1,5 @@
+// SPDX-FileCopyrightText: 2026 André Luis Pereira dos Santos
+// SPDX-License-Identifier: AGPL-3.0-or-later
 // Administration area (spec 011): users, groups, settings, company, commands,
 // remote systems, default accounts, monitor and audit.
 "use strict";
@@ -34,7 +36,7 @@
   async function users(search = "") {
     const [list, groups] = await Promise.all([API.admin.users(search), API.admin.groups()]);
     const side = el("div");
-    const searchInput = el("input", { placeholder: "Buscar por login ou nome…", value: search });
+    const searchInput = el("input", { "aria-label": "Buscar por login ou nome…", placeholder: "Buscar por login ou nome…", value: search });
     searchInput.addEventListener("keydown", (e) => { if (e.key === "Enter") users(searchInput.value); });
 
     const showForm = (u) => side.replaceChildren(userForm(u, groups));
@@ -46,7 +48,7 @@
       { label: "Situação", value: (u) => el("span", {}, u.active ? pill("ativo", "ok") : pill("bloqueado", "off"),
                                               u.must_change_password ? pill("trocar senha", "warn") : null) },
       { label: "Último acesso", value: (u) => fmtDate(u.last_login_at) || "—" },
-    ], list, { onRow: (u) => showForm(u) });
+    ], list, { onRow: (u) => showForm(u), screen: "admin.users", title: "Usuários" });
 
     main().replaceChildren(
       ...header("Usuários", "Inclua pessoas, defina papel e grupos, bloqueie acessos e redefina senhas."),
@@ -165,9 +167,9 @@
   function robotKeys(username) {
     const box = el("div", {}, el("div", { class: "muted", text: "Chaves de API" }));
     const list = el("div");
-    const name = el("input", { placeholder: "nome (ex.: integração loja)" });
+    const name = el("input", { "aria-label": "nome (ex.: integração loja)", placeholder: "nome (ex.: integração loja)" });
     const days = el("input", { type: "number", min: 1, placeholder: "validade em dias (vazio = sem)" });
-    const ips = el("input", { placeholder: "IPs/redes permitidos, separados por vírgula (vazio = qualquer)" });
+    const ips = el("input", { "aria-label": "IPs/redes permitidos, separados por vírgula (vazio = qualquer)", placeholder: "IPs/redes permitidos, separados por vírgula (vazio = qualquer)" });
     const out = el("div");
     async function load() {
       const keys = await API.admin.keys(username);
@@ -205,16 +207,42 @@
     const side = el("div");
     const showForm = (g) => side.replaceChildren(groupForm(g));
     main().replaceChildren(
-      ...header("Grupos de acesso", "Defina quais programas cada grupo executa. Programas marcados como \"restrito\" só rodam para membros de um grupo que os cubra."),
+      ...header("Grupos de acesso", "Defina quais programas cada grupo executa e, se quiser, quais dados seus membros veem. Programas marcados como \"restrito\" só rodam para membros de um grupo que os cubra; o escopo de dados vale para todos os programas e é aplicado pelo banco."),
       el("div", { class: "admin-toolbar" }, el("button", { class: "primary", text: "+ Novo grupo", onclick: () => showForm(null) })),
       el("div", { class: "admin-columns" },
         el("div", {}, table([
           { label: "Grupo", value: (g) => g.name },
           { label: "Descrição", value: (g) => g.description },
           { label: "Programas", value: (g) => el("span", {}, (g.program_patterns || []).map((p) => pill(p))) },
+          { label: "Dados", value: (g) => el("span", {}, scopePills(g)) },
           { label: "Membros", value: (g) => g.members, class: "num" },
         ], list, { onRow: showForm })), side));
     showForm(null);
+  }
+
+  // Spec 009 (D10): what the group's members see (nothing set = everything).
+  function scopePills(g) {
+    const out = [];
+    if (g.data_cost_centers && g.data_cost_centers.length) out.push(pill("centros: " + g.data_cost_centers.join(", "), "warn"));
+    if (g.data_portfolio) out.push(pill("só a carteira", "warn"));
+    if (g.data_own_projects) out.push(pill("só os próprios projetos", "warn"));
+    return out.length ? out : ["todos"];
+  }
+
+  // RF-020-13: what a member would see with this scope, simulated before saving (counts by the database's policies).
+  function scopePreview(read) {
+    const member = el("input", { placeholder: "simular como (usuário; carteira e projetos dele)", "aria-label": "Simular como" });
+    const out = el("div", { class: "scope-preview", "aria-live": "polite" });
+    const run = () => guard(async () => {
+      const r = await API.admin.scopePreview({ ...read(), member: member.value.trim() });
+      const when = new Date().toLocaleTimeString("pt-BR");
+      out.replaceChildren(el("p", { class: "muted small", text: `${r.restricted ? "Com este escopo" : "Sem restrição"}, simulado às ${when} — nada foi gravado.` }),
+        table([{ label: "O que", value: (x) => x.label },
+               { label: "Veria", value: (x) => x.visible.toLocaleString("pt-BR"), class: "num" },
+               { label: "De", value: (x) => x.total.toLocaleString("pt-BR") + (x.total >= r.cap ? "+" : ""), class: "num" }], r.entities));
+    });
+    return el("div", { class: "scope-sim" }, el("div", { class: "row-buttons" }, member,
+      el("button", { type: "button", text: "Simular", onclick: run })), out);
   }
 
   function groupForm(g) {
@@ -223,12 +251,25 @@
     const description = el("input", { value: g ? g.description : "" });
     const patterns = el("textarea", { rows: 6, placeholder: "um por linha, ex.:\nprojects.*\nsales.create_order" });
     patterns.value = g ? (g.program_patterns || []).join("\n") : "";
+    const centers = el("input", { value: g && g.data_cost_centers ? g.data_cost_centers.join(", ") : "",
+                                  placeholder: "vazio = todos; ex.: COMERCIAL, FILIAL-SP (inclui os centros filhos)" });
+    const portfolio = el("input", { type: "checkbox" }); portfolio.checked = !!(g && g.data_portfolio);
+    const ownProjects = el("input", { type: "checkbox" }); ownProjects.checked = !!(g && g.data_own_projects);
+    const values = el("textarea", { rows: 3, placeholder: "um por linha, ex.:\nfinanceiro.*\nestoque.deposito_principal" });
+    values.value = g ? (g.value_patterns || []).join("\n") : "";
+    const variantPats = el("textarea", { rows: 2, placeholder: "um por linha, ex.:\nfinance.*\nsales.order_report" });
+    variantPats.value = g ? (g.variant_patterns || []).join("\n") : "";
     return el("form", { class: "form-card", onsubmit: async (e) => {
       e.preventDefault();
       await guard(async () => {
         await API.admin.saveGroup((g ? g.name : name.value).trim(), {
           description: description.value,
           program_patterns: patterns.value.split("\n").map((s) => s.trim()).filter(Boolean),
+          data_cost_centers: centers.value.split(",").map((s) => s.trim().toUpperCase()).filter(Boolean),
+          data_portfolio: portfolio.checked,
+          data_own_projects: ownProjects.checked,
+          value_patterns: values.value.split("\n").map((s) => s.trim()).filter(Boolean),
+          variant_patterns: variantPats.value.split("\n").map((s) => s.trim()).filter(Boolean),
         });
         toast("Grupo salvo.");
         await groups();
@@ -236,6 +277,15 @@
     } },
       el("h3", { text: isNew ? "Novo grupo" : `Editar ${g.name}` }),
       field("Nome", name), field("Descrição", description), field("Programas (nome ou prefixo.*)", patterns),
+      field("Valores da empresa que alteram (nome ou área.*)", values),
+      field("Variantes da empresa que publicam (rotina ou prefixo.*)", variantPats),
+      el("h4", { text: "Dados que os membros veem" }),
+      field("Centros de custo", centers),
+      check("Só os clientes da própria carteira (e seus pedidos e títulos)", portfolio),
+      check("Só os projetos que gerencia ou em que trabalha", ownProjects),
+      el("p", { class: "muted", text: "Administradores veem tudo. Quem está em vários grupos com restrição vê a soma deles." }),
+      scopePreview(() => ({ data_cost_centers: centers.value.split(",").map((s) => s.trim().toUpperCase()).filter(Boolean),
+                            data_portfolio: portfolio.checked, data_own_projects: ownProjects.checked })),
       el("div", { class: "row-buttons" },
         el("button", { class: "primary", type: "submit", text: "Salvar" }),
         isNew ? null : el("button", { type: "button", class: "danger", text: "Excluir", onclick: () => guard(async () => {
@@ -269,27 +319,88 @@
   // ------------------------------------------------------------------ company
   async function company() {
     const c = await API.admin.company();
-    const fields = [["legal_name", "Razão social"], ["tax_id", "CNPJ / documento"], ["address", "Endereço"],
-                    ["city", "Cidade"], ["state", "UF"], ["email", "E-mail"], ["phone", "Telefone"]];
+    const fields = [["legal_name", "Razão social"], ["display_name", "Nome de exibição (ao lado da marca do ANA e nos documentos; vazio = razão social)"],
+                    ["tax_id", "CNPJ (numérico ou alfanumérico)"], ["address", "Endereço"],
+                    ["city", "Cidade"], ["state", "UF"], ["email", "E-mail"], ["phone", "Telefone"],
+                    ["latitude", "Latitude (ex.: -23,5505)"], ["longitude", "Longitude (ex.: -46,6333)"],
+                    ["public_url", "Endereço público do ERP (ex.: https://erp.empresa.com.br) — usado nos links enviados a clientes"]];
     const inputs = Object.fromEntries(fields.map(([k]) => [k, el("input", { value: c[k] || "" })]));
+    // Spec 043 (D4): fiscal data of the company (the same rules as the partners, checked by the database).
+    const choose = (key, options) => {
+      const s = el("select", {}, el("option", { value: "", text: "— não informado —" }), options.map(([v, l]) => el("option", { value: v, text: l })));
+      s.value = c[key] || "";
+      return s;
+    };
+    inputs.state_registration = el("input", { value: c.state_registration || "", placeholder: "só números ou ISENTO" });
+    inputs.icms_taxpayer = choose("icms_taxpayer", [["taxpayer", "Contribuinte"], ["exempt", "Isento"], ["non_taxpayer", "Não contribuinte"]]);
+    inputs.municipal_registration = el("input", { value: c.municipal_registration || "" });
+    inputs.tax_regime = choose("tax_regime", [["simples", "Simples Nacional"], ["simples_excess", "Simples Nacional — excesso de sublimite"],
+      ["presumed", "Lucro Presumido"], ["real", "Lucro Real"], ["mei", "MEI"], ["public", "Órgão público"], ["nonprofit", "Entidade sem fins lucrativos"]]);
+    const fiscal = [["state_registration", "Inscrição estadual"], ["icms_taxpayer", "Contribuinte do ICMS"],
+                    ["municipal_registration", "Inscrição municipal"], ["tax_regime", "Regime tributário"]];
     main().replaceChildren(
-      ...header("Empresa", "Dados da empresa usados em documentos e no título do Estúdio."),
+      ...header("Empresa", "Dados da empresa usados em documentos e no título do Estúdio. As coordenadas servem para distâncias até os clientes; o endereço público aparece nos links de download enviados a clientes e fornecedores."),
       el("form", { class: "form-card", onsubmit: async (e) => {
         e.preventDefault();
         await guard(async () => {
           const body = Object.fromEntries(Object.entries(inputs).map(([k, i]) => [k, i.value || null]));
           await API.admin.saveCompany(body);
           toast("Dados da empresa salvos.");
-          window.AnaStudio && window.AnaStudio.refreshTitle(body.legal_name);
+          window.AnaStudio && window.AnaStudio.refreshTitle(body.display_name || body.legal_name);
         });
       } }, fields.map(([k, label]) => field(label, inputs[k])),
-        el("div", { class: "row-buttons" }, el("button", { class: "primary", type: "submit", text: "Salvar" }))));
+        el("h3", { text: "Dados fiscais" }),
+        el("p", { class: "muted", text: "CNPJ (numérico ou alfanumérico), inscrição estadual pelo formato da UF e coerência com o indicador do ICMS são conferidos ao salvar. O motor de impostos usa estes dados." }),
+        fiscal.map(([k, label]) => field(label, inputs[k])),
+        el("div", { class: "row-buttons" }, el("button", { class: "primary", type: "submit", text: "Salvar" }))),
+      logoCard(c));
+  }
+
+  // Spec 009 (D11): any image becomes a small JPEG in the browser (white background, at most 480×160).
+  function toJpeg(file) {
+    return new Promise((resolve, reject) => {
+      const img = new Image();
+      img.onload = () => {
+        const scale = Math.min(1, 480 / img.width, 160 / img.height);
+        const cv = document.createElement("canvas");
+        cv.width = Math.max(1, Math.round(img.width * scale)); cv.height = Math.max(1, Math.round(img.height * scale));
+        const ctx = cv.getContext("2d");
+        ctx.fillStyle = "#fff"; ctx.fillRect(0, 0, cv.width, cv.height);
+        ctx.drawImage(img, 0, 0, cv.width, cv.height);
+        URL.revokeObjectURL(img.src);
+        resolve(cv.toDataURL("image/jpeg", 0.88).split(",")[1]);
+      };
+      img.onerror = () => reject(new Error("imagem ilegível"));
+      img.src = URL.createObjectURL(file);
+    });
+  }
+
+  function logoCard(c) {
+    const preview = el("img", { class: "logo-preview", alt: "logotipo atual", hidden: !c.has_logo });
+    if (c.has_logo) preview.src = "/api/company/logo?v=" + Date.now();
+    const input = el("input", { type: "file", accept: "image/*", onchange: () => guard(async () => {
+      if (!input.files[0]) return;
+      const logo = await toJpeg(input.files[0]);
+      await API.admin.saveLogo(logo);
+      toast("Logotipo salvo: aparece no topo e nos documentos.");
+      company();
+      window.AnaStudio && window.AnaStudio.refreshTitle(c.display_name || c.legal_name, true);
+    }) });
+    return el("div", { class: "form-card" },
+      el("h3", { text: "Logotipo" }),
+      el("p", { class: "muted", text: "Fica ao lado da marca do ANA, no topo do Estúdio, e no timbre dos PDFs (pedidos, faturas, recibos). Qualquer imagem serve: o navegador a reduz e converte." }),
+      preview, field("Escolher imagem", input),
+      c.has_logo ? el("div", { class: "row-buttons" }, el("button", { type: "button", class: "danger", text: "Remover logotipo", onclick: () => guard(async () => {
+        if (!confirm("Remover o logotipo?")) return;
+        await API.admin.saveLogo(null); toast("Logotipo removido."); company();
+        window.AnaStudio && window.AnaStudio.refreshTitle(c.display_name || c.legal_name, false);
+      }) })) : null);
   }
 
   // ------------------------------------------------------------------ commands
   async function commands() {
     const [list, programs] = await Promise.all([API.commands(), API.programs(false)]);
-    const code = el("input", { placeholder: "ex.: logtime" });
+    const code = el("input", { "aria-label": "ex.: logtime", placeholder: "ex.: logtime" });
     const program = el("select", {}, programs.filter((p) => p.kind === "program").map((p) => el("option", { value: p.name, text: p.name })));
     const description = el("input");
     main().replaceChildren(
@@ -319,8 +430,8 @@
   // ------------------------------------------------------------------ remote systems
   async function remote() {
     const list = await API.admin.remoteSystems();
-    const name = el("input", { placeholder: "ex.: matriz" });
-    const url = el("input", { placeholder: "https://erp.exemplo.com" });
+    const name = el("input", { "aria-label": "ex.: matriz", placeholder: "ex.: matriz" });
+    const url = el("input", { "aria-label": "https://erp.exemplo.com", placeholder: "https://erp.exemplo.com" });
     const username = el("input");
     const password = el("input", { type: "password", autocomplete: "new-password", placeholder: "vazio mantém a atual" });
     const timeout = el("input", { type: "number", value: 15000, min: 100, max: 120000 });
@@ -357,7 +468,7 @@
         { label: "Uso", value: (a) => el("div", {}, el("div", { text: a.description }), el("code", { class: "muted", text: a.key })) },
         { label: "Conta atual", value: (a) => `${a.account} — ${a.account_description}` },
         { label: "Nova conta", value: (a) => {
-            const input = el("input", { value: a.account, placeholder: "ex.: 1.1.2" });
+            const input = el("input", { value: a.account, placeholder: "ex.: 1.1.2", "aria-label": `Nova conta para ${a.description}` });
             return el("div", { class: "row-buttons" }, input, el("button", { text: "Salvar", onclick: () => guard(async () => {
               await API.admin.saveDefaultAccount(a.key, input.value.trim());
               toast("Conta padrão atualizada.");
@@ -374,7 +485,7 @@
   async function limits() {
     const [profiles, groupsList] = await Promise.all([API.admin.limitProfiles(), API.admin.groups()]);
     const kind = el("select", {}, el("option", { value: "role", text: "papel" }), el("option", { value: "group", text: "grupo" }));
-    const target = el("input", { placeholder: "user | developer | admin | nome do grupo", list: "limit-targets" });
+    const target = el("input", { "aria-label": "user | developer | admin | nome do grupo", placeholder: "user | developer | admin | nome do grupo", list: "limit-targets" });
     const targets = el("datalist", { id: "limit-targets" },
       ["user", "developer", "admin", ...groupsList.map((g) => g.name)].map((t) => el("option", { value: t })));
     const inputs = Object.fromEntries(LIMIT_KEYS.map((k) => [k, el("input", { type: "number", min: 0, placeholder: k })]));
@@ -382,7 +493,7 @@
       kind.value = p.target_kind; target.value = p.target;
       for (const k of LIMIT_KEYS) inputs[k].value = p.limits[k] ?? "";
     };
-    const quotaUser = el("input", { placeholder: "login" });
+    const quotaUser = el("input", { "aria-label": "login", placeholder: "login" });
     const quotaMax = el("input", { type: "number", min: 0, placeholder: "simultâneas" });
     const quotaRate = el("input", { type: "number", min: 0, placeholder: "por minuto" });
 
@@ -497,7 +608,7 @@
       tasks: [["username", "Dono"], ["task", "Tarefa (prefixo)"]],
       trail: [["username", "Usuário ou robô"], ...period],
     }[kind];
-    const fields = inputs.map(([k, label]) => [k, el("input", { placeholder: label, value: filters[k] || "" })]);
+    const fields = inputs.map(([k, label]) => [k, el("input", { placeholder: label, "aria-label": label, value: filters[k] || "" })]);
     const detail = el("div");
     const columns = {
       executions: [
@@ -564,7 +675,7 @@
         i.addEventListener("keydown", (e) => { if (e.key === "Enter") apply(); });
         return i;
       }), el("button", { text: "Filtrar", onclick: apply })),
-      kind === "trail" && !filters.username ? el("p", { class: "muted", text: "Informe o usuário (ou abra pela ficha dele em Usuários → Ver trilha)." }) : table(columns, rows, { onRow }),
+      kind === "trail" && !filters.username ? el("p", { class: "muted", text: "Informe o usuário (ou abra pela ficha dele em Usuários → Ver trilha)." }) : table(columns, rows, { onRow, screen: "admin.audit." + kind, title: "Registros" }),
       detail);
   }
 
@@ -686,7 +797,8 @@
   const STATE = { green: ["●", "normal", "ok"], yellow: ["▲", "atenção", "warn"], red: ["■", "falha", "off"] };
   const SEVERITY = { info: ["ℹ", "informação", ""], warning: ["▲", "atenção", "warn"], serious: ["◆", "sério", "off"], critical: ["■", "crítico", "off"] };
   const COMPONENT = { database: "Banco de dados", pool_core: "Conexões do núcleo", pool_programs: "Conexões dos programas",
-    python: "Processos Python", scheduler: "Agendamento", access_log: "Registro de acessos", remote_systems: "Sistemas remotos", integrations: "Integrações" };
+    python: "Processos Python", scheduler: "Agendamento", access_log: "Registro de acessos", remote_systems: "Sistemas remotos", integrations: "Integrações",
+    public_api: "API pública" };
   const stateChip = (s) => { const [icon, label, cls] = STATE[s] || ["?", s, ""]; return pill(`${icon} ${label}`, cls); };
   const sevChip = (s) => { const [icon, label, cls] = SEVERITY[s] || ["", s, ""]; return pill(`${icon} ${label}`, cls); };
   const n2 = (v) => (v === null || v === undefined ? "—" : Number(v).toLocaleString("pt-BR", { maximumFractionDigits: 1 }));
@@ -722,13 +834,16 @@
       deltas.length >= 2 ? window.AnaCharts.render({ type: "line", title: "Memória do núcleo", format: "number", unit: "MB",
         x: deltas.map((d) => d.t.replace("T", " ")), series: [{ name: "Memória", values: deltas.map((d) => d.mem) }] }) : null,
       el("h3", { text: "Incidentes" }),
+      el("p", { class: "muted", text: "Abertos pelas regras de alerta (veja Alertas). Silenciados ficam registrados, mas só avisam quando o silêncio termina." }),
       table([
-        { label: "Componente", value: (i) => COMPONENT[i.component] || i.component },
+        { label: "Regra", value: (i) => i.rule || "—" },
+        { label: "Gravidade", value: (i) => sevChip(i.severity) },
+        { label: "Alvo", value: (i) => COMPONENT[i.component] || METRIC[i.component] || i.component },
         { label: "Nó", value: (i) => i.node },
         { label: "Início", value: (i) => fmtDate(i.opened_at) },
         { label: "Fim", value: (i) => i.closed_at ? fmtDate(i.closed_at) : pill("■ aberto", "off") },
         { label: "Duração", value: (i) => `${Math.round(i.seconds / 60)} min`, class: "num" },
-        { label: "Mensagem", value: (i) => i.message },
+        { label: "Mensagem", value: (i) => i.silenced && !i.notified_at ? el("span", {}, pill("silenciado"), " ", i.message) : i.message },
       ], h.incidents, { empty: "Nenhum incidente." }),
       el("h3", { text: "Mudanças de estado (72 h)" }),
       table([
@@ -740,10 +855,273 @@
       ], h.events, { empty: "Nenhuma mudança." }));
   }
 
+  const METRIC = { running: "Execuções em andamento", failures_per_min: "Falhas por minuto", memory_mb: "Memória do núcleo (MB)",
+    processes: "Processos Erlang", db_waiting: "Esperando conexão com o banco", python_ready: "Processos Python prontos",
+    max_message_queue: "Maior fila de mensagens no núcleo", wal_mb_per_hour: "Escrita de WAL no banco (MB/h)",
+    temp_mb_per_hour: "Arquivos temporários do banco (MB/h)" };
+  const LEVEL = { yellow: "amarelo ou pior", red: "vermelho" };
+
+  // RF-019-08 (T-019-08b): alert rules (threshold, window, destinations) and silences.
+  async function alerts() {
+    const a = await API.admin.alerts();
+    const targetName = (r) => r.source === "health" ? (r.target === "*" ? "qualquer componente" : COMPONENT[r.target] || r.target)
+      : METRIC[r.target] || r.target;
+    const condition = (r) => r.source === "health" ? `${targetName(r)} em ${LEVEL[r.level] || r.level}`
+      : `${targetName(r)} ${r.op} ${r.threshold_value ? "valor da empresa " + r.threshold_value : n2(r.threshold)}`;
+    const destinations = (r) => [r.notify_studio ? "Estúdio" : null, r.connector ? `conector ${r.connector}` : null,
+      (r.recipients || []).length ? `${r.recipients.length} e-mail(s)` : null].filter(Boolean).join(", ") || "nenhum";
+    const opt = (v, t) => el("option", { value: v, text: t });
+
+    const id = el("input", { type: "hidden" });
+    const name = el("input", { "aria-label": "Ex.: Memória alta", placeholder: "Ex.: Memória alta" });
+    const source = el("select", {}, opt("health", "Saúde de componente"), opt("metric", "Métrica do nó"));
+    const target = el("select");
+    const level = el("select", {}, opt("red", "vermelho"), opt("yellow", "amarelo ou pior"));
+    const op = el("select", {}, [">", ">=", "<", "<="].map((o) => opt(o, o)));
+    const threshold = el("input", { type: "number", step: "any", placeholder: "limiar" });
+    // Spec 065 (T-065-07): or a company value, read at each check (changing it changes the rule, no edit here).
+    const thresholdValue = el("input", { placeholder: "ou o nome de um valor da empresa (ex.: ti.memoria_maxima_mb)", "aria-label": "Valor da empresa do limiar" });
+    const windowS = el("input", { type: "number", min: 0, max: 86400, value: 0 });
+    const severity = el("select", {}, Object.entries(SEVERITY).map(([k, v]) => opt(k, v[1])));
+    const studio = el("input", { type: "checkbox", checked: true });
+    const connector = el("select", {}, opt("", "— nenhum —"), a.connectors.map((c) => opt(c.name, c.description ? `${c.name} — ${c.description}` : c.name)));
+    const recipients = el("textarea", { rows: 2, placeholder: "e-mails separados por vírgula (entregues pelo conector)" });
+    const active = el("input", { type: "checkbox", checked: true });
+    const healthOnly = [field("Nível", level)];
+    const metricOnly = [field("Comparação", op), field("Limiar", threshold), field("Limiar por valor da empresa", thresholdValue)];
+    const sync = () => {
+      const h = source.value === "health";
+      const keep = target.value;
+      target.replaceChildren(...(h ? [opt("*", "qualquer componente"), ...a.components.map((c) => opt(c, COMPONENT[c] || c))]
+        : a.metrics.map((m) => opt(m, METRIC[m] || m))));
+      if ([...target.options].some((o) => o.value === keep)) target.value = keep;
+      for (const f of healthOnly) f.hidden = !h;
+      for (const f of metricOnly) f.hidden = h;
+    };
+    source.onchange = sync;
+    const fill = (r) => {
+      id.value = r ? r.id : ""; name.value = r ? r.name : ""; source.value = r ? r.source : "health"; sync();
+      target.value = r ? r.target : "*"; level.value = (r && r.level) || "red"; op.value = (r && r.op) || ">";
+      threshold.value = r && r.threshold != null ? r.threshold : ""; windowS.value = r ? r.window_s : 0;
+      thresholdValue.value = (r && r.threshold_value) || "";
+      severity.value = r ? r.severity : "warning"; studio.checked = r ? r.notify_studio : true;
+      connector.value = (r && r.connector) || ""; recipients.value = r ? (r.recipients || []).join(", ") : "";
+      active.checked = r ? r.active : true;
+    };
+    fill(null);
+
+    const silRule = el("select", {}, opt("", "todas as regras"), a.rules.map((r) => opt(r.id, r.name)));
+    const silTarget = el("input", { "aria-label": "alvo (vazio = todos)", placeholder: "alvo (vazio = todos)", list: "alert-targets" });
+    const silTargets = el("datalist", { id: "alert-targets" }, [...a.components, ...a.metrics].map((t) => opt(t, COMPONENT[t] || METRIC[t] || t)));
+    const silNode = el("input", { "aria-label": "nó (vazio = todos)", placeholder: "nó (vazio = todos)" });
+    const silMinutes = el("input", { type: "number", min: 1, max: 43200, value: 60 });
+    const silReason = el("input", { "aria-label": "motivo (ex.: manutenção do banco)", placeholder: "motivo (ex.: manutenção do banco)" });
+
+    main().replaceChildren(
+      ...header("Alertas", "Regras sobre a saúde dos componentes e as métricas de cada nó. A condição precisa durar a janela inteira para abrir um incidente; ele se encerra sozinho quando a condição passa. Silêncios mantêm o registro, mas não avisam ninguém."),
+      el("div", { class: "admin-columns" },
+        el("div", {}, table([
+          { label: "Regra", value: (r) => r.name },
+          { label: "Condição", value: condition },
+          { label: "Janela", value: (r) => r.window_s ? `${r.window_s} s` : "imediata", class: "num" },
+          { label: "Gravidade", value: (r) => sevChip(r.severity) },
+          { label: "Destinos", value: destinations },
+          { label: "Situação", value: (r) => !r.active ? pill("inativa") : Number(r.open) ? pill(`■ ${r.open} aberto(s)`, "off") : pill("● ativa", "ok") },
+          { label: "", value: (r) => el("div", { class: "cell-actions" }, el("button", { class: "danger small", text: "Remover", onclick: (e) => guard(async () => {
+              e.stopPropagation();
+              if (!confirm(`Remover a regra ${r.name}? Os incidentes continuam no histórico.`)) return;
+              await API.admin.deleteAlertRule(r.id);
+              await alerts();
+            }) })) },
+        ], a.rules, { onRow: fill, empty: "Nenhuma regra: nenhum incidente será aberto." })),
+        el("form", { class: "form-card", onsubmit: async (e) => {
+          e.preventDefault();
+          const h = source.value === "health";
+          const body = { id: id.value ? Number(id.value) : null, name: name.value.trim(), source: source.value, target: target.value,
+            level: h ? level.value : null, op: h ? null : op.value, threshold: h || threshold.value === "" ? null : Number(threshold.value),
+            threshold_value: h || !thresholdValue.value.trim() ? null : thresholdValue.value.trim(),
+            window_s: parseInt(windowS.value || "0", 10), severity: severity.value, notify_studio: studio.checked,
+            connector: connector.value || null, active: active.checked,
+            recipients: recipients.value.split(/[,;\s]+/).map((x) => x.trim()).filter(Boolean) };
+          await guard(async () => {
+            await API.admin.saveAlertRule(body);
+            toast("Regra de alerta salva.");
+            await alerts();
+          });
+        } }, el("h3", { text: "Regra de alerta" }), id, field("Nome", name), field("Origem", source), field("Observa", target),
+          ...healthOnly, ...metricOnly, field("Janela (segundos)", windowS), field("Gravidade", severity),
+          check("Avisar no Estúdio", studio), field("Conector (webhook ou e-mail)", connector), field("Destinatários", recipients),
+          check("Ativa", active),
+          el("div", { class: "row-buttons" }, el("button", { class: "primary", type: "submit", text: "Salvar" }),
+            el("button", { type: "button", text: "Nova", onclick: () => fill(null) })))),
+      el("h3", { text: "Silêncios" }),
+      el("form", { class: "admin-toolbar", onsubmit: async (e) => {
+        e.preventDefault();
+        await guard(async () => {
+          await API.admin.createSilence({ rule_id: silRule.value ? Number(silRule.value) : null, target: silTarget.value.trim() || null,
+            node: silNode.value.trim() || null, minutes: parseInt(silMinutes.value || "0", 10), reason: silReason.value.trim() });
+          toast("Silêncio criado.");
+          await alerts();
+        });
+      } }, silRule, silTarget, silTargets, silNode, field("Minutos", silMinutes), silReason, el("button", { type: "submit", text: "Silenciar" })),
+      table([
+        { label: "Regra", value: (x) => x.rule || "todas" },
+        { label: "Alvo", value: (x) => x.target ? COMPONENT[x.target] || METRIC[x.target] || x.target : "todos" },
+        { label: "Nó", value: (x) => x.node || "todos" },
+        { label: "De", value: (x) => fmtDate(x.starts_at) },
+        { label: "Até", value: (x) => fmtDate(x.ends_at) },
+        { label: "Motivo", value: (x) => x.reason },
+        { label: "Por", value: (x) => x.created_by },
+        { label: "", value: (x) => x.in_force ? el("div", { class: "cell-actions" }, el("button", { class: "small", text: "Encerrar", onclick: () => guard(async () => {
+            await API.admin.endSilence(x.id);
+            await alerts();
+          }) })) : pill("encerrado") },
+      ], a.silences, { empty: "Nenhum silêncio nos últimos 7 dias." }));
+  }
+
+  // Spec 062 (D6): a read-only look inside the running core.
+  async function core() {
+    const c = await API.admin.core();
+    const procTable = (title, rows, key, label) => el("div", {}, el("h3", { text: title }), table([
+      { label: "Processo", value: (p) => p.name },
+      { label, value: (p) => n2(p[key]), class: "num" },
+      { label: "Em", value: (p) => el("code", { text: p.current }) },
+    ], rows, { empty: "Nenhum processo com fila de mensagens agora.",
+               emptyAction: { label: "Atualizar", onClick: () => guard(core) } }));
+    const dropped = Object.entries(c.dropped || {});
+    main().replaceChildren(
+      ...header("Núcleo", "Dentro do núcleo em execução: memória, processos, filas de mensagens, áreas supervisionadas e reinícios da última hora. Só leitura; uma fila crescendo pode virar alerta (métrica \"Maior fila de mensagens no núcleo\")."),
+      el("div", { class: "row-buttons" }, el("button", { text: "Atualizar", onclick: () => guard(core) })),
+      el("div", { class: "stat-grid" },
+        ...[["Memória total", `${c.memory_mb.total} MB`], ["Processos (memória)", `${c.memory_mb.processes} MB`],
+            ["ETS", `${c.memory_mb.ets} MB`], ["Processos", n2(c.processes)], ["Fila de execução", n2(c.run_queue)],
+            ["Agendadores", n2(c.schedulers)], ["Nós", c.nodes.join(", ")]]
+          .map(([l, v]) => el("div", { class: "stat" }, el("div", { class: "label", text: l }), el("div", { class: "value", text: v })))),
+      el("h3", { text: "Áreas supervisionadas" }),
+      table([
+        { label: "Área", value: (a) => ({ ana_base_sup: "Base", ana_exec_area_sup: "Execução", ana_work_sup: "Trabalho de fundo",
+                                          ana_observe_sup: "Observação" })[a.area] || a.area },
+        { label: "Processos", value: (a) => a.children.map((x) => x.id).join(", ") },
+        { label: "Situação", value: (a) => a.children.every((x) => x.alive) ? pill("● todos ativos", "ok") : pill("▲ algum parado", "warn") },
+      ], c.areas),
+      el("h3", { text: "Reinícios na última hora" }),
+      table([{ label: "Quando", value: (r) => fmtDate(new Date(r.at * 1000).toISOString()) }, { label: "Área", value: (r) => r.area },
+             { label: "Processo", value: (r) => r.child }], c.restarts,
+            { empty: "Nenhum reinício: tudo estável.", emptyAction: { label: "Atualizar", onClick: () => guard(core) } }),
+      dropped.length ? el("p", { class: "muted", text: "Registros descartados por fila cheia: " + dropped.map(([k, v]) => `${k}: ${v}`).join(", ") }) : null,
+      el("div", { class: "admin-columns" },
+        procTable("Mais memória", c.top_memory, "memory_kb", "KB"),
+        procTable("Mais trabalho", c.top_reductions, "reductions", "Reduções")),
+      procTable("Filas de mensagens", c.top_queue, "queue", "Mensagens"));
+  }
+
+  // Spec 063 (D3; P15): how much the database writes, who wrote it and how long the SSD lasts at this pace.
+  const mb = (b) => (b === null || b === undefined ? "—" : (b >= 1e9 ? `${n2(b / 1e9)} GB` : `${n2(b / 1e6)} MB`));
+  async function disk() {
+    const d = await API.admin.disk();
+    const lh = d.last_hour || {};
+    const budget = d.budget || {};
+    const idleBudget = budget.idle_wal_bytes_per_hour;
+    const perHour = lh.minutes ? (lh.wal_bytes || 0) * 60 / lh.minutes : null;
+    const p = d.projection || {};
+    const ck = d.checkpoints || {};
+    const stat = (l, v, sub) => el("div", { class: "stat" }, el("div", { class: "label", text: l }), el("div", { class: "value", text: v }),
+      sub ? el("div", { class: "sub", text: sub }) : null);
+    const within = idleBudget && perHour !== null ? (perHour <= idleBudget * (1 + (budget.tolerance || 0))
+      ? pill("● dentro do orçamento de ocioso", "ok") : pill("▲ acima do orçamento de ocioso", "warn")) : null;
+    const tbw = el("input", { type: "number", min: "0", step: "1", "aria-label": "Resistência do SSD (TBW, em TB)",
+                              value: p.informed ? String(p.tbw_tb) : "" });
+    const used = el("input", { type: "number", min: "0", max: "100", step: "1", "aria-label": "Desgaste já usado (%)",
+                               value: p.informed ? String(p.used_pct) : "0" });
+    const saveTbw = () => guard(async () => {
+      await API.admin.saveSetting("disk_tbw_tb", Number(tbw.value || 0));
+      await API.admin.saveSetting("disk_used_pct", Number(used.value || 0));
+      toast("Resistência do disco salva.");
+      await disk();
+    });
+    const projection = p.informed
+      ? (p.years_left === null ? "sem escrita medida ainda" : `${n2(p.years_left)} anos no ritmo atual`)
+      : "informe a resistência do SSD";
+    const days = d.days || [];
+    main().replaceChildren(
+      ...header("Disco", "Quanto o banco de dados grava (WAL, páginas de dados e arquivos temporários), quem mais escreveu e quanto tempo o SSD dura neste ritmo. A medição só lê estatísticas do PostgreSQL; uma hora sem escrita não grava nada."),
+      el("div", { class: "row-buttons" }, el("button", { text: "Atualizar", onclick: () => guard(disk) })),
+      el("div", { class: "stat-grid" },
+        stat("Última hora", mb((lh.wal_bytes || 0) + (lh.data_bytes || 0) + (lh.temp_bytes || 0)),
+             lh.minutes ? `WAL ${mb(lh.wal_bytes)} · dados ${mb(lh.data_bytes)} · temporários ${mb(lh.temp_bytes)} em ${lh.minutes} min` : "medindo…"),
+        stat("Ritmo de WAL agora", `${n2((d.rates || {}).wal_mb_per_hour)} MB/h`, "últimos 5 minutos; pode virar alerta"),
+        stat("Média por dia", days.length ? mb(days.slice(0, Math.max(1, days.length - 1)).reduce((a, x) => a + x.total_bytes, 0) / Math.max(1, days.length - 1)) : "—",
+             days.length ? `${days.length} dia(s) medidos` : "o primeiro dia aparece após uma hora com escrita"),
+        stat("Vida útil restante", projection, p.informed ? `TBW ${n2(p.tbw_tb)} TB, ${n2(p.used_pct)}% já usado${d.disk_health ? " (lido do disco)" : ""}` : null),
+        stat("Checkpoints", `${n2(ck.checkpoints_timed)} programados · ${n2(ck.checkpoints_req)} forçados`,
+             `max_wal_size ${ck.max_wal_size} · intervalo ${ck.checkpoint_timeout}`),
+        stat("Tamanho", mb((d.sizes || {}).database_bytes), `banco · repositório de arquivos ${mb((d.sizes || {}).files_bytes)}`)),
+      within ? el("p", {}, within, el("span", { class: "muted", text: ` Orçamento de ocioso: ${mb(idleBudget)} de WAL por hora (versão ${budget.version}).` })) : null,
+      days.length >= 2 ? window.AnaCharts.render({ type: "stacked", title: "Escrita por dia", subtitle: "últimos 35 dias", format: "number", unit: "MB",
+        x: days.map((x) => x.day), series: [{ name: "WAL", values: days.map((x) => Math.round(x.wal_bytes / 1e6)) },
+                                            { name: "Páginas de dados", values: days.map((x) => Math.round(x.data_bytes / 1e6)) },
+                                            { name: "Temporários", values: days.map((x) => Math.round(x.temp_bytes / 1e6)) }] }) : null,
+      el("h3", { text: "Resistência do SSD" }),
+      d.disk_health ? el("p", {}, d.disk_health.healthy === false ? pill("■ o disco indica falha: troque-o", "off") : pill("● disco saudável", "ok"),
+        el("span", { class: "muted", text: ` ${d.disk_health.model || d.disk_health.device || "disco"}: ${d.disk_health.used_pct ?? "—"}% da vida útil usada${d.disk_health.written_bytes ? `, ${mb(d.disk_health.written_bytes)} gravados no total` : ""} — lido por ana-ctl em ${fmtDate(d.disk_health.at)}.` }))
+        : el("p", { class: "muted", text: "Para o ERP ler o desgaste do próprio SSD, rode \"ana-ctl disk\" como root no servidor (precisa do smartmontools); a leitura aparece aqui." }),
+      el("p", { class: "muted", text: "O fabricante informa o TBW (terabytes que podem ser gravados) na ficha do disco. Com ele e a escrita média por dia, o painel projeta quando planejar a troca." }),
+      el("div", { class: "form-grid" }, el("label", {}, "TBW (TB)", tbw), el("label", {}, "Já usado (%)", used),
+        el("div", { class: "row-buttons" }, el("button", { text: "Salvar", onclick: saveTbw }))),
+      el("div", { class: "admin-columns" },
+        el("div", {}, el("h3", { text: "Tabelas que mais mudaram na última hora" }), table([
+          { label: "Tabela", value: (t) => el("code", { text: t.table }) }, { label: "Linhas", value: (t) => n2(t.rows), class: "num" }],
+          lh.tables || [], { empty: "Nada mudou na última hora.", emptyAction: { label: "Atualizar", onClick: () => guard(disk) } })),
+        el("div", {}, el("h3", { text: "Programas que mais escreveram" }), table([
+          { label: "Programa", value: (t) => t.program }, { label: "Tabela", value: (t) => el("code", { text: t.table }) },
+          { label: "Linhas", value: (t) => n2(t.rows), class: "num" }],
+          lh.programs || [], { empty: "Nenhum programa escreveu na última hora.", emptyAction: { label: "Atualizar", onClick: () => guard(disk) } }))),
+      el("h3", { text: "Escrita por tipo de processo (desde o início das estatísticas)" }),
+      table([
+        { label: "Processo", value: (r) => r.backend_type }, { label: "Objeto", value: (r) => r.object }, { label: "Contexto", value: (r) => r.context },
+        { label: "Gravado", value: (r) => mb(r.write_bytes), class: "num" }, { label: "Crescimento de arquivo", value: (r) => mb(r.extend_bytes), class: "num" }],
+        d.io || [], { empty: "Sem escrita registrada." }),
+      el("h3", { text: "Tabelas que mais cresceram (30 dias)" }),
+      table([{ label: "Tabela", value: (g) => el("code", { text: g.table_name }) }, { label: "Tamanho", value: (g) => mb(g.bytes), class: "num" },
+             { label: "Crescimento", value: (g) => mb(g.growth_bytes), class: "num" }],
+        d.growth || [], { empty: "O crescimento aparece depois da primeira análise diária." }),
+      el("h3", { text: "Sugestões para o servidor" }),
+      el("p", { class: "muted", text: "O ERP nunca muda a configuração do sistema operacional nem desliga proteções do banco (fsync, full_page_writes): só sugere." }),
+      el("ul", {}, (d.suggestions || []).map((t) => el("li", { text: t }))));
+  }
+
+  // Spec 050 (T-050-03, P18): how long screens take to open in the browsers, against the 1 s budget.
+  async function uiperf(days = 7) {
+    const rows = await API.admin.uiPerf(days);
+    const ms = (v) => (v === null || v === undefined ? "> 5000" : n2(v));
+    const opens = rows.filter((r) => r.kind === "open").sort((a, b) => (b.p95_ms ?? 1e9) - (a.p95_ms ?? 1e9));
+    const top = opens.slice(0, 10);
+    const period = el("select", { "aria-label": "Período" }, [[1, "Hoje"], [7, "Últimos 7 dias"], [30, "Últimos 30 dias"]]
+      .map(([v, l]) => el("option", { value: v, text: l })));
+    period.value = String(days);
+    period.addEventListener("change", () => guard(() => uiperf(Number(period.value))));
+    main().replaceChildren(
+      ...header("Desempenho das telas", "Quanto cada tela leva para abrir e quanto duram as chamadas dela, medido nos navegadores de quem usa. Orçamento: 95 % das aberturas em até 1 s; acima disso vira apontamento nas Verificações."),
+      el("div", { class: "admin-toolbar" }, period),
+      top.length ? window.AnaCharts.render({ type: "bar", title: "Telas mais lentas para abrir (p95)", format: "number", unit: "ms",
+        x: top.map((r) => r.screen), series: [{ name: "p95", values: top.map((r) => r.p95_ms ?? 5000) }] }) : null,
+      table([
+        { label: "Tela", value: (r) => r.screen },
+        { label: "Medida", value: (r) => (r.kind === "open" ? "abrir a tela" : "chamadas ao servidor") },
+        { label: "Amostras", value: (r) => n2(r.samples), class: "num" },
+        { label: "Média (ms)", value: (r) => n2(r.avg_ms), class: "num" },
+        { label: "p50 (ms)", value: (r) => ms(r.p50_ms), class: "num" },
+        { label: "p95 (ms)", value: (r) => r.kind === "open" && (r.p95_ms === null || r.p95_ms > r.budget_ms)
+            ? pill(`▲ ${ms(r.p95_ms)}`, "warn") : ms(r.p95_ms), class: "num" },
+        { label: "Travamentos", value: (r) => n2(r.long_tasks), class: "num" },
+      ], rows, { empty: "Ainda sem medições: as telas se medem sozinhas enquanto as pessoas usam o Estúdio.",
+                 emptyAction: { label: "Atualizar", onClick: () => guard(() => uiperf(days)) } }));
+  }
+
   async function sqlperf(filters = { order: "total" }) {
     const rows = await API.admin.obsSql(filters);
     const detail = el("div");
-    const program = el("input", { placeholder: "Programa (opcional)", value: filters.program || "" });
+    const program = el("input", { "aria-label": "Programa (opcional)", placeholder: "Programa (opcional)", value: filters.program || "" });
     const order = el("select", {}, [["total", "Tempo total"], ["mean", "Tempo médio"], ["max", "Tempo máximo"], ["calls", "Chamadas"]]
       .map(([v, l]) => el("option", { value: v, text: "Ordenar por " + l.toLowerCase() })));
     order.value = filters.order || "total";
@@ -820,6 +1198,458 @@
       })) : el("p", { class: "muted", text: status === "open" ? "Nenhuma dica aberta. Bom sinal." : "Nada aqui." }));
   }
 
+  // ------------------------------------------------------------------ periodic checks (spec 033)
+  const CHECK_CATEGORIES = { security: "Segurança", dependencies: "Componentes", integrity: "Integridade",
+                             robustness: "Robustez", performance: "Desempenho" };
+  const SEV_ORDER = ["critical", "serious", "warning", "info"];
+
+  async function checks(tab = "findings", filter = { status: "open", category: "" }) {
+    const tabs = el("div", { class: "sub-tabs" }, [["findings", "Achados"], ["inventory", "Inventário e vulnerabilidades"], ["notify", "Avisos e base automática"]]
+      .map(([k, l]) => el("button", { class: k === tab ? "active" : "", text: l, onclick: () => guard(() => checks(k, filter)) })));
+    const head = header("Verificações", "Segurança da configuração, componentes com vulnerabilidade conhecida, integridade dos arquivos, " +
+      "robustez (cópias, filas, erros) e desempenho, verificados periodicamente pelo robô system. Missão crítica: o que é crítico vira aviso no sino.");
+    if (tab === "inventory") return checksInventory(head, tabs, filter);
+    if (tab === "notify") return checksConfig(head, tabs);
+    const [data, notices] = await Promise.all([API.admin.checks(filter), API.admin.notices(true).catch(() => [])]);
+    const counts = {};
+    for (const c of data.counts) (counts[c.category] = counts[c.category] || {})[c.severity] = c.n;
+    const runs = Object.fromEntries(data.runs.map((r) => [r.category, r]));
+    const runBtn = (category, label) => el("button", { type: "button", class: category === "all" ? "" : "quiet small", text: label,
+      onclick: (e) => { e.stopPropagation(); guard(async () => {
+        e.target.disabled = true;
+        const r = await API.admin.checksRun(category);
+        toast(`${r.found} achado(s), ${r.resolved} resolvido(s).`);
+        checks(tab, filter);
+      }); } });
+    const cards = el("div", { class: "check-grid" }, data.categories.map((c) => {
+      const cc = counts[c] || {};
+      const worst = SEV_ORDER.find((s) => cc[s]);
+      const total = SEV_ORDER.reduce((n, s) => n + (cc[s] || 0), 0);
+      const r = runs[c];
+      return el("div", { class: "check-card" + (filter.category === c ? " active" : "") + (worst ? " sev-" + worst : " sev-ok"),
+                         role: "button", tabindex: "0", title: "Filtrar por " + CHECK_CATEGORIES[c],
+                         onclick: () => guard(() => checks(tab, { ...filter, category: filter.category === c ? "" : c })) },
+        el("div", { class: "check-title", text: CHECK_CATEGORIES[c] || c }),
+        el("div", { class: "check-value", text: total ? String(total) : "ok" }),
+        el("div", { class: "check-sev" }, ...SEV_ORDER.filter((s) => cc[s]).map((s) => el("span", {}, sevChip(s), ` ${cc[s]}`))),
+        el("div", { class: "muted small", text: r ? `${r.status === "success" ? "verificado" : "falhou"} ${fmtDate(r.finished_at || r.started_at)}` : "ainda não verificado" }),
+        runBtn(c, "Verificar"));
+    }));
+    const noticeBox = notices.length ? el("div", { class: "notice-box" },
+      el("strong", { text: `${notices.length} aviso(s) novo(s)` }),
+      el("ul", {}, notices.map((n) => el("li", {}, sevChip(n.severity), " ", n.message, el("span", { class: "muted small", text: " · " + fmtDate(n.created_at) })))),
+      el("button", { type: "button", class: "small", text: "Marcar como lidos", onclick: () => guard(async () => {
+        for (const n of notices) await API.admin.noticeRead(n.id);
+        checks(tab, filter);
+      }) })) : null;
+    const status = el("div", { class: "sub-tabs" }, [["open", "Abertos"], ["dismissed", "Dispensados"], ["resolved", "Resolvidos"]].map(([k, l]) =>
+      el("button", { class: k === filter.status ? "active" : "", text: l, onclick: () => guard(() => checks(tab, { ...filter, status: k })) })));
+    const list = data.findings.length ? el("div", {}, data.findings.map((a) => {
+      const card = adviceCard(a);
+      card.querySelector(".advice-head").append(pill(CHECK_CATEGORIES[a.category] || a.category, ""));
+      if (filter.status === "open") card.append(el("div", { class: "row-buttons" },
+        el("button", { type: "button", class: "quiet small", text: "Dispensar por 30 dias", onclick: () => guard(async () => { await API.admin.adviceDismiss(a.id, 30); checks(tab, filter); }) }),
+        el("button", { type: "button", class: "quiet small", text: "Dispensar sempre", onclick: () => guard(async () => { await API.admin.adviceDismiss(a.id, 0); checks(tab, filter); }) })));
+      card.append(el("div", { class: "muted small", text: `${a.rule} · desde ${fmtDate(a.first_seen)} · visto ${fmtDate(a.last_seen)}` }));
+      return card;
+    })) : el("p", { class: "muted", text: filter.status === "open" ? "Nenhum achado aberto" + (filter.category ? " nesta categoria." : ". Bom sinal.") : "Nada aqui." });
+    main().replaceChildren(...head, tabs, noticeBox || "", el("div", { class: "row-buttons" }, runBtn("all", "Verificar tudo agora")),
+      cards, status, list);
+  }
+
+  // T-033-09b: the vulnerability base kept up to date by a connector, and new findings sent by e-mail or chat.
+  async function checksConfig(head, tabs) {
+    const c = await API.admin.checksConfig();
+    const opt = (v, t) => el("option", { value: v, text: t });
+    const conn = el("select", {}, opt("", "— só no sino do Estúdio —"),
+      c.connectors.map((k) => opt(k.name, `${k.name} (${k.kind === "smtp" ? "e-mail" : "HTTP/chat"})${k.description ? " — " + k.description : ""}`)));
+    conn.value = c.notify_connector || "";
+    const to = el("input", { value: (c.notify_recipients || []).join(", "), placeholder: "e-mails separados por vírgula (para conector de e-mail)" });
+    const min = el("select", {}, [["critical", "só críticos"], ["serious", "sérios e críticos"], ["warning", "atenção, sérios e críticos"]].map(([v, l]) => opt(v, l)));
+    min.value = c.notify_min_severity || "critical";
+    const feed = c.feed_available
+      ? el("div", {},
+          el("p", {}, "Conector ", el("code", { text: c.feed_available }), c.feed_at
+            ? ` · última atualização ${fmtDate(c.feed_at)}: ` : " · ainda não atualizada",
+            c.feed_at ? (c.feed_ok ? pill(`✓ ${c.feed_message}`, "ok") : pill(`■ ${c.feed_message}`, "off")) : ""),
+          el("p", { class: "muted small", text: "Atualiza sozinha uma vez por dia, junto com a verificação de dependências." }),
+          el("button", { type: "button", text: "Atualizar agora", onclick: (e) => guard(async () => {
+            e.target.disabled = true;
+            const r = await API.admin.checksFeedRefresh();
+            toast(`Base atualizada: ${r.feed_message}. ${r.check.found} achado(s) de dependências.`);
+            checks("notify");
+          }) }))
+      : el("div", {},
+          el("p", { text: "Desligada: a base é enviada à mão (aba Inventário). Para atualizar sozinha, crie um conector HTTP com as opções:" }),
+          el("pre", { class: "params-json", text: '{"purpose": "osv_feed", "mode": "feed", "path": "/caminho/do/arquivo-osv.json"}\n' +
+                                                    'ou, com URL base https://api.osv.dev:\n{"purpose": "osv_feed", "mode": "query"}' }),
+          el("button", { type: "button", class: "quiet", text: "Ir para Conectores", onclick: () => location.hash = "#/admin/integrations" }));
+    main().replaceChildren(...head, tabs,
+      el("div", { class: "admin-columns" },
+        el("div", { class: "form-card" }, el("h3", { text: "Base de vulnerabilidades automática" }), feed),
+        el("form", { class: "form-card", onsubmit: (e) => { e.preventDefault(); guard(async () => {
+          await API.admin.checksSaveConfig({ notify_connector: conn.value || null, notify_min_severity: min.value,
+            notify_recipients: to.value.split(/[,;\s]+/).map((x) => x.trim()).filter(Boolean) });
+          toast("Avisos configurados.");
+          checks("notify");
+        }); } },
+          el("h3", { text: "Avisos por e-mail ou chat" }),
+          el("p", { class: "muted small", text: "Achados novos a partir da gravidade escolhida vão numa só mensagem por verificação. Os críticos continuam também no sino." }),
+          field("Conector", conn), field("Destinatários", to), field("Gravidade mínima", min),
+          el("div", { class: "row-buttons" }, el("button", { class: "primary", type: "submit", text: "Salvar" })))));
+  }
+
+  async function checksInventory(head, tabs, filter) {
+    const [inv, found] = await Promise.all([API.admin.checksInventory(), API.admin.checks({ category: "dependencies", status: "open" })]);
+    const vulnerable = new Map();
+    for (const f of found.findings) if (f.rule === "vulnerable_component" && f.evidence) {
+      const k = `${f.evidence.ecosystem}|${f.evidence.package}`;
+      vulnerable.set(k, [...(vulnerable.get(k) || []), f]);
+    }
+    const file = el("input", { type: "file", accept: ".json,application/json", "aria-label": "Arquivo da base OSV" });
+    const send = el("button", { type: "button", text: "Importar base", onclick: () => guard(async () => {
+      const f = file.files[0];
+      if (!f) { toast("Escolha o arquivo JSON da base OSV.", true); return; }
+      send.disabled = true;
+      try {
+        const r = await API.admin.checksImport(f);
+        toast(`${r.advisories} aviso(s) importado(s); ${r.findings ?? 0} achado(s) de componentes.`);
+        checks("inventory", filter);
+      } finally { send.disabled = false; }
+    }) });
+    const search = el("input", { type: "search", placeholder: "Filtrar componentes…", "aria-label": "Filtrar componentes" });
+    const SOURCES = { runtime: "núcleo", image: "imagem", database: "banco" };
+    const render = () => {
+      const q = search.value.trim().toLowerCase();
+      const rows = inv.components.filter((c) => !q || `${c.ecosystem} ${c.name} ${c.version}`.toLowerCase().includes(q))
+        .sort((a, b) => (vulnerable.has(`${b.ecosystem}|${b.name}`) - vulnerable.has(`${a.ecosystem}|${a.name}`)));
+      box.replaceChildren(table([
+        { label: "Componente", value: (c) => c.name },
+        { label: "Versão", value: (c) => c.version },
+        { label: "Ecossistema", value: (c) => c.ecosystem },
+        { label: "Origem", value: (c) => SOURCES[c.source] || c.source },
+        { label: "Vulnerabilidades", value: (c) => {
+            const v = vulnerable.get(`${c.ecosystem}|${c.name}`);
+            return v ? el("span", {}, ...v.map((f) => el("span", {}, sevChip(f.severity), " ", f.evidence.osv_id,
+                                                                  f.evidence.fixed ? ` → ${f.evidence.fixed}` : "", " "))) : "—";
+          } },
+      ], rows, { title: "Componentes", empty: "Inventário ainda não coletado: clique em Verificar em Componentes." }));
+    };
+    const box = el("div");
+    search.addEventListener("input", render);
+    const feed = inv.feed || {};
+    main().replaceChildren(...head, tabs,
+      el("div", { class: "form-card" },
+        el("h3", { text: "Base de vulnerabilidades (OSV)" }),
+        el("p", { class: "muted", text: feed.advisories ? `${feed.advisories} aviso(s), importada em ${fmtDate(feed.imported_at)}.`
+          : "Nenhuma base importada. Baixe em osv.dev (\"Data dump\") os avisos dos ecossistemas Hex, Debian e PyPI e envie o JSON aqui (até 20 MiB por arquivo)." }),
+        el("div", { class: "row-buttons" }, file, send)),
+      el("div", { class: "row-buttons" }, search, el("span", { class: "muted small", text: `${inv.components.length} componente(s) · ${vulnerable.size} com vulnerabilidade` })),
+      box);
+    render();
+  }
+
+  // ------------------------------------------------------------------ transports (spec 034)
+  const T_STATUS = { exported: ["enviado", ""], received: ["recebido", "warn"], imported: ["importado", "ok"],
+                     refused: ["recusado", "off"], reverted: ["desfeito", "off"] };
+  const ITEM_STATUS = { new: ["novo", "ok"], unchanged: ["igual", ""], update: ["atualiza", "ok"], conflict: ["conflito", "off"] };
+
+  async function transports(tab = "list", detail = null) {
+    const tabs = el("div", { class: "sub-tabs" }, [["list", "Pacotes"], ["send", "Montar pacote"], ["receive", "Receber pacote"], ["exemptions", "Isenções"], ["keys", "Chave e origens"]]
+      .map(([k, l]) => el("button", { class: k === tab ? "active" : "", text: l, onclick: () => guard(() => transports(k)) })));
+    const head = header("Transportes", "Leve programas, comandos e parâmetros da instância de desenvolvimento e testes para a produção: " +
+      "pacote assinado, verificação prévia (conflitos e dependências), importação numa transação, sem parada, e desfazer com um clique.");
+    if (tab === "send") return transportSend(head, tabs);
+    if (tab === "receive") return transportReceive(head, tabs);
+    if (tab === "keys") return transportKeys(head, tabs);
+    if (tab === "exemptions") return qualityExemptions(head, tabs);
+    if (detail) return transportDetail(head, tabs, detail);
+    const list = await API.admin.transports();
+    main().replaceChildren(...head, tabs, table([
+      { label: "Nº", value: (t) => String(t.id) },
+      { label: "Sentido", value: (t) => t.direction === "out" ? "enviado daqui" : `recebido de ${t.origin}` },
+      { label: "Título", value: (t) => t.title },
+      { label: "Itens", value: (t) => String(t.items), class: "num" },
+      { label: "Autor", value: (t) => t.author },
+      { label: "Situação", value: (t) => { const [l, c] = T_STATUS[t.status] || [t.status, ""]; return pill(l, c); } },
+      { label: "Quando", value: (t) => fmtDate(t.imported_at || t.received_at || t.created_at) },
+    ], list, { empty: "Nenhum pacote ainda.", onRow: (t) => guard(() => transports("list", t.id)) }));
+  }
+
+  async function transportDetail(head, tabs, id) {
+    const t = await API.admin.transport(id);
+    const pre = t.preflight || {};
+    const status = Object.fromEntries((pre.items || []).map((i) => [i.name, i.status]));
+    const accept = new Set();
+    const items = t.manifest.items;
+    const rows = items.map((i) => {
+      const st = status[i.name];
+      const [l, c] = ITEM_STATUS[st] || [st || "—", ""];
+      const box = st === "conflict" && t.status === "received"
+        ? el("input", { type: "checkbox", "aria-label": "Aceitar o conflito de " + i.name, onchange: (e) => e.target.checked ? accept.add(i.name) : accept.delete(i.name) }) : null;
+      return { i, l, c, box };
+    });
+    const diffs = el("div");
+    const actions = el("div", { class: "row-buttons" });
+    if (t.status === "received") {
+      actions.append(
+        el("button", { type: "button", text: "Importar", onclick: () => guard(async () => {
+          const r = await API.admin.importTransport(id, { accept_conflicts: [...accept] });
+          if (r && r.error) { toast(r.error.message + (r.error.conflicts ? ": " + r.error.conflicts.join(", ") : "") + (r.error.missing ? ": " + r.error.missing.join(", ") : ""), true); return; }
+          toast(`Pacote importado: ${r.imported} item(ns).`); transports("list", id);
+        }) }),
+        el("button", { type: "button", class: "quiet", text: "Recusar", onclick: () => guard(async () => {
+          const reason = window.prompt("Motivo da recusa:");
+          if (!reason) return;
+          await API.admin.refuseTransport(id, reason); toast("Pacote recusado."); transports("list", id);
+        }) }));
+    }
+    if (t.status === "imported") actions.append(el("button", { type: "button", class: "quiet", text: "Desfazer importação", onclick: () => guard(async () => {
+      if (!window.confirm("Voltar todos os itens deste pacote ao estado anterior?")) return;
+      const r = await API.admin.revertTransport(id); toast(`${r.reverted} item(ns) voltaram ao estado anterior.`); transports("list", id);
+    }) }));
+    main().replaceChildren(...head, tabs,
+      el("div", { class: "form-card" },
+        el("h3", { text: `#${t.id} — ${t.title}` }),
+        el("p", { class: "muted", text: `${t.direction === "out" ? "Enviado daqui" : "Recebido de " + t.origin} · autor ${t.author} · ` +
+          `versão ${t.manifest.product_version} · SHA-256 ${t.manifest_sha256.slice(0, 16)}…` }),
+        t.description ? el("p", { text: t.description }) : null,
+        t.manifest.tests ? el("p", { class: "muted", text: "Testes declarados: " + t.manifest.tests }) : null,
+        pre.missing && pre.missing.length ? el("p", { class: "warn-text", text: "Chama programas que não existem aqui: " + pre.missing.join(", ") }) : null,
+        pre.missing_values && pre.missing_values.length ? el("p", { class: "warn-text" },
+          "Lê valores da empresa que não existem aqui: " + pre.missing_values.join(", ") + " ",
+          el("a", { href: "#/admin/values", class: "button small", text: "Criar em Valores da empresa" })) : null,
+        t.refused_reason ? el("p", { class: "warn-text", text: `Recusado por ${t.refused_by}: ${t.refused_reason}` }) : null,
+        table([
+          { label: "Item", value: (r) => r.i.name },
+          { label: "Tipo", value: (r) => ({ program: "programa", command: "comando", setting: "parâmetro", value: "valor da empresa" })[r.i.kind] || r.i.kind },
+          { label: "Situação aqui", value: (r) => pill(r.l, r.c) },
+          { label: "Aceitar conflito", value: (r) => r.box || "" },
+          { label: "", value: (r) => r.i.kind === "program" ? el("button", { type: "button", class: "quiet small", text: "Comparar", onclick: () => {
+              const here = (t.current || {})[r.i.name];
+              diffs.replaceChildren(el("h4", { text: r.i.name }), here === undefined
+                ? el("p", { class: "muted", text: "Não existe nesta instância: a importação cria o programa." })
+                : diffView("Aqui (atual)", here, "No pacote", r.i.source));
+              diffs.scrollIntoView?.({ block: "nearest" });
+            } }) : "" },
+        ], rows),
+        actions),
+      diffs);
+  }
+
+  async function transportSend(head, tabs) {
+    const programs = await API.programs();
+    const filter = el("input", { type: "search", placeholder: "Filtrar programas…", "aria-label": "Filtrar programas" });
+    const chosen = new Set();
+    const listBox = el("div", { class: "pick-list" });
+    const draw = () => {
+      const q = filter.value.trim().toLowerCase();
+      listBox.replaceChildren(...programs.filter((p) => !q || p.name.toLowerCase().includes(q) || (p.description || "").toLowerCase().includes(q))
+        .slice(0, 300).map((p) => el("label", { class: "check" },
+          el("input", { type: "checkbox", checked: chosen.has(p.name), onchange: (e) => { e.target.checked ? chosen.add(p.name) : chosen.delete(p.name); count.textContent = `${chosen.size} escolhido(s)`; } }),
+          el("span", {}, el("code", { text: p.name }), " ", el("span", { class: "muted small", text: `v${p.version} · ${p.description || ""}` })))));
+    };
+    filter.addEventListener("input", draw);
+    const count = el("span", { class: "muted small", text: "0 escolhido(s)" });
+    const title = el("input", { type: "text", placeholder: "ex.: Ajuste no faturamento de serviços" });
+    const desc = el("textarea", { rows: 3 });
+    const tests = el("textarea", { rows: 2, placeholder: "ex.: suíte de integração verde; testado com a massa de 05/10" });
+    const commands = el("input", { type: "text", placeholder: "códigos separados por vírgula (opcional)" });
+    const settings = el("input", { type: "text", placeholder: "parâmetros separados por vírgula (opcional)" });
+    const gateBox = el("div", {});
+    const split = (v) => v.split(",").map((x) => x.trim()).filter(Boolean);
+    main().replaceChildren(...head, tabs, el("div", { class: "form-card" },
+      field("Título do pacote", title), field("O que muda e por quê", desc), field("Testes feitos", tests),
+      el("h4", {}, "Programas ", count), filter, listBox,
+      field("Comandos", commands), field("Parâmetros", settings),
+      el("div", { class: "row-buttons" }, el("button", { type: "button", text: "Gerar pacote assinado", onclick: async () => {
+        gateBox.replaceChildren();
+        try {
+          const r = await API.admin.exportTransport({ title: title.value, description: desc.value, tests: tests.value, programs: [...chosen],
+                                                      commands: split(commands.value), settings: split(settings.value) });
+          API.saveBlob(new Blob([JSON.stringify(r.package)], { type: "application/json" }), r.file_name);
+          toast(`Pacote #${r.id} gerado com o portão de qualidade verde: leve o arquivo ${r.file_name} à produção (Transportes → Receber pacote).`);
+        } catch (e) {
+          if (e.code === "QUALITY_GATE" && e.body && e.body.error && e.body.error.report) gateBox.replaceChildren(gateReport(e.body.error.report));
+          toast(errorText(e), true);
+        }
+      } })), gateBox));
+    draw();
+  }
+
+  // Spec 064 (D7, CA-064-01): what blocks the package, per program, with the way to fix it.
+  function gateReport(report) {
+    const rows = [];
+    for (const p of report.programs) for (const f of p.blocking) rows.push({ program: p.name, ...f });
+    return el("div", { class: "form-card" },
+      el("h4", { text: `Portão de qualidade: ${rows.length} achado(s) bloqueiam (a partir de "${report.level}")` }),
+      el("p", { class: "muted", text: "Corrija no Estúdio (o editor mostra cada achado na linha) ou peça isenção: outra pessoa aprova na aba Isenções." }),
+      table([
+        { label: "Programa", value: (r) => el("a", { href: `#/dev/program/${r.program}`, text: r.program }) },
+        { label: "Linha", value: (r) => String(r.line), class: "num" },
+        { label: "Gravidade", value: (r) => r.severity },
+        { label: "O que", value: (r) => r.message },
+        { label: "Como resolver", value: (r) => r.suggestion || "" },
+      ], rows, { empty: "Nada bloqueia." }));
+  }
+
+  // Spec 064 (D3, CA-064-02): exemptions decided by someone other than who asked (the database refuses otherwise).
+  async function qualityExemptions(head, tabs) {
+    const list = await API.qualityExemptions({});
+    const me = (window.AnaStudio && window.AnaStudio.user && window.AnaStudio.user()) || {};
+    const ST = { requested: ["aguardando decisão", "warn"], approved: ["aprovada", "ok"], refused: ["recusada", "off"] };
+    const decide = (x, approve) => guard(async () => {
+      await API.decideExemption(x.id, approve, null);
+      toast(approve ? "Isenção aprovada." : "Isenção recusada.");
+      transports("exemptions");
+    });
+    main().replaceChildren(...head, tabs,
+      el("p", { class: "muted", text: "Isenções do portão de qualidade: quem pede não decide. Aprovada, vale até a data e libera o transporte daquele achado." }),
+      table([
+        { label: "Programa", value: (x) => el("a", { href: `#/dev/program/${x.program}`, text: x.program }) },
+        { label: "Regra", value: (x) => x.rule },
+        { label: "Motivo", value: (x) => x.reason },
+        { label: "Até", value: (x) => fmtDate(x.valid_until) },
+        { label: "Pedida por", value: (x) => x.requested_by },
+        { label: "Situação", value: (x) => { const [l, c] = ST[x.status] || [x.status, ""]; return pill(l, c); } },
+        { label: "Decisão", value: (x) => x.status !== "requested" ? `${x.decided_by || ""}` : x.requested_by === me.username
+            ? el("span", { class: "muted", text: "outra pessoa decide" })
+            : el("span", { class: "row-buttons" }, el("button", { type: "button", text: "Aprovar", onclick: () => decide(x, true) }),
+                 el("button", { type: "button", class: "quiet", text: "Recusar", onclick: () => decide(x, false) })) },
+      ], list, { empty: "Nenhum pedido de isenção. Eles nascem no Estúdio, na faixa de qualidade abaixo do editor.",
+                 emptyAction: { label: "Abrir o Estúdio", onClick: () => { location.hash = "#/dev"; } } }),
+      el("div", { class: "form-card" },
+        el("h4", { text: "Adotar o portão em programas antigos" }),
+        el("p", { class: "muted", text: "Aceita os achados que já existem hoje como linha de base: daqui em diante só achados novos bloqueiam o transporte." }),
+        el("div", { class: "row-buttons" }, el("button", { type: "button", text: "Registrar linha de base de todos os programas", onclick: () => guard(async () => {
+          if (!confirm("Registrar os achados atuais de todos os programas como linha de base?")) return;
+          const r = await API.admin.qualityBaseline([]);
+          toast(`Linha de base registrada: ${r.findings} achado(s) em ${r.programs} programa(s).`);
+        }) }))));
+  }
+
+  function transportReceive(head, tabs) {
+    const file = el("input", { type: "file", accept: ".json,application/json", "aria-label": "Arquivo do pacote" });
+    main().replaceChildren(...head, tabs, el("div", { class: "form-card" },
+      el("p", { class: "muted", text: "O pacote só é aceito de uma origem cadastrada (Chave e origens), com assinatura e conteúdo conferidos. " +
+        "Nada é aplicado agora: você verá a verificação prévia e decide importar." }),
+      el("div", { class: "row-buttons" }, file, el("button", { type: "button", text: "Receber", onclick: () => guard(async () => {
+        if (!file.files[0]) { toast("Escolha o arquivo do pacote.", true); return; }
+        const r = await API.admin.receiveTransport(file.files[0]);
+        toast(r.preflight.ok ? "Pacote recebido: sem conflitos." : "Pacote recebido: veja os conflitos antes de importar.");
+        transports("list", r.id);
+      }) }))));
+  }
+
+  async function transportKeys(head, tabs) {
+    const [key, origins] = await Promise.all([API.admin.transportKey().catch((e) => ({ error: errorText(e) })), API.admin.transportOrigins()]);
+    const name = el("input", { type: "text", placeholder: "ex.: ana-development" });
+    const pub = el("input", { type: "text", placeholder: "chave pública (base64)" });
+    main().replaceChildren(...head, tabs,
+      el("div", { class: "form-card" },
+        el("h3", { text: "Esta instância" }),
+        key.error ? el("p", { class: "warn-text", text: key.error }) : el("div", {},
+          el("p", {}, "Nome: ", el("strong", { text: key.name }), ` · papel: ${key.role} · versão ${key.product_version}`),
+          el("p", {}, "Chave pública: ", el("code", { text: key.public_key })),
+          el("p", { class: "muted", text: `Impressão digital ${key.fingerprint}. Cadastre nome e chave pública como origem na instância que vai receber os pacotes.` }))),
+      el("div", { class: "form-card" },
+        el("h3", { text: "Origens aceitas aqui" }),
+        table([
+          { label: "Origem", value: (o) => o.name },
+          { label: "Impressão digital", value: (o) => el("code", { text: o.fingerprint }) },
+          { label: "Cadastrada por", value: (o) => `${o.created_by} em ${fmtDate(o.created_at)}` },
+          { label: "", value: (o) => el("button", { type: "button", class: "quiet small", text: "Remover", onclick: () => guard(async () => {
+              await API.admin.deleteOrigin(o.name); transports("keys"); }) }) },
+        ], origins, { empty: "Nenhuma origem: esta instância ainda não aceita pacotes.",
+                      emptyAction: { label: "Cadastrar a primeira origem", onClick: () => name.focus() } }),
+        el("div", { class: "row-buttons" }, field("Nome da origem", name), field("Chave pública da origem", pub), el("button", { type: "button", text: "Cadastrar origem", onclick: () => guard(async () => {
+          await API.admin.saveOrigin(name.value.trim(), pub.value.trim()); toast("Origem cadastrada."); transports("keys");
+        }) }))));
+  }
+
+  // ------------------------------------------------------------------ data copy (spec 034)
+  const COPY_STATUS = { running: ["em andamento", "warn"], ready: ["pronta para baixar", "ok"], uploaded: ["recebida", ""],
+                        imported: ["importada", "ok"], checked: ["ensaio ok", "ok"], failed: ["falhou", "off"], expired: ["expirada", ""] };
+  const MASK_KINDS = { keep: "manter", person: "nome de pessoa", company: "nome de empresa", email: "e-mail", phone: "telefone",
+                       document: "documento", address: "endereço", geo: "coordenada", text: "texto livre", null: "apagar" };
+
+  async function datacopy(tab = "copies") {
+    const tabs = el("div", { class: "sub-tabs" }, [["copies", "Cópias"], ["masking", "Máscaras"]]
+      .map(([k, l]) => el("button", { class: k === tab ? "active" : "", text: l, onclick: () => guard(() => datacopy(k)) })));
+    const inst = await API.admin.instance();
+    const head = header("Cópia de dados para testes", "Leva os dados reais da produção para a instância de testes como massa de testes: " +
+      "dados pessoais mascarados já na origem, arquivo cifrado, carga numa transação com contagens e totais conferidos. " +
+      "Depois da carga, a instância de testes não chama nenhum sistema externo.");
+    if (tab === "masking") return datacopyMasking(head, tabs);
+    const copies = await API.admin.copies();
+    const isProd = inst.role === "production";
+    const keyBox = el("div");
+    const exportCard = el("div", { class: "form-card" }, el("h3", { text: "Exportar daqui" }),
+      el("p", { class: "muted", text: "Gera o arquivo cifrado desta instância. A chave aparece uma única vez: guarde-a para importar no destino." }),
+      el("div", { class: "row-buttons" }, el("button", { type: "button", text: "Exportar dados mascarados", onclick: () => guard(async () => {
+        const r = await API.admin.copyExport();
+        keyBox.replaceChildren(el("div", { class: "secret-box" }, el("div", { text: `Cópia #${r.id} — chave (mostrada só agora):` }), el("strong", { text: r.key }),
+          el("div", { class: "muted", text: "Copie a chave; o arquivo fica disponível por 48 horas." })));
+        setTimeout(() => datacopy("copies").then(() => main().prepend(keyBox)), 2500);
+      }) })), keyBox);
+    const file = el("input", { type: "file", accept: ".anadc", "aria-label": "Arquivo da cópia" });
+    const importCard = isProd ? el("div", { class: "form-card" }, el("p", { class: "muted", text: "Esta instância é a produção: ela não recebe cópias." }))
+      : el("div", { class: "form-card" }, el("h3", { text: `Receber nesta instância (${inst.role === "test" ? "testes" : "desenvolvimento"})` }),
+          el("p", { class: "warn-text", text: "A importação substitui todos os dados de negócio desta instância." }),
+          el("div", { class: "row-buttons" }, file, el("button", { type: "button", text: "Enviar arquivo", onclick: () => guard(async () => {
+            if (!file.files[0]) { toast("Escolha o arquivo da cópia.", true); return; }
+            await API.admin.copyUpload(file.files[0]); toast("Arquivo recebido: informe a chave e importe."); datacopy("copies");
+          }) })));
+    main().replaceChildren(...head, tabs, el("div", { class: "card-pair" }, exportCard, importCard),
+      table([
+        { label: "Nº", value: (c) => String(c.id) },
+        { label: "Sentido", value: (c) => c.direction === "out" ? "exportada daqui" : "recebida" },
+        { label: "Situação", value: (c) => { const [l, k] = COPY_STATUS[c.status] || [c.status, ""]; return pill(l, k); } },
+        { label: "Tamanho", value: (c) => c.size_bytes ? `${(c.size_bytes / 1048576).toFixed(1)} MiB` : "—", class: "num" },
+        { label: "Resultado", value: (c) => c.error ? el("span", { class: "warn-text", text: c.error })
+            : c.result ? `${c.result.tables} tabela(s), ${c.result.rows} linha(s)` + (c.result.skipped ? `, ${c.result.skipped} omitida(s)` : "") : "" },
+        { label: "Quando", value: (c) => fmtDate(c.finished_at || c.created_at) },
+        { label: "", value: (c) => c.direction === "out" && c.status === "ready"
+            ? el("button", { type: "button", class: "small", text: "Baixar", onclick: () => guard(() => API.download(`/api/admin/datacopy/${c.id}/download`, `copia-${c.id}.anadc`)) })
+            : c.direction === "in" && ["uploaded", "checked", "failed"].includes(c.status) && !isProd ? copyImportButtons(c) : "" },
+      ], copies, { empty: "Nenhuma cópia." }));
+  }
+
+  function copyImportButtons(c) {
+    const run = (dry) => guard(async () => {
+      const key = window.prompt("Chave da cópia (mostrada na exportação):");
+      if (!key) return;
+      if (!dry && !window.confirm("Substituir todos os dados de negócio desta instância pela cópia?")) return;
+      await API.admin.copyImport(c.id, { key: key.trim(), dry_run: dry });
+      toast(dry ? "Ensaio iniciado: carga completa e desfeita ao final." : "Importação iniciada.");
+      setTimeout(() => datacopy("copies"), 1500);
+    });
+    return el("span", { class: "row-buttons" },
+      el("button", { type: "button", class: "quiet small", text: "Ensaiar", onclick: () => run(true) }),
+      el("button", { type: "button", class: "small", text: "Importar", onclick: () => run(false) }));
+  }
+
+  async function datacopyMasking(head, tabs) {
+    const m = await API.admin.masking();
+    main().replaceChildren(...head, tabs,
+      el("p", { class: "muted", text: "Colunas mascaradas na exportação (catálogo do produto e ajustes desta instalação). Tabelas do sistema, cofre, " +
+        "integrações, arquivos e senhas nunca entram na cópia." }),
+      table([
+        { label: "Tabela", value: (c) => c.table },
+        { label: "Coluna", value: (c) => c.column },
+        { label: "Máscara", value: (c) => {
+            const sel = el("select", { "aria-label": `Máscara de ${c.table}.${c.column}` },
+              el("option", { value: "catalog", text: "padrão do produto" }),
+              ...m.kinds.map((k) => el("option", { value: k, text: MASK_KINDS[k] || k })));
+            sel.value = c.rule ? c.kind : "catalog";
+            sel.addEventListener("change", () => guard(async () => {
+              await API.admin.saveMasking({ table: c.table, column: c.column, kind: sel.value }); toast("Máscara salva.");
+            }));
+            return el("span", {}, sel, c.rule ? "" : el("span", { class: "muted small", text: ` (${MASK_KINDS[c.kind] || c.kind})` }));
+          } },
+      ], m.columns, { empty: "Nenhuma coluna mascarada." }));
+  }
+
   // ------------------------------------------------------------------ integrations (spec 017)
   const MSG_STATUS = { pending: "pendente", processing: "processando", done: "entregue", dead: "esgotada", discarded: "descartada" };
   const SECRET_KEYS = { none: [], basic: ["username", "password"], bearer: ["token"], api_key: ["api_key"],
@@ -856,7 +1686,7 @@
       const f = {
         name: el("input", { value: c.name || "", placeholder: "ex.: banco_x", disabled: !!c.name }),
         description: el("input", { value: c.description || "" }),
-        kind: el("select", {}, [["http_api", "Saída HTTP (API)"], ["webhook_in", "Webhook de entrada"]].map(([v, l]) => el("option", { value: v, text: l, selected: c.kind === v }))),
+        kind: el("select", {}, [["http_api", "Saída HTTP (API)"], ["webhook_in", "Webhook de entrada"], ["smtp", "E-mail (SMTP)"]].map(([v, l]) => el("option", { value: v, text: l, selected: c.kind === v }))),
         base_url: el("input", { value: c.base_url || "", placeholder: "https://api.exemplo.com" }),
         auth: el("select", {}, [["none", "Nenhuma"], ["basic", "Usuário e senha"], ["bearer", "Token"], ["api_key", "Chave de API"], ["oauth2_client", "OAuth2 (client credentials)"]].map(([v, l]) => el("option", { value: v, text: l, selected: (c.auth || "none") === v }))),
         token_url: el("input", { value: c.token_url || "", placeholder: "https://… (OAuth2)" }),
@@ -870,6 +1700,33 @@
         options: el("textarea", { rows: 3, class: "params-json", value: JSON.stringify(c.options || {}, null, 1) }),
         active: el("input", { type: "checkbox", checked: c.active !== false }),
       };
+      // Spec 044: an e-mail (SMTP) connector keeps its settings in the options; the password goes to the vault.
+      const o = c.options || {};
+      const sm = {
+        host: el("input", { value: o.host || "", placeholder: "smtp.empresa.com.br" }),
+        port: el("input", { type: "number", min: 1, max: 65535, value: o.port || "", placeholder: "587 (STARTTLS) ou 465 (TLS)" }),
+        security: el("select", {}, [["starttls", "STARTTLS (obrigatório)"], ["tls", "TLS direto"], ["none", "Sem criptografia (não recomendado)"]]
+          .map(([v, l]) => el("option", { value: v, text: l, selected: (o.security || "starttls") === v }))),
+        from: el("input", { value: o.from || "", placeholder: "erp@empresa.com.br" }),
+        from_name: el("input", { value: o.from_name || "", placeholder: "nome do remetente" }),
+        reply_to: el("input", { value: o.reply_to || "", placeholder: "responder para (opcional)" }),
+        ca_cert: el("textarea", { rows: 2, class: "params-json", value: o.ca_cert || "", placeholder: "-----BEGIN CERTIFICATE----- (só para CA própria)" }),
+        allow_plain: el("input", { type: "checkbox", checked: o.allow_plain === true }),
+        default_email: el("input", { type: "checkbox", checked: c.default_email === true }),
+      };
+      const testTo = el("input", { type: "email", placeholder: "para (e-mail de teste)" });
+      const smtpOnly = [field("Servidor SMTP", sm.host), field("Porta", sm.port), field("Segurança", sm.security), field("Remetente", sm.from),
+        field("Nome do remetente", sm.from_name), field("Responder para", sm.reply_to), field("CA própria (PEM)", sm.ca_cert),
+        check("Permitir sem criptografia (aparece nas Verificações)", sm.allow_plain), check("Conector de e-mail padrão", sm.default_email),
+        el("div", { class: "row-buttons" },
+          el("button", { type: "button", class: "quiet", text: "Testar conexão", disabled: !c.name, onclick: () => guard(async () => {
+            await API.admin.smtpTest(c.name, {}); toast("Conexão com o servidor de e-mail ok.");
+          }) }),
+          testTo,
+          el("button", { type: "button", class: "quiet", text: "Enviar e-mail de teste", disabled: !c.name, onclick: () => guard(async () => {
+            if (!testTo.value.trim()) { toast("Informe o destinatário do teste.", true); return; }
+            const r = await API.admin.smtpTest(c.name, { to: testTo.value.trim() }); toast(`Enviado: ${r.server_reply || "ok"}`);
+          }) }))];
       const secrets = el("div");
       const drawSecrets = () => {
         const have = new Map((c.secrets || []).map((x) => [x.key, x]));
@@ -890,35 +1747,51 @@
       f.auth.addEventListener("change", drawSecrets);
       f.kind.addEventListener("change", drawSecrets);
       drawSecrets();
+      const httpOnly = [field("URL base", f.base_url), field("URL do token (OAuth2)", f.token_url), field("Hosts permitidos", f.allowed_hosts),
+        field("Programa de entrega (saída)", f.outbound_program), field("Programa de processamento (entrada)", f.inbound_program)];
+      const showKind = () => {
+        const smtp = f.kind.value === "smtp";
+        for (const n of smtpOnly) n.hidden = !smtp;
+        for (const n of httpOnly) n.hidden = smtp;
+      };
+      f.kind.addEventListener("change", showKind);
       side.replaceChildren(el("form", { class: "form-card", onsubmit: (e) => { e.preventDefault(); guard(async () => {
         let options;
         try { options = JSON.parse(f.options.value || "{}"); } catch (_) { toast("Opções devem ser um JSON de objeto.", true); return; }
         const name = f.name.value.trim();
+        const smtp = f.kind.value === "smtp";
+        if (smtp) {
+          Object.assign(options, { host: sm.host.value.trim(), security: sm.security.value, from: sm.from.value.trim(),
+            from_name: sm.from_name.value.trim() || null, reply_to: sm.reply_to.value.trim() || null,
+            ca_cert: sm.ca_cert.value.trim() || null, allow_plain: sm.allow_plain.checked });
+          if (sm.port.value) options.port = Number(sm.port.value);
+        }
         await API.admin.saveConnector(name, { description: f.description.value, kind: f.kind.value, base_url: f.base_url.value.trim() || null,
           auth: f.auth.value, token_url: f.token_url.value.trim() || null,
           allowed_hosts: f.allowed_hosts.value.split(",").map((h) => h.trim()).filter(Boolean),
           outbound_program: f.outbound_program.value.trim() || null, inbound_program: f.inbound_program.value.trim() || null,
           run_as: f.run_as.value.trim() || "system", max_attempts: Number(f.max_attempts.value), timeout_ms: Number(f.timeout_ms.value),
-          rate_per_min: Number(f.rate_per_min.value), options, active: f.active.checked });
+          rate_per_min: Number(f.rate_per_min.value), options, active: f.active.checked, default_email: smtp && sm.default_email.checked });
         toast("Conector salvo."); integrations("connectors");
       }); } },
         el("h3", { text: c.name ? `Conector ${c.name}` : "Novo conector" }),
-        field("Nome", f.name), field("Descrição", f.description), field("Tipo", f.kind), field("URL base", f.base_url),
-        field("Autenticação", f.auth), field("URL do token (OAuth2)", f.token_url), field("Hosts permitidos", f.allowed_hosts),
-        field("Programa de entrega (saída)", f.outbound_program), field("Programa de processamento (entrada)", f.inbound_program),
+        field("Nome", f.name), field("Descrição", f.description), field("Tipo", f.kind), field("Autenticação", f.auth),
+        ...httpOnly, ...smtpOnly,
         field("Roda como (usuário dono)", f.run_as), field("Tentativas", f.max_attempts), field("Tempo máximo (ms)", f.timeout_ms),
         field("Chamadas por minuto", f.rate_per_min), field("Opções para os programas (JSON)", f.options), check("Ativo", f.active),
         el("div", { class: "row-buttons" }, el("button", { class: "primary", type: "submit", text: "Salvar" })),
         secrets,
         c.kind === "webhook_in" ? el("p", { class: "muted small", text: `Endereço: POST /hooks/${c.name} com cabeçalhos ${c.timestamp_header} (segundos), ${c.signature_header} = sha256=<HMAC-SHA256 hex de "carimbo.corpo"> e ${c.event_id_header}.` }) : null));
+      showKind();
     };
     form();
     return el("div", { class: "admin-columns" },
       el("div", {}, el("div", { class: "row-buttons" }, el("button", { text: "Novo conector", onclick: () => form() })),
         table([
           { label: "Nome", value: (c) => c.name },
-          { label: "Tipo", value: (c) => (c.kind === "http_api" ? "saída HTTP" : "webhook") },
-          { label: "Destino", value: (c) => c.base_url || `/hooks/${c.name}` },
+          { label: "Tipo", value: (c) => ({ http_api: "saída HTTP", webhook_in: "webhook", smtp: "e-mail (SMTP)" })[c.kind] || c.kind },
+          { label: "Destino", value: (c) => c.kind === "smtp" ? `${(c.options || {}).host || "?"}:${(c.options || {}).port || ""}${c.default_email ? " · padrão" : ""}`
+            : c.base_url || `/hooks/${c.name}` },
           { label: "Segredos", value: (c) => (c.secrets.length ? c.secrets.map((x) => x.key).join(", ") : "—") },
           { label: "Situação", value: (c) => (c.active ? pill("ativo", "ok") : pill("inativo", "off")) },
         ], data.connectors, { empty: "Nenhum conector.", onRow: (c) => form(c) })),
@@ -952,6 +1825,114 @@
       ], rows, { empty: "Nenhuma mensagem.", onRow: (m) => detail.replaceChildren(el("h4", { text: `Mensagem ${m.id}` }),
         el("pre", { class: "code-view", text: JSON.stringify({ payload: m.payload, result: m.result, headers: m.headers }, null, 2) })) }),
       detail);
+  }
+
+  // ------------------------------------------------------------------ license (spec 009)
+  const LICENSE_STATE = { trial: ["avaliação", "warn"], valid: ["válida", "ok"], expiring: ["vence em breve", "warn"],
+                          grace: ["vencida — em carência", "warn"], restricted: ["somente consulta", "off"] };
+  const LICENSE_REASON = { expired: "vencida além da carência", trial_over: "avaliação de 30 dias encerrada",
+                           clock: "relógio do servidor está atrás da última data vista: corrija a hora do servidor",
+                           version: "não cobre a versão instalada", not_yet: "ainda não começou a valer" };
+
+  async function license() {
+    const l = await API.admin.license();
+    const [label, tone] = LICENSE_STATE[l.state] || [l.state, ""];
+    const users = l.named_users === "unlimited" ? `${l.named_users_used} (sem limite)` : `${l.named_users_used} de ${l.named_users}`;
+    const days = l.days_left;
+    const when = l.state === "trial" ? `${days} dia(s) de avaliação`
+      : days === undefined || days === null ? "—"
+      : days >= 0 ? `${fmtDate(l.valid_until)} (${days} dia(s))` : `${fmtDate(l.valid_until)} (vencida há ${-days} dia(s))`;
+    const text = el("textarea", { rows: 6, placeholder: "-----BEGIN ANA LICENSE-----\n…\n-----END ANA LICENSE-----", spellcheck: "false" });
+    main().replaceChildren(
+      ...header("Licença", "O que esta instalação contratou. A licença vem assinada pelo fornecedor e funciona sem internet. Vencida, o ERP nunca prende seus dados: consultas, relatórios e exportação continuam."),
+      el("dl", { class: "facts" },
+        el("dt", { text: "Situação" }), el("dd", {}, pill(label, tone), l.reason ? el("span", { class: "muted", text: " " + (LICENSE_REASON[l.reason] || l.reason) }) : null),
+        el("dt", { text: "Cliente" }), el("dd", { text: l.customer || "— (sem licença instalada)" }),
+        el("dt", { text: "Validade" }), el("dd", { text: when }),
+        el("dt", { text: "Ambiente" }), el("dd", {}, l.environment === "non_production" ? pill("testes — não usar em produção", "warn") : "produção"),
+        el("dt", { text: "Usuários nomeados" }), el("dd", { text: users + " — robôs e contas do portal não contam" }),
+        el("dt", { text: "Versão" }), el("dd", { text: `${l.product_version} instalada` + (l.max_version ? `; a licença cobre até ${l.max_version}` : "") })),
+      el("h3", { text: "Módulos" }),
+      table([
+        { label: "Módulo", value: (m) => m.label },
+        { label: "Programas", value: (m) => el("span", {}, (m.namespaces.length ? m.namespaces : ["—"]).map((n) => el("code", { text: n === "—" ? n : n + ".* " }))) },
+        { label: "Situação", value: (m) => (m.module === "core" ? pill("sempre incluído", "ok")
+          : l.modules.includes(m.module) ? pill("contratado", "ok") : pill("não contratado", "off")) },
+      ], [{ module: "core", label: "Núcleo: plataforma, Estúdio, cadastros, financeiro, estoque, agendamento, integrações e os seus programas", namespaces: [] }]
+          .concat(l.catalog)),
+      el("h3", { text: "Instalar licença" }),
+      el("form", { class: "stack", onsubmit: (e) => { e.preventDefault(); guard(async () => {
+        const r = await API.admin.installLicense(text.value.trim());
+        toast(`Licença instalada: ${(LICENSE_STATE[r.state] || [r.state])[0]}.`);
+        license();
+      }); } },
+        field("Texto da licença (enviado pelo fornecedor)", text),
+        el("div", { class: "row-buttons" }, el("button", { class: "primary", type: "submit", text: "Instalar" }))),
+      el("p", { class: "muted", text: "Sem tela? Indique o arquivo em ANA_LICENSE_FILE: a licença mais nova é instalada na partida e a cada hora." }),
+      el("h3", { text: "Histórico" }),
+      table([
+        { label: "Instalada em", value: (h) => fmtDate(h.installed_at) },
+        { label: "Por", value: (h) => h.installed_by },
+        { label: "Origem", value: (h) => (h.source === "file" ? "arquivo" : "tela") },
+        { label: "Cliente", value: (h) => h.customer },
+        { label: "Validade", value: (h) => fmtDate(h.valid_until) },
+        { label: "", value: (h) => (h.active ? pill("em uso", "ok") : "") },
+      ], l.history, { empty: "Nenhuma licença instalada ainda." }));
+  }
+
+  // ------------------------------------------------------------------ telemetry (spec 009, D13)
+  const CONNECTOR_STATE = { ready: ["conector pronto", "ok"], inactive: ["conector inativo", "warn"], missing: ["sem conector \"telemetry\"", "warn"] };
+
+  async function telemetry() {
+    const t = await API.admin.telemetry();
+    const [cl, ct] = CONNECTOR_STATE[t.connector] || [t.connector, ""];
+    main().replaceChildren(
+      ...header("Telemetria", "Opcional e desligada por padrão. Ligada, envia uma vez por dia ao suporte do fornecedor só o que aparece abaixo: versões, situação da licença, saúde e contagens de execuções e de códigos de erro. Nunca dados do negócio, nomes, mensagens ou usuários."),
+      el("dl", { class: "facts" },
+        el("dt", { text: "Situação" }), el("dd", {}, t.enabled ? pill("ligada", "ok") : pill("desligada", "off"),
+          t.changed_by ? el("span", { class: "muted", text: ` por ${t.changed_by} em ${fmtDate(t.changed_at)}` }) : null),
+        el("dt", { text: "Destino" }), el("dd", {}, pill(cl, ct), el("span", { class: "muted", text: " — configure o endereço do fornecedor em Integrações → Conectores, nome telemetry" })),
+        el("dt", { text: "Último envio" }), el("dd", { text: t.last_sent_at ? `${fmtDate(t.last_sent_at)} — ${t.last_status}` : "nunca" }),
+        el("dt", { text: "Instância" }), el("dd", {}, el("code", { text: t.instance_id }), el("span", { class: "muted", text: " (identificador anônimo, não é o cliente)" }))),
+      el("div", { class: "row-buttons" },
+        el("button", { class: t.enabled ? "danger" : "primary", text: t.enabled ? "Desligar" : "Ligar", onclick: () => guard(async () => {
+          if (!t.enabled && !confirm("Enviar uma vez por dia ao fornecedor os dados mostrados abaixo?")) return;
+          await API.admin.setTelemetry(!t.enabled); telemetry();
+        }) }),
+        t.enabled ? el("button", { text: "Enviar agora", onclick: () => guard(async () => {
+          const r = await API.admin.sendTelemetry(); toast(`Envio: ${r.last_status}`, r.last_status !== "enviado"); telemetry();
+        }) }) : null),
+      el("h3", { text: "Exatamente o que é enviado" }),
+      el("pre", { class: "json form-card", text: JSON.stringify(t.preview, null, 2) }));
+  }
+
+  // ------------------------------------------------------------------ extension points (spec 009, D9)
+  async function extensions() {
+    const r = await API.admin.extensions();
+    const point = el("select", {}, r.points.map((p) => el("option", { value: p.point, text: `${p.label} — ${p.point}` })));
+    const program = el("input", { "aria-label": "ex.: cli.validar_faturamento", placeholder: "ex.: cli.validar_faturamento" });
+    const position = el("input", { type: "number", value: 100, min: 1 });
+    const byPoint = Object.fromEntries(r.points.map((p) => [p.point, p]));
+    main().replaceChildren(
+      ...header("Extensões", "Regras da sua empresa nos programas do produto, sem copiá-los: um programa seu roda no ponto escolhido, na mesma transação. Os de \"antes\" podem recusar (com ana.Error) ou ajustar os campos permitidos; os de \"depois\" recebem o resultado. O programa recebe main(point, data)."),
+      table([
+        { label: "Ponto", value: (x) => el("span", {}, (byPoint[x.point] || {}).label || x.point, " ", el("code", { class: "muted", text: x.point })) },
+        { label: "Programa", value: (x) => el("code", { text: x.program }) },
+        { label: "Ordem", value: (x) => x.position, class: "num" },
+        { label: "Por", value: (x) => x.created_by },
+        { label: "", value: (x) => el("button", { class: "danger small", text: "Remover", onclick: () => guard(async () => {
+          if (!confirm(`Desligar ${x.program} de ${x.point}?`)) return;
+          await API.admin.deleteExtension(x.id); toast("Extensão removida."); extensions();
+        }) }) },
+      ], r.extensions, { empty: "Nenhuma extensão: os programas do produto rodam como vieram." }),
+      el("form", { class: "form-card", onsubmit: (e) => { e.preventDefault(); guard(async () => {
+        await API.admin.saveExtension({ point: point.value, program: program.value.trim(), position: Number(position.value) || 100 });
+        toast("Extensão registrada."); extensions();
+      }); } },
+        el("h3", { text: "Ligar um programa seu" }),
+        field("Ponto", point), field("Programa (fora dos namespaces do produto)", program), field("Ordem (menor roda primeiro)", position),
+        el("p", { class: "muted", text: "Pontos que ajustam: " + r.points.filter((p) => p.adjust.length).map((p) => `${p.point} (${p.adjust.join(", ")})`).join("; ") }),
+        el("div", { class: "row-buttons" }, el("button", { class: "primary", type: "submit", text: "Registrar" }))));
   }
 
   // ------------------------------------------------------------------ product updates (spec 028)
@@ -1082,6 +2063,152 @@
 
   // ------------------------------------------------------------------ navigation
   // ------------------------------------------------------------------ scheduler (spec 018)
+  // ------------------------------------------------------------------ public API (spec 010)
+  const API_KINDS = { confidential: "servidor (segredo)", browser: "navegador com login", publishable: "chave publicável (site)" };
+  const lines = (v) => v.split(/[\n,]/).map((s) => s.trim()).filter(Boolean);
+
+  function shownOnce(title, value, usage) {
+    return el("div", { class: "secret-box" },
+      el("div", { text: `${title} (copie agora: não será exibido novamente)` }),
+      el("strong", { text: value }),
+      usage ? el("div", { class: "muted", text: usage }) : null);
+  }
+
+  async function publicapi(tab = "clients", detail = null) {
+    const tabs = el("div", { class: "sub-tabs" }, [["clients", "Clientes"], ["new", "Novo cliente"], ["calls", "Chamadas"]]
+      .map(([k, l]) => el("button", { class: k === tab ? "active" : "", text: l, onclick: () => guard(() => publicapi(k)) })));
+    const head = header("API pública", "Sistemas de terceiros, sites e aplicativos chamam programas expostos por /rpc. Cada cliente " +
+      "executa como um usuário robô (toda chamada tem dono), só alcança os programas do seu escopo e tem limite por minuto e cota diária.");
+    if (tab === "new") return apiClientNew(head, tabs);
+    if (tab === "calls") return apiCallsView(head, tabs, detail);
+    if (detail) return apiClientDetail(head, tabs, detail);
+    const list = await API.admin.apiClients();
+    main().replaceChildren(...head, tabs, table([
+      { label: "Nome", value: (c) => c.name },
+      { label: "Tipo", value: (c) => API_KINDS[c.kind] || c.kind },
+      { label: "Executa como", value: (c) => c.run_as },
+      { label: "Escopo", value: (c) => c.scopes.join(", ") || "—" },
+      { label: "Hoje", value: (c) => String(c.today), class: "num" },
+      { label: "Situação", value: (c) => apiClientState(c) },
+    ], list, { empty: "Nenhum cliente: a API pública está fechada.", onRow: (c) => guard(() => publicapi("clients", c.client_id)) }),
+    el("div", { class: "form-card" },
+      el("h3", { text: "Chaves de assinatura dos tokens" }),
+      el("p", { class: "muted", text: "Os tokens de acesso duram 10 minutos. Trocar a chave não derruba quem já tem token: a anterior segue valendo até eles vencerem." }),
+      el("button", { type: "button", class: "quiet", text: "Trocar chave de assinatura", onclick: () => guard(async () => {
+        if (!confirm("Gerar nova chave de assinatura dos tokens?")) return;
+        await API.admin.rotateApiKeys(); toast("Nova chave de assinatura ativa.");
+      }) })));
+  }
+
+  async function robotUsers() {
+    return (await API.admin.users("")).filter((u) => u.kind === "robot" && u.active !== false);
+  }
+
+  async function apiClientNew(head, tabs) {
+    const robots = await robotUsers();
+    const name = el("input", { type: "text", placeholder: "ex.: Loja virtual" });
+    const kind = el("select", {}, ...Object.entries(API_KINDS).map(([k, l]) => el("option", { value: k, text: l })));
+    const runAs = el("select", {}, ...robots.map((u) => el("option", { value: u.username, text: u.username })));
+    const scopes = el("textarea", { rows: 3, placeholder: "um por linha: sales.* ou sales.create_order" });
+    const origins = el("textarea", { rows: 2, placeholder: "https://loja.exemplo.com.br (um por linha)" });
+    const ips = el("input", { type: "text", placeholder: "IPs/redes permitidos, separados por vírgula (vazio = qualquer)" });
+    const rate = el("input", { type: "number", min: 1, value: 600 });
+    const quota = el("input", { type: "number", min: 1, placeholder: "vazio = sem cota" });
+    const sign = el("input", { type: "checkbox" });
+    const out = el("div");
+    kind.addEventListener("change", () => { rate.value = kind.value === "publishable" ? 60 : 600; });
+    const form = el("form", { class: "form-card" },
+      robots.length ? null : el("p", { class: "warn-text", text: "Crie antes um usuário robô (Usuários → Novo, tipo robô) com o papel e os grupos que o cliente deve ter." }),
+      field("Nome", name), field("Tipo", kind), field("Executa como (robô)", runAs), field("Escopo", scopes),
+      field("Origens permitidas (sites)", origins), field("Endereços permitidos", ips),
+      field("Chamadas por minuto", rate), field("Cota diária", quota),
+      check("Exigir requisições assinadas (HMAC)", sign),
+      el("div", { class: "row-buttons" }, el("button", { type: "submit", text: "Criar cliente" })), out);
+    form.addEventListener("submit", (e) => { e.preventDefault(); guard(async () => {
+      const r = await API.admin.createApiClient({
+        name: name.value.trim(), kind: kind.value, run_as: runAs.value, scopes: lines(scopes.value), origins: lines(origins.value),
+        ip_allow: lines(ips.value), rate_per_minute: parseInt(rate.value, 10) || 600,
+        daily_quota: quota.value ? parseInt(quota.value, 10) : null, require_signature: sign.checked,
+      });
+      out.replaceChildren(el("p", {}, "Cliente criado: ", el("code", { text: r.client_id })),
+        r.client_secret ? shownOnce("Segredo do cliente", r.client_secret, "POST /oauth/token com grant_type=client_credentials (Basic client_id:segredo)") : null,
+        r.publishable_key ? shownOnce("Chave publicável", r.publishable_key, "Cabeçalho X-Api-Key; só programas marcados como públicos, só das origens cadastradas") : null);
+      form.querySelector("button[type=submit]").disabled = true;
+    }); });
+    main().replaceChildren(...head, tabs, form);
+  }
+
+  // RNF-010-10: a client suspended by its circuit breaker says until when.
+  const apiClientState = (c) => !c.active ? pill("desativado", "off")
+    : c.suspended_until ? pill(`▲ suspenso até ${fmtDate(c.suspended_until)}`, "warn") : pill("ativo", "ok");
+
+  async function apiClientDetail(head, tabs, id) {
+    const c = (await API.admin.apiClients()).find((x) => x.client_id === id);
+    if (!c) return publicapi();
+    const out = el("div");
+    const scopes = el("textarea", { rows: 3 }); scopes.value = c.scopes.join("\n");
+    const origins = el("textarea", { rows: 2 }); origins.value = c.origins.join("\n");
+    const ips = el("input", { type: "text", value: c.ip_allow.join(", ") });
+    const rate = el("input", { type: "number", min: 1, value: c.rate_per_minute });
+    const quota = el("input", { type: "number", min: 1, value: c.daily_quota ?? "" });
+    const sign = el("input", { type: "checkbox" }); sign.checked = c.require_signature;
+    const save = el("button", { type: "button", text: "Salvar", onclick: () => guard(async () => {
+      await API.admin.updateApiClient(id, { scopes: lines(scopes.value), origins: lines(origins.value), ip_allow: lines(ips.value),
+        rate_per_minute: parseInt(rate.value, 10), daily_quota: quota.value ? parseInt(quota.value, 10) : null, require_signature: sign.checked });
+      toast("Cliente atualizado (vale em todos os nós em até 5 s).");
+    }) });
+    const toggle = el("button", { type: "button", class: c.active ? "danger" : "", text: c.active ? "Desativar" : "Reativar", onclick: () => guard(async () => {
+      if (c.active && !confirm(`Desativar "${c.name}"? As chamadas param em até 5 s, mesmo com token válido.`)) return;
+      await API.admin.updateApiClient(id, { active: !c.active }); publicapi("clients", id);
+    }) });
+    const secrets = c.kind === "confidential" ? el("div", { class: "row-buttons" },
+      el("button", { type: "button", class: "quiet", text: "Gerar novo segredo", onclick: () => guard(async () => {
+        const r = await API.admin.rotateApiSecret(id);
+        out.replaceChildren(shownOnce("Novo segredo", r.client_secret, "O anterior continua valendo até você removê-lo: troque no sistema cliente e depois remova."));
+      }) }),
+      c.secrets > 1 ? el("button", { type: "button", class: "quiet", text: "Remover segredo anterior", onclick: () => guard(async () => {
+        if (!confirm("Remover o segredo anterior? Quem ainda o usa deixa de obter tokens.")) return;
+        await API.admin.dropOldApiSecret(id); toast("Segredo anterior removido."); publicapi("clients", id);
+      }) }) : null) : null;
+    const signing = el("button", { type: "button", class: "quiet", text: c.signing ? "Trocar chave de assinatura HMAC" : "Gerar chave de assinatura HMAC",
+      onclick: () => guard(async () => {
+        const r = await API.admin.apiSigningSecret(id);
+        out.replaceChildren(shownOnce("Chave HMAC", r.signing_secret, "Cabeçalhos X-Ana-Timestamp, X-Ana-Nonce e X-Ana-Signature = HMAC-SHA256(método\\ncaminho\\ntimestamp\\nnonce\\nsha256(corpo))"));
+      }) });
+    main().replaceChildren(...head, tabs,
+      el("div", { class: "form-card" },
+        el("h3", { text: c.name }),
+        el("p", {}, el("code", { text: c.client_id }), ` · ${API_KINDS[c.kind] || c.kind} · executa como ${c.run_as} · criado por ${c.created_by} em ${fmtDate(c.created_at)}`),
+        el("p", {}, apiClientState(c), ` ${c.today} chamada(s) hoje`,
+          Number(c.breaker_openings) ? ` · disjuntor abriu ${c.breaker_openings} vez(es) em 7 dias` : ""),
+        c.suspended_until ? el("div", { class: "row-buttons" },
+          el("p", { class: "muted", text: "Suspenso pelo disjuntor: falhas técnicas demais (erro interno, tempo esgotado) nas chamadas deste cliente. Corrija a causa (veja as chamadas) e libere, ou aguarde o fim do prazo." }),
+          el("button", { type: "button", text: "Liberar agora", onclick: () => guard(async () => {
+            await API.admin.releaseApiBreaker(id); toast("Cliente liberado (vale em todos os nós em até 5 s)."); publicapi("clients", id);
+          }) })) : null,
+        field("Escopo", scopes), field("Origens permitidas", origins), field("Endereços permitidos", ips),
+        field("Chamadas por minuto", rate), field("Cota diária", quota), check("Exigir requisições assinadas (HMAC)", sign),
+        el("div", { class: "row-buttons" }, save, toggle,
+          el("button", { type: "button", class: "quiet", text: "Ver chamadas", onclick: () => guard(() => publicapi("calls", id)) })),
+        secrets, el("div", { class: "row-buttons" }, signing), out));
+  }
+
+  async function apiCallsView(head, tabs, client) {
+    const rows = await API.admin.apiCalls(client || "");
+    main().replaceChildren(...head, tabs,
+      client ? el("p", {}, "Cliente ", el("code", { text: client }), " ",
+        el("button", { type: "button", class: "quiet small", text: "Todos", onclick: () => guard(() => publicapi("calls")) })) : null,
+      table([
+        { label: "Quando", value: (r) => fmtDate(r.at) },
+        { label: "Cliente", value: (r) => r.client_id || "—" },
+        { label: "Autenticação", value: (r) => r.auth },
+        { label: "Programa", value: (r) => r.program || "—" },
+        { label: "Situação", value: (r) => pill(String(r.status), r.status < 300 ? "ok" : r.status === 429 ? "warn" : "off") },
+        { label: "ms", value: (r) => r.duration_ms == null ? "" : String(r.duration_ms), class: "num" },
+        { label: "Origem", value: (r) => r.ip || "" },
+      ], rows, { empty: "Nenhuma chamada registrada." }));
+  }
+
   async function scheduler() {
     const jobs = el("div"), hol = el("div"), notes = el("div");
     main().replaceChildren(
@@ -1093,7 +2220,332 @@
                        window.AnaScheduler.holidays(hol)]);
   }
 
-  const SECTIONS = { users, groups, settings, company, commands, remote, accounts, limits, consumption, scheduler, monitor, audit, retention, health, sqlperf, advice, updates, integrations };
+  // ------------------------------------------------------------------ company values (spec 065)
+  const VALUE_TYPES = { text: "texto", integer: "número inteiro", decimal: "decimal", date: "data", boolean: "sim/não",
+                        month: "mês", reference: "cadastro" };
+  const VALUE_SHAPES = { single: "simples", list: "lista", selection: "seleção" };
+  const VALUE_STATUS = { pending: ["aguarda aprovação", "warn"], active: ["em uso", "ok"], refused: ["recusada", "off"],
+                         withdrawn: ["retirada", "off"], replaced: ["substituída", ""] };
+  const VALUE_ACTIONS = { defined: "criou", redefined: "mudou a definição", requested: "pediu mudança", activated: "mudou",
+                          approved: "aprovou", refused: "recusou", withdrawn: "retirou", archived: "arquivou", restored: "restaurou",
+                          kept: "mudou pela rotina", transported: "veio num transporte" };
+  const INSTANCES = { development: "desenvolvimento", test: "teste", production: "produção" };
+  let valuesMeta = null, valuesState = { q: "", area: "", archived: false, open: null };
+
+  const brDate = (s) => (s && /^\d{4}-\d{2}-\d{2}$/.test(s) ? s.slice(8, 10) + "/" + s.slice(5, 7) + "/" + s.slice(0, 4) : s);
+  function valueText(v, type, labels) {
+    if (v === null || v === undefined) return "—";
+    const one = (x) => {
+      if (x === null || x === undefined) return "—";
+      if (type === "boolean") return x ? "sim" : "não";
+      if (type === "decimal") return String(x).replace(".", ",");
+      if (type === "date") return brDate(String(x));
+      if (type === "month" && /^\d{4}-\d{2}$/.test(x)) return x.slice(5) + "/" + x.slice(0, 4);
+      if (type === "reference" && labels && labels[String(x)]) return `${x} — ${labels[String(x)]}`;
+      return String(x);
+    };
+    if (Array.isArray(v)) return v.length ? v.map(one).join(", ") : "(lista vazia)";
+    if (typeof v === "object") {
+      const parts = [];
+      if ((v.include || []).length) parts.push(v.include.map(one).join(", "));
+      for (const [a, b] of v.ranges || []) parts.push(`de ${one(a)} a ${one(b)}`);
+      for (const p of v.prefixes || []) parts.push(`começa com ${p}`);
+      if (!parts.length) parts.push("todos");
+      if ((v.exclude || []).length) parts.push("exceto " + v.exclude.map(one).join(", "));
+      return parts.join("; ");
+    }
+    return one(v);
+  }
+  const exprLabel = (e) => {
+    if (!e) return "";
+    const m = /^([a-z_]+)([+-]\d+)?$/.exec(e);
+    const x = valuesMeta && valuesMeta.expressions.find((t) => t.token === (m ? m[1] : e));
+    if (!x) return e;
+    const unit = { day: "dia(s)", month: "mês(es)" }[x.offset_unit] || "";
+    return x.label.replace(/ \(± N .*\)$/, "") + (m && m[2] ? ` ${m[2][0]} ${m[2].slice(1)} ${unit}` : "");
+  };
+  function currentText(c, d) {
+    if (!c) return el("span", { class: "muted", text: "sem valor em vigor" });
+    return el("span", {}, el("strong", { text: valueText(c.value, d.value_type) }),
+      c.expression ? el("span", { class: "muted small", text: ` (${exprLabel(c.expression)})` }) : null);
+  }
+
+  async function values() {
+    if (!valuesMeta) valuesMeta = await API.values.meta();
+    const st = valuesState;
+    const r = await API.values.list({ q: st.q || undefined, area: st.area || undefined, archived: st.archived ? "1" : undefined });
+    if (current !== "values") return;
+    const side = el("div", { class: "value-side" });
+    const search = el("input", { type: "search", value: st.q, placeholder: "Buscar por nome ou descrição…", "aria-label": "Buscar valores" });
+    search.addEventListener("keydown", (e) => { if (e.key === "Enter") { st.q = search.value.trim(); values(); } });
+    const area = el("select", { "aria-label": "Área", onchange: () => { st.area = area.value; values(); } },
+      el("option", { value: "", text: "Todas as áreas" }), r.areas.map((a) => el("option", { value: a, text: a })));
+    area.value = st.area;
+    const arch = el("input", { type: "checkbox", onchange: () => { st.archived = arch.checked; values(); } });
+    arch.checked = st.archived;
+    const open = (n) => { st.open = n; valueDetail(n, side); };
+    const groups = {};
+    for (const v of r.values) (groups[v.area] = groups[v.area] || []).push(v);
+    const lists = Object.keys(groups).sort().map((a) => el("section", { class: "value-area" },
+      el("h3", { text: a }),
+      table([
+        { label: "Valor", value: (v) => el("span", {}, el("code", { text: v.name }), el("div", { class: "muted small", text: v.description })) },
+        { label: "Hoje", value: (v) => currentText(v.current, v) },
+        { label: "Próxima vigência", value: (v) => v.next ? `${brDate(v.next.valid_from)}: ${valueText(v.next.value, v.value_type)}${v.next.expression ? " (" + exprLabel(v.next.expression) + ")" : ""}` : "—" },
+        { label: "", value: (v) => el("span", {}, v.sensitive ? pill("sensível", "warn") : null,
+                                       v.pending ? pill(`${v.pending} aguardando aprovação`, "warn") : null,
+                                       v.archived ? pill("arquivado", "off") : null,
+                                       v.unused ? pill("sem uso há 180 dias: arquivar?", "warn") : null) },
+      ], groups[a], { onRow: (v) => open(v.name) })));
+    main().replaceChildren(
+      ...header("Valores da empresa", "Valores de negócio com nome — período aberto, margem mínima, depósito principal, centros de custo de P&D — que as rotinas leem pelo nome (ana.value no Python, base.company_value no SQL). Mude aqui, com vigência, sem tocar em código."),
+      el("div", { class: "admin-toolbar" }, search, area,
+        el("button", { text: "Buscar", onclick: () => { st.q = search.value.trim(); values(); } }),
+        el("label", { class: "check" }, arch, "Mostrar arquivados"),
+        el("button", { class: "primary", text: "+ Novo valor", onclick: () => { st.open = null; side.replaceChildren(valueDefineForm(null)); } })),
+      el("div", { class: "admin-columns" },
+        el("div", {}, lists.length ? lists : el("p", { class: "empty-state muted" },
+          el("span", { text: st.q || st.area ? "Nenhum valor com esse filtro. " : "Nenhum valor cadastrado. " }),
+          el("button", { type: "button", class: "small", text: st.q || st.area ? "Limpar filtro" : "+ Novo valor",
+            onclick: () => { if (st.q || st.area) { st.q = ""; st.area = ""; values(); } else side.replaceChildren(valueDefineForm(null)); } }))),
+        side));
+    if (st.open) valueDetail(st.open, side);
+    else side.replaceChildren(el("p", { class: "muted", text: `Hoje é ${brDate(r.today)}; esta instância é de ${INSTANCES[r.instance] || r.instance}. Escolha um valor para ver a linha do tempo, mudar ou aprovar.` }));
+  }
+
+  // Live (spec 062): a value changed in another session or node — read again, keeping what is open.
+  let valuesTimer = null;
+  document.addEventListener("ana:values", () => {
+    clearTimeout(valuesTimer);
+    valuesTimer = setTimeout(() => {
+      const area = document.querySelector("#area-admin");
+      const editing = document.activeElement && document.activeElement.closest && document.activeElement.closest(".value-side form");
+      if (current === "values" && area && !area.hidden && !editing) guard(values);
+    }, 400);
+  });
+
+  async function valueDetail(name, side) {
+    const d = await API.values.get(name);
+    const def = d.definition;
+    const actions = (v) => {
+      const out = [];
+      const act = (label, action, cls, ask) => el("button", { type: "button", class: "small " + (cls || ""), text: label, onclick: () => guard(async () => {
+        let note = null;
+        if (ask) { note = prompt(ask, ""); if (note === null) return; }
+        await API.values.act(name, v.id, action, note);
+        toast({ approve: "Mudança aprovada.", refuse: "Mudança recusada.", withdraw: "Versão retirada." }[action]);
+        await values();
+      }) });
+      if (v.status === "pending" && d.can_edit && v.requested_by !== d.me) out.push(act("Aprovar", "approve", "primary"), act("Recusar", "refuse", "danger", "Motivo da recusa (opcional):"));
+      if (v.status === "pending" && v.requested_by === d.me) out.push(el("span", { class: "muted small", text: "aguarda outra pessoa " }));
+      if ((v.status === "pending" && (v.requested_by === d.me || d.can_edit)) || (v.status === "active" && v.valid_from > valuesMeta.today && d.can_edit))
+        out.push(act("Retirar", "withdraw", "quiet"));
+      return el("span", { class: "row-buttons" }, out);
+    };
+    const where = (v) => [v.instance ? INSTANCES[v.instance] : null, v.company || null].filter(Boolean).join(" · ") || "todas";
+    const now = d.current || {};
+    side.replaceChildren(
+      el("h3", {}, el("code", { text: def.name })),
+      el("p", { text: def.description }),
+      el("p", {}, pill(VALUE_TYPES[def.value_type] || def.value_type), " ", pill(VALUE_SHAPES[def.shape] || def.shape),
+        def.ref_kind ? pill((valuesMeta.reference_kinds.find((k) => k.kind === def.ref_kind) || {}).label || def.ref_kind) : null,
+        def.sensitive ? pill("sensível: quatro olhos", "warn") : null, def.archived ? pill("arquivado", "off") : null),
+      el("div", { class: "value-now" },
+        el("div", { class: "muted small", text: "Em vigor hoje" }),
+        now.error ? el("span", { class: "error", text: now.error })
+          : el("div", { class: "value-big", text: valueText(now.value, def.value_type, (d.versions.find((v) => v.id === now.version) || {}).labels) }),
+        now.expression ? el("div", { class: "muted small", text: `${exprLabel(now.expression)}, desde ${brDate(now.valid_from)}` })
+          : now.valid_from ? el("div", { class: "muted small", text: `desde ${brDate(now.valid_from)}` }) : null),
+      valuePreviewAt(name, def),
+      el("h4", { text: "Linha do tempo" }),
+      table([
+        { label: "Vigência", value: (v) => brDate(v.valid_from) },
+        { label: "Onde", value: (v) => where(v) },
+        { label: "Valor", value: (v) => v.expression ? exprLabel(v.expression) : valueText(v.content, def.value_type, v.labels) },
+        { label: "Situação", value: (v) => pill(...(VALUE_STATUS[v.status] || [v.status])) },
+        { label: "Quem", value: (v) => el("span", { class: "small" }, v.requested_by, v.decided_by ? ` → ${v.decided_by}` : "",
+                                          v.reason ? el("div", { class: "muted", text: v.reason }) : null) },
+        { label: "", value: actions },
+      ], d.versions, { empty: "Nenhuma versão ainda: informe o primeiro valor abaixo." }),
+      valueUsage(d.usage, def),
+      d.can_edit && !def.archived ? valueVersionForm(def, d) : null,
+      d.can_edit ? el("details", { class: "value-def" }, el("summary", { text: "Definição" }), valueDefineForm(def, d.usage)) : null,
+      !d.changes.length ? null : el("details", { class: "value-history" }, el("summary", { text: `Histórico (${d.changes.length})` }),
+        table([
+          { label: "Quando", value: (c) => fmtDate(c.at) },
+          { label: "Quem", value: (c) => c.program ? `${c.program} (para ${c.username})` : c.username },
+          { label: "O quê", value: (c) => VALUE_ACTIONS[c.action] || c.action },
+          { label: "Antes → depois", value: (c) => el("span", { class: "small" }, change(c.before), " → ", change(c.after)) },
+          { label: "Motivo", value: (c) => c.reason || "" },
+        ], d.changes)));
+    function change(x) {
+      if (!x) return "—";
+      if (x.expression) return exprLabel(x.expression) + (x.from ? ` desde ${brDate(x.from)}` : "");
+      if ("content" in x) return valueText(x.content, def.value_type) + (x.from ? ` desde ${brDate(x.from)}` : "");
+      if (x.status) return (VALUE_STATUS[x.status] || [x.status])[0];
+      return Object.keys(x).filter((k) => k !== "name").map((k) => `${k}: ${x[k]}`).join(", ");
+    }
+  }
+
+  // D8: who reads or keeps the value — shown before changing or archiving it.
+  function usageCount(u) {
+    if (!u) return 0;
+    return ["programs", "libraries", "variants", "schedules", "alert_rules", "processes", "flows", "tax_rules"]
+      .reduce((n, k) => n + (u[k] || []).length, 0);
+  }
+  function valueUsage(u, def) {
+    if (!u) return null;
+    const items = [];
+    const add = (label, list, text, href) => { if ((list || []).length) items.push(el("li", {}, el("strong", { text: label + ": " }),
+      ...list.map((x, i) => [i ? ", " : "", href ? el("a", { href: href(x), text: text(x) }) : text(x)]).flat())); };
+    add("Mantido pelas rotinas", (u.maintained_by || []).map((p) => ({ p })), (x) => x.p, (x) => `#/dev/program/${x.p}`);
+    add("Programas", u.programs, (x) => `${x.name} (linha ${x.line})${x.keeps ? " — mantém" : ""}`, (x) => `#/dev/program/${x.name}`);
+    add("Bibliotecas", u.libraries, (x) => `${x.name} (linha ${x.line})`, (x) => `#/dev/program/${x.name}`);
+    add("Variantes", u.variants, (x) => `${x.program} · ${x.name}${x.company ? " (empresa)" : ""}`);
+    add("Agendamentos", u.schedules, (x) => `${x.name} (${x.program})`);
+    add("Regras de alerta", u.alert_rules, (x) => x.name, () => "#/admin/alerts");
+    add("Processos", u.processes, (x) => x.name);
+    add("Esteiras", u.flows, (x) => x.name);
+    add("Regras de imposto", u.tax_rules, (x) => x.name);
+    const reads = u.reads && Number(u.reads.n) ? `${u.reads.n} execução(ões) leram nos últimos 180 dias; a última em ${fmtDate(u.reads.last)}.`
+                                               : "Nenhuma execução leu este valor nos últimos 180 dias.";
+    return el("details", { class: "value-usage", open: true }, el("summary", { text: `Onde é usado (${usageCount(u)})` }),
+      items.length ? el("ul", {}, items) : el("p", { class: "muted", text: "Nenhum programa, variante, agendamento ou regra cita este valor pelo nome." }),
+      el("p", { class: "muted small", text: reads }));
+  }
+
+  function valuePreviewAt(name, def) {
+    const at = el("input", { type: "date", "aria-label": "Data de referência" });
+    const out = el("span", { class: "muted", "aria-live": "polite" });
+    return el("div", { class: "row-buttons value-preview" }, el("span", { class: "small", text: "Valor em outra data:" }), at,
+      el("button", { type: "button", class: "small", text: "Ver", onclick: () => guard(async () => {
+        if (!at.value) { at.focus(); return; }
+        const r = await API.values.preview({ name, at: at.value });
+        out.textContent = `${brDate(at.value)}: ${valueText(r.value, def.value_type)}${r.expression ? " (" + exprLabel(r.expression) + ")" : ""}`;
+      }) }), out);
+  }
+
+  // The input for the content, by type and form (D1).
+  function valueInput(def) {
+    const t = def.value_type;
+    const single = () => {
+      if (t === "boolean") { const c = el("input", { type: "checkbox" }); return { node: el("label", { class: "check" }, c, "sim"), read: () => c.checked }; }
+      const i = el("input", { "aria-label": "Valor", type: { date: "date", month: "month", integer: "number", decimal: "text" }[t] || "text",
+        inputmode: t === "decimal" ? "decimal" : undefined, placeholder: t === "reference" ? "código do cadastro" : t === "decimal" ? "ex.: 18,5" : "" });
+      return { node: i, read: () => (t === "integer" ? (i.value === "" ? null : Number(i.value)) : i.value.trim()) };
+    };
+    const items = (s) => s.split(/[\n,;]/).map((x) => x.trim()).filter(Boolean).map((x) => (t === "integer" ? Number(x) : x));
+    if (def.shape === "list") {
+      const a = el("textarea", { rows: 4, placeholder: "um por linha", "aria-label": "Itens da lista" });
+      return { node: a, read: () => items(a.value) };
+    }
+    if (def.shape === "selection") {
+      const inc = el("input", { placeholder: "ex.: 4100, 4200" }), rng = el("textarea", { rows: 2, placeholder: "uma faixa por linha, ex.: 4000 a 4999" });
+      const pre = el("input", { placeholder: "ex.: 3.1" }), exc = el("input", { placeholder: "ex.: 4500" });
+      return { node: el("div", { class: "value-selection" }, field("Incluir", inc), field("Faixas", rng),
+                        t === "integer" ? null : field("Começa com", pre), field("Exceto", exc)),
+               read: () => ({ include: items(inc.value), exclude: items(exc.value), prefixes: t === "integer" ? [] : items(pre.value),
+                              ranges: rng.value.split("\n").map((l) => l.split(/\s+a\s+|\s*-\s*|\s*\.\.\s*/).map((x) => x.trim()))
+                                .filter((p) => p.length === 2 && p[0] && p[1]).map((p) => (t === "integer" ? p.map(Number) : p)) }) };
+    }
+    return single();
+  }
+
+  function valueVersionForm(def, d) {
+    const input = valueInput(def);
+    const exprs = valuesMeta.expressions.filter((x) => ({ date: ["date"], month: ["month"], text: ["text", "datetime", "cost_center"],
+      reference: def.ref_kind === "cost_center" ? ["cost_center"] : [] }[def.value_type] || []).includes(x.result_type));
+    const mode = el("select", { "aria-label": "Forma do valor" }, el("option", { value: "fixed", text: "Valor fixo" }),
+      def.shape === "single" && exprs.length ? el("option", { value: "expr", text: "Calculado (expressão)" }) : null);
+    const expr = el("select", { "aria-label": "Expressão" }, exprs.map((x) => el("option", { value: x.token, text: x.label })));
+    const offset = el("input", { type: "number", value: "0", step: "1", "aria-label": "Deslocamento", class: "narrow" });
+    const exprBox = el("div", { class: "row-buttons", hidden: true }, expr, offset);
+    const preview = el("span", { class: "muted small", "aria-live": "polite" });
+    const exprValue = () => expr.value + (Number(offset.value) ? (Number(offset.value) > 0 ? "+" : "") + Number(offset.value) : "");
+    const syncOffset = () => { const x = exprs.find((e) => e.token === expr.value); offset.hidden = !(x && x.offset_unit); if (offset.hidden) offset.value = "0"; };
+    expr.addEventListener("change", syncOffset); syncOffset();
+    mode.addEventListener("change", () => { exprBox.hidden = mode.value !== "expr"; input.node.hidden = mode.value === "expr"; });
+    const from = el("input", { type: "date", value: valuesMeta.today, "aria-label": "Vigência a partir de" });
+    const inst = el("select", { "aria-label": "Instância" }, el("option", { value: "", text: "todas as instâncias" }),
+      Object.entries(INSTANCES).map(([k, l]) => el("option", { value: k, text: "só em " + l })));
+    const co = el("select", { "aria-label": "Empresa" }, el("option", { value: "", text: "todas as empresas" }),
+      valuesMeta.companies.map((c) => el("option", { value: c.id, text: c.legal_name })));
+    const reason = el("textarea", { rows: 2, placeholder: def.reason_required ? "obrigatório" : "opcional" });
+    return el("form", { class: "form-card", onsubmit: (e) => { e.preventDefault(); guard(async () => {
+      const body = { valid_from: from.value || null, instance: inst.value || null, company_id: co.value ? Number(co.value) : null,
+                     reason: reason.value.trim() || null };
+      if (mode.value === "expr") body.expression = exprValue(); else body.content = input.read();
+      const r = await API.values.propose(def.name, body);
+      toast(r.status === "pending" ? "Pedido registrado: aguarda a aprovação de outra pessoa." : "Valor mudado.");
+      await values();
+    }); } },
+      el("h4", { text: "Mudar o valor" }),
+      def.sensitive ? el("p", { class: "muted small", text: "Valor sensível: a mudança fica pendente até outra pessoa com permissão aprovar." }) : null,
+      field("Valor", el("div", {}, mode, input.node, exprBox,
+        el("button", { type: "button", class: "small quiet", text: "Prévia", onclick: () => guard(async () => {
+          if (mode.value !== "expr") { preview.textContent = valueText(input.read(), def.value_type); return; }
+          const r = await API.values.preview({ expression: exprValue() });
+          preview.textContent = "hoje: " + valueText(r.value, def.value_type);
+        }) }), preview)),
+      field("A partir de", from), field("Onde", el("div", { class: "row-buttons" }, inst, co)),
+      field("Motivo", reason),
+      el("div", { class: "row-buttons" }, el("button", { class: "primary", type: "submit", text: def.sensitive ? "Pedir aprovação" : "Salvar" })));
+  }
+
+  function valueDefineForm(def, usage) {
+    const isNew = !def;
+    const name = el("input", { value: def ? def.name : "", disabled: !isNew, placeholder: "ex.: financeiro.margem_minima" });
+    const description = el("input", { value: def ? def.description : "" });
+    const area = el("input", { value: def ? def.area : "", placeholder: "vazio = a primeira parte do nome" });
+    const type = el("select", {}, Object.entries(VALUE_TYPES).map(([k, l]) => el("option", { value: k, text: l })));
+    const shape = el("select", {}, Object.entries(VALUE_SHAPES).map(([k, l]) => el("option", { value: k, text: l })));
+    const ref = el("select", {}, valuesMeta.reference_kinds.map((k) => el("option", { value: k.kind, text: k.label })));
+    type.value = def ? def.value_type : "text"; shape.value = def ? def.shape : "single"; if (def && def.ref_kind) ref.value = def.ref_kind;
+    const refField = field("Cadastro", ref);
+    const sync = () => { refField.hidden = type.value !== "reference"; };
+    type.addEventListener("change", sync); sync();
+    const box = (label, on) => { const c = el("input", { type: "checkbox" }); c.checked = !!on; return [c, check(label, c)]; };
+    const [sens, sensL] = box("Sensível: mudança só com aprovação de outra pessoa", def && def.sensitive);
+    const [reas, reasL] = box("Exige motivo em cada mudança", def && def.reason_required);
+    const [same, sameL] = box("Igual em todos os ambientes (o conteúdo viaja nos transportes)", def && def.same_everywhere);
+    const keepers = el("input", { value: def ? (def.maintained_by || []).join(", ") : "", placeholder: "ex.: finance.close_period (separe por vírgula)",
+                                  "aria-label": "Rotinas que mantêm o valor" });
+    const body = () => ({ description: description.value.trim(), area: area.value.trim() || null, value_type: type.value, shape: shape.value,
+                          ref_kind: type.value === "reference" ? ref.value : null, sensitive: sens.checked, reason_required: reas.checked,
+                          same_everywhere: same.checked,
+                          maintained_by: keepers.value.split(",").map((s) => s.trim()).filter(Boolean) });
+    return el("form", { class: "form-card", onsubmit: (e) => { e.preventDefault(); guard(async () => {
+      if (isNew) {
+        const n = name.value.trim();
+        await API.values.define({ name: n, ...body() });
+        toast("Valor criado: informe agora o conteúdo.");
+        valuesState.open = n;
+      } else {
+        const b = body(); if (!b.area) b.area = def.area;
+        await API.values.redefine(def.name, b);
+        toast("Definição salva.");
+      }
+      await values();
+    }); } },
+      el("h4", { text: isNew ? "Novo valor da empresa" : "Definição" }),
+      field("Nome", name), field("Descrição", description), field("Área responsável", area),
+      el("div", { class: "row-buttons" }, field("Tipo", type), field("Forma", shape), refField),
+      sensL, reasL, sameL,
+      field("Mantido pelas rotinas (ana.set_value)", keepers),
+      isNew ? el("p", { class: "muted small", text: "Senhas, tokens e chaves não são valores da empresa: vão para o cofre dos conectores." }) : null,
+      el("div", { class: "row-buttons" }, el("button", { class: "primary", type: "submit", text: isNew ? "Criar" : "Salvar definição" }),
+        isNew ? null : el("button", { type: "button", class: def.archived ? "" : "danger", text: def.archived ? "Restaurar" : "Arquivar",
+          onclick: () => guard(async () => {
+            const n = usageCount(usage);
+            if (!def.archived && !confirm(`Arquivar ${def.name}? ${n ? `${n} uso(s) listado(s) em "Onde é usado" deixam de funcionar — ` : ""}`
+                                          + `as rotinas que o lerem passam a receber "valor arquivado". O histórico fica.`)) return;
+            await API.values.redefine(def.name, { archived: !def.archived });
+            toast(def.archived ? "Valor restaurado." : "Valor arquivado.");
+            await values();
+          }) })));
+  }
+
+  const SECTIONS = { users, groups, settings, company, values, commands, remote, accounts, limits, consumption, scheduler, monitor, audit, retention, health, alerts, core, disk, uiperf, sqlperf, advice, updates, integrations, checks, transports, datacopy, publicapi, license, extensions, telemetry };
 
   function show(section) {
     refreshUpdatesCount();
@@ -1102,7 +2554,7 @@
     current = section;
     for (const b of $$("#area-admin .nav-link")) b.classList.toggle("active", b.dataset.section === section);
     main().replaceChildren(el("p", { class: "muted", text: "Carregando…" }));
-    guard(() => SECTIONS[section]());
+    return guard(() => SECTIONS[section]());
   }
 
   function wire() {

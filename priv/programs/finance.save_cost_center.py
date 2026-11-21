@@ -1,6 +1,7 @@
 # ana:description Cadastra ou altera centro de custo (hierarquia, tipo, responsável)
 # ana:exposed yes
 # ana:role admin
+# ana:category Contabilidade/Custos e orçamento
 """RF-027-01. Admin only. A center with lines posted can be deactivated, never removed."""
 
 PARAMS = {

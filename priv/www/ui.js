@@ -1,3 +1,5 @@
+// SPDX-FileCopyrightText: 2026 André Luis Pereira dos Santos
+// SPDX-License-Identifier: AGPL-3.0-or-later
 // Shared UI helpers. All server content goes through textContent (RNF-005-02).
 "use strict";
 (function () {
@@ -27,7 +29,9 @@
     return isNaN(d) ? String(s) : d.toLocaleString("pt-BR");
   }
 
+  // Spec 050 (T-050-04): what happened and what to do; the technical code only for developers.
   function errorText(e) {
+    if (window.AnaErrors && e && (e instanceof window.AnaApiError || e.code)) return window.AnaErrors.text(e);
     if (e instanceof window.AnaApiError) return `${e.code || e.status}: ${e.message}`;
     return String((e && e.message) || e);
   }
@@ -42,8 +46,14 @@
     toastTimer = setTimeout(() => { t.hidden = true; }, isError ? 7000 : 3500);
   }
 
-  // Generic table: columns = [{label, value: row => text|Node, class}]
+  // Generic table: columns = [{label, value: row => text|Node, class}]. With `options.screen` it is the work
+  // table (RF-020-17: search, filters, columns, variants per user; `title`, `bulk` as in AnaTable.create).
   function table(columns, rows, options = {}) {
+    if (options.screen && window.AnaTable) {
+      return window.AnaTable.create({ title: options.title, screen: options.screen, rows, empty: options.empty,
+        emptyAction: options.emptyAction, onRow: options.onRow, bulk: options.bulk,
+        columns: columns.map((c, i) => ({ key: c.key || c.label || "#" + i, label: c.label, value: c.value, class: c.class })) });
+    }
     const t = el("table", { class: "grid-table" });
     t.append(el("thead", {}, el("tr", {}, columns.map((c) => el("th", { class: c.class || "", text: c.label })))));
     const tb = el("tbody");
@@ -56,63 +66,77 @@
       }
       tb.append(tr);
     }
-    if (!rows.length) tb.append(el("tr", {}, el("td", { colspan: columns.length, class: "muted", text: options.empty || "Nada para mostrar." })));
+    if (!rows.length) tb.append(el("tr", {}, emptyCell(columns.length, options.empty, options.emptyAction)));
     t.append(tb);
     return t;
   }
 
-  const cellText = (v) => (v === null || v === undefined ? "" : typeof v === "object" ? JSON.stringify(v) : String(v));
-  const NUMERIC = /^-?[\d.]+(,\d+)?$|^-?\d+(\.\d+)?$/;
-
-  /** Program output table: sortable columns, numbers to the right, CSV export,
-   *  resizable box. `extra(i)` may return a node for an extra last cell. */
-  function dataTable(columns, rows, title, extra) {
-    const t = el("table", { class: "data-table" });
-    const tb = el("tbody");
-    let order = rows.map((_, i) => i);
-    let sortCol = -1, asc = true;
-    const draw = () => {
-      tb.replaceChildren(...order.map((i) => el("tr", {},
-        rows[i].map((v) => { const s = cellText(v); return el("td", { class: NUMERIC.test(s) ? "num" : "", text: v === null ? "—" : s }); }),
-        extra ? el("td", { class: "cell-actions" }, extra(i)) : null)));
-      if (!rows.length) tb.append(el("tr", {}, el("td", { colspan: columns.length + (extra ? 1 : 0), class: "muted", text: "Nada para mostrar." })));
-    };
-    const key = (v) => { const s = cellText(v); const n = Number(s.replace(/\./g, "").replace(",", ".")); return NUMERIC.test(s) && !isNaN(n) ? n : s.toLowerCase(); };
-    const head = el("tr", {}, columns.map((c, ci) => el("th", { class: "sortable", text: c, title: "Ordenar", onclick: () => {
-      asc = sortCol === ci ? !asc : true;
-      sortCol = ci;
-      order = rows.map((_, i) => i).sort((a, b) => { const x = key(rows[a][ci]), y = key(rows[b][ci]); return (x < y ? -1 : x > y ? 1 : 0) * (asc ? 1 : -1); });
-      for (const th of head.children) th.classList.remove("asc", "desc");
-      head.children[ci].classList.add(asc ? "asc" : "desc");
-      draw();
-    } })), extra ? el("th", { text: "" }) : null);
-    t.append(el("thead", {}, head), tb);
-    draw();
-    const csv = () => {
-      const q = (s) => /[";\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
-      const text = [columns, ...order.map((i) => rows[i])].map((r) => r.map((v) => q(cellText(v))).join(";")).join("\n");
-      const a = el("a", { href: "data:text/csv;charset=utf-8," + encodeURIComponent("\ufeff" + text),
-                          download: (title || "dados").replace(/[^\w\- ]+/g, "").trim().replace(/\s+/g, "_") + ".csv" });
-      document.body.append(a); a.click(); a.remove();
-    };
-    const exportBtn = el("button", { type: "button", class: "quiet small icon-text", title: "Exportar para planilha (CSV)", onclick: csv },
-      icon("download", 16), el("span", { text: "CSV" }));
-    return el("div", { class: "table-box" },
-      el("div", { class: "table-head" },
-        el("strong", { class: "table-title", text: title || "Itens" }),
-        el("span", { class: "table-count", text: `(${rows.length})` }),
-        el("span", { class: "muted", text: `${rows.length} linha(s)` }),
-        el("div", { class: "table-tools" }, exportBtn)),
-      el("div", { class: "resizable" }, t));
+  /** Spec 050 (D3, P18): an empty list says why and offers the action that fills it
+   *  (emptyAction: {label, onClick} or {label, href}). */
+  function emptyCell(span, text, action) {
+    const btn = !action ? null : action.href
+      ? el("a", { href: action.href, class: "button small", text: action.label })
+      : el("button", { type: "button", class: "small", text: action.label, onclick: action.onClick });
+    return el("td", { colspan: span, class: "muted empty-state" }, el("span", { text: (text || "Nada para mostrar.") + (btn ? " " : "") }), btn);
   }
 
-  /** Draggable divider: sets a CSS variable (px) on `host`; remembered per viewer. */
-  function splitter(host, cssVar, { min = 160, max = 900, key, initial } = {}) {
-    let saved = null;
-    try { saved = key ? parseInt(localStorage.getItem("ana.split." + key), 10) : null; } catch (_) { /* storage blocked */ }
-    if (saved || initial) host.style.setProperty(cssVar, (saved || initial) + "px");
-    const bar = el("div", { class: "splitter", role: "separator", title: "Arraste para redimensionar (duplo clique: tamanho padrão)" });
+  const cellText = (v) => (v === null || v === undefined ? "" : typeof v === "object" ? JSON.stringify(v) : String(v));
+
+  // ------------------------------------------------------------------ screen state per user (RF-020-17/18)
+  // Dividers, collapsed panels, pinned headers and the last table layout come back on any computer: kept on
+  // the server per user, loaded once after login (screens drawn before that re-apply on "ana:prefs").
+  // The browser copy only covers the moment before the load and a server that cannot answer.
+  const prefs = { data: {}, timers: {} };
+  const Prefs = {
+    async load() {
+      try { prefs.data = await window.AnaApi.uiSettings(); } catch (_) { prefs.data = {}; }
+      document.dispatchEvent(new CustomEvent("ana:prefs"));
+    },
+    get(key) {
+      if (key in prefs.data) return prefs.data[key];
+      try { const v = localStorage.getItem("ana.pref." + key); return v === null ? undefined : JSON.parse(v); } catch (_) { return undefined; }
+    },
+    /** value undefined/null forgets it. Writes are debounced per key (dragging sends one request). */
+    set(key, value) {
+      if (value === undefined || value === null) delete prefs.data[key]; else prefs.data[key] = value;
+      try { if (value === undefined || value === null) localStorage.removeItem("ana.pref." + key); else localStorage.setItem("ana.pref." + key, JSON.stringify(value)); } catch (_) { /* storage blocked */ }
+      clearTimeout(prefs.timers[key]);
+      prefs.timers[key] = setTimeout(() => {
+        window.AnaApi.putUiSetting(key, value === undefined ? null : value).catch(() => { /* kept locally */ });
+      }, 400);
+    },
+  };
+
+  /** Draggable divider with a collapse button: sets a CSS variable (px) on `host`; width and collapsed state
+   *  remembered per user (RF-020-18). Collapsing hides the panel before the divider (`collapsedClass` on host). */
+  function splitter(host, cssVar, { min = 160, max = 900, key, initial, collapsible = true } = {}) {
+    const prefKey = key ? "split." + key : null;
+    const bar = el("div", { class: "splitter", role: "separator", "aria-orientation": "vertical",
+                            title: "Arraste para redimensionar (duplo clique: tamanho padrão)" });
+    const toggle = collapsible ? el("button", { type: "button", class: "split-toggle", "aria-label": "Recolher o painel", title: "Recolher o painel" }, "‹") : null;
+    if (toggle) bar.append(toggle);
+    const state = () => (prefKey && Prefs.get(prefKey)) || {};
+    const apply = () => {
+      const s = state();
+      const w = typeof s === "number" ? s : s.w;            // older value: just the width
+      const collapsed = !!s.collapsed;
+      if (collapsed) host.style.setProperty(cssVar, "0px");
+      else if (w || initial) host.style.setProperty(cssVar, (w || initial) + "px");
+      else host.style.removeProperty(cssVar);
+      host.classList.toggle("split-collapsed", collapsed);
+      if (toggle) {
+        toggle.textContent = collapsed ? "›" : "‹";
+        toggle.setAttribute("aria-label", collapsed ? "Mostrar o painel" : "Recolher o painel");
+        toggle.title = toggle.getAttribute("aria-label");
+        toggle.setAttribute("aria-expanded", collapsed ? "false" : "true");
+      }
+    };
+    const save = (patch) => { if (prefKey) { const s = state(); Prefs.set(prefKey, { ...(typeof s === "number" ? { w: s } : s), ...patch }); } };
+    apply();
+    document.addEventListener("ana:prefs", apply);
+    if (toggle) toggle.addEventListener("click", (e) => { e.stopPropagation(); save({ collapsed: !state().collapsed }); apply(); });
     bar.addEventListener("pointerdown", (e) => {
+      if (e.target === toggle || host.classList.contains("split-collapsed")) return;
       e.preventDefault();
       const start = e.clientX;
       const base = parseInt(getComputedStyle(host).getPropertyValue(cssVar), 10) || bar.previousElementSibling.getBoundingClientRect().width;
@@ -120,19 +144,108 @@
       const up = () => {
         window.removeEventListener("pointermove", move);
         window.removeEventListener("pointerup", up);
-        try { if (key) localStorage.setItem("ana.split." + key, parseInt(getComputedStyle(host).getPropertyValue(cssVar), 10)); } catch (_) { /* ignore */ }
+        save({ w: parseInt(getComputedStyle(host).getPropertyValue(cssVar), 10) || undefined });
       };
       window.addEventListener("pointermove", move);
       window.addEventListener("pointerup", up);
     });
-    bar.addEventListener("dblclick", () => {
+    bar.addEventListener("dblclick", (e) => {
+      if (e.target === toggle || host.classList.contains("split-collapsed")) return;
       host.style.removeProperty(cssVar);
-      try { if (key) localStorage.removeItem("ana.split." + key); } catch (_) { /* ignore */ }
+      save({ w: undefined });
     });
     return bar;
   }
 
+  /** Pin button for a screen header: pinned, it stays in sight while the page scrolls (filters and range
+   *  always visible); remembered per screen and user (RF-020-18). */
+  function pinnable(header, key) {
+    const prefKey = "pin." + key;
+    const btn = el("button", { type: "button", class: "quiet small pin-toggle" });
+    const apply = () => {
+      const on = !!Prefs.get(prefKey);
+      header.classList.toggle("pinned", on);
+      btn.textContent = on ? "Desafixar cabeçalho" : "Fixar cabeçalho";
+      btn.setAttribute("aria-pressed", on ? "true" : "false");
+      btn.title = on ? "O cabeçalho volta a rolar com a página" : "Mantém filtros e título à vista ao rolar";
+    };
+    btn.addEventListener("click", () => { Prefs.set(prefKey, Prefs.get(prefKey) ? null : true); apply(); });
+    apply();
+    return btn;
+  }
+
   function pill(text, kind = "") { return el("span", { class: "pill " + kind, text }); }
+
+  // ------------------------------------------------------------------ dialogs, confirmation and undo (spec 050)
+  /** Modal dialog: native when the browser has it; Esc and the close callback always end it. */
+  function modal(dlg, onClose) {
+    document.body.append(dlg);
+    dlg.addEventListener("close", () => { dlg.remove(); if (onClose) onClose(); });
+    dlg.addEventListener("keydown", (e) => { if (e.key === "Escape") { e.preventDefault(); dlg.close(); } });
+    if (!dlg.close) dlg.close = () => { dlg.removeAttribute("open"); dlg.dispatchEvent(new Event("close")); };
+    if (dlg.showModal) dlg.showModal(); else dlg.setAttribute("open", "");
+    return dlg;
+  }
+
+  /** D5: an irreversible action asks first, saying its consequence. Resolves true only on "Confirmar". */
+  function confirmDialog(consequence, { title = "Confirmar?", ok = "Confirmar" } = {}) {
+    return new Promise((resolve) => {
+      let answer = false;
+      const yes = el("button", { type: "button", class: "primary", text: ok });
+      const no = el("button", { type: "button", class: "quiet", text: "Voltar" });
+      const dlg = el("dialog", { class: "md-dialog confirm-dialog", role: "alertdialog", "aria-label": title },
+        el("h2", { text: title }), el("p", { class: "consequence", text: consequence }),
+        el("div", { class: "row-buttons" }, no, yes));
+      yes.addEventListener("click", () => { answer = true; dlg.close(); });
+      no.addEventListener("click", () => dlg.close());
+      modal(dlg, () => resolve(answer));
+      no.focus();                                  // the safe choice has the focus
+    });
+  }
+
+  /** D5: "… — Desfazer" for the seconds the routine gave; Ctrl+Z (outside a text field) does the same. */
+  let undoState = null;
+  function offerUndo(offer) {
+    if (!offer || !offer.id) return;
+    dropUndo();
+    const left = el("span", { class: "undo-left" });
+    const btn = el("button", { type: "button", class: "undo-button", text: "Desfazer", "aria-keyshortcuts": "Control+Z" });
+    const bar = el("div", { id: "undo-bar", class: "undo-bar", role: "status" },
+      el("span", { class: "undo-text", text: offer.label || "Feito" }), btn, left,
+      el("button", { type: "button", class: "quiet small undo-close", "aria-label": "Fechar o aviso de desfazer", text: "×", onclick: dropUndo }));
+    const until = Date.now() + (offer.seconds || 30) * 1000;
+    const tick = () => {
+      const s = Math.ceil((until - Date.now()) / 1000);
+      if (s <= 0) { dropUndo(); return; }
+      left.textContent = `${s} s`;
+    };
+    undoState = { offer, bar, timer: setInterval(tick, 1000) };
+    tick();
+    btn.addEventListener("click", () => undo(offer));
+    document.body.append(bar);
+  }
+  function dropUndo() {
+    if (!undoState) return;
+    clearInterval(undoState.timer);
+    undoState.bar.remove();
+    undoState = null;
+  }
+  async function undo(offer) {
+    dropUndo();
+    try {
+      const res = await window.AnaApi.undo(offer.id);
+      if (res.error) { toast(errorText(res.error), true); return; }
+      toast(`Desfeito: ${offer.label || "a última ação"}.`);
+      document.dispatchEvent(new CustomEvent("ana:undone", { detail: { offer, result: res.result } }));
+    } catch (e) { toast(errorText(e), true); }
+  }
+  const typing = (t) => t && (t.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName));
+  document.addEventListener("keydown", (e) => {
+    if (undoState && !e.defaultPrevented && (e.ctrlKey || e.metaKey) && !e.shiftKey && e.key.toLowerCase() === "z" && !typing(e.target)) {
+      e.preventDefault();
+      undo(undoState.offer);
+    }
+  });
 
   // Own line icons (spec 029): 24×24 grid, 1.8 stroke, no icon font, no third-party set.
   const ICONS = {
@@ -154,6 +267,10 @@
     close: "M6 6l12 12M18 6L6 18",
     folder: "M3.5 7.5a2 2 0 0 1 2-2h4l2 2h7a2 2 0 0 1 2 2v7.5a2 2 0 0 1-2 2h-13a2 2 0 0 1-2-2z",
     file: "M7 3.5h6.5l4 4V20a.5.5 0 0 1-.5.5H7a.5.5 0 0 1-.5-.5V4a.5.5 0 0 1 .5-.5zM13.5 3.5V8h4",
+    calendar: "M5 6.5h14v13H5zM5 10.5h14M9 4v4M15 4v4",
+    clock: "M12 4.5a7.5 7.5 0 1 1 0 15 7.5 7.5 0 0 1 0-15zM12 8v4.5l3 2",
+    plus: "M12 5v14M5 12h14",
+    scan: "M4.5 8V4.5H8M16 4.5h3.5V8M19.5 16v3.5H16M8 19.5H4.5V16M8.5 8.5v7M11.5 8.5v7M15.5 8.5v7",
   };
   const SVG_NS = "http://www.w3.org/2000/svg";
   function icon(name, size = 18) {
@@ -169,5 +286,57 @@
     return svg;
   }
 
-  window.AnaUI = { $, $$, el, fmtDate, errorText, toast, table, dataTable, pill, splitter, icon };
+  // ------------------------------------------------------------------ keyboard and screen readers (RF-020-09)
+  // Applied once to everything on screen, also to what is drawn later: tabs (roles, arrow keys, roving
+  // focus), tree items (focusable, Enter/Space, expanded state) and fields without a label (name from the
+  // placeholder). Screens keep using plain buttons and divs; this keeps them accessible.
+  const TABLISTS = ".tabs, .sub-tabs, .shell-tabs";
+  function enhance(root) {
+    for (const list of $$(TABLISTS, root)) {
+      list.setAttribute("role", "tablist");
+      const tabs = [...list.children].filter((b) => b.tagName === "BUTTON" && !b.hidden);
+      const any = tabs.some((b) => b.classList.contains("active"));
+      tabs.forEach((b, i) => {
+        const on = b.classList.contains("active") || (!any && i === 0);
+        b.setAttribute("role", "tab");
+        b.setAttribute("aria-selected", on ? "true" : "false");
+        b.tabIndex = on ? 0 : -1;
+      });
+    }
+    for (const n of $$(".node", root)) {
+      if (n.tabIndex < 0 || !n.hasAttribute("tabindex")) n.tabIndex = 0;
+      n.setAttribute("role", n.classList.contains("folder") ? "treeitem" : "link");
+      if (n.classList.contains("folder")) n.setAttribute("aria-expanded", n.classList.contains("closed") ? "false" : "true");
+    }
+    for (const f of $$("input:not([type=hidden]), select, textarea", root)) {
+      if (f.labels && f.labels.length) continue;
+      if (f.hasAttribute("aria-label") || f.hasAttribute("aria-labelledby")) continue;
+      const name = f.getAttribute("placeholder") || f.getAttribute("title") || f.name;
+      if (name) f.setAttribute("aria-label", name);
+    }
+  }
+  document.addEventListener("keydown", (e) => {
+    const t = e.target;
+    if (t && t.getAttribute && t.getAttribute("role") === "tab" && ["ArrowLeft", "ArrowRight", "Home", "End"].includes(e.key)) {
+      const tabs = [...t.parentElement.children].filter((b) => b.getAttribute("role") === "tab" && !b.hidden && !b.disabled);
+      const i = tabs.indexOf(t);
+      const next = { ArrowLeft: tabs[(i - 1 + tabs.length) % tabs.length], ArrowRight: tabs[(i + 1) % tabs.length],
+                     Home: tabs[0], End: tabs[tabs.length - 1] }[e.key];
+      if (next) { e.preventDefault(); next.focus(); next.click(); }
+    } else if (t && t.classList && t.classList.contains("node") && (e.key === "Enter" || e.key === " ")) {
+      e.preventDefault();
+      t.click();
+    }
+  });
+  let pending = false;
+  new MutationObserver(() => {
+    if (pending) return;
+    pending = true;
+    setTimeout(() => { pending = false; enhance(document); }, 30);
+  }).observe(document.documentElement, { childList: true, subtree: true, attributes: true, attributeFilter: ["class", "hidden"] });
+  document.addEventListener("DOMContentLoaded", () => enhance(document));
+
+  window.AnaPrefs = Prefs;
+  window.AnaUI = { $, $$, el, fmtDate, errorText, toast, table, emptyCell, pill, splitter, pinnable, icon, enhance, cellText,
+                   modal, confirmDialog, offerUndo, typing };
 })();

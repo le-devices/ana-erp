@@ -1,11 +1,13 @@
 # ana:description Aceite do cliente: conclui a OS (exige o checklist obrigatório respondido)
 # ana:exposed yes
+# ana:category Logística e campo/Serviços em campo
 """RF-015-08. Name, document and time of whoever accepted on site; the order becomes done."""
 
 from ana_lib.field import common
+from ana_lib.docs import pdfs
 
 PARAMS = {
-    "order": {"type": "int", "required": True, "label": "OS"},
+    "order": {"type": "int", "required": True, "label": "OS", "lookup": {"program": "logistics.lookup", "params": {"kind": "service_orders"}}},
     "signed_by": {"type": "str", "required": True, "label": "aceite de (nome)"},
     "document": {"type": "str", "label": "documento"},
     "notes": {"type": "str", "label": "observações"},
@@ -29,4 +31,5 @@ def main(order, signed_by, document=None, notes=None):
     common.advance(o, "in_progress")
     ana.sql_exec("UPDATE field.service_order SET status = 'done', done_at = now() WHERE id = $1", o["id"])
     ana.sql_exec("UPDATE field.assignment SET status = 'done' WHERE order_id = $1 AND status = 'planned'", o["id"])
+    pdfs.publish_quietly("service_order", o["number"])  # spec 037: service report
     return {"order": o["number"], "status": "done"}

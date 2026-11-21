@@ -1,5 +1,6 @@
 # ana:description Atualiza situação e % concluído de uma atividade
 # ana:exposed yes
+# ana:category Projetos/Planejamento
 """RF-021-04/05, H4. The responsible person, a team member allocated to the
 activity, or the manager. Moving to doing/done records actual dates."""
 

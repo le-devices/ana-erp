@@ -1,3 +1,5 @@
+# SPDX-FileCopyrightText: 2026 André Luis Pereira dos Santos
+# SPDX-License-Identifier: AGPL-3.0-or-later
 """Real primary failover with a local PostgreSQL cluster (spec 023, T-023-09).
 
 db = primary, db2 = streaming replica; two core nodes with ANA_DB_HOST=db,db2 and
@@ -31,6 +33,12 @@ def psql(service, sql):
     return r.stdout.strip() if r.returncode == 0 else None
 
 
+def psql_diag(service, sql):
+    """Like psql, but keeps the error text (diagnosis only)."""
+    r = compose("exec", "-T", service, "psql", "-U", "postgres", "-d", "ana", "-At", "-c", sql, check=False)
+    return r.stdout.strip() if r.returncode == 0 else "erro: " + (r.stderr.strip()[-300:] or str(r.returncode))
+
+
 def wait_healthy(service, timeout=120):
     end = time.time() + timeout
     while time.time() < end:
@@ -50,6 +58,18 @@ class TestPrimaryFailover(unittest.TestCase):
         for base in (NODE1, NODE2, LB):
             wait_ready(base)
         cls.token = login()
+        # The load runs above the default per-user quota (600/min): lifted for this suite only, as in the chaos suite.
+        http(LB, "PUT", "/api/admin/quotas/admin", {"max_concurrent": 0, "runs_per_minute": 0}, cls.token)
+
+    @classmethod
+    def tearDownClass(cls):
+        for base in (LB, NODE1, NODE2):
+            try:
+                s, _ = http(base, "PUT", "/api/admin/quotas/admin", {"max_concurrent": None, "runs_per_minute": None}, login(base))
+                if s == 200:
+                    break
+            except Exception:                    # a node may still be restarting after case (c)
+                continue
 
     def marker_program(self, base, token, tag):
         name = "test.pg_ha_marker"
@@ -74,12 +94,30 @@ class TestPrimaryFailover(unittest.TestCase):
         started = {s: compose("ps", "-q", s).stdout.strip() for s in ("ana", "ana2")}
         before = {s: subprocess.run(["docker", "inspect", "-f", "{{.State.StartedAt}}", c], capture_output=True,
                                     text=True).stdout.strip() for s, c in started.items()}
+        # RF-023-08: the session is streamed to the replica like any other data (never UNLOGGED), so the promoted
+        # replica keeps everyone signed in.
+        token_sql = self.token.replace("'", "''")
+        before_promote = {
+            "replication": psql_diag("db", "SELECT string_agg(state || ' ' || COALESCE(replay_lag::text, '0'), ', ') FROM pg_stat_replication"),
+            "session_on_replica": psql_diag("db2", f"SELECT count(*) FROM ana_system.session WHERE token_hash = sha256(convert_to('{token_sql}', 'UTF8'))"),
+        }
+        self.assertEqual(before_promote["session_on_replica"], "1", f"a sessão precisa estar na réplica antes da troca: {before_promote}")
         with Load(LB, self.token, lambda: ("POST", "/api/programs/demo.hello/run", {"params": {"name": "failover"}})) as load:
             time.sleep(2)
             self.assertEqual(psql("db2", "SELECT pg_promote()"), "t")
             compose("stop", "db")
             switched = time.time()
             time.sleep(15)
+        # While the replica takes over, the session stays valid: "try again" (503), never a sign-out (401).
+        signed_out = [r for r in load.results if r[1] == 401]
+        if signed_out:
+            before_promote["session_on_new_primary"] = psql_diag(
+                "db2", f"SELECT count(*) || ' ' || COALESCE(max(expires_at)::text, '-') FROM ana_system.session "
+                       f"WHERE token_hash = sha256(convert_to('{token_sql}', 'UTF8'))")
+            before_promote["db2_in_recovery"] = psql_diag("db2", "SELECT pg_is_in_recovery()")
+        self.assertEqual(signed_out, [], "a troca de primário não pode invalidar a sessão: "
+                         f"{[(round(r[0] - switched, 1), r[1], r[3]) for r in signed_out[:5]]} (s após a troca, status, código); "
+                         f"antes da promoção: {before_promote}")
         late = load.failures(since=switched + 10)
         self.assertEqual(late, [], f"depois de 10 s o núcleo deveria estar no novo primário: {late[:5]}")
         self.assertGreater(len(load.results), 30)

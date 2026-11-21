@@ -1,3 +1,5 @@
+%% SPDX-FileCopyrightText: 2026 André Luis Pereira dos Santos
+%% SPDX-License-Identifier: AGPL-3.0-or-later
 %% Program execution: one execution transaction per run (specs 002 and 004).
 %%
 %% One supervised (temporary) process per execution. It:
@@ -12,7 +14,7 @@
 -behaviour(gen_server).
 
 -export([init_tables/0, start_link/1, run/4, events/4, command/3, status/2,
-         counters/0, running/0, abort/1]).
+         counters/0, running/0, abort/1, can_run/2, new_id/0]).
 -export([init/1, handle_continue/2, handle_call/3, handle_cast/2, handle_info/2,
          terminate/2]).
 
@@ -44,6 +46,21 @@
     origin :: binary(),
     debug = false :: boolean(),
     commit = false :: boolean(),
+    %% Spec 056: a rehearsal runs whole and is undone; external effects are held and listed.
+    rehearse = false :: boolean(),
+    held = [] :: [map()],
+    rehearsal = #{} :: map(),               % effects of the parts, joined at the end
+    stats_base = #{} :: map(),              % per-transaction statistics at the start of a rehearsal
+    %% Spec 065 (RNF-065-02): the company values this execution read, kept in its record.
+    values_read = #{} :: map(),
+    %% Spec 065 (D4): company values the routine keeps (ana.set_value), written right after its COMMIT.
+    value_sets = [] :: [map()],
+    read_only = false :: boolean(),          % simulation or restricted license: nothing is kept after the run
+    %% Spec 050 (D5): the undo the routine offers (ana.offer_undo), recorded after its COMMIT; then what was offered.
+    undo = undefined :: map() | undefined,
+    undo_offered = null :: map() | null,
+    %% Spec 045 (RF-045-06): the variant this run used (id, name, version, warnings), or null.
+    variant = null :: map() | null,
     breakpoints = [] :: list(),
     stop_on_entry = false :: boolean(),
     timeout_ms :: pos_integer(),
@@ -123,7 +140,10 @@ start_link(Args) ->
 run(Program, Params, User, Options) ->
     Debug = maps:get(debug, Options, false) =:= true,
     Async = Debug orelse maps:get(async, Options, false) =:= true,
-    case ana_security:owner(User) =:= ok andalso admit(Debug) of
+    Owner = ana_security:owner(User),
+    case Owner =:= ok andalso admit(Debug) of
+        false when Owner =:= {error, unavailable} ->
+            {error, err(<<"DB_UNAVAILABLE">>, <<"banco de dados indisponível no momento: tente de novo em instantes"/utf8>>)};
         false ->
             {error, err(<<"NO_OWNER">>, <<"toda execução precisa de um usuário dono ativo (pessoa ou robô)"/utf8>>)};
         ok ->
@@ -261,7 +281,10 @@ init(#{id := Id, program := Program, params := Params, user := User,
              origin = maps:get(origin, Op, <<"api">>),
              debug = Debug,
              commit = maps:get(commit, Op, false) =:= true
-                      andalso ana_security:has_role(User, <<"developer">>),
+                      andalso ana_security:has_role(User, <<"developer">>)
+                      andalso maps:get(rehearse, Op, false) =/= true,
+             rehearse = maps:get(rehearse, Op, false) =:= true,
+             variant = maps:get(variant, Op, null),
              breakpoints = [L || L <- maps:get(breakpoints, Op, []), is_integer(L)],
              stop_on_entry = maps:get(stop_on_entry, Op, false) =:= true,
              timeout_ms = ana_settings:get(exec_timeout_ms),
@@ -355,7 +378,12 @@ handle_info(audit_start, St = #st{status = Status}) when Status =/= finished ->
     ok = audit_start(St),
     {noreply, St};
 handle_info({part_done, H, Res}, St) ->
-    {noreply, part_done(H, Res, St)};
+    %% Spec 056: a rehearsed part brings its effects; they join the main execution's.
+    St2 = case Res of
+        {ok, #{rehearsal := E}} -> St#st{rehearsal = ana_rehearsal:merge(St#st.rehearsal, E)};
+        _ -> St
+    end,
+    {noreply, part_done(H, simplify(Res), St2)};
 handle_info({gather_timeout, Ref}, St = #st{par = #{gather := {_, _, _, Ref, _}}}) ->
     {noreply, gather_expired(St)};
 handle_info({'DOWN', Mon, process, _, _}, St = #st{parent_mon = Mon, status = S}) when S =/= finished ->
@@ -403,20 +431,35 @@ prepare_run(P, L, St) ->
     end,
     case ana_db:checkout(?POOL, 15000) of
         {ok, C} ->
-            St2 = St1#st{conn = C},
+            St2 = St1#st{conn = C, read_only = ana_license:restricted() orelse simulating(P, St1#st.params)},
             %% RF-022-05: a part may read the snapshot exported by its main execution.
             Snap = case St1#st.snapshot_in of
                 undefined -> "BEGIN; ";
                 S -> ["BEGIN ISOLATION LEVEL REPEATABLE READ; SET TRANSACTION SNAPSHOT '", S, "'; "]
             end,
-            %% ana.username: informational (outbox created_by, spec 017); never used for authorization.
+            %% ana.username / ana.origin / ana.execution_id: informational (outbox created_by, spec 017;
+            %% master data history, spec 040); never used for authorization.
+            Q = fun(V) -> binary:replace(iolist_to_binary(V), <<"'">>, <<"''">>, [global]) end,
+            %% Spec 009 (RF-009-05): restricted license → the database itself refuses every write.
+            %% Spec 020 (RF-020-13): so does a simulation ("Simular" never saves, whatever the program does).
+            ReadOnly = case ana_license:restricted() orelse simulating(P, St1#st.params) of
+                true -> "SET TRANSACTION READ ONLY; ";
+                false -> ""
+            end,
+            %% Spec 009 (D10): the user's data scope, applied by the database's row policies.
+            Scope = iolist_to_binary(ana_access:scope_sql(St1#st.user)),
             Begin = io_lib:format(
-                "~sSET LOCAL statement_timeout = ~b; SET LOCAL lock_timeout = ~b; SET LOCAL ana.username = '~ts'",
-                [Snap, maps:get(<<"sql_timeout_ms">>, L), maps:get(<<"lock_timeout_ms">>, L),
-                 binary:replace(maps:get(username, St1#st.user), <<"'">>, <<"''">>, [global])]),
+                "~s~s~sSET LOCAL statement_timeout = ~b; SET LOCAL lock_timeout = ~b; SET LOCAL ana.username = '~ts'; "
+                "SET LOCAL ana.origin = '~ts'; SET LOCAL ana.execution_id = '~ts'; SET LOCAL ana.instance = '~ts'; "
+                "SET LOCAL ana.timezone = '~ts'",
+                [Snap, ReadOnly, Scope, maps:get(<<"sql_timeout_ms">>, L), maps:get(<<"lock_timeout_ms">>, L),
+                 Q(maps:get(username, St1#st.user)), Q(St1#st.origin), Q(St1#st.id),
+                 ana_instance:role(), Q(ana_config:timezone())]),
             case lists:flatten([epgsql:squery(C, Begin)]) of
                 [{ok, [], []} | _] = Rs ->
                     case [E || {error, E} <- Rs] of
+                        [] when St2#st.rehearse ->
+                            open_frame(P, undefined, undefined, St2#st{in_tx = true, stats_base = ana_rehearsal:baseline(C)});
                         [] -> open_frame(P, undefined, undefined, St2#st{in_tx = true});
                         [E | _] -> {error, sql_error(E), St2}
                     end;
@@ -436,13 +479,48 @@ load(Name, User) ->
                 #{role := <<"external">>} -> maps:get(<<"portal">>, P, false) =:= true;
                 _ -> ana_security:has_role(User, Min) andalso ana_access:allowed(User, P)
             end,
-            case Allowed of
-                true -> {ok, P};
-                false -> {error, err(<<"FORBIDDEN">>, <<"sem permissão para o programa"/utf8>>)}
+            %% The public API and the portal are modules too: their callers need them in the license.
+            Module = case User of
+                #{api := _} -> first_missing([<<"public_api">>, ana_license:module_of(Name)]);
+                #{role := <<"external">>} -> first_missing([<<"portal">>, ana_license:module_of(Name)]);
+                _ -> ana_license:module_of(Name)
+            end,
+            case {Allowed, ana_license:allowed(Module)} of
+                {false, _} -> {error, err(<<"FORBIDDEN">>, <<"sem permissão para o programa"/utf8>>)};
+                {true, false} ->
+                    %% Spec 009 (RF-009-03): a module not in the license; its tables stay readable.
+                    {error, err(<<"NOT_LICENSED">>, <<"o módulo "/utf8, (module_label(Module))/binary,
+                                                       " não está na licença desta instalação"/utf8>>)};
+                {true, true} -> {ok, P}
             end;
+        {ok, #{<<"kind">> := <<"library">>}} ->
+            %% A library is imported by programs; running it by itself is a mistake worth explaining.
+            {error, err(<<"NOT_EXECUTABLE">>, <<"é uma biblioteca: não executa sozinha, é usada pelos programas "
+                                                "(from ana_lib.<módulo> import <nome>)"/utf8>>)};
+        {ok, #{<<"active">> := false}} ->
+            {error, err(<<"PROGRAM_INACTIVE">>, <<"programa inativo: reative-o em Propriedades para executar"/utf8>>)};
         _ ->
-            {error, err(<<"PROGRAM_NOT_FOUND">>,
-                          <<"programa inexistente, inativo ou não executável"/utf8>>)}
+            {error, err(<<"PROGRAM_NOT_FOUND">>, <<"programa inexistente"/utf8>>)}
+    end.
+
+%% A parameter declared {"type": "bool", "simulate": true} and received true: the run only shows what the
+%% definition would take (RF-020-13).
+simulating(#{<<"params">> := Decl}, Params) when is_map(Decl), is_map(Params) ->
+    lists:any(fun({K, #{<<"simulate">> := true}}) -> lists:member(maps:get(K, Params, false), [true, <<"true">>]);
+                 (_) -> false
+              end, maps:to_list(Decl));
+simulating(_, _) -> false.
+
+first_missing(Modules) ->
+    case [M || M <- Modules, not ana_license:allowed(M)] of
+        [M | _] -> M;
+        [] -> lists:last(Modules)
+    end.
+
+module_label(M) ->
+    case [L || #{module := X, label := L} <- ana_license:modules(), X =:= M] of
+        [L | _] -> L;
+        [] -> M
     end.
 
 open_frame(P, RequestId, Savepoint, St = #st{stack = Stack}) ->
@@ -461,8 +539,11 @@ open_frame(P, RequestId, Savepoint, St = #st{stack = Stack}) ->
                     context => #{user => maps:get(username, St#st.user),
                                  role => maps:get(role, St#st.user),
                                  party => maps:get(party_id, St#st.user, null),
+                                 %% Spec 037: absolute addresses in download links sent to partners.
+                                 public_url => ana_instance:public_url(),
                                  execution_id => St#st.id,
                                  origin => St#st.origin,
+                                 rehearsal => St#st.rehearse,
                                  depth => length(Stack)},
                     debug => Root andalso St#st.debug,
                     profile => Root andalso St#st.profile_req andalso not St#st.debug,
@@ -484,6 +565,16 @@ open_frame(P, RequestId, Savepoint, St = #st{stack = Stack}) ->
 %% Protocol
 %% ==========================================================================
 
+handle_message(#{<<"type">> := <<"request">>, <<"id">> := Id, <<"op">> := Op} = M, St = #st{rehearse = true}) ->
+    %% Spec 056 (D1): what would leave the transaction is held, answered as held and listed.
+    A = maps:get(<<"args">>, M, #{}),
+    case is_map(A) andalso ana_rehearsal:hold(Op, A) of
+        {hold, What} ->
+            respond(Id, {ok, ana_rehearsal:held_reply(What)}, St),
+            St#st{held = [What | St#st.held]};
+        {rewrite, A2} -> request(Op, Id, A2, St);
+        _ -> request(Op, Id, A, St)
+    end;
 handle_message(#{<<"type">> := <<"request">>, <<"id">> := Id, <<"op">> := Op} = M, St) ->
     request(Op, Id, maps:get(<<"args">>, M, #{}), St);
 handle_message(#{<<"type">> := <<"output">>} = M, St) ->
@@ -526,6 +617,70 @@ request(<<"files">>, Id, A, St = #st{user = User}) when is_map(A) ->
 request(<<"library_source">>, Id, #{<<"name">> := Name}, St) ->
     respond(Id, {ok, ana_program:library_source(Name)}, St),
     St;
+request(<<"extensions">>, Id, #{<<"point">> := Point}, St) when is_binary(Point) ->
+    %% Spec 009 (D9): the customer programs registered for a point of a product program.
+    respond(Id, {ok, ana_extensions:programs(Point)}, St),
+    St;
+request(<<"schedule">>, Id, #{<<"name">> := Name} = A, St = #st{program = Prog, user = User}) when is_binary(Name) ->
+    %% Spec 039 (T-039-17b): a program keeps scheduler jobs of its own module ("bpm.publish" → "bpm.*"), through the
+    %% scheduler's own validation and as the user who runs it (never more than that user may do by hand).
+    [Ns | _] = binary:split(Prog, <<".">>),
+    Reply = case binary:longest_common_prefix([Name, <<Ns/binary, ".">>]) =:= byte_size(Ns) + 1 of
+        false -> {error, err(<<"FORBIDDEN">>, <<"um programa só agenda rotinas do próprio módulo ("/utf8, Ns/binary, ".*)">>)};
+        true -> schedule_job(Name, A, User)
+    end,
+    respond(Id, Reply, St),
+    St;
+request(<<"value">>, Id, #{<<"name">> := Name} = A, St = #st{user = User}) when is_binary(Name) ->
+    %% Spec 065 (D6, D7): from the memory of this node; an expression is one read-only query. Nothing is written.
+    Opts = #{at => maps:get(<<"at">>, A, null), company => maps:get(<<"company">>, A, null), user => maps:get(username, User, null)},
+    case ana_values:read(Name, Opts) of
+        {ok, R} ->
+            respond(Id, {ok, R}, St),
+            Key = case Opts of #{at := null, company := null} -> Name;
+                               #{at := At, company := Co} -> iolist_to_binary([Name, "@", json:encode([At, Co])]) end,
+            Read = St#st.values_read,
+            case map_size(Read) < 200 orelse maps:is_key(Key, Read) of
+                true -> St#st{values_read = Read#{Key => maps:with([value, version, valid_from, expression], R)}};
+                false -> St
+            end;
+        {error, Code, M} ->
+            respond(Id, {error, err(Code, M)}, St),
+            St
+    end;
+request(<<"set_value">>, Id, #{<<"name">> := Name} = A, St = #st{user = User, stack = [#frame{program = Prog} | _]}) ->
+    case ana_values:check_set(Name, A, Prog, User) of
+        {ok, Set} ->
+            respond(Id, {ok, #{name => Name, value => maps:get(value, Set), before => maps:get(before, Set),
+                               valid_from => maps:get(from, Set)}}, St),
+            St#st{value_sets = [Set | St#st.value_sets]};
+        {error, Code, M} ->
+            respond(Id, {error, err(Code, M)}, St),
+            St
+    end;
+%% Spec 050 (D5): only the routine that was run offers its undo; nothing is offered when nothing will be kept.
+request(<<"offer_undo">>, Id, A, St = #st{user = User, stack = [#frame{program = Prog}]}) ->
+    case St#st.read_only orelse St#st.rehearse orelse (St#st.debug andalso not St#st.commit) of
+        true ->
+            respond(Id, {ok, #{offered => false}}, St),
+            St;
+        false ->
+            case ana_undo:check_offer(A, Prog, User) of
+                {ok, Offer} ->
+                    respond(Id, {ok, #{offered => true}}, St),
+                    St#st{undo = Offer};
+                {error, Code, M} ->
+                    respond(Id, {error, err(Code, M)}, St),
+                    St
+            end
+    end;
+request(<<"offer_undo">>, Id, _A, St) ->
+    respond(Id, {ok, #{offered => false}}, St),
+    St;
+%% Spec 050: may this user run that program (role, groups, license)? — what a screen offers follows the answer.
+request(<<"can_run">>, Id, #{<<"program">> := Name}, St = #st{user = User}) when is_binary(Name) ->
+    respond(Id, {ok, can_run(Name, User)}, St),
+    St;
 request(<<"savepoint">>, Id, A, St) ->
     savepoint(Id, A, St);
 request(<<"call">>, Id, #{<<"program">> := Name} = A, St) ->
@@ -541,6 +696,30 @@ request(<<"cancel">>, Id, #{<<"handles">> := Hs}, St) when is_list(Hs) ->
 request(Op, Id, _, St) ->
     respond(Id, {error, err(<<"INVALID_OPERATION">>, Op)}, St),
     St.
+
+schedule_job(Name, A, User = #{username := Who}) ->
+    Existing = case ana_db:one("SELECT id FROM scheduler.job WHERE name = $1", [Name]) of
+        {ok, #{<<"id">> := Found}} -> Found;
+        _ -> new
+    end,
+    Cron = maps:get(<<"cron">>, A, null),
+    Active = maps:get(<<"active">>, A, true) =:= true andalso is_binary(Cron),
+    case {Existing, Active} of
+        {new, false} -> {ok, #{<<"job">> => null}};                         % nothing scheduled, nothing to stop
+        {JobId, false} -> reply_job(ana_schedule:set_active(JobId, false, User));
+        _ ->
+            Fields = #{<<"name">> => Name, <<"description">> => maps:get(<<"description">>, A, <<>>),
+                       <<"program">> => maps:get(<<"program">>, A, null), <<"params">> => maps:get(<<"params">>, A, #{}),
+                       <<"run_as">> => Who, <<"active">> => true,
+                       <<"triggers">> => [#{<<"kind">> => <<"cron">>, <<"cron">> => Cron}]},
+            reply_job(ana_schedule:save_job(Existing, Fields, User))
+    end.
+
+reply_job({ok, #{<<"id">> := JobId}}) -> {ok, #{<<"job">> => JobId}};
+reply_job({ok, #{id := JobId}}) -> {ok, #{<<"job">> => JobId}};
+reply_job({ok, _}) -> {ok, #{<<"job">> => true}};
+reply_job({error, M}) when is_binary(M) -> {error, err(<<"SCHEDULE_REFUSED">>, M)};
+reply_job({error, E}) -> {error, err(<<"SCHEDULE_REFUSED">>, unicode:characters_to_binary(io_lib:format("~0p", [E])))}.
 
 files_reply({ok, V}) -> {ok, V};
 files_reply({error, not_found}) -> {error, err(<<"FILE_NOT_FOUND">>, <<"arquivo ou pasta não encontrado"/utf8>>)};
@@ -635,6 +814,11 @@ root_end2(#{<<"ok">> := true} = M, St0 = #st{conn = C}) ->
             finish(<<"error">>, err(<<"PARALLEL_ATOMIC_FAILED">>,
                                     io_lib:format("~b parte(s) atômica(s) falharam: nada foi gravado",
                                                   [length(AtomicFailed)])), St);
+        false when St#st.rehearse ->
+            %% Spec 056 (RF-056-02): the effect is read from the transaction itself, then everything is undone.
+            Effects = ana_rehearsal:merge(ana_rehearsal:effects(C, St#st.held, St#st.stats_base), St#st.rehearsal),
+            _ = epgsql:squery(C, "ROLLBACK"),
+            finish(<<"success">>, #{result => Result, rolled_back => true, rehearsal => Effects}, St#st{in_tx = false});
         false when St#st.debug, not St#st.commit ->
             %% RNF-004-01: debugging always rolls back unless explicitly committed.
             _ = epgsql:squery(C, "ROLLBACK"),
@@ -650,7 +834,8 @@ root_end2(#{<<"ok">> := true} = M, St0 = #st{conn = C}) ->
                 [] ->
                     case epgsql:squery(C, "COMMIT") of
                         {ok, [], []} ->
-                            finish(<<"success">>, #{result => Result}, St#st{in_tx = false});
+                            ok = ana_values:apply_sets([S || not St#st.read_only, S <- lists:reverse(St#st.value_sets)], St#st.user),
+                            finish(<<"success">>, #{result => Result}, offer_undo(St#st{in_tx = false}));
                         {error, E} ->
                             %% E.g. a deferred constraint violated at COMMIT (RF-006-05).
                             finish(<<"error">>, sql_error(E), St#st{in_tx = false})
@@ -874,24 +1059,26 @@ start_part(H, St = #st{par = Par}) ->
             end,
             ChildId = uuid(),
             Gid = case maps:get(mode, Part) of
+                _ when St#st.rehearse -> undefined;      % spec 056: a rehearsed part is undone by itself
                 <<"atomic">> -> ana_parallel:gid(St#st.id, H);
                 _ -> undefined
             end,
             Opts0 = #{id => ChildId, origin => St#st.origin, parent => St#st.id, parent_pid => self(),
-                      timeout_ms => Timeout},
+                      timeout_ms => Timeout, rehearse => St#st.rehearse},
             Opts1 = case Gid of undefined -> Opts0; _ -> Opts0#{prepare => Gid} end,
             Opts = case maps:get(snapshot, Part) of undefined -> Opts1; S -> Opts1#{snapshot => S} end,
             Self = self(),
             #{program := Program, params := Params} = Part,
             User = St#st.user,
             {_, Mon} = spawn_monitor(fun() ->
-                Self ! {part_done, H, simplify(run(Program, Params, User, Opts))}
+                Self ! {part_done, H, run(Program, Params, User, Opts)}
             end),
             Parts = maps:get(parts, Par),
             St#st{par = Par#{parts => Parts#{H => Part#{status => running, id => ChildId, mon => Mon, gid => Gid}}}}
     end.
 
 simplify({ok, #{result := R}}) -> {ok, R};
+simplify({ok, R}) -> {ok, R};
 simplify({error, E}) -> {error, maps:without([<<"events">>], E)}.
 
 part_done(H, Res, St) ->
@@ -995,12 +1182,13 @@ two_phase_commit(Result, Gids, St = #st{conn = C, par = Par}) ->
             case ana_parallel:decide(Own, All) of
                 ok ->
                     Failed = [G || G <- All, {error, _} <- [epgsql:squery(C, ["COMMIT PREPARED '", G, "'"])]],
+                    ok = ana_values:apply_sets([S || not St#st.read_only, S <- lists:reverse(St#st.value_sets)], St#st.user),
                     _ = case Failed of
                         [] -> ana_parallel:forget(Own);
                         _ -> logger:error("execution ~s: COMMIT PREPARED failed for ~p; recovery will finish it",
                                           [St#st.id, Failed])
                     end,
-                    finish(<<"success">>, #{result => Result}, St#st{in_tx = false, par = Par#{committed => true}});
+                    finish(<<"success">>, #{result => Result}, offer_undo(St#st{in_tx = false, par = Par#{committed => true}}));
                 {error, E} ->
                     logger:error("execution ~s: commit decision not recorded: ~0p", [St#st.id, E]),
                     _ = ana_parallel:resolve([Own], rollback),
@@ -1052,14 +1240,19 @@ finish(Status, Data, St00) ->
         _ -> {null, Data#{<<"execution_id">> => St#st.id}}
     end,
     RolledBack = maps:get(rolled_back, Data, false),
+    %% Spec 056: a rehearsal that stopped on an error still says what it had held up to there.
+    Rehearsal = case St#st.rehearse of
+        true -> maps:get(rehearsal, Data, ana_rehearsal:merge(#{held => lists:reverse(St#st.held)}, St#st.rehearsal));
+        false -> null
+    end,
     audit_end(St, Status, Duration, Result, Error),
     _ = (catch observe(Status, Duration, St)),
     Final = #{final_status => Status, result => Result, error => Error,
-              duration_ms => Duration, rolled_back => RolledBack,
+              duration_ms => Duration, rolled_back => RolledBack, rehearsal => Rehearsal,
               usage => usage(St), limits => St#st.limits},
     St2 = event(#{<<"status">> => Status, <<"result">> => Result, <<"error">> => Error,
-                  <<"duration_ms">> => Duration, <<"rolled_back">> => RolledBack,
-                  <<"usage">> => usage(St)},
+                  <<"duration_ms">> => Duration, <<"rolled_back">> => RolledBack orelse St#st.rehearse,
+                  <<"rehearsal">> => Rehearsal, <<"usage">> => usage(St), <<"undo">> => St#st.undo_offered},
                 <<"end">>,
                 St#st{stack = [], pending = undefined, conn = undefined, in_tx = false, final = Final}),
     _ = St2#st.admitted andalso release(St2#st.debug) =:= ok,
@@ -1075,10 +1268,36 @@ finish(Status, Data, St00) ->
     St3.
 
 sync_reply(<<"success">>, Result, _, Duration, St) ->
-    {ok, #{id => St#st.id, result => Result, duration_ms => Duration, usage => usage(St),
-           events => lists:reverse(St#st.events)}};
+    R = #{id => St#st.id, result => Result, duration_ms => Duration, usage => usage(St),
+          events => lists:reverse(St#st.events)},
+    {ok, with_undo(with_rehearsal(R, rehearsal, St), St)};
 sync_reply(_, _, Error, _, St) ->
-    {error, Error#{<<"events">> => lists:reverse(St#st.events)}}.
+    {error, with_rehearsal(Error#{<<"events">> => lists:reverse(St#st.events)}, <<"rehearsal">>, St)}.
+
+%% Spec 050 (D5): the answer carries the undo the routine offered (recorded after its COMMIT).
+with_undo(M, #st{undo_offered = null}) -> M;
+with_undo(M, #st{undo_offered = U}) -> M#{undo => U}.
+
+offer_undo(St = #st{undo = undefined}) -> St;
+offer_undo(St = #st{undo = Offer, id = Id, user = User}) ->
+    case ana_undo:record(Id, User, Offer) of
+        {ok, U} -> St#st{undo_offered = U};
+        {error, E} ->
+            logger:warning("execution ~s: undo offer not recorded: ~0p", [Id, E]),
+            St
+    end.
+
+%% Spec 050: may this user run that program now (role, groups, portal, license)?
+-spec can_run(binary(), map()) -> boolean().
+can_run(Name, User) when is_binary(Name) ->
+    element(1, load(Name, User)) =:= ok;
+can_run(_, _) -> false.
+
+new_id() -> uuid().
+
+%% Spec 056: the answer of a rehearsal carries its effects (also when it stopped on an error).
+with_rehearsal(M, K, #st{rehearse = true, final = #{rehearsal := E}}) when is_map(E) -> M#{K => E};
+with_rehearsal(M, _, _) -> M.
 
 %% Returns the connection clean to the pool; if that is not possible, drops it.
 return_connection(#st{conn = undefined}) -> ok;
@@ -1124,10 +1343,11 @@ crash_trace(Class, Reason, Stack) ->
 audit_start(St) ->
     case ana_db:exec(
            "INSERT INTO ana_system.execution (id, program, version, username, origin, debug, status, params, "
-           "  client_ip, api_key_id, node, parent_execution_id) "
-           "VALUES ($1::text::uuid, $2, $3, $4, $5, $6, 'running', $7::text::jsonb, $8, $9, $10, $11::text::uuid)",
+           "  client_ip, api_key_id, node, parent_execution_id, rehearsal, variant) "
+           "VALUES ($1::text::uuid, $2, $3, $4, $5, $6, 'running', $7::text::jsonb, $8, $9, $10, $11::text::uuid, $12, $13::text::jsonb)",
            [St#st.id, St#st.program, St#st.version, maps:get(username, St#st.user),
-            St#st.origin, St#st.debug, json_text(St#st.params)] ++ trace(St) ++ [parent(St)]) of
+            St#st.origin, St#st.debug, json_text(St#st.params)] ++ trace(St) ++ [parent(St), St#st.rehearse,
+                                                                                json_text(St#st.variant)]) of
         {ok, _} -> ok;
         {error, E} -> logger:error("audit (start) failed: ~0p", [E]), ok
     end.
@@ -1136,23 +1356,25 @@ audit_end(St, Status, Duration, Result, Error) ->
     Sql = "INSERT INTO ana_system.execution (id, program, version, username, origin, debug, "
           "  status, params, finished_at, duration_ms, result, error, output, "
           "  cpu_ms, max_rss_kb, sql_count, rows_read, limits, client_ip, api_key_id, node, internal_trace, "
-          "  parent_execution_id) "
+          "  parent_execution_id, rehearsal, values_read, variant) "
           "VALUES ($1::text::uuid, $2, $3, $4, $5, $6, $7, $8::text::jsonb, now(), $9, "
           "        $10::text::jsonb, $11::text::jsonb, $12, $13, $14, $15, $16, $17::text::jsonb, "
-          "        $18, $19, $20, $21, $22::text::uuid) "
+          "        $18, $19, $20, $21, $22::text::uuid, $23, $24::text::jsonb, $25::text::jsonb) "
           "ON CONFLICT (id) DO UPDATE SET status = EXCLUDED.status, finished_at = now(), "
           "  duration_ms = EXCLUDED.duration_ms, result = EXCLUDED.result, "
           "  error = EXCLUDED.error, output = EXCLUDED.output, cpu_ms = EXCLUDED.cpu_ms, "
           "  max_rss_kb = EXCLUDED.max_rss_kb, sql_count = EXCLUDED.sql_count, "
           "  rows_read = EXCLUDED.rows_read, limits = EXCLUDED.limits, "
-          "  internal_trace = EXCLUDED.internal_trace",
+          "  internal_trace = EXCLUDED.internal_trace, values_read = EXCLUDED.values_read",
     Params = [St#st.id, St#st.program, St#st.version, maps:get(username, St#st.user),
               St#st.origin, St#st.debug, Status, json_text(St#st.params),
               Duration, json_text(Result), json_text(Error),
               unicode:characters_to_binary(St#st.output),
               St#st.cpu_ms, St#st.max_rss_kb, St#st.sql_count, St#st.rows_read,
               json_text(case St#st.limits of M when map_size(M) =:= 0 -> null; M -> M end)]
-             ++ trace(St) ++ [St#st.internal_trace, parent(St)],
+             ++ trace(St) ++ [St#st.internal_trace, parent(St), St#st.rehearse,
+                              json_text(case St#st.values_read of R when map_size(R) =:= 0 -> null; R -> R end),
+                              json_text(St#st.variant)],
     case ana_db:exec(Sql, Params) of
         {ok, _} -> ok;
         {error, E} -> logger:error("audit (end) failed: ~0p", [E])
@@ -1173,8 +1395,8 @@ note_sql(_Res, St = #st{sql_cur = undefined}) -> St;
 note_sql(Res, St = #st{sql_cur = {T0, Sql, At}}) ->
     Us = now_us() - T0,
     Rows = case Res of
-        {ok, #{rows := R}} when is_list(R) -> length(R);
-        {ok, #{affected := N}} when is_integer(N) -> N;
+        {ok, #{rows := [_ | _] = R}} -> length(R);
+        {ok, #{affected := N}} when is_integer(N) -> N;       % writes: rows changed (spec 063)
         _ -> 0
     end,
     Norm = ana_sql_stats:normalize(Sql),

@@ -1,5 +1,6 @@
 # ana:description Registra ou atualiza risco ou pendência do projeto
 # ana:exposed yes
+# ana:category Projetos/Planejamento
 """RF-021-08. Team members register; changing or closing: manager or the risk owner."""
 
 from ana_lib.projects import access
@@ -7,16 +8,16 @@ from ana_lib.projects import views as V
 
 PARAMS = {
     "project": {"type": "str", "required": True, "label": "projeto", "lookup": {"program": "projects.lookup", "params": {"kind": "projects"}}},
-    "id": {"type": "int"},
+    "id": {"type": "int", "label": "risco (id; vazio = novo)"},
     "kind": {"type": "str", "label": "tipo", "choices": [["risk", "Risco"], ["issue", "Pendência"]]},
-    "title": {"type": "str"},
-    "probability": {"type": "int"},
-    "impact": {"type": "int"},
-    "owner": {"type": "str"},
-    "action_plan": {"type": "str"},
-    "due_date": {"type": "date"},
+    "title": {"type": "str", "label": "título"},
+    "probability": {"type": "int", "label": "probabilidade (1 a 5)"},
+    "impact": {"type": "int", "label": "impacto (1 a 5)"},
+    "owner": {"type": "str", "label": "responsável"},
+    "action_plan": {"type": "str", "label": "plano de ação"},
+    "due_date": {"type": "date", "label": "vencimento/prazo"},
     "status": {"type": "str", "label": "situação", "choices": [["open", "Aberto"], ["mitigating", "Em tratamento"], ["closed", "Fechado"]]},
-    "client_visible": {"type": "bool"},
+    "client_visible": {"type": "bool", "label": "visível ao cliente"},
 }
 
 FIELDS = ["kind", "title", "probability", "impact", "owner", "action_plan", "due_date", "status", "client_visible"]

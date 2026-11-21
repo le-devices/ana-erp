@@ -1,3 +1,5 @@
+%% SPDX-FileCopyrightText: 2026 André Luis Pereira dos Santos
+%% SPDX-License-Identifier: AGPL-3.0-or-later
 %% HTTP of the file repository (spec 016).
 %%
 %% /api/files/...   session (internal users and external portal accounts; what one
@@ -54,6 +56,8 @@ route(<<"POST">>, [<<"files">>, Id, <<"links">>], U, Req) ->
     with_int(Id, Req, fun(N) -> body(Req, fun(B, R) -> reply(ana_files:link_create(U, N, B), R) end) end);
 route(<<"DELETE">>, [<<"links">>, Id], U, Req) ->
     with_int(Id, Req, fun(N) -> reply(ana_files:link_revoke(U, N), Req) end);
+route(<<"PUT">>, [<<"folders">>, Id, <<"external">>], U, Req) ->
+    with_int(Id, Req, fun(N) -> body(Req, fun(B, R) -> reply(ana_files:set_external(U, N, maps:get(<<"external">>, B, false) =:= true), R) end) end);
 route(<<"POST">>, [<<"folders">>, Id, <<"zip">>], U, Req) ->
     with_int(Id, Req, fun(N) -> reply(ana_files:zip_token(U, N), Req) end);
 route(<<"POST">>, [<<"grants">>], U, Req) ->

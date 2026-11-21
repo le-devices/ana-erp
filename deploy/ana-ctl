@@ -1,0 +1,269 @@
+#!/usr/bin/env bash
+# SPDX-FileCopyrightText: 2026 André Luis Pereira dos Santos
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# ANA ERP — operation of an installation made by install.sh (spec 036).
+#
+#   ana-ctl status                 containers and health
+#   ana-ctl doctor                 full diagnosis (exit 1 when something needs attention)
+#   ana-ctl disk                   wear of the SSD (SMART/NVMe, needs smartctl and root) and server suggestions (spec 063)
+#   ana-ctl backup                 full database copy now (also run daily by cron)
+#   ana-ctl restore-test           restores the last copy in a throwaway container and checks it
+#   ana-ctl upgrade --source DIR   builds the new version from a package and updates node by node
+#   ana-ctl upgrade --image TAG    same, with an image already built or pulled
+#   ana-ctl rollback               back to the previous image
+#   ana-ctl archive-minutes [N]    shows or changes (1-60) the maximum loss window of the WAL archive (spec 063)
+#   ana-ctl logs [service]         follows the logs
+#   ana-ctl install-cron           daily backup and monthly restore test (cron, needs root)
+#   ana-ctl uninstall [--purge --yes]   stops everything; --purge also erases the data
+#
+# Options: --dir DIR (installation directory; default: this script's directory).
+set -euo pipefail
+
+DIR="$(cd "$(dirname "$0")" && pwd)"
+ARGS=()
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --dir) DIR="$(cd "$2" && pwd)"; shift 2 ;;
+    *) ARGS+=("$1"); shift ;;
+  esac
+done
+set -- "${ARGS[@]:-}"
+CMD="${1:-status}"; shift || true
+
+[ -f "$DIR/.env" ] || { echo "instalação não encontrada em $DIR (.env ausente)" >&2; exit 2; }
+# shellcheck disable=SC1091
+set -a; . "$DIR/.env"; set +a
+export COMPOSE_PROFILES="${COMPOSE_PROFILES:-localdb}"
+compose() { docker compose --project-directory "$DIR" -f "$DIR/docker-compose.prod.yml" --env-file "$DIR/.env" "$@"; }
+say() { printf '%s\n' "$*"; }
+ok() { printf '  [ok]    %s\n' "$*"; }
+bad() { printf '  [ATENÇÃO] %s\n' "$*"; PROBLEMS=$((PROBLEMS + 1)); }
+PROBLEMS=0
+
+nodes() {
+  case ",$COMPOSE_PROFILES," in *,ha,*) echo "ana2 ana1" ;; *) echo "ana1" ;; esac
+}
+
+node_ready() {   # node_ready ana1 → 0 when /health/ready answers 200 inside the container
+  compose exec -T "$1" python3 -c \
+    "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8080/health/ready', timeout=3).status == 200 else 1)" \
+    >/dev/null 2>&1
+}
+
+wait_ready() {   # wait_ready ana1 [seconds]
+  local n="$1" t="${2:-240}" i=0
+  while [ $i -lt "$t" ]; do node_ready "$n" && return 0; sleep 2; i=$((i + 2)); done
+  return 1
+}
+
+psql_db() {      # SQL on the ERP database (local database container)
+  compose exec -T db psql -U postgres -d "${ANA_DB_NAME:-ana}" -At -v ON_ERROR_STOP=1 -c "$1"
+}
+
+has_localdb() { case ",$COMPOSE_PROFILES," in *,localdb,*) return 0 ;; *) return 1 ;; esac; }
+
+record() {       # record kind ok detail → the ERP sees backups and restore tests (spec 033)
+  has_localdb || return 0
+  psql_db "INSERT INTO ana_system.ops_event (kind, ok, detail) VALUES ('$1', $2, left(\$\$$3\$\$, 2000))" >/dev/null 2>&1 \
+    || say "aviso: não foi possível registrar o evento no ERP"
+}
+
+set_env() {      # set_env KEY VALUE (keeps mode 600)
+  if grep -q "^$1=" "$DIR/.env"; then sed -i "s|^$1=.*|$1=\"$2\"|" "$DIR/.env"; else echo "$1=\"$2\"" >> "$DIR/.env"; fi
+  chmod 600 "$DIR/.env"
+}
+
+disk_health() {  # spec 063 (D5): wear of the disk holding the data; reads only, never changes the system
+  local root dev disk json
+  root="$(docker info -f '{{.DockerRootDir}}' 2>/dev/null || echo /)"
+  dev="$(df -P "$root" 2>/dev/null | awk 'NR==2 {print $1}' || true)"
+  disk="$(lsblk -no PKNAME "$dev" 2>/dev/null | head -1 || true)"; disk="/dev/${disk:-$(basename "${dev:-disco}")}"
+  if ! command -v smartctl >/dev/null 2>&1 || ! command -v python3 >/dev/null 2>&1; then
+    say "  [sugestão] instale smartmontools (smartctl) para o ERP acompanhar o desgaste do SSD"
+  elif [ "$(id -u)" != "0" ]; then
+    say "  [sugestão] rode como root para ler o desgaste do SSD ($disk)"
+  elif json="$(smartctl -j -a "$disk" 2>/dev/null || true)"; [ -n "$json" ]; then
+    local line
+    line="$(printf '%s' "$json" | python3 -c '
+import json, sys
+d = json.load(sys.stdin)
+nv = d.get("nvme_smart_health_information_log") or {}
+used, written = nv.get("percentage_used"), None
+if nv.get("data_units_written") is not None:
+    written = nv["data_units_written"] * 512000
+for page in (d.get("ata_device_statistics") or {}).get("pages", []):
+    for t in page.get("table", []):
+        if t.get("name") == "Percentage Used Endurance Indicator":
+            used = t.get("value")
+for a in (d.get("ata_smart_attributes") or {}).get("table", []):
+    if a.get("id") == 241 and written is None:
+        written = a.get("raw", {}).get("value", 0) * 512
+out = {"device": d.get("device", {}).get("name"), "model": d.get("model_name"), "used_pct": used,
+       "written_bytes": written, "healthy": (d.get("smart_status") or {}).get("passed")}
+print(json.dumps(out))' 2>/dev/null || true)"
+    if [ -n "$line" ]; then
+      used="$(printf '%s' "$line" | python3 -c 'import json,sys; v=json.load(sys.stdin)["used_pct"]; print("" if v is None else int(v))' || true)"
+      if [ -n "$used" ] && [ "$used" -ge 80 ]; then bad "SSD $disk com ${used}% da vida útil usada: planeje a troca"
+      elif [ -n "$used" ]; then ok "SSD $disk com ${used}% da vida útil usada"
+      else ok "disco $disk lido (sem indicador de desgaste)"; fi
+      healthy="$(printf '%s' "$line" | python3 -c 'import json,sys; print(json.load(sys.stdin)["healthy"])' || true)"
+      [ "$healthy" = "False" ] && bad "SMART de $disk indica falha: troque o disco"
+      record disk_health true "$line"
+    fi
+  fi
+  { findmnt -no OPTIONS --target "$root" 2>/dev/null || true; } | grep -qw noatime \
+    || say "  [sugestão] monte o disco de dados com noatime (menos escrita a cada leitura)"
+  systemctl is-enabled fstrim.timer >/dev/null 2>&1 \
+    || say "  [sugestão] ligue o TRIM periódico: systemctl enable --now fstrim.timer"
+}
+
+case "$CMD" in
+  status)
+    compose ps
+    for n in $(nodes); do if node_ready "$n"; then ok "$n pronto"; else bad "$n não está pronto"; fi; done
+    ;;
+
+  doctor)
+    say "Diagnóstico de $DIR (${ANA_INSTANCE_NAME:-ana})"
+    docker info >/dev/null 2>&1 && ok "Docker em execução" || bad "Docker não responde"
+    [ "$(stat -c %a "$DIR/.env")" = "600" ] && ok ".env com permissão 600" || bad ".env deveria ter permissão 600 (chmod 600 $DIR/.env)"
+    for n in $(nodes); do if node_ready "$n"; then ok "nó $n pronto"; else bad "nó $n não está pronto (ana-ctl logs $n)"; fi; done
+    if curl -fsSk --max-time 5 "https://127.0.0.1:${ANA_HTTPS_PORT_PUBLIC:-443}/health" -H "Host: ${ANA_HOSTNAME:-localhost}" >/dev/null; then
+      ok "HTTPS respondendo na porta ${ANA_HTTPS_PORT_PUBLIC:-443}"
+    else bad "HTTPS não responde na porta ${ANA_HTTPS_PORT_PUBLIC:-443} (ana-ctl logs proxy)"; fi
+    free_kb=$(df -Pk "$(docker info -f '{{.DockerRootDir}}' 2>/dev/null || echo /)" | awk 'NR==2 {print $4}')
+    [ "${free_kb:-0}" -gt 5242880 ] && ok "disco: $((free_kb / 1048576)) GiB livres" || bad "disco com menos de 5 GiB livres"
+    if has_localdb; then
+      age=$(psql_db "SELECT COALESCE(extract(epoch FROM now() - max(at))::int / 3600, -1) FROM ana_system.ops_event WHERE kind = 'backup_base' AND ok" 2>/dev/null || echo -1)
+      if [ "$age" -ge 0 ] && [ "$age" -le 26 ]; then ok "última cópia do banco há ${age} h"; else bad "sem cópia do banco nas últimas 26 h (ana-ctl backup)"; fi
+      crit=$(psql_db "SELECT count(*) FROM ana_system.advice WHERE status = 'open' AND severity = 'critical'" 2>/dev/null || echo "?")
+      [ "$crit" = "0" ] && ok "verificações do ERP sem achados críticos" || bad "$crit achado(s) crítico(s) em Administração → Verificações"
+    fi
+    has_localdb && say "  [info]  janela máxima de perda (arquivo de WAL): $(( ${ANA_PG_ARCHIVE_TIMEOUT:-300} / 60 )) min (ana-ctl archive-minutes N)"
+    disk_health
+    say ""
+    [ $PROBLEMS -eq 0 ] && say "Tudo certo." || { say "$PROBLEMS ponto(s) de atenção."; exit 1; }
+    ;;
+
+  backup)
+    has_localdb || { say "banco gerenciado: use as cópias do provedor"; exit 0; }
+    name="base-$(date -u +%Y%m%dT%H%M%SZ)"
+    if compose exec -T -u postgres db pg_basebackup -U postgres -D "/var/lib/postgresql/archive/base/$name" -Ft -z -X fetch --checkpoint=fast; then
+      record backup_base true "$name"
+      keep="${ANA_BACKUP_KEEP_DAYS:-14}"
+      compose exec -T -u postgres db sh -c "find /var/lib/postgresql/archive/base -mindepth 1 -maxdepth 1 -type d -mtime +$keep -exec rm -rf {} +; \
+        oldest=\$(ls -1 /var/lib/postgresql/archive/base | head -1); \
+        [ -n \"\$oldest\" ] && f=\$(tar -xzOf /var/lib/postgresql/archive/base/\$oldest/base.tar.gz backup_label 2>/dev/null | sed -n 's/^START WAL LOCATION: .*(file \\(.*\\))/\\1/p'); \
+        [ -n \"\$f\" ] && pg_archivecleanup /var/lib/postgresql/archive/wal \$f || true"
+      say "$name"
+    else
+      record backup_base false "$name"; exit 1
+    fi
+    ;;
+
+  restore-test)
+    has_localdb || { say "banco gerenciado: teste a restauração no provedor"; exit 0; }
+    vol="${ANA_PROJECT:-ana-erp}_wal_archive"; name="ana-restore-test-$$"
+    docker run -d --name "$name" -v "$vol":/archive:ro -e POSTGRES_PASSWORD=restore --entrypoint sh citusdata/citus:12.1 -c "
+      set -e; base=\$(ls -1d /archive/base/base-* | tail -1); mkdir -p /tmp/pg
+      tar -xzf \$base/base.tar.gz -C /tmp/pg; chown -R postgres /tmp/pg && chmod 700 /tmp/pg
+      echo \"restore_command = 'cp /archive/wal/%f %p'\" >> /tmp/pg/postgresql.auto.conf; su postgres -c 'touch /tmp/pg/recovery.signal'
+      exec su postgres -c 'postgres -D /tmp/pg -c archive_mode=off -c shared_preload_libraries=citus,pg_prewarm -c max_connections=300'" >/dev/null
+    trap 'docker rm -f "$name" >/dev/null 2>&1 || true' EXIT
+    for _ in $(seq 1 120); do
+      if docker exec "$name" su postgres -c "psql -At -d ${ANA_DB_NAME:-ana} -c 'SELECT NOT pg_is_in_recovery()'" 2>/dev/null | grep -q t; then
+        n=$(docker exec "$name" su postgres -c "psql -At -d ${ANA_DB_NAME:-ana} -c 'SELECT count(*) FROM ana_system.migration'")
+        record restore_test true "migrações: $n"; say "restauração conferida ($n migrações)"; exit 0
+      fi
+      sleep 1
+    done
+    record restore_test false "restauração não terminou"; docker logs --tail 30 "$name" >&2; exit 1
+    ;;
+
+  upgrade)
+    image=""; source=""
+    while [ $# -gt 0 ]; do
+      case "$1" in --image) image="$2"; shift 2 ;; --source) source="$2"; shift 2 ;; *) shift ;; esac
+    done
+    if [ -n "$source" ]; then
+      vsn=$(sed -n 's/.*{vsn, *"\([^"]*\)".*/\1/p' "$source/src/ana.app.src" | head -1)
+      image="ana-erp:${vsn:-0}-$(date -u +%Y%m%d%H%M%S)"
+      say "Construindo $image a partir de $source…"
+      docker build -q -t "$image" "$source" >/dev/null
+    fi
+    [ -n "$image" ] || { say "informe --source DIR ou --image TAG" >&2; exit 2; }
+    docker image inspect "$image" >/dev/null 2>&1 || docker pull "$image"
+    previous="$ANA_IMAGE"
+    say "Cópia do banco antes da atualização…"; "$0" --dir "$DIR" backup >/dev/null || { say "cópia falhou: atualização cancelada" >&2; exit 1; }
+    set_env ANA_IMAGE_PREVIOUS "$previous"; set_env ANA_IMAGE "$image"
+    [ "$(nodes)" = "ana1" ] && say "aviso: com um só nó a atualização tem uma parada curta (use dois nós para não parar)"
+    for n in $(nodes); do
+      say "Atualizando $n…"
+      compose up -d --no-deps "$n" >/dev/null
+      if ! wait_ready "$n" 300; then
+        say "$n não ficou pronto: voltando para $previous" >&2
+        set_env ANA_IMAGE "$previous"; compose up -d --no-deps "$n" >/dev/null; wait_ready "$n" 300 || true
+        exit 1
+      fi
+      sleep 5                       # the proxy sees it ready before the next node drains
+    done
+    say "Atualizado para $image."
+    ;;
+
+  rollback)
+    [ -n "${ANA_IMAGE_PREVIOUS:-}" ] || { say "não há versão anterior registrada" >&2; exit 2; }
+    exec "$0" --dir "$DIR" upgrade --image "$ANA_IMAGE_PREVIOUS"
+    ;;
+
+  disk) disk_health; [ $PROBLEMS -eq 0 ] || exit 1 ;;
+
+  archive-minutes)
+    # Maximum loss window if the whole server is lost (RPO, spec 063): while there are writes, the WAL archive
+    # closes and copies a 16 MB segment at most this often. Shorter = less loss, more disk writes.
+    has_localdb || { say "banco gerenciado: a janela de perda é a do provedor"; exit 0; }
+    if [ -z "${1:-}" ]; then
+      say "janela máxima de perda: $(( ${ANA_PG_ARCHIVE_TIMEOUT:-300} / 60 )) min (no banco: $(psql_db "SHOW archive_timeout" 2>/dev/null || echo '?'))"
+      exit 0
+    fi
+    case "$1" in [1-9]|[1-5][0-9]|60) ;; *) say "informe de 1 a 60 minutos" >&2; exit 2 ;; esac
+    set_env ANA_PG_ARCHIVE_TIMEOUT $(( $1 * 60 )); export ANA_PG_ARCHIVE_TIMEOUT=$(( $1 * 60 ))
+    say "aplicando $1 min: o banco reinicia (pausa de alguns segundos; as telas se reconectam sozinhas)"
+    compose up -d db
+    for n in $(nodes); do wait_ready "$n" 300 && ok "$n pronto" || bad "$n não ficou pronto"; done
+    say "no banco: $(psql_db "SHOW archive_timeout")"
+    [ $PROBLEMS -eq 0 ] || exit 1
+    ;;
+
+  logs) compose logs -f --tail 200 "$@" ;;
+
+  install-cron)
+    [ "$(id -u)" = "0" ] || { say "rode como root (ou agende você mesmo: ana-ctl backup diário, ana-ctl restore-test mensal)" >&2; exit 2; }
+    cat > /etc/cron.d/ana-erp-"${ANA_PROJECT:-ana-erp}" <<CRON
+# ANA ERP (${ANA_PROJECT:-ana-erp}): daily database copy, monthly restore test (spec 036)
+SHELL=/bin/bash
+30 2 * * * root $DIR/ana-ctl --dir $DIR backup >> /var/log/ana-erp-backup.log 2>&1
+30 4 1 * * root $DIR/ana-ctl --dir $DIR restore-test >> /var/log/ana-erp-backup.log 2>&1
+CRON
+    say "agendado em /etc/cron.d/ana-erp-${ANA_PROJECT:-ana-erp}"
+    ;;
+
+  uninstall)
+    purge=""; yes=""
+    for a in "$@"; do case "$a" in --purge) purge=1 ;; --yes) yes=1 ;; esac; done
+    if [ -n "$purge" ]; then
+      if [ -z "$yes" ]; then
+        printf 'Isto APAGA o banco, os arquivos e as cópias de %s. Digite o nome do projeto para confirmar: ' "${ANA_PROJECT:-ana-erp}"
+        read -r answer; [ "$answer" = "${ANA_PROJECT:-ana-erp}" ] || { say "cancelado"; exit 1; }
+      fi
+      compose --profile localdb --profile ha down -v --remove-orphans
+      say "removido, inclusive os dados."
+    else
+      compose --profile localdb --profile ha down --remove-orphans
+      say "parado; dados mantidos (volumes ${ANA_PROJECT:-ana-erp}_*). Para voltar: ana-ctl --dir $DIR up"
+    fi
+    ;;
+
+  up) compose up -d; for n in $(nodes); do wait_ready "$n" 300 && ok "$n pronto" || bad "$n não ficou pronto"; done ;;
+
+  *) sed -n '2,17p' "$0"; exit 2 ;;
+esac

@@ -1,3 +1,5 @@
+%% SPDX-FileCopyrightText: 2026 André Luis Pereira dos Santos
+%% SPDX-License-Identifier: AGPL-3.0-or-later
 %% Studio files served from memory with ETag (RF-005-01, RNF-005-03).
 %% Allow-list: only files present in priv/www at startup.
 -module(ana_http_static).

@@ -1,5 +1,6 @@
 # ana:description Aprova sugestões do planejamento: gera ordens de produção e solicitações de compra
 # ana:exposed yes
+# ana:category Produção/Planejamento
 """RF-014-05. "make" → planned production order; "buy" → purchase request (origin planning,
 spec 013), one per need week and warehouse. Without ids, every open suggestion of the scenario."""
 
@@ -8,7 +9,7 @@ import datetime
 PARAMS = {
     "scenario": {"type": "str", "default": "principal", "label": "cenário"},
     "ids": {"type": "list", "label": "sugestões (vazio = todas as abertas)"},
-    "warehouse": {"type": "str", "default": "CENTRAL", "label": "depósito das compras"},
+    "warehouse": {"type": "str", "default": "CENTRAL", "label": "depósito das compras", "lookup": {"program": "production.lookup", "params": {"kind": "warehouses"}}},
 }
 
 

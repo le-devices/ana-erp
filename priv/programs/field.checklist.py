@@ -1,11 +1,12 @@
 # ana:description Checklist da OS (perguntas do serviço): consultar ou responder
 # ana:exposed yes
+# ana:category Logística e campo/Serviços em campo
 """RF-015-08. Without answers, lists the questions of the service and what was answered."""
 
 from ana_lib.field import common
 
 PARAMS = {
-    "order": {"type": "int", "required": True, "label": "OS"},
+    "order": {"type": "int", "required": True, "label": "OS", "lookup": {"program": "logistics.lookup", "params": {"kind": "service_orders"}}},
     "answers": {"type": "list", "label": "respostas", "help": '[{"item": 1, "answer": "ok"}]'},
 }
 

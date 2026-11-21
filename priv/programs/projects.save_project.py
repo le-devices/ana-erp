@@ -1,6 +1,7 @@
 # ana:description Cria ou atualiza projeto com tarefas, equipe e valores-hora
 # ana:exposed yes
 # ana:command project
+# ana:category Projetos/Planejamento
 """Upsert by code. Creating requires admin; changing requires manager or admin.
 
 Example:
@@ -14,25 +15,26 @@ Example:
 from decimal import Decimal
 
 from ana_lib.projects import access
+from ana_lib.tax import admin as tax_admin
 
 PARAMS = {
-    "code": {"type": "str", "required": True},
-    "name": {"type": "str"},
-    "customer": {"type": "int"},
-    "manager": {"type": "str"},
-    "billing": {"type": "str"},
-    "status": {"type": "str"},
-    "start_date": {"type": "date"},
-    "due_date": {"type": "date"},
-    "budget_hours": {"type": "decimal"},
-    "budget_amount": {"type": "decimal"},
-    "service_tax_rate": {"type": "decimal"},
-    "service_tax_withheld": {"type": "bool"},
-    "description": {"type": "str"},
+    "code": {"type": "str", "required": True, "label": "código"},
+    "name": {"type": "str", "label": "nome"},
+    "customer": {"type": "int", "label": "cliente", "lookup": {"program": "sales.lookup", "params": {"kind": "customers"}}},
+    "manager": {"type": "str", "label": "gestor (usuário)"},
+    "billing": {"type": "str", "label": "faturamento", "choices": [["hourly", "Por hora"], ["fixed", "Preço fechado"], ["mixed", "Misto"]]},
+    "status": {"type": "str", "label": "situação", "choices": [["proposal", "Proposta"], ["active", "Ativo"], ["suspended", "Suspenso"], ["closed", "Encerrado"]]},
+    "start_date": {"type": "date", "label": "início"},
+    "due_date": {"type": "date", "label": "vencimento/prazo"},
+    "budget_hours": {"type": "decimal", "label": "orçamento (horas)"},
+    "budget_amount": {"type": "decimal", "label": "orçamento (valor)"},
+    "service_tax_rate": {"type": "decimal", "label": "alíquota do imposto sobre serviço"},
+    "service_tax_withheld": {"type": "bool", "label": "imposto retido pelo cliente"},
+    "description": {"type": "str", "label": "descrição"},
     "cost_center": {"type": "str", "label": "centro de custo", "lookup": {"program": "finance.lookup", "params": {"kind": "cost_centers"}}},
-    "tasks": {"type": "list", "default": []},
-    "team": {"type": "list", "default": []},
-    "rates": {"type": "dict", "default": {}},
+    "tasks": {"type": "list", "default": [], "label": "atividades"},
+    "team": {"type": "list", "default": [], "label": "equipe"},
+    "rates": {"type": "dict", "default": {}, "label": "valores por perfil"},
 }
 
 COLUMNS = ["name", "customer_id", "manager", "billing", "status", "start_date", "due_date",
@@ -69,6 +71,10 @@ def main(code, tasks=(), team=(), rates=None, customer=None, **fields):
                      "description = COALESCE($13, description), cost_center = COALESCE($14, cost_center) WHERE id = $1",
                      project_id, *[fields.get(c) for c in COLUMNS])
         created = False
+    if fields.get("service_tax_rate") is not None or fields.get("service_tax_withheld") is not None:
+        # Spec 049 (D11): the rate typed on the project becomes a rule of this contract in the tax engine.
+        cur = ana.sql_one("SELECT service_tax_rate, service_tax_withheld FROM projects.project WHERE id = $1", project_id)
+        tax_admin.contract_rate(code, cur["service_tax_rate"], cur["service_tax_withheld"])
 
     if tasks:
         ana.sql_batch(

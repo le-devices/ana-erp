@@ -1,0 +1,141 @@
+# SPDX-FileCopyrightText: 2026 André Luis Pereira dos Santos
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# ANA ERP — production installation (spec 036). Created and driven by install.sh / ana-ctl;
+# every secret comes from .env (generated, mode 600). Two core nodes with the "ha" profile.
+name: ${ANA_PROJECT:-ana-erp}
+
+x-logging: &logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "5"
+
+x-ana: &ana
+  image: ${ANA_IMAGE:?ANA_IMAGE}
+  environment: &ana-env
+    ANA_DB_HOST: ${ANA_DB_HOST:-db}
+    ANA_DB_PORT: ${ANA_DB_PORT:-5432}
+    ANA_DB_NAME: ${ANA_DB_NAME:-ana}
+    ANA_DB_USER: ana
+    ANA_DB_PASSWORD: ${ANA_DB_PASSWORD:?ANA_DB_PASSWORD}
+    ANA_DB_EXEC_PASSWORD: ${ANA_DB_EXEC_PASSWORD:?ANA_DB_EXEC_PASSWORD}
+    ANA_DB_READ_PASSWORD: ${ANA_DB_READ_PASSWORD:?ANA_DB_READ_PASSWORD}
+    ANA_ADMIN_PASSWORD: ${ANA_ADMIN_PASSWORD:?ANA_ADMIN_PASSWORD}
+    ANA_MASTER_KEY: ${ANA_MASTER_KEY:?ANA_MASTER_KEY}
+    ANA_COOKIE: ${ANA_COOKIE:?ANA_COOKIE}
+    ANA_HTTP_PORT: "8080"
+    ANA_DEMO: "false"
+    ANA_INSTANCE: ${ANA_INSTANCE:-production}
+    ANA_INSTANCE_NAME: ${ANA_INSTANCE_NAME:-ana-production}
+    ANA_TIMEZONE: ${ANA_TIMEZONE:-America/Sao_Paulo}
+    ANA_PUBLIC_URL: ${ANA_PUBLIC_URL:-}
+    ANA_DRAIN_DELAY_MS: "4000"           # longer than the proxy's health detection
+  read_only: true
+  tmpfs:
+    - /tmp:size=256m,mode=1777
+  volumes:
+    - files:/var/lib/ana/files
+  security_opt:
+    - no-new-privileges:true
+  cap_drop: [ALL]
+  restart: unless-stopped
+  stop_grace_period: 40s
+  logging: *logging
+  mem_limit: ${ANA_NODE_MEMORY:-2g}
+
+services:
+  # One-shot: the WAL archive volume belongs to the database user (created as root by Docker).
+  db-prepare:
+    image: citusdata/citus:12.1
+    profiles: ["localdb"]
+    user: root
+    entrypoint: ["sh", "-c", "mkdir -p /archive/wal /archive/base && chown -R postgres:postgres /archive && chmod 700 /archive"]
+    volumes:
+      - wal_archive:/archive
+    restart: "no"
+
+  db:
+    image: citusdata/citus:12.1
+    profiles: ["localdb"]                 # left out when ANA_DB_HOST points to a managed database
+    depends_on:
+      db-prepare:
+        condition: service_completed_successfully
+    environment:
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD}
+      ANA_DB_PASSWORD: ${ANA_DB_PASSWORD}
+    command: >
+      postgres -c shared_preload_libraries=citus,pg_prewarm
+               -c shared_buffers=${ANA_PG_SHARED_BUFFERS:-512MB}
+               -c effective_cache_size=${ANA_PG_EFFECTIVE_CACHE:-1536MB}
+               -c work_mem=${ANA_PG_WORK_MEM:-32MB}
+               -c maintenance_work_mem=256MB
+               -c max_connections=300
+               -c password_encryption=scram-sha-256
+               -c wal_compression=lz4
+               -c checkpoint_timeout=15min
+               -c max_wal_size=2GB
+               -c min_wal_size=256MB
+               -c pg_prewarm.autoprewarm_interval=0
+               -c log_temp_files=10240
+               -c log_checkpoints=on
+               -c archive_mode=on
+               -c archive_timeout=${ANA_PG_ARCHIVE_TIMEOUT:-300}
+               -c "archive_command=test ! -f /var/lib/postgresql/archive/wal/%f && cp %p /var/lib/postgresql/archive/wal/%f"
+               -c log_min_duration_statement=1000
+    volumes:
+      - data:/var/lib/postgresql/data
+      - wal_archive:/var/lib/postgresql/archive
+      - ./initdb.sql:/docker-entrypoint-initdb.d/01-ana.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d ana"]
+      interval: 5s
+      timeout: 3s
+      retries: 60
+    restart: unless-stopped
+    logging: *logging
+    shm_size: 256m
+
+  ana1:
+    <<: *ana
+    hostname: ana1.ana
+    environment:
+      <<: *ana-env
+      ANA_NODE_NAME: ana@ana1.ana
+    networks:
+      default:
+        aliases: [ana1.ana]
+
+  ana2:
+    <<: *ana
+    profiles: ["ha"]
+    hostname: ana2.ana
+    environment:
+      <<: *ana-env
+      ANA_NODE_NAME: ana@ana2.ana
+    networks:
+      default:
+        aliases: [ana2.ana]
+
+  proxy:
+    image: caddy:2.8-alpine
+    environment:
+      ANA_SITE: ${ANA_SITE:?ANA_SITE}
+      ANA_HOSTNAME: ${ANA_HOSTNAME:-localhost}
+      ANA_TLS: ${ANA_TLS:-internal}
+      ANA_UPSTREAMS: ${ANA_UPSTREAMS:-ana1:8080}
+    ports:
+      - "${ANA_HTTP_PORT_PUBLIC:-80}:80"
+      - "${ANA_HTTPS_PORT_PUBLIC:-443}:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - ./certs:/certs:ro
+    depends_on: [ana1]
+    restart: unless-stopped
+    logging: *logging
+
+volumes:
+  data:
+  wal_archive:
+  files:
+  caddy_data:

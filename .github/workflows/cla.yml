@@ -1,0 +1,100 @@
+# SPDX-FileCopyrightText: 2026 André Luis Pereira dos Santos
+# SPDX-License-Identifier: AGPL-3.0-or-later
+#
+# Contributor License Agreement (spec 066, RF-066-03, CA-066-05). Every person who authored a commit of a pull request
+# must have accepted CLA.md: by commenting the acceptance sentence on a pull request, once. The acceptance is recorded
+# in the branch "cla-signatures" (.github/cla/signatures.json: user, id, date, version, pull request, comment) and
+# holds for the next pull requests. The result is the commit status "CLA" on the head of the pull request — make it a
+# required check of dev, qa and master.
+#
+# Safe with pull_request_target: the code of the pull request is never checked out nor run; only the GitHub API is
+# read, and the comment text is only compared with the sentence.
+name: CLA
+
+on:
+  pull_request_target:
+    types: [opened, synchronize, reopened]
+  issue_comment:
+    types: [created]
+
+permissions:
+  contents: write        # the signatures branch
+  pull-requests: read
+  statuses: write        # the "CLA" status on the head commit
+
+concurrency:
+  group: cla-${{ github.event.pull_request.number || github.event.issue.number }}
+  cancel-in-progress: false
+
+jobs:
+  cla:
+    if: github.event_name == 'pull_request_target' || github.event.issue.pull_request
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    env:
+      GH_TOKEN: ${{ github.token }}
+      REPO: ${{ github.repository }}
+      PR: ${{ github.event.pull_request.number || github.event.issue.number }}
+      VERSION: "1.0"
+      SENTENCE: "Li e aceito o Termo de Licença de Contribuição do ANA ERP, versão 1.0."
+      SENTENCE_EN: "I have read and accept the ANA ERP Contributor License Agreement, version 1.0."
+      BRANCH: cla-signatures
+      FILE: .github/cla/signatures.json
+      COMMENT_USER: ${{ github.event.comment.user.login }}
+      COMMENT_ID: ${{ github.event.comment.user.id }}
+      COMMENT_URL: ${{ github.event.comment.html_url }}
+      COMMENT_BODY: ${{ github.event.comment.body }}
+    steps:
+      - name: Check the authors of the pull request
+        run: |
+          set -euo pipefail
+          pr=$(gh api "repos/$REPO/pulls/$PR")
+          sha=$(jq -r .head.sha <<<"$pr")
+          # Who must accept: the authors of the commits (GitHub users), and who opened the pull request. Bots do not.
+          authors=$( { jq -r .user.login <<<"$pr"; gh api "repos/$REPO/pulls/$PR/commits" --paginate --jq '.[].author.login // empty'; } \
+                     | grep -v '\[bot\]$' | sort -u)
+          # Maintainers (owner and members of the organization) are the licensor: no agreement needed.
+          exempt() {
+            local a
+            a=$(gh api "repos/$REPO/collaborators/$1/permission" --jq .permission 2>/dev/null || echo none)
+            [ "$a" = admin ] || [ "$a" = maintain ]
+          }
+          # Signatures so far (the branch is created with the first one).
+          if raw=$(gh api "repos/$REPO/contents/$FILE?ref=$BRANCH" 2>/dev/null); then
+            signed=$(jq -r .content <<<"$raw" | base64 -d); file_sha=$(jq -r .sha <<<"$raw")
+          else
+            signed='[]'; file_sha=""
+          fi
+          # A new acceptance in this comment is recorded first.
+          norm() { tr -s '[:space:]' ' ' | sed 's/^ //; s/ $//'; }
+          body=$(printf '%s' "${COMMENT_BODY:-}" | norm)
+          if [ -n "${COMMENT_USER:-}" ] && { [ "$body" = "$SENTENCE" ] || [ "$body" = "$SENTENCE_EN" ]; } \
+             && ! jq -e --arg u "$COMMENT_USER" --arg v "$VERSION" 'any(.[]; .user == $u and .version == $v)' <<<"$signed" >/dev/null; then
+            signed=$(jq --arg u "$COMMENT_USER" --argjson id "${COMMENT_ID:-0}" --arg v "$VERSION" --arg pr "$PR" \
+                        --arg url "$COMMENT_URL" --arg at "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+                        '. + [{user: $u, id: $id, version: $v, pull_request: ($pr | tonumber), comment: $url, at: $at}]' <<<"$signed")
+            if [ -z "$file_sha" ] && ! gh api "repos/$REPO/branches/$BRANCH" >/dev/null 2>&1; then
+              base=$(gh api "repos/$REPO" --jq .default_branch)
+              gh api -X POST "repos/$REPO/git/refs" -f ref="refs/heads/$BRANCH" \
+                 -f sha="$(gh api "repos/$REPO/git/refs/heads/$base" --jq .object.sha)" >/dev/null
+            fi
+            args=(-X PUT "repos/$REPO/contents/$FILE" -f branch="$BRANCH" -f message="CLA: aceite de $COMMENT_USER (versão $VERSION)"
+                  -f content="$(printf '%s\n' "$signed" | base64 -w0)")
+            [ -n "$file_sha" ] && args+=(-f sha="$file_sha")
+            gh api "${args[@]}" >/dev/null
+            echo "aceite registrado: $COMMENT_USER"
+          fi
+          missing=""
+          for a in $authors; do
+            exempt "$a" && continue
+            jq -e --arg u "$a" --arg v "$VERSION" 'any(.[]; .user == $u and .version == $v)' <<<"$signed" >/dev/null || missing="$missing $a"
+          done
+          if [ -z "$missing" ]; then
+            state=success; desc="Termo de contribuição aceito por todos os autores"
+          else
+            state=failure; desc="Falta aceitar o termo (CLA.md):$missing"
+          fi
+          gh api -X POST "repos/$REPO/statuses/$sha" -f state="$state" -f context=CLA -f description="${desc:0:139}" \
+             -f target_url="https://github.com/$REPO/blob/$(gh api "repos/$REPO" --jq .default_branch)/CLA.md" >/dev/null
+          echo "$desc"
+          [ "$state" = success ]

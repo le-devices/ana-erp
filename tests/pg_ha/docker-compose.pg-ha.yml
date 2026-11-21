@@ -1,3 +1,5 @@
+# SPDX-FileCopyrightText: 2026 André Luis Pereira dos Santos
+# SPDX-License-Identifier: AGPL-3.0-or-later
 # Real primary failover (spec 023, T-023-09): db (primary) + db2 (streaming replica),
 # on top of the cluster and chaos compose files. Usage: tests/pg_ha/run.sh
 services:
@@ -8,14 +10,14 @@ services:
       PGPASSWORD: ${ANA_TEST_REPL_PASSWORD:-repl-test-password}
     # Data in memory: a throwaway replica (and no SSD wear, P15).
     tmpfs:
-      - /var/lib/postgresql/data:size=1g,mode=0700,uid=999,gid=999
+      - /var/lib/postgresql/data:size=3g,mode=0700,uid=999,gid=999
     user: postgres
     entrypoint: ["sh", "-c"]
     command:
       - |
         set -e
         if [ ! -s /var/lib/postgresql/data/PG_VERSION ]; then
-          until pg_basebackup -h db -U replicator -D /var/lib/postgresql/data -R -X stream; do
+          until pg_basebackup -h db -U replicator -D /var/lib/postgresql/data -R -X stream -c fast; do
             echo "waiting for the primary"; sleep 2; done
         fi
         exec postgres -D /var/lib/postgresql/data -c shared_preload_libraries=citus,pg_prewarm \
