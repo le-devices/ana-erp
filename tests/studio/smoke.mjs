@@ -704,6 +704,7 @@ ok(true, "API pública: clientes, novo cliente e chamadas (spec 010)");
 
   // CA-050-02: a routine, an order by its number and a customer by CNPJ, and the chosen one is opened.
   await go(w, "#/home");
+  await until(() => !d.querySelector("#area-home").hidden && d.querySelector("#area-ops").hidden, "home shown", jsErrors);
   key("k", { ctrlKey: true });
   await until(() => d.querySelector(".palette-dialog .palette-input"), "palette", jsErrors);
   const pin = d.querySelector(".palette-dialog .palette-input");
@@ -712,7 +713,9 @@ ok(true, "API pública: clientes, novo cliente e chamadas (spec 010)");
   pin.dispatchEvent(new w.KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true }));
   await until(() => w.location.hash.startsWith("#/ops/sales/sales.invoice_order") && !d.querySelector(".palette-dialog"), "palette opens routine", jsErrors);
   ok(true, "Ctrl+K acha a rotina pelo nome e abre (CA-050-02)");
-  await until(() => d.querySelector("#ops-main .run-button"), "routine form", jsErrors);
+  // The screen really changed (a form left by an earlier visit to this routine does not count).
+  await until(() => !d.querySelector("#area-ops").hidden && d.querySelector("#area-home").hidden && d.querySelector("#ops-main .run-button"),
+              "routine screen shown (toast: " + text("#toast") + ")", jsErrors);
   key("k", { ctrlKey: true });
   await until(() => d.querySelector(".palette-dialog"), "palette 2", jsErrors);
   typeIn(d.querySelector(".palette-dialog .palette-input"), "executar");
