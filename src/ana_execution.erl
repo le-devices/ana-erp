@@ -59,6 +59,12 @@
     read_only = false :: boolean(),          % simulation or restricted license: nothing is kept after the run
     %% Spec 052: the caller asks a read-only transaction (the assistant's queries — the database refuses any write).
     force_read_only = false :: boolean(),
+    %% Spec 064 (D4, D5): a test entry in place of main, line coverage, and an earlier version of the program
+    %% (only in a rehearsal: everything undone).
+    entry = undefined :: binary() | undefined,
+    coverage_req = false :: boolean(),
+    coverage = null :: map() | null,
+    version_req = undefined :: pos_integer() | undefined,
     %% Spec 050 (D5): the undo the routine offers (ana.offer_undo), recorded after its COMMIT; then what was offered.
     undo = undefined :: map() | undefined,
     undo_offered = null :: map() | null,
@@ -288,6 +294,12 @@ init(#{id := Id, program := Program, params := Params, user := User,
                       andalso maps:get(rehearse, Op, false) =/= true,
              rehearse = maps:get(rehearse, Op, false) =:= true,
              force_read_only = maps:get(read_only, Op, false) =:= true,
+             entry = case maps:get(entry, Op, undefined) of E when is_binary(E) -> E; _ -> undefined end,
+             coverage_req = maps:get(coverage, Op, false) =:= true,
+             version_req = case {maps:get(version, Op, undefined), maps:get(rehearse, Op, false)} of
+                 {V, true} when is_integer(V), V > 0 -> V;
+                 _ -> undefined
+             end,
              variant = maps:get(variant, Op, null),
              breakpoints = [L || L <- maps:get(breakpoints, Op, []), is_integer(L)],
              stop_on_entry = maps:get(stop_on_entry, Op, false) =:= true,
@@ -412,7 +424,7 @@ terminate(_Reason, St) ->
 %% ==========================================================================
 
 prepare(St0 = #st{program = Name, user = U}) ->
-    case load(Name, U) of
+    case with_version(load(Name, U), Name, St0#st.version_req) of
         {ok, P} ->
             %% Spec 012: effective limits and concurrency/rate slots.
             L = ana_limits:effective(P, U, St0#st.requested),
@@ -522,6 +534,15 @@ simulating(#{<<"params">> := Decl}, Params) when is_map(Decl), is_map(Params) ->
               end, maps:to_list(Decl));
 simulating(_, _) -> false.
 
+%% Spec 064 (D5): an earlier version of the program, to compare (asked only by rehearsals of the tests).
+with_version({ok, P}, _, undefined) -> {ok, P};
+with_version({ok, P}, Name, V) ->
+    case ana_program:version(Name, V) of
+        {ok, #{<<"source">> := Src}} when is_binary(Src) -> {ok, P#{<<"source">> => Src, <<"version">> => V}};
+        _ -> {error, err(<<"VERSION_NOT_FOUND">>, <<"versão inexistente do programa"/utf8>>)}
+    end;
+with_version(Other, _, _) -> Other.
+
 indicator(#{<<"indicator_refresh_s">> := S}) when is_integer(S) -> true;
 indicator(_) -> false.
 
@@ -563,7 +584,9 @@ open_frame(P, RequestId, Savepoint, St = #st{stack = Stack}) ->
                     profile => Root andalso St#st.profile_req andalso not St#st.debug,
                     limits => maps:with([<<"cpu_ms">>, <<"memory_mb">>, <<"output_kb">>], St#st.limits),
                     breakpoints => St#st.breakpoints,
-                    stop_on_entry => St#st.stop_on_entry},
+                    stop_on_entry => St#st.stop_on_entry,
+                    entry => case {Root, St#st.entry} of {true, E} when is_binary(E) -> E; _ -> null end,
+                    coverage => Root andalso St#st.coverage_req},
             true = ana_py:send(Port, Msg),
             F = #frame{port = Port, ospid = OsPid, program = Name,
                        version = maps:get(<<"version">>, P), request_id = RequestId,
@@ -813,7 +836,8 @@ nested_end2(M, F = #frame{savepoint = Sp, request_id = RequestId}, St = #st{conn
     St.
 
 root_end(M, St0) ->
-    root_end2(M, add_usage(M, St0#st{profile = maps:get(<<"profile">>, M, null)})).
+    root_end2(M, add_usage(M, St0#st{profile = maps:get(<<"profile">>, M, null),
+                                     coverage = maps:get(<<"coverage">>, M, null)})).
 
 root_end2(#{<<"ok">> := true} = M, St0 = #st{conn = C}) ->
     Result = maps:get(<<"result">>, M, null),
@@ -1284,11 +1308,14 @@ finish(Status, Data, St00) ->
 sync_reply(<<"success">>, Result, _, Duration, St) ->
     R = #{id => St#st.id, result => Result, duration_ms => Duration, usage => usage(St),
           events => lists:reverse(St#st.events)},
-    {ok, with_undo(with_rehearsal(R, rehearsal, St), St)};
+    {ok, with_coverage(with_undo(with_rehearsal(R, rehearsal, St), St), St)};
 sync_reply(_, _, Error, _, St) ->
     {error, with_rehearsal(Error#{<<"events">> => lists:reverse(St#st.events)}, <<"rehearsal">>, St)}.
 
 %% Spec 050 (D5): the answer carries the undo the routine offered (recorded after its COMMIT).
+with_coverage(M, #st{coverage = null}) -> M;
+with_coverage(M, #st{coverage = C}) -> M#{coverage => C}.
+
 with_undo(M, #st{undo_offered = null}) -> M;
 with_undo(M, #st{undo_offered = U}) -> M#{undo => U}.
 

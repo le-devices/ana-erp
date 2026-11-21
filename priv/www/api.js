@@ -102,6 +102,8 @@
     programs: (inactive) => API.request("GET", "/api/programs" + query({ inactive: inactive ? 1 : 0 })),
     programPerformance: (name) => API.request("GET", `/api/programs/${enc(name)}/performance`),
     // Spec 064: quality gate.
+    programQuality: (n) => API.request("GET", `/api/programs/${enc(n)}/quality`),       // spec 064, phase 2
+    runProgramTests: (n) => API.request("POST", `/api/programs/${enc(n)}/tests/run`, {}),
     inspectProgram: (source, signal) => API.request("POST", "/api/programs/inspect", { source }, { signal }),
     qualityGate: (names) => API.request("GET", "/api/quality/gate" + query({ programs: names.join(",") })),
     qualityExemptions: (filter) => API.request("GET", "/api/quality/exemptions" + query(filter || {})),

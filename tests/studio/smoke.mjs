@@ -855,6 +855,22 @@ ok(true, "API pública: clientes, novo cliente e chamadas (spec 010)");
     await w.AnaAssistant.refresh();
   }
 }
+// ---------------------------------------------------------------- spec 064, phase 2: Quality tab of a program
+{
+  const prog = "test.qtab_" + Date.now().toString().slice(-7);
+  const src = "TESTS = [{'name': 'um', 'params': {}, 'expect': {'n': 1}}, {'name': 'dois', 'params': {}, 'expect': {'n': 2}}]\n"
+    + "def main():\n    return {'n': 1}\n";
+  await w.AnaApi.saveProgram(prog, { source: src });
+  await go(w, "#/dev/program/" + prog);
+  await until(() => d.querySelector("[data-ptab=quality]") && text("#program-name").includes(prog), "program opened", jsErrors);
+  d.querySelector("[data-ptab=quality]").click();
+  await until(() => [...d.querySelectorAll("#ptab-quality button")].some((b) => b.textContent === "Rodar os testes"), "quality tab", jsErrors);
+  [...d.querySelectorAll("#ptab-quality button")].find((b) => b.textContent === "Rodar os testes").click();
+  await until(() => text("#ptab-quality").includes("1 passaram, 1 falharam") && text("#ptab-quality").includes("cobertura de linhas"), "tests ran", jsErrors);
+  ok(text("#ptab-quality").includes("esperava") && text("#ptab-quality").includes("portão bloqueia o transporte"),
+     "aba Qualidade: testes, cobertura, motivo da falha e portão bloqueado pelo teste que falha (T-064-06, T-064-09)");
+  await w.AnaApi.purgeProgram(prog);
+}
 ok(true, "todas as seções administrativas abrem");
 ok(jsErrors.length === 0, "nenhum erro de JavaScript (admin)" + (jsErrors.length ? ": " + jsErrors.join("; ") : ""));
 w.close();

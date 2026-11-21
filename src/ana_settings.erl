@@ -133,6 +133,13 @@ definitions() ->
       <<"Portão de qualidade: recusar pacote de programas sem relatório do portão verde (1 = sim)"/utf8>>},
      {quality_exemption_max_days, integer, 1, 365, "ANA_QUALITY_EXEMPTION_MAX_DAYS", 90,
       <<"Portão de qualidade: prazo máximo de uma isenção (dias)"/utf8>>},
+     %% Spec 064 (D4, D5): tests of programs and their performance against the previous version.
+     {quality_tests_required, integer, 0, 1, "ANA_QUALITY_TESTS_REQUIRED", 0,
+      <<"Portão de qualidade: programa que grava precisa de ao menos um teste passando (1 = sim)"/utf8>>},
+     {quality_perf_sql_pct, integer, 10, 1000, "ANA_QUALITY_PERF_SQL_PCT", 50,
+      <<"Portão de qualidade: piora de comandos SQL de um teste, em relação à versão anterior, que vira achado (%)"/utf8>>},
+     {quality_perf_time_pct, integer, 10, 1000, "ANA_QUALITY_PERF_TIME_PCT", 100,
+      <<"Portão de qualidade: piora de CPU de um teste (acima de 50 ms), em relação à versão anterior, que vira achado (%)"/utf8>>},
      {outbound_blocked, integer, 0, 1, "ANA_OUTBOUND_BLOCKED", 0,
       <<"Bloquear chamadas a sistemas externos (instância de testes com dados copiados)"/utf8>>},
      {api_breaker_failures, integer, 1, 100000, "ANA_API_BREAKER_FAILURES", 20,
