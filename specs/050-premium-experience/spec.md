@@ -1,6 +1,6 @@
 # 050 — Experiência premium (padrão de UX e auditoria de todas as telas)
 
-Situação: fase 1 implementada (nov/2026); fases 2 e 3 na fila.
+Situação: fases 1 e 2 implementadas (nov/2026); fase 3 (auditoria de todas as áreas) na fila. Fase 2: ver plan.md.
 
 Decisões de implementação (fase 1): o verificador (`tests/studio/ux_check.mjs`) roda em cada tela que o
 teste do Estúdio alcança — campo e controle sem nome acessível, imagem sem texto alternativo, lista vazia
