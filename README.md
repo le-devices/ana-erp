@@ -4,8 +4,9 @@ ERP com núcleo em **Erlang/OTP**, dados em **PostgreSQL** (com armazenamento
 **colunar** para análise) e regras de negócio em **Python** — guardadas,
 versionadas, executadas e **depuradas dentro do próprio ERP**, e chamáveis
 remotamente por JSON-RPC. Software livre sob a **GNU AGPL-3.0** (spec 066), com
-[permissão adicional para os programas do cliente](NOTICE) — customizar não obriga a
-abrir o próprio código — e licença comercial, suporte, módulos premium e SaaS
+[permissão adicional para os programas do cliente](NOTICE) — programas próprios do
+cliente (fora dos namespaces do produto) e os pontos de extensão não obrigam a abrir o
+código; alterar os programas do produto, sim — e licença comercial, suporte, módulos premium e SaaS
 oferecidos pela LE Devices.
 
 **Licença:** [LICENSE](LICENSE) (AGPL-3.0-or-later) · [NOTICE](NOTICE) ·
