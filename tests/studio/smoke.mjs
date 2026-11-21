@@ -821,6 +821,40 @@ ok(true, "API pública: clientes, novo cliente e chamadas (spec 010)");
   await until(() => text("#admin-main").includes("Ver como um usuário vê") && text("#admin-main").includes("Visão geral"), "home editor", jsErrors);
   ok(true, "Administração → Painel inicial: espaços, blocos e pré-visualização (RF-048-02)");
 }
+// ---------------------------------------------------------------- spec 052: assistant
+{
+  await w.AnaApi.admin.saveAssistant({ enabled: true, provider: "program", program: "assistant.local_model" });
+  try {
+    await w.AnaAssistant.refresh();
+    ok(!d.querySelector("#assistant-btn").hidden, "entrada do assistente no topo quando ligado");
+    const num = (await rpc("sales.create_order", { customer: 1, items: [{ product: "FEIJAO-1", quantity: 1 }] })).number;
+    await go(w, "#/home");
+    d.dispatchEvent(new w.KeyboardEvent("keydown", { key: "k", ctrlKey: true, bubbles: true, cancelable: true }));
+    await until(() => d.querySelector(".palette-dialog .palette-input"), "palette", jsErrors);
+    const pin = d.querySelector(".palette-dialog .palette-input");
+    pin.value = `cancele o pedido ${num}`;
+    pin.dispatchEvent(new w.Event("input", { bubbles: true }));
+    const askItem = () => [...d.querySelectorAll(".palette-dialog .palette-item")].find((i) => i.textContent.startsWith("Perguntar ao assistente"));
+    await until(askItem, "ask item", jsErrors);
+    askItem().click();
+    await until(() => d.querySelector("#assistant-panel .assistant-action button.primary"), "rehearsed action", jsErrors);
+    ok(text("#assistant-panel").includes("Ensaiado — nada foi gravado"), "pedido que grava volta ensaiado, com o efeito, esperando confirmação (CA-052-01)");
+    const before = await w.AnaApi.run("sales.reopen_order", { params: { number: num } });
+    ok(before.error && before.error.code === "ORDER_NOT_CANCELLED", "nada foi cancelado antes de confirmar");
+    d.querySelector("#assistant-panel .assistant-action button.primary").click();
+    await until(() => text("#assistant-panel .assistant-action").includes("Confirmado e executado") && d.querySelector("#undo-bar"), "confirmed", jsErrors);
+    ok(true, "confirmar executa e oferece Desfazer (spec 050)");
+    d.querySelector("#undo-bar .undo-button").click();
+    await until(() => !d.querySelector("#undo-bar"), "undone", jsErrors);
+    d.querySelector("#assistant-panel .assistant-head button[aria-label='Fechar o assistente']").click();
+    await go(w, "#/admin/assistant");
+    await until(() => text("#admin-main").includes("Conversas") && text("#admin-main").includes("confirmada e executada"), "assistant audit", jsErrors);
+    ok(true, "Administração → Assistente: configuração e registro das conversas (CA-052-04)");
+  } finally {
+    await w.AnaApi.admin.saveAssistant({ enabled: false });
+    await w.AnaAssistant.refresh();
+  }
+}
 ok(true, "todas as seções administrativas abrem");
 ok(jsErrors.length === 0, "nenhum erro de JavaScript (admin)" + (jsErrors.length ? ": " + jsErrors.join("; ") : ""));
 w.close();

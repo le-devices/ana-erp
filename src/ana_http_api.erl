@@ -390,6 +390,21 @@ route(<<"GET">>, [<<"home">>, <<"blocks">>, Id, <<"indicator">>], Req) ->
         end)
     end);
 
+%% --- Assistant (spec 052) --------------------------------------------------
+route(<<"GET">>, [<<"assistant">>], Req) ->
+    ana_http:require(Req, ?USER, fun(U) -> home_reply(ana_assistant:config(U), Req) end);
+route(<<"POST">>, [<<"assistant">>, <<"ask">>], Req) ->
+    ana_http:require(Req, ?USER, fun(U) ->
+        with_body(Req, fun(#{<<"text">> := T} = B, R) when is_binary(T) ->
+            home_reply(ana_assistant:ask(U, maps:get(<<"conversation">>, B, null), string:trim(T)), R);
+            (_, R) -> invalid(R)
+        end)
+    end);
+route(<<"GET">>, [<<"assistant">>, <<"conversations">>, Id], Req) ->
+    ana_http:require(Req, ?USER, fun(U) -> home_reply(ana_assistant:conversation(U, Id), Req) end);
+route(<<"POST">>, [<<"assistant">>, <<"actions">>, Id, Decision], Req) when Decision =:= <<"confirm">>; Decision =:= <<"decline">> ->
+    ana_http:require(Req, ?USER, fun(U) -> home_reply(ana_assistant:decide(U, Id, Decision), Req) end);
+
 %% --- Undo (spec 050, D5) ---------------------------------------------------
 %% The routine that undoes runs as an ordinary execution of this user; the offer is theirs, once, within its time.
 route(<<"POST">>, [<<"undo">>, Id], Req) ->

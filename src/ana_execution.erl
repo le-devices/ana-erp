@@ -57,6 +57,8 @@
     %% Spec 065 (D4): company values the routine keeps (ana.set_value), written right after its COMMIT.
     value_sets = [] :: [map()],
     read_only = false :: boolean(),          % simulation or restricted license: nothing is kept after the run
+    %% Spec 052: the caller asks a read-only transaction (the assistant's queries — the database refuses any write).
+    force_read_only = false :: boolean(),
     %% Spec 050 (D5): the undo the routine offers (ana.offer_undo), recorded after its COMMIT; then what was offered.
     undo = undefined :: map() | undefined,
     undo_offered = null :: map() | null,
@@ -285,6 +287,7 @@ init(#{id := Id, program := Program, params := Params, user := User,
                       andalso ana_security:has_role(User, <<"developer">>)
                       andalso maps:get(rehearse, Op, false) =/= true,
              rehearse = maps:get(rehearse, Op, false) =:= true,
+             force_read_only = maps:get(read_only, Op, false) =:= true,
              variant = maps:get(variant, Op, null),
              breakpoints = [L || L <- maps:get(breakpoints, Op, []), is_integer(L)],
              stop_on_entry = maps:get(stop_on_entry, Op, false) =:= true,
@@ -437,7 +440,7 @@ prepare_run(P, L, St) ->
     case ana_db:checkout(?POOL, 15000) of
         {ok, C} ->
             St2 = St1#st{conn = C, read_only = ana_license:restricted() orelse simulating(P, St1#st.params)
-                                                orelse indicator(P)},
+                                                orelse indicator(P) orelse St1#st.force_read_only},
             %% RF-022-05: a part may read the snapshot exported by its main execution.
             Snap = case St1#st.snapshot_in of
                 undefined -> "BEGIN; ";
@@ -449,7 +452,8 @@ prepare_run(P, L, St) ->
             %% Spec 009 (RF-009-05): restricted license → the database itself refuses every write.
             %% Spec 020 (RF-020-13): so does a simulation ("Simular" never saves, whatever the program does).
             %% Spec 048 (D1): so does an indicator — it only reads, whatever its code does.
-            ReadOnly = case ana_license:restricted() orelse simulating(P, St1#st.params) orelse indicator(P) of
+            ReadOnly = case ana_license:restricted() orelse simulating(P, St1#st.params) orelse indicator(P)
+                            orelse St1#st.force_read_only of
                 true -> "SET TRANSACTION READ ONLY; ";
                 false -> ""
             end,

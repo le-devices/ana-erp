@@ -16,6 +16,7 @@
 <script src="studio/ui.js" defer></script>
 <script src="studio/palette.js" defer></script>
 <script src="studio/homepanel.js" defer></script>
+<script src="studio/assistant.js" defer></script>
 <script src="studio/table.js" defer></script>
 <script src="studio/conditions.js" defer></script>
 <script src="studio/charts.js" defer></script>
@@ -95,6 +96,7 @@
         <button id="palette-btn" class="palette-btn" type="button" title="Paleta de comandos: rotinas, documentos, cadastros e ações desta tela"
                 aria-label="Abrir a paleta de comandos" aria-keyshortcuts="Control+K"><kbd>Ctrl K</kbd></button>
       </form>
+      <button id="assistant-btn" class="assistant-btn" type="button" hidden title="Assistente: pergunte ou peça (o que grava é ensaiado e espera a sua confirmação)">Assistente</button>
       <button id="notices-btn" class="icon-btn" type="button" title="Avisos das rotinas agendadas" aria-label="Avisos"><svg class="icon" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6.5 16.5V11a5.5 5.5 0 0 1 11 0v5.5l1.5 2H5zM10 20.5a2 2 0 0 0 4 0"/></svg><span id="notices-dot" class="dot" hidden></span></button>
     </div>
     <div id="user-menu" class="popover user-box" role="menu" hidden>
@@ -290,6 +292,7 @@
       <button class="nav-link" data-section="settings">Parâmetros</button>
       <button class="nav-link" data-section="values">Valores da empresa</button>
       <button class="nav-link" data-section="home">Painel inicial</button>
+      <button class="nav-link" data-section="assistant">Assistente</button>
       <button class="nav-link" data-section="accounts">Contas padrão</button>
       <button class="nav-link" data-section="commands">Comandos</button>
       <button class="nav-link" data-section="remote">Sistemas remotos</button>
