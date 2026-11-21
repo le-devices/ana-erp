@@ -120,6 +120,13 @@
       return r;
     }),
     undo: (id) => API.request("POST", `/api/undo/${enc(id)}`, {}, { accept: [422] }),
+    // Spec 052: the assistant — ask, and confirm or decline what it rehearsed.
+    assistant: {
+      config: () => API.request("GET", "/api/assistant"),
+      ask: (body) => API.request("POST", "/api/assistant/ask", body),
+      decide: (id, decision) => API.request("POST", `/api/assistant/actions/${enc(id)}/${decision}`, {}),
+      conversation: (id) => API.request("GET", `/api/assistant/conversations/${enc(id)}`),
+    },
     // Spec 048: home panel — the company's spaces and their indicators.
     home: {
       spaces: () => API.request("GET", "/api/home/spaces"),
@@ -239,6 +246,10 @@
     uiSettings: () => API.request("GET", "/api/ui/settings"),
     putUiSetting: (key, value) => API.request("PUT", "/api/ui/settings", { key, value }),
     admin: {
+      // Spec 052: the assistant's model, limits and policy; its conversations.
+      assistant: () => API.request("GET", "/api/admin/assistant"),
+      saveAssistant: (body) => API.request("PUT", "/api/admin/assistant", body),
+      assistantConversations: (username) => API.request("GET", "/api/admin/assistant/conversations" + query(username ? { username } : {})),
       // Spec 048: the company's spaces of the home panel.
       home: () => API.request("GET", "/api/admin/home"),
       homePreview: (as) => API.request("GET", `/api/admin/home/preview/${enc(as)}`),

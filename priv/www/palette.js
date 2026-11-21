@@ -102,7 +102,9 @@
     const list = el("ul", { id: "palette-list", class: "palette-list", role: "listbox", "aria-label": "Resultados" });
     const hint = el("p", { class: "palette-hint muted small", text: "↑↓ escolhem · Enter abre · Esc fecha · ? atalhos" });
     const dlg = el("dialog", { class: "md-dialog palette-dialog", "aria-label": "Paleta de comandos" }, input, list, hint);
-    const local = { targets: external ? [] : targets(), actions: screenActions(), variants: [] };
+    const local = { targets: external ? [] : targets(), actions: screenActions(), variants: [], assistant: false };
+    // Spec 052 (D7): "pergunte ou peça" — the text goes to the assistant.
+    if (!external && window.AnaAssistant) window.AnaAssistant.isEnabled().then((on) => { local.assistant = on; if (open) draw(); });
     if (!external) variants().then((v) => { local.variants = v; if (open) draw(); });
     const help = { group: "Ajuda", label: "Atalhos do teclado", detail: "?", run: () => shortcuts() };
     let items = [];
@@ -113,7 +115,9 @@
 
     function draw() {
       const q = input.value;
-      const groups = [match(local.targets, q), q.trim() ? match(local.variants, q) : [], match(local.actions, q), remote, match([help], q)];
+      const ask = local.assistant && q.trim() ? [{ group: "Assistente", label: `Perguntar ao assistente: "${q.trim()}"`, detail: "o que grava é ensaiado",
+                                                     run: () => window.AnaAssistant.open(q.trim()) }] : [];
+      const groups = [match(local.targets, q), q.trim() ? match(local.variants, q) : [], match(local.actions, q), remote, ask, match([help], q)];
       items = groups.flat();
       if (active >= items.length) active = Math.max(0, items.length - 1);
       const rows = [];

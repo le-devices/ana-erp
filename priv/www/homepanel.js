@@ -148,7 +148,14 @@
     const go = () => window.AnaPalette && window.AnaPalette.open(input.value);
     input.addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); go(); input.value = ""; } });
     input.addEventListener("input", () => { if (input.value.length >= 2) { go(); input.value = ""; } });
-    return el("div", { class: "home-search" }, window.AnaUI.icon("search", 18), input, el("kbd", { class: "muted small", text: "Ctrl K" }));
+    const box = el("div", { class: "home-search" }, window.AnaUI.icon("search", 18), input, el("kbd", { class: "muted small", text: "Ctrl K" }));
+    // Spec 052 (D7): where the assistant is on, it is one click away from the top of the panel.
+    const wrap = el("div", { class: "home-search-row" }, box);
+    if (window.AnaAssistant) window.AnaAssistant.isEnabled().then((on) => {
+      if (on) wrap.append(el("button", { type: "button", class: "quiet", text: "Perguntar ao assistente",
+                                         onclick: () => window.AnaAssistant.open(input.value) }));
+    });
+    return wrap;
   }
 
   // ------------------------------------------------------------------ notice center (D4)

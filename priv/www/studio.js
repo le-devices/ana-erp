@@ -11,7 +11,7 @@
   const ROLE_LEVEL = { user: 1, developer: 2, admin: 3 };
   const ADMIN_SECTIONS = {
     users: "Usuários", groups: "Grupos de acesso", limits: "Limites e cotas", company: "Empresa",
-    settings: "Parâmetros", home: "Painel inicial", accounts: "Contas padrão", commands: "Comandos", remote: "Sistemas remotos",
+    settings: "Parâmetros", home: "Painel inicial", assistant: "Assistente", accounts: "Contas padrão", commands: "Comandos", remote: "Sistemas remotos",
     scheduler: "Agendamento", monitor: "Monitor", consumption: "Consumo", audit: "Auditoria", retention: "Retenção",
     health: "Saúde", alerts: "Alertas", core: "Núcleo", uiperf: "Desempenho das telas", sqlperf: "Desempenho do SQL", advice: "Dicas de otimização", updates: "Atualizações do produto",
     license: "Licença", extensions: "Extensões", telemetry: "Telemetria",
@@ -121,6 +121,7 @@
     $("#notices-btn").hidden = isExternal();
     refreshNotices();
     if (window.AnaLive && !isExternal()) window.AnaLive.start();          // spec 062: live bell and tasks
+    if (window.AnaAssistant && !isExternal()) window.AnaAssistant.refresh();   // spec 052: the entry where it is on
     refreshTitle(state.user.company, state.user.company_logo);
     // Spec 034 (RF-034-01): development and test instances are marked on every screen.
     const inst = state.user.instance || {};

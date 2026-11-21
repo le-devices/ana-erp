@@ -46,6 +46,14 @@ route(<<"PUT">>, [<<"home">>, <<"spaces">>, Sp, <<"blocks">>, Id], U, Req) ->
 route(<<"DELETE">>, [<<"home">>, <<"blocks">>, Id], U, Req) ->
     with_id(Id, Req, fun(N) -> home(ana_home:delete_block(N, U), Req) end);
 
+%% --- Assistant (spec 052): model, limits, policy; conversations (CA-052-04) ----------
+route(<<"GET">>, [<<"assistant">>], _U, Req) ->
+    home(ana_assistant:config(admin), Req);
+route(<<"PUT">>, [<<"assistant">>], U, Req) ->
+    with_body(Req, fun(B, R) -> home(ana_assistant:save_config(B, U), R) end);
+route(<<"GET">>, [<<"assistant">>, <<"conversations">>], _U, Req) ->
+    home(ana_assistant:audit(ana_http:qs_map(Req)), Req);
+
 %% --- Telemetry (spec 009, D13) ----------------------------------------------
 route(<<"GET">>, [<<"telemetry">>], _U, Req) ->
     reply(ana_telemetry:status(), Req);

@@ -2628,7 +2628,56 @@
         }); } }, field("Usuário", as), el("button", { type: "submit", text: "Ver" })), preview));
   }
 
-  const SECTIONS = { users, groups, settings, company, values, home, commands, remote, accounts, limits, consumption, scheduler, monitor, audit, retention, health, alerts, core, disk, uiperf, sqlperf, advice, updates, integrations, checks, transports, datacopy, publicapi, license, extensions, telemetry };
+  // ------------------------------------------------------------------ assistant (spec 052)
+  async function assistant() {
+    const [cfg, conns, convs] = await Promise.all([API.admin.assistant(), API.admin.connectors().catch(() => []),
+                                                   API.admin.assistantConversations().catch(() => [])]);
+    const http = (Array.isArray(conns) ? conns : conns.connectors || []).filter((c) => c.kind === "http_api");
+    const enabled = el("input", { type: "checkbox", checked: cfg.enabled });
+    const provider = el("select", { "aria-label": "Provedor do modelo" },
+      el("option", { value: "anthropic", text: "Modelo de linguagem (Claude) por conector" }),
+      el("option", { value: "program", text: "Modelo local (sem internet): acha a rotina pelas palavras" }));
+    provider.value = cfg.provider;
+    const connector = el("select", { "aria-label": "Conector do modelo" }, el("option", { value: "", text: "— conector —" }),
+      ...http.map((c) => el("option", { value: c.name, text: `${c.name} — ${c.base_url || ""}` })));
+    connector.value = cfg.connector || "";
+    const model = el("input", { value: cfg.model, "aria-label": "Modelo" });
+    const effort = el("select", { "aria-label": "Esforço do modelo" }, ...[["low", "Baixo"], ["medium", "Médio"], ["high", "Alto"]].map(([k, v]) => el("option", { value: k, text: v })));
+    effort.value = cfg.effort;
+    const program = el("input", { value: cfg.program || "", "aria-label": "Programa do modelo local" });
+    const daily = el("input", { type: "number", min: 1000, value: cfg.daily_tokens, "aria-label": "Limite diário de tokens por pessoa" });
+    const blocked = el("input", { value: (cfg.blocked || []).join(", "), placeholder: "ex.: finance.close_period, tax.*", "aria-label": "Rotinas fora do alcance do assistente" });
+    const viaConnector = el("div", {}, field("Conector (base https://api.anthropic.com, autenticação por chave no cabeçalho x-api-key, chave no cofre)", connector),
+      field("Modelo", model), field("Esforço", effort));
+    const viaProgram = el("div", {}, field("Programa do modelo local", program));
+    const sync = () => { viaConnector.hidden = provider.value !== "anthropic"; viaProgram.hidden = provider.value !== "program"; };
+    provider.addEventListener("change", sync);
+    sync();
+    const KIND = { question: "pergunta", answer: "resposta", query: "consulta", rehearsal: "ensaio", refused_tool: "ferramenta recusada",
+                   confirmed: "confirmada e executada", declined: "recusada pela pessoa", expired: "expirou", failed: "falhou" };
+    main().replaceChildren(
+      ...header("Assistente", "Pergunte ou peça em linguagem natural. O assistente usa só as rotinas que a pessoa pode executar; o que só consulta roda na hora (sem poder gravar) e o que grava é ensaiado e só executa quando a pessoa confirma na tela. Dados pessoais vão mascarados ao modelo; tudo fica registrado abaixo."),
+      el("form", { class: "form-card", onsubmit: (e) => { e.preventDefault(); guard(async () => {
+        await API.admin.saveAssistant({ enabled: enabled.checked, provider: provider.value, connector: connector.value || null, model: model.value.trim(),
+                                        effort: effort.value, program: program.value.trim() || null, daily_tokens: Number(daily.value) || 300000,
+                                        blocked: blocked.value.split(",").map((x) => x.trim()).filter(Boolean) });
+        toast("Assistente salvo."); if (window.AnaAssistant) window.AnaAssistant.refresh(); assistant();
+      }); } },
+        check("Ligado para os usuários", enabled), field("Provedor", provider), viaConnector, viaProgram,
+        field("Limite diário por pessoa (tokens)", daily), field("Fora do alcance do assistente (nomes ou padrões)", blocked),
+        el("div", { class: "row-buttons" }, el("button", { class: "primary", type: "submit", text: "Salvar" }))),
+      el("h3", { text: "Conversas" }),
+      table([
+        { label: "Quando", value: (c) => fmtDate(c.updated_at) },
+        { label: "Usuário", value: (c) => c.username },
+        { label: "Assunto", value: (c) => c.title },
+        { label: "Registro", value: (c) => el("ul", { class: "small" }, ...c.events.map((ev) => el("li", {},
+            `${KIND[ev.kind] || ev.kind}${ev.program ? " · " + ev.program : ""}${ev.detail && ev.detail.text ? " — " + String(ev.detail.text).slice(0, 120) : ""}`,
+            ev.execution_id ? el("span", { class: "muted", text: ` (execução ${ev.execution_id.slice(0, 8)})` }) : null))) },
+      ], convs, { empty: "Nenhuma conversa ainda." }));
+  }
+
+  const SECTIONS = { users, groups, settings, company, values, home, assistant, commands, remote, accounts, limits, consumption, scheduler, monitor, audit, retention, health, alerts, core, disk, uiperf, sqlperf, advice, updates, integrations, checks, transports, datacopy, publicapi, license, extensions, telemetry };
 
   function show(section) {
     refreshUpdatesCount();
