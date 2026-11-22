@@ -109,9 +109,7 @@ set_active(<<"schedule">>, Id, On, U) ->
         N when is_integer(N) ->
             case ana_schedule:set_active(N, On, U) of
                 {ok, _} -> {ok, #{<<"active">> => On}};
-                {error, not_found} -> {error, 404, <<"NOT_FOUND">>, <<"agendamento não encontrado"/utf8>>};
-                {error, M} when is_binary(M) -> {error, 400, <<"INVALID">>, M};
-                {error, E} -> {error, 400, <<"INVALID">>, iolist_to_binary(io_lib:format("~0p", [E]))}
+                {error, not_found} -> {error, 404, <<"NOT_FOUND">>, <<"agendamento não encontrado"/utf8>>}
             end;
         _ -> {error, 400, <<"INVALID_PARAMETER">>, <<"agendamento inválido"/utf8>>}
     end;

@@ -47,12 +47,12 @@ work(S = #{worker := undefined}, Timed) ->
     case leader() of
         false -> S#{again := false};
         true ->
-            {_, Ref} = spawn_monitor(fun() -> drain(), [safe(F) || F <- Timed], resolve_tasks() end),
+            {_, Ref} = spawn_monitor(fun() -> drain(), lists:foreach(fun safe/1, Timed), resolve_tasks() end),
             S#{worker := Ref, again := false}
     end;
 work(S, []) -> S;
 work(S, Timed) ->
-    _ = spawn(fun() -> [safe(F) || F <- Timed] end),
+    _ = spawn(fun() -> lists:foreach(fun safe/1, Timed) end),
     S.
 
 safe(F) -> try F() catch C:R:St -> logger:warning("rules: ~0p:~0p ~0p", [C, R, St]) end.
@@ -572,7 +572,7 @@ rehearse(Id, Key0, Who) ->
             Out = #{<<"document">> => Key, <<"facts">> => Facts, <<"conditions_hold">> => Holds,
                     <<"effect">> => Effect, <<"error">> => Error},
             record(Id, Ev, <<"rehearsal">>, Out, null, [], Who),
-            case Error of
+            _ = case Error of
                 null -> {ok, _} = ana_db:exec("UPDATE automation.rule SET rehearsed_version = $2 WHERE id = $1 AND version = $2",
                                               [Id, Ver]);
                 _ -> ok
