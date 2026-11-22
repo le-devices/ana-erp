@@ -1,0 +1,82 @@
+# SPDX-FileCopyrightText: 2026 André Luis Pereira dos Santos
+# SPDX-License-Identifier: AGPL-3.0-or-later
+#
+# Continuous usage simulation of the product (spec 067, D6a, T-067-05b): every night, on a standard runner (free for the
+# public repository), the stack comes up with demonstration data only, personas run the pipelines, and the report goes
+# to the job summary, to an artifact and to issues — a new finding opens one (with the seed and the steps to reproduce
+# it), a finding that disappeared closes its own. The repository is public: logs, artifacts and issues are public, so
+# nothing here ever uses customer data or secrets.
+name: Uso simulado
+
+on:
+  schedule:
+    - cron: "0 5 * * *"            # 02:00 in Brasília
+  workflow_dispatch:
+    inputs:
+      seed:
+        description: "Semente (vazio = nova; a de um achado o reproduz)"
+        required: false
+      days:
+        description: "Dias simulados"
+        default: "3"
+      per_day:
+        description: "Cenários por dia"
+        default: "12"
+
+permissions:
+  contents: read
+  issues: write
+
+concurrency:
+  group: simulation
+  cancel-in-progress: false
+
+jobs:
+  simulate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 300
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Free disk space
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /usr/local/.ghcup /opt/hostedtoolcache/CodeQL /usr/local/share/boost
+          docker image prune -af >/dev/null
+
+      - name: Start ANA (demonstration data only)
+        env:
+          ANA_DEMO: "true"
+        run: |
+          docker compose up -d --build
+          for i in $(seq 1 120); do
+            curl -fs -o /dev/null http://localhost:8080/health/live && exit 0
+            sleep 3
+          done
+          docker compose logs --tail 200
+          exit 1
+
+      - name: Simulate
+        env:
+          SEED: ${{ github.event.inputs.seed }}
+          DAYS: ${{ github.event.inputs.days || '3' }}
+          PER_DAY: ${{ github.event.inputs.per_day || '12' }}
+        run: python3 .github/simulation.py run --out report.json
+
+      - name: Report and issues
+        if: always() && hashFiles('report.json') != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: python3 .github/simulation.py issues --report report.json >> "$GITHUB_STEP_SUMMARY"
+
+      - uses: actions/upload-artifact@v4
+        if: always() && hashFiles('report.json') != ''
+        with:
+          name: uso-simulado-${{ github.run_id }}
+          path: report.json
+          retention-days: 30
+
+      - name: Logs of the core when something failed
+        if: failure()
+        run: docker compose logs --tail 300 ana

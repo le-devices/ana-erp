@@ -1,6 +1,6 @@
 # 052 — Assistente que executa com segurança
 
-Situação: especificada (nov/2026).
+Situação: implementada (nov/2026). Ver plan.md: modelo por conector (Claude) ou local, ensaio e confirmação, dados mascarados, registro.
 
 ## Problema
 Assistentes de linguagem natural em ERPs costumam só consultar e resumir.

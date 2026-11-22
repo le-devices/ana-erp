@@ -1,6 +1,6 @@
 # 064 — Portão de qualidade dos programas antes da produção
 
-Situação: especificada (nov/2026).
+Situação: implementada (nov/2026): fase 1 (inspeção e portão) e fase 2 (testes, desempenho comparado, falhas por versão, aba Qualidade). A reexecução para depurar fica com a spec 047; os grupos de erro, com a 046.
 
 ## Problema
 Programas do produto e do cliente (P5) vão da instância de desenvolvimento
