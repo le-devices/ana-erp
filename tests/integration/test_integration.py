@@ -3930,6 +3930,26 @@ class TestFlows(Base):
     def order(self, customer=None, qty=2, **extra):
         return self.ok("sales.create_order", customer=customer or self.customer, items=[{"product": self.item, "quantity": qty}], **extra)
 
+
+    def test_document_bills_found_by_index_and_exact(self):
+        """The sweep asks every 30 s for the bills of each waiting document: found by index, never a full read of
+        finance.bill (it kept a CPU busy with ~1,500 steps waiting), and exactly the document and its installments."""
+        d = f"ZZB-{SUFFIX}"
+        out = psql(
+            "BEGIN; "
+            "INSERT INTO finance.bill (kind, party_id, document, due_date, amount, account) "
+            f"SELECT 'receivable', {self.customer}, doc, current_date + 30, 10, (SELECT min(code) FROM finance.account) "
+            f"FROM unnest(ARRAY['{d}', '{d}/1', '{d}/2', '{d}0', '{d}-1', '{d}0/1']) doc; "
+            f"SELECT (SELECT string_agg(document, ',' ORDER BY document) FROM flow.document_bills('{d}')) || ' ' || "
+            f"(SELECT string_agg(document, ',' ORDER BY document) FROM flow.document_bills('{d}/1')) AS got; "
+            "ROLLBACK;")
+        self.assertIn(f"{d},{d}/1,{d}/2 {d}/1", out.splitlines(), out)
+        # The plan of the function's own query (the body, with the document in place of the parameter).
+        body = psql("SELECT prosrc FROM pg_proc WHERE oid = 'flow.document_bills(text)'::regprocedure")
+        plan = psql(f"SET enable_seqscan = off; EXPLAIN {body.replace('p_document', chr(39) + d + chr(39))}")
+        self.assertIn("bill_document_base_idx", plan)
+        self.assertNotIn("Seq Scan", plan)
+
     def test_ca_030_01_sale_runs_by_itself(self):
         self.configure("sales", {1: "auto", 2: "auto", 3: "auto"})
         n = self.order()["number"]
