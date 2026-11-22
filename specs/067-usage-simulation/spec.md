@@ -1,6 +1,6 @@
 # 067 — Uso simulado contínuo: usuários sintéticos percorrendo esteiras inteiras
 
-Situação: especificada (nov/2026), a pedido do dono do produto em 21/11/2026.
+Situação: fase 1 implementada (nov/2026), a pedido do dono do produto em 21/11/2026: personas robô percorrendo esteiras inteiras pela API com semente, erros humanos, oráculos de automação e de contas, relatório com tendência, rotina agendada fora da produção e workflow noturno no GitHub Actions com uma issue por achado. Fase 2 (telas, perfil real, trilhas) depois da 050 fase 3.
 
 ## Problema
 Há defeitos que só aparecem usando o ERP com frequência, como gente de verdade: o passo de uma esteira que não dispara
