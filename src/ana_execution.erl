@@ -59,6 +59,7 @@
     read_only = false :: boolean(),          % simulation or restricted license: nothing is kept after the run
     %% Spec 052: the caller asks a read-only transaction (the assistant's queries — the database refuses any write).
     force_read_only = false :: boolean(),
+    rule_chain = <<>> :: binary(),          % spec 051: rules whose actions led to this run (loop detection)
     %% Spec 064 (D4, D5): a test entry in place of main, line coverage, and an earlier version of the program
     %% (only in a rehearsal: everything undone).
     entry = undefined :: binary() | undefined,
@@ -294,6 +295,8 @@ init(#{id := Id, program := Program, params := Params, user := User,
                       andalso maps:get(rehearse, Op, false) =/= true,
              rehearse = maps:get(rehearse, Op, false) =:= true,
              force_read_only = maps:get(read_only, Op, false) =:= true,
+             rule_chain = iolist_to_binary(lists:join(<<",">>, [integer_to_binary(I) || I <- maps:get(rule_chain, Op, []),
+                                                                                       is_integer(I)])),
              entry = case maps:get(entry, Op, undefined) of E when is_binary(E) -> E; _ -> undefined end,
              coverage_req = maps:get(coverage, Op, false) =:= true,
              version_req = case {maps:get(version, Op, undefined), maps:get(rehearse, Op, false)} of
@@ -474,10 +477,10 @@ prepare_run(P, L, St) ->
             Begin = io_lib:format(
                 "~s~s~sSET LOCAL statement_timeout = ~b; SET LOCAL lock_timeout = ~b; SET LOCAL ana.username = '~ts'; "
                 "SET LOCAL ana.origin = '~ts'; SET LOCAL ana.execution_id = '~ts'; SET LOCAL ana.instance = '~ts'; "
-                "SET LOCAL ana.timezone = '~ts'",
+                "SET LOCAL ana.timezone = '~ts'; SET LOCAL ana.rule_chain = '~ts'",
                 [Snap, ReadOnly, Scope, maps:get(<<"sql_timeout_ms">>, L), maps:get(<<"lock_timeout_ms">>, L),
                  Q(maps:get(username, St1#st.user)), Q(St1#st.origin), Q(St1#st.id),
-                 ana_instance:role(), Q(ana_config:timezone())]),
+                 ana_instance:role(), Q(ana_config:timezone()), St1#st.rule_chain]),
             case lists:flatten([epgsql:squery(C, Begin)]) of
                 [{ok, [], []} | _] = Rs ->
                     case [E || {error, E} <- Rs] of

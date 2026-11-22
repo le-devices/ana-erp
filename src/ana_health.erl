@@ -15,7 +15,7 @@
 -behaviour(gen_server).
 
 -export([start_link/0, state/0, history/1, incidents/1, check_now/0]).
--export([components_names/0, metric_names/0]).
+-export([components_names/0, metric_names/0, metrics/0]).
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2]).
 -export([holds/3, silenced/5]).
 
@@ -35,6 +35,10 @@ check_now() -> gen_server:call(?MODULE, check, 15000).
 components_names() -> [C || {C, _} <- components()].
 metric_names() -> ?METRICS.
 
+%% Spec 051: the node metrics of the last check, for the rules "when a metric passes a limit".
+-spec metrics() -> map().
+metrics() -> gen_server:call(?MODULE, metrics, 5000).
+
 history(Hours) ->
     ana_db:rows("SELECT component, state, message, node, at FROM ana_system.health_event "
                 "WHERE at > now() - make_interval(hours => $1) ORDER BY at DESC LIMIT 500", [Hours]).
@@ -53,6 +57,7 @@ init([]) ->
            firing => #{}, resumed => false, failures => undefined}}.
 
 handle_call(state, _From, S = #{states := St}) -> {reply, St, S};
+handle_call(metrics, _From, S) -> {reply, maps:get(last_metrics, S, #{}), S};
 handle_call(check, _From, S) ->
     S2 = check(S),
     {reply, maps:get(states, S2), S2}.
@@ -75,7 +80,7 @@ check(S = #{states := Old}) ->
     [logger:notice("health: ~ts → ~ts (~ts)", [C, St, M]) || {event, C, St, M, _, _} <- Events],
     S1 = load(S#{states := New}, Node),
     {Metrics, S2} = metrics(S1),
-    {Ops, S3} = evaluate(S2, New, Metrics, Node),
+    {Ops, S3} = evaluate(S2#{last_metrics => Metrics}, New, Metrics, Node),
     %% Writes wait in memory, in order, while the database itself is the one down.
     S3#{pending := flush(maps:get(pending, S3) ++ Events ++ Ops)}.
 

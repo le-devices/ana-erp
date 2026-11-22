@@ -11,7 +11,7 @@
   const ROLE_LEVEL = { user: 1, developer: 2, admin: 3 };
   const ADMIN_SECTIONS = {
     users: "Usuários", groups: "Grupos de acesso", limits: "Limites e cotas", company: "Empresa",
-    settings: "Parâmetros", home: "Painel inicial", assistant: "Assistente", simulation: "Uso simulado", accounts: "Contas padrão", commands: "Comandos", remote: "Sistemas remotos",
+    settings: "Parâmetros", home: "Painel inicial", assistant: "Assistente", simulation: "Uso simulado", automations: "Automações", accounts: "Contas padrão", commands: "Comandos", remote: "Sistemas remotos",
     scheduler: "Agendamento", monitor: "Monitor", consumption: "Consumo", audit: "Auditoria", retention: "Retenção",
     health: "Saúde", alerts: "Alertas", core: "Núcleo", uiperf: "Desempenho das telas", sqlperf: "Desempenho do SQL", advice: "Dicas de otimização", updates: "Atualizações do produto",
     license: "Licença", extensions: "Extensões", telemetry: "Telemetria",

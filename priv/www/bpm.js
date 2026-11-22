@@ -614,8 +614,18 @@
       el("div", { class: "muted small" }, el("a", { href: `#/bpm/case/${t.case_id}`, text: t.title }), ` · ${t.process}`,
         t.assignee ? ` · com ${t.assignee}` : ` · para ${t.group_name ? "grupo " + t.group_name : { user: "usuários", developer: "desenvolvedores", admin: "administradores" }[t.role] || t.role}`),
       t.instructions ? el("p", { class: "small", text: t.instructions }) : null,
+      // Spec 051 (D4): an exception comes with its context and the actions that resolve it.
+      t.context && Object.keys(t.context).length ? el("dl", { class: "bpm-task-context small" },
+        ...Object.entries(t.context).filter(([, v]) => v !== null && v !== "" && typeof v !== "object").slice(0, 8)
+          .flatMap(([k, v]) => [el("dt", { text: k.replace(/_/g, " ") }), el("dd", { text: String(v) })])) : null,
       t.fact ? el("p", { class: "muted small", text: "Conclui sozinha quando o ERP registrar o resultado (ex.: ao expedir pelo programa)." }) : null,
       el("div", { class: "row-buttons" },
+        ...(t.actions || []).map((a, i) => el("button", { type: "button", class: i === 0 && !url ? "primary small" : "quiet small", text: a.label,
+          onclick: async () => {
+            const params = { ...(a.params || {}) };
+            if (a.ask) { const v = prompt(a.ask.label + ":"); if (!v || !v.trim()) return; params[a.ask.param] = v.trim(); }
+            try { await call(a.program, params); toast(`${a.label}: feito.`); refresh(); } catch (e) { toast(e.message, true); }
+          } })),
         url ? el("button", { type: "button", class: "primary small", text: "Abrir", onclick: () => go(url) }) : null,
         t.kind === "approval" ? el("button", { type: "button", class: url ? "quiet small" : "primary small", text: "Aprovar", onclick: () => act("approve", { comment: prompt("Comentário (opcional):") || null }) }) : null,
         t.kind === "approval" ? el("button", { type: "button", class: "quiet small", text: "Recusar", onclick: () => { const c = prompt("Motivo da recusa:"); if (c) act("reject", { comment: c }); } }) : null,

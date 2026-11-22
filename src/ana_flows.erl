@@ -185,9 +185,42 @@ retry(I, Seq, Attempts, E, Exec) ->
     ok.
 
 fail(I, Seq, E, Exec) ->
-    both("UPDATE flow.instance_step SET status = 'failed', error = $3, execution_id = COALESCE($4::text::uuid, execution_id), "
-         "  lease_until = NULL, force = false, finished_at = now() WHERE instance_id = $1 AND seq = $2", [I, Seq, clean(E), Exec],
-         "UPDATE flow.instance SET status = 'failed', updated_at = now() WHERE id = $1", [I]).
+    R = both("UPDATE flow.instance_step SET status = 'failed', error = $3, execution_id = COALESCE($4::text::uuid, execution_id), "
+             "  lease_until = NULL, force = false, finished_at = now() WHERE instance_id = $1 AND seq = $2", [I, Seq, clean(E), Exec],
+             "UPDATE flow.instance SET status = 'failed', updated_at = now() WHERE id = $1", [I]),
+    _ = (catch exception_task(I, Seq, E)),
+    R.
+
+%% Spec 051 (D4, RF-051-05): an automatic step that failed is an exception — a task for a person, with the error, the
+%% document and what can be done (try again, skip), in "Minhas tarefas"; it closes by itself when the step leaves the
+%% failure (ana_rules). One open task per step.
+exception_task(I, Seq, E) ->
+    {ok, Rows} = ana_db:rows(
+        "SELECT f.name AS flow, s.name AS step, i.doc_key, d.entity FROM flow.instance i "
+        "JOIN flow.definition f ON f.code = i.flow_code JOIN flow.step s ON s.flow_code = i.flow_code AND s.seq = $2 "
+        "LEFT JOIN bpm.document d ON d.label = f.document "
+        "WHERE i.id = $1 AND NOT EXISTS (SELECT 1 FROM bpm.task t JOIN bpm.case c ON c.id = t.case_id "
+        "  WHERE c.process_code = 'erp.tarefa' AND t.status = 'waiting' "
+        "    AND t.resolve = jsonb_build_object('flow_instance', $1::bigint, 'seq', $2::int))", [I, Seq]),
+    case Rows of
+        [#{<<"flow">> := Flow, <<"step">> := Step, <<"doc_key">> := Key, <<"entity">> := Ent}] ->
+            Msg = case E of #{<<"message">> := M} when is_binary(M) -> M; #{message := M} when is_binary(M) -> M; _ -> <<>> end,
+            Args = #{<<"instance">> => I, <<"seq">> => Seq},
+            {ok, _} = ana_db:one(
+                "SELECT automation.create_task($1, 'human', $2, $3, NULL, 'admin', NULL, $4, NULL, '{}', $5, $6, $7, 2, 'system') AS id",
+                [<<"Esteira parada: "/utf8, Flow/binary, " — "/utf8, Step/binary>>, Ent, Key,
+                 <<"A etapa automática \""/utf8, Step/binary, "\" falhou: "/utf8, Msg/binary,
+                   ". Resolva a causa e tente de novo, ou pule a etapa dizendo o motivo. A tarefa se conclui sozinha quando "
+                   "a etapa sair da falha."/utf8>>,
+                 #{<<"esteira">> => Flow, <<"etapa">> => Step, <<"documento">> => Key, <<"erro">> => Msg,
+                   <<"código"/utf8>> => maps:get(<<"code">>, E, maps:get(code, E, null))},
+                 [#{<<"label">> => <<"Tentar de novo">>, <<"program">> => <<"flows.act">>, <<"params">> => Args#{<<"action">> => <<"retry">>}},
+                  #{<<"label">> => <<"Pular a etapa">>, <<"program">> => <<"flows.act">>, <<"params">> => Args#{<<"action">> => <<"skip">>},
+                    <<"ask">> => #{<<"param">> => <<"reason">>, <<"label">> => <<"Motivo para pular a etapa">>}}],
+                 #{<<"flow_instance">> => I, <<"seq">> => Seq}]),
+            ok;
+        _ -> ok
+    end.
 
 cancel(I, Reason) ->
     both("UPDATE flow.instance_step SET status = 'cancelled', reason = $2, lease_until = NULL, finished_at = now() "

@@ -38,6 +38,8 @@ init([]) ->
             worker(ana_access_log, [])],
     Work = [worker(ana_scheduler, []),
             worker(ana_bpm, []),          % single process engine: BPM cases and esteiras (specs 030, 039)
+            worker(ana_rules, []),        % spec 051: rules "when… then…" and ERP tasks that resolve by themselves
+            worker(ana_suggestions, []),  % spec 051: suggestions from usage (background, hourly)
             #{id => ana_connector_sup, start => {ana_connector_sup, start_link, []}, type => supervisor},
             worker(ana_integration, []),
             worker(ana_analytics, []),

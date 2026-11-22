@@ -883,6 +883,21 @@ ok(true, "API pública: clientes, novo cliente e chamadas (spec 010)");
     ok(true, "Uso simulado: relatório de uma rodada com semente e achados (RF-067-06)");
   }
 }
+// ---------------------------------------------------------------- spec 051: automations
+{
+  await go(w, "#/admin/automations");
+  await until(() => text("#admin-main").includes("automações") && text("#admin-main").includes("ligadas"), "central of automations", jsErrors);
+  ok(text("#admin-main").includes("Agendamento") || text("#admin-main").includes("Rotina do produto"), "Automações: a central lista agendamentos e rotinas do produto (CA-051-04)");
+  ok(text("#admin-main").includes("Esteira"), "Automações: e as esteiras");
+  await go(w, "#/admin/automations/rules/new");
+  await until(() => text("#admin-main").includes("Quando") && d.querySelector("#admin-main .cond-builder"), "rule editor", jsErrors);
+  ok(text("#admin-main").includes("Então") && text("#admin-main").includes("Limites"), "Regras: quando, se (construtor de condições), então e limites — sem programar (RF-051-02)");
+  const save = [...d.querySelectorAll("#admin-main button")].find((b) => b.textContent === "Salvar");
+  ok(save, "Regras: salvar não liga — ensaia primeiro");
+  await go(w, "#/admin/automations/rules");
+  await until(() => text("#admin-main").includes("Nova regra"), "rules list", jsErrors);
+  ok(true, "Regras: lista com situação (ligada, ensaiada, a ensaiar, bloqueada)");
+}
 ok(true, "todas as seções administrativas abrem");
 ok(jsErrors.length === 0, "nenhum erro de JavaScript (admin)" + (jsErrors.length ? ": " + jsErrors.join("; ") : ""));
 w.close();

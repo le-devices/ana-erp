@@ -24,6 +24,7 @@ def main(scope="mine", q=None):
     rows = ana.sql(
         "SELECT t.id, t.case_id, t.node, t.kind, t.name, t.status, t.assignee, t.role, t.group_name, t.program, t.params, "
         "  t.instructions, t.priority, t.due_at, t.created_at, t.escalated, t.fact, (t.due_at < now()) AS late, "
+        "  t.context, t.actions, "
         "  c.title, c.process_code, c.doc_entity, c.doc_key, p.name AS process, d.program AS doc_program "
         "FROM bpm.task t JOIN bpm.case c ON c.id = t.case_id JOIN bpm.process p ON p.code = c.process_code "
         "JOIN bpm.document d ON d.entity = c.doc_entity "

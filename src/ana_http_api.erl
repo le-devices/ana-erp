@@ -160,6 +160,14 @@ route(<<"PUT">>, [<<"shortcuts">>, Id], Req) ->
         with_body(Req, fun(B, R) -> category_reply(ana_categories:update_shortcut(U, N, B), R) end) end) end);
 route(<<"DELETE">>, [<<"shortcuts">>, Id], Req) ->
     ana_http:require(Req, ?USER, fun(U) -> with_id(Id, Req, fun(N) -> category_reply(ana_categories:delete_shortcut(U, N), Req) end) end);
+%% Spec 051 (D3, RF-051-03): the person's suggestions from usage — accept does it at once, declined never comes back.
+route(<<"GET">>, [<<"suggestions">>], Req) ->
+    ana_http:require(Req, ?USER, fun(#{username := Who}) -> {ok, L} = ana_suggestions:mine(Who), ana_http:json(200, L, Req) end);
+route(<<"POST">>, [<<"suggestions">>, Id, <<"accept">>], Req) ->
+    ana_http:require(Req, ?USER, fun(U) -> with_id(Id, Req, fun(N) -> with_body(Req, fun(B, R) ->
+        suggestion_reply(ana_suggestions:accept(N, B, U), R) end) end) end);
+route(<<"POST">>, [<<"suggestions">>, Id, <<"decline">>], Req) ->
+    ana_http:require(Req, ?USER, fun(U) -> with_id(Id, Req, fun(N) -> suggestion_reply(ana_suggestions:decline(N, U), Req) end) end);
 %% Table variants and screen state per user (RF-020-17/18).
 route(<<"GET">>, [<<"ui">>, <<"variants">>], Req) ->
     ana_http:require(Req, ?USER, fun(U) ->
@@ -739,3 +747,6 @@ values_reply({error, Code, M}, Req) ->
 
 quality_reply({ok, V}, Req) -> ana_http:json(200, V, Req);
 quality_reply({error, M}, Req) when is_binary(M) -> ana_http:reply_error(400, <<"INVALID">>, M, Req).
+
+suggestion_reply({ok, V}, Req) -> ana_http:json(200, V, Req);
+suggestion_reply({error, Status, Code, Msg}, Req) -> ana_http:reply_error(Status, Code, Msg, Req).
