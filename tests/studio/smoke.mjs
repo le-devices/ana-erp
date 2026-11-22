@@ -2,12 +2,12 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Studio smoke test (specs 005, 011, 012, 020): loads the real page in a DOM
 // (jsdom), runs the scripts served by ANA and walks through the areas.
-// Run: docker run --rm --network host -v $PWD/tests/studio:/t -w /t node:22-alpine \
-//      sh -c "npm i --silent --no-save jsdom@24 && node smoke.mjs"
+// Run: make teste-estudio (another port: ANA_URL=http://localhost:8081 make teste-estudio).
 import { JSDOM, VirtualConsole } from "jsdom";
 import { Verifier } from "./ux_check.mjs";
+import { ANA_URL, ensureAna } from "./target.mjs";
 
-const ANA_URL = process.env.ANA_URL || "http://localhost:8080";
+await ensureAna();
 const PASSWORD = process.env.ANA_ADMIN_PASSWORD || "admin";
 
 async function open(username, password) {

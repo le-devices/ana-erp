@@ -33,9 +33,10 @@ teste-integracao: ## requer `make subir`
 teste-trilhas:    ## trilhas de processo de ponta a ponta com as conciliações antes e depois (spec 042); requer `make subir`
 	python3 -m unittest discover -s tests/trails -v
 
-teste-estudio:    ## contraste dos temas (WCAG) e DOM real (jsdom) contra o Estúdio; requer `make subir`
+teste-estudio:    ## contraste dos temas (WCAG) e DOM real (jsdom) contra o Estúdio; requer `make subir` (outra porta: ANA_URL=http://localhost:8081)
 	python3 tests/a11y/contrast.py
-	docker run --rm --network host -v $(PWD)/tests/studio:/t -w /t node:22-alpine \
+	docker run --rm --network host -e ANA_URL="$${ANA_URL:-http://localhost:8080}" -e ANA_ADMIN_PASSWORD \
+	  -v $(PWD)/tests/studio:/t -w /t node:22-alpine \
 	  sh -c "npm i --silent --no-save jsdom@24 >/dev/null 2>&1 && node ux_check_test.mjs && node smoke.mjs"
 
 teste-cluster:    ## dois nós (sobe e remove o segundo nó)
