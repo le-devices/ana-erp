@@ -4,8 +4,9 @@
 // messages hide technical codes from operation users. Run before smoke.mjs (make teste-estudio).
 import { JSDOM } from "jsdom";
 import { audit } from "./ux_check.mjs";
+import { ANA_URL, ensureAna } from "./target.mjs";
 
-const ANA_URL = process.env.ANA_URL || "http://localhost:8080";
+await ensureAna();
 const ok = (c, m) => { if (!c) throw new Error("failed: " + m); console.log("✔", m); };
 const page = (body) => new JSDOM(`<!doctype html><body><div id="app-screen"><div class="area" id="area-ops">${body}</div></div></body>`).window.document;
 
