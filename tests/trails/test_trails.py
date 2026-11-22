@@ -78,7 +78,7 @@ class Trail(unittest.TestCase):
 
     def pay(self, lines):
         """The money arrives (or leaves) in the bank statement with the document's number: it settles by itself."""
-        day = datetime.date.today().strftime("%d/%m/%Y")
+        day = T.ana_today().strftime("%d/%m/%Y")
         csv = "data;histórico;valor\n" + "".join(f"{day};{desc};{str(a).replace('.', ',')}\n" for desc, a in lines)
         return self.must("finance.import_statement", bank_account="CAIXA", format="csv", content=csv)
 
@@ -141,7 +141,7 @@ class Trail(unittest.TestCase):
         self.must("production.save_item_plan", product=made, make_or_buy="make", lead_time_days=2, standard_cost="12")
         self.must("production.save_structure", product=made, lines=[{"component": comp, "quantity": 2}])
         wo = self.must("production.create_order", product=made, quantity=5, warehouse="CENTRAL",
-                       due_date=(datetime.date.today() + datetime.timedelta(days=5)).isoformat())["order"]
+                       due_date=(T.ana_today() + datetime.timedelta(days=5)).isoformat())["order"]
         self.must("production.release_order", order=wo)
         self.must("production.issue_components", order=wo)
         for (seq,) in self.sql(f"SELECT o.seq FROM production.order_operation o JOIN production.work_order w ON w.id = o.order_id WHERE w.number = {wo}"):
@@ -161,7 +161,7 @@ class Trail(unittest.TestCase):
         so = self.must("field.open_order", customer=self.customer, description="Manutenção trilha", service=self.service)
         num = so.get("number") or so.get("order")
         self.must("field.schedule", order=num, technician=emp,
-                  start=(datetime.datetime.now() + datetime.timedelta(hours=1)).strftime("%Y-%m-%dT%H:%M"))
+                  start=(T.ana_now() + datetime.timedelta(hours=1)).strftime("%Y-%m-%dT%H:%M"))
         self.must("field.start_trip", order=num)
         self.must("field.log_work", order=num, hours=2, km=10)                    # the scheduled technician (B-01)
         self.must("field.use_part", order=num, product=self.item, quantity=1)
@@ -180,7 +180,7 @@ class Trail(unittest.TestCase):
         emp = self.must("projects.save_employee", name=f"Consultor Trilha {SFX}", profile=prof, hourly_cost="60")["id"]
         self.must("projects.save_project", code=code, name="Projeto trilha", customer=self.customer, billing="hourly", manager="admin")
         self.must("projects.save_activity", project=code, code="1", name="Atividade", planned_hours=10)
-        self.must("projects.allocate", project=code, activity="1", employee=emp, hours=4, week=datetime.date.today().isoformat())
+        self.must("projects.allocate", project=code, activity="1", employee=emp, hours=4, week=T.ana_today().isoformat())
         if "error" in self.run_("projects.approve_plan", project=code):
             self.must("projects.approve_plan", project=code, low_margin_justification="trilha automática de processo")
         self.must("projects.log_time", project=code, task="1", hours=4, description="trabalho da trilha", employee=emp)
@@ -279,7 +279,7 @@ class Trail(unittest.TestCase):
             so = self.must("field.open_order", customer=self.customer, description="Esteira campo trilha", service=self.service)
             num = so.get("number") or so.get("order")
             self.must("field.schedule", order=num, technician=emp,
-                      start=(datetime.datetime.now() + datetime.timedelta(hours=1)).strftime("%Y-%m-%dT%H:%M"))
+                      start=(T.ana_now() + datetime.timedelta(hours=1)).strftime("%Y-%m-%dT%H:%M"))
             self.must("field.start_trip", order=num)
             self.must("field.log_work", order=num, hours=2, km=10)
             self.must("field.sign_off", order=num, signed_by="Cliente")
@@ -302,7 +302,7 @@ class Trail(unittest.TestCase):
             self.must("production.save_item_plan", product=made, make_or_buy="make", lead_time_days=1)
             self.must("production.save_structure", product=made, lines=[{"component": comp, "quantity": 1}])
             wo = self.must("production.create_order", product=made, quantity=3, warehouse="CENTRAL",
-                           due_date=(datetime.date.today() + datetime.timedelta(days=3)).isoformat())["order"]
+                           due_date=(T.ana_today() + datetime.timedelta(days=3)).isoformat())["order"]
             st = self.flow_steps("production", str(wo), lambda s: s.get("make", ("",))[0] == "waiting")
             self.assertEqual((st["release"][0], st["issue"][0], st["make"][0]), ("done", "done", "waiting"), st)
             self.must("production.deliver", order=wo, good_qty=3, complete=True)
