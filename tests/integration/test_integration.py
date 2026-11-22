@@ -83,6 +83,29 @@ def new_user(role, groups=()):
 
 CREATED_USERS = []
 
+# ANA's clock runs in the client's time zone (ana_config:timezone(), America/Sao_Paulo by default): every database role
+# has it as `timezone`, so `localtimestamp` is ANA's wall clock. The runner may be anywhere (GitHub Actions runs in
+# UTC, three hours ahead of Brasília), so "today" in a test must be ANA's business date, never the runner's. The offset
+# between the two clocks is read once; ana_now() keeps ticking with the runner, so a run that crosses midnight follows
+# ANA's date as it turns.
+_CLOCK_OFFSET = None
+
+
+def ana_now():
+    """ANA's naive local wall clock (the business time zone), as the server sees it."""
+    global _CLOCK_OFFSET
+    if _CLOCK_OFFSET is None:
+        s, c, _ = http("POST", "/api/sql", {"sql": "SELECT to_char(localtimestamp, 'YYYY-MM-DD\"T\"HH24:MI:SS.US')"},
+                       admin_token())
+        assert s == 200, (s, c)
+        _CLOCK_OFFSET = datetime.datetime.fromisoformat(c["rows"][0][0]) - datetime.datetime.now()
+    return datetime.datetime.now() + _CLOCK_OFFSET
+
+
+def ana_today():
+    """ANA's business date — what programs, validations ("data futura") and templates ({{today}}) use."""
+    return ana_now().date()
+
 
 def setUpModule():
     # The suite runs ~600 programs a minute as admin, the default per-user quota: lifted for the suite only,
@@ -630,7 +653,7 @@ class TestProjects(Base):
         days_ago = days_ago if days_ago is not None else 2 + self.seq
         return self.client.call("projects.log_time", project=project, task=task, hours=hours,
                                 description="trabalho de teste", employee=self.employee,
-                                entry_date=str(datetime.date.today() - datetime.timedelta(days=days_ago)), **extra)
+                                entry_date=str(ana_today() - datetime.timedelta(days=days_ago)), **extra)
 
     def err(self, function, **params):
         with self.assertRaises(AnaRemoteError) as ctx:
@@ -649,7 +672,7 @@ class TestProjects(Base):
         p = self.make_project()
         self.log(p, 9, days_ago=40)
         self.assertEqual(self.err("projects.log_time", project=p, task="1", hours=16, employee=self.employee,
-                                  description="excesso", entry_date=str(datetime.date.today() - datetime.timedelta(days=40))),
+                                  description="excesso", entry_date=str(ana_today() - datetime.timedelta(days=40))),
                          "DAILY_LIMIT")
 
     def test_ca_008_03_validations(self):
@@ -1560,7 +1583,7 @@ class TestConsulting(Base):
         self.activity(p, "F.1", phase="F", planned_hours=100, duration_days=10)
         for d in range(3):
             self.client.call("projects.log_time", project=p, task="F.1", hours=20, description="execução",
-                             employee=emp, entry_date=str(datetime.date.today() - datetime.timedelta(days=400 + d)))
+                             employee=emp, entry_date=str(ana_today() - datetime.timedelta(days=400 + d)))
         self.prog("projects.update_progress", project=p, activity="F.1", percent=40)
         prog = self.prog("projects.workspace", project=p, view="progress")["data"]
         phase = prog["phases"][0]
@@ -1593,7 +1616,7 @@ class TestConsulting(Base):
         emp = self.client.call("projects.save_employee", name=f"Consultor D {SUFFIX}", profile="HW", username=username)["id"]
         p = self.project(team=[{"employee": emp, "profile": "HW"}])
         self.activity(p, "1", planned_hours=20)
-        self.prog("projects.allocate", project=p, activity="1", employee=emp, hours=8, week=str(datetime.date.today()))
+        self.prog("projects.allocate", project=p, activity="1", employee=emp, hours=8, week=str(ana_today()))
         s, c, _ = self.run_program("projects.my_week", {}, token=token)
         self.assertEqual(s, 200, c)
         acts = [a for a in c["result"]["activities"] if a["project"] == p]
@@ -2099,10 +2122,10 @@ class TestCostCenters(Base):
             self.client.call("finance.post_entry", memo="despesa", document=f"MAN-{SUFFIX}{child}",
                              lines=[{"account": "5.1.1", "debit": amount, "cost_center": self.cc + child},
                                     {"account": "1.1.1", "credit": amount}])
-        month = datetime.date.today().strftime("%Y-%m")
+        month = ana_today().strftime("%Y-%m")
         self.client.call("finance.save_budget", cost_center=self.cc + "-A", account="5.1.1", months=[month], amount="250")
         s, c, _ = self.run_program("finance.cost_center_report", {"cost_center": self.cc,
-                                                                  "start": datetime.date.today().replace(day=1).isoformat()})
+                                                                  "start": ana_today().replace(day=1).isoformat()})
         self.assertEqual(s, 200, c)
         rows = {r["centro"].strip().split(" — ")[0]: r for r in c["result"]["centers"]}
         parent, a = rows[self.cc], rows[self.cc + "-A"]
@@ -2126,7 +2149,7 @@ class TestCostCenters(Base):
                                   targets=[{"cost_center": a, "pct": 60}, {"cost_center": b, "pct": 30}]), "INVALID_TARGETS")
         self.client.call("finance.save_allocation_rule", code=rule, name="Rateio teste", source=src,
                          targets=[{"cost_center": a, "pct": 60}, {"cost_center": b, "pct": 40}])
-        today = datetime.date.today().isoformat()
+        today = ana_today().isoformat()
         prev = self.client.call("finance.allocate_costs", month=today, rule=rule)
         self.assertTrue(prev["preview"])
         self.assertEqual(self.lines(f"RATEIO-{rule}-{today[:7]}"), [])
@@ -2281,7 +2304,7 @@ class TestSupplyChain(Base):
 
     def test_rf_013_09_10_performance_confirm_date_and_workbench(self):
         number = self.ordered(self.mcu, 3)
-        new_date = (datetime.date.today() + datetime.timedelta(days=30)).isoformat()
+        new_date = (ana_today() + datetime.timedelta(days=30)).isoformat()
         self.assertEqual(self.client.call("supply.confirm_delivery_date", order=number, promised_date=new_date)["lines"], 1)
         self.client.call("supply.receive", order=number)
         s, c, _ = self.run_program("supply.supplier_performance", {"supplier": self.supplier})
@@ -2457,7 +2480,7 @@ class TestIntegrationHub(Base):
         return c["result"]
 
     def test_ca_017_01_ofx_import_twice_does_not_duplicate(self):
-        today = datetime.date.today().strftime("%Y%m%d")
+        today = ana_today().strftime("%Y%m%d")
         content = self.ofx((today, "10.00", f"F1{SUFFIX}", "tarifa"), (today, "-3.50", f"F2{SUFFIX}", "pacote"))
         first = self.client.call("finance.import_statement", bank_account="CAIXA", content=content)
         again = self.client.call("finance.import_statement", bank_account="CAIXA", content=content)
@@ -2475,7 +2498,7 @@ class TestIntegrationHub(Base):
         bill = self.bill(amount)
         ext = f"PIX{SUFFIX}AUTO"
         self.run_ok(self.charge_prog(), {"bill": bill, "ext": ext, "connector": self.api})
-        today = datetime.date.today().strftime("%Y%m%d")
+        today = ana_today().strftime("%Y%m%d")
         # Spec 038 (RF-038-06): importing already reconciles what is certain — no second step.
         r = self.client.call("finance.import_statement", bank_account="CAIXA",
                              content=self.ofx((today, str(amount), f"F3{SUFFIX}", f"PIX REC {ext} CLIENTE")))
@@ -2501,7 +2524,7 @@ class TestIntegrationHub(Base):
     def test_ca_017_03_equal_amounts_stay_for_manual_with_two_suggestions(self):
         amount = Decimal(f"{700 + int(SUFFIX[-3:])}.43")
         b1, b2 = self.bill(amount), self.bill(amount)
-        today = datetime.date.today().strftime("%Y%m%d")
+        today = ana_today().strftime("%Y%m%d")
         self.client.call("finance.import_statement", bank_account="CAIXA",
                          content=self.ofx((today, str(amount), f"F4{SUFFIX}", "DEPOSITO SEM IDENTIFICACAO")))
         line = int(self.scalar(f"SELECT id FROM finance.bank_statement_line WHERE dedup_key = 'id:F4{SUFFIX}'"))
@@ -3010,7 +3033,7 @@ class TestProduction(Base):
         return c["error"]["code"]
 
     def monday(self, weeks_ahead):
-        d = datetime.date.today()
+        d = ana_today()
         return d - datetime.timedelta(days=d.weekday()) + datetime.timedelta(weeks=weeks_ahead)
 
     def test_ca_014_01_02_mrp_two_levels_and_cycle(self):
@@ -3300,7 +3323,7 @@ class TestLogisticsField(Base):
         self.ok("field.save_technician", employee=self.tech, warehouse="LAB")
         o1 = self.ok("field.open_order", customer=self.customer, description="Instalação do equipamento", priority="normal")
         o2 = self.ok("field.open_order", customer=self.customer, description="Manutenção preventiva", priority="normal")
-        day = (datetime.date.today() + datetime.timedelta(days=30)).isoformat()
+        day = (ana_today() + datetime.timedelta(days=30)).isoformat()
         self.ok("field.schedule", order=o1["number"], technician=self.tech, start=f"{day} 09:00", hours=2)
         self.assertEqual(self.err("field.schedule", order=o2["number"], technician=self.tech, start=f"{day} 10:00", hours=2),
                          "SCHEDULE_CONFLICT")
@@ -3308,7 +3331,7 @@ class TestLogisticsField(Base):
         r = self.ok("field.route", technician=self.tech, day=day)
         self.assertEqual([s["OS"] for s in r["stops"]], [o1["number"], o2["number"]])
         # Absence (spec 014/021 calendar): refused by the database.
-        far = datetime.date.today() + datetime.timedelta(days=60)
+        far = ana_today() + datetime.timedelta(days=60)
         self.ok("projects.save_availability", employee=self.tech, absence_from=far.isoformat(), absence_to=far.isoformat())
         self.assertEqual(self.err("field.schedule", order=o2["number"], technician=self.tech, start=f"{far} 09:00"), "TECHNICIAN_ABSENT")
 
@@ -4037,7 +4060,7 @@ class TestFlows(Base):
         self.assertEqual(bills["settled"], 0)
         s, c, _ = http("POST", "/api/sql", {"sql": f"SELECT document, amount FROM finance.bill WHERE (document = 'ORD-{n}' "
                                                   f"OR document LIKE 'ORD-{n}/%') AND status = 'open' ORDER BY id"}, self.token)
-        day = datetime.date.today().strftime("%d/%m/%Y")
+        day = ana_today().strftime("%d/%m/%Y")
         csv = "data;histórico;valor\n" + "".join(f"{day};PIX {doc} CLIENTE;{str(amount).replace('.', ',')}\n" for doc, amount in c["rows"])
         self.ok("finance.import_statement", bank_account="CAIXA", format="csv", content=csv, reconcile=False)
         self.ok("flows.act", instance=st["receipt"]["id"], seq=st["receipt"]["seq"], action="run")   # the stage itself settles it
@@ -4146,7 +4169,7 @@ class TestGeo(Base):
         emp = self.client.call("projects.save_employee", name=f"Técnico Geo {SUFFIX}", profile="TEC", hourly_cost="60")["id"]
         self.call("field.save_technician", employee=emp, warehouse=self.wh)
         os_ = self.call("field.open_order", customer=self.customer, description=f"Calibração {SUFFIX}")["number"]
-        start = (datetime.datetime.now() + datetime.timedelta(days=40)).replace(hour=9, minute=0, second=0, microsecond=0)
+        start = (ana_now() + datetime.timedelta(days=40)).replace(hour=9, minute=0, second=0, microsecond=0)
         r = self.call("field.schedule", order=os_, technician=emp, start=start.isoformat(timespec="minutes"))
         self.assertEqual((Decimal(str(r["distance_km"])), r["travel_min"]), (Decimal("109.2"), 132))
         self.assertEqual(Decimal(str(self.scalar(f"SELECT distance_km FROM field.assignment WHERE id = {r['assignment']}"))), Decimal("109.2"))
@@ -4861,7 +4884,7 @@ class TestIntegratedProcesses(Base):
             self.assertFalse([f for f in c["findings"] if f["rule"] == "ledger_reconciliation" and f["target"] == "inventory"])
 
     def test_ca_038_11_closed_period_refuses_entries(self):
-        old = datetime.date.today() - datetime.timedelta(days=3650)
+        old = ana_today() - datetime.timedelta(days=3650)
         current = self.scalar("SELECT finance.closed_until()")
         if current:
             old = max(old, datetime.date.fromisoformat(str(current)[:10]) + datetime.timedelta(days=1))
@@ -4957,7 +4980,7 @@ class TestIntegratedFinance(Base):
         b1, b2, b3 = self.bill(cust, "100.00"), self.bill(cust, "200.00"), self.bill(cust, "300.00")
         doc1 = self.scalar(f"SELECT document FROM finance.bill WHERE id = {b1}")
         bank = self.bank(1)
-        today = datetime.date.today().strftime("%Y%m%d")
+        today = ana_today().strftime("%Y%m%d")
         self.ok("finance.import_statement", bank_account=bank, reconcile=False, content=self.ofx(
             (today, "90.00", f"R1{SUFFIX}", "PIX PARCIAL"), (today, "199.50", f"R2{SUFFIX}", "PIX QUASE"),
             (today, "320.00", f"R3{SUFFIX}", "PIX A MAIS")))
@@ -4999,7 +5022,7 @@ class TestIntegratedFinance(Base):
         a, b = self.bank(2), self.bank(3)
         self.ok("finance.statement_rules", pattern="TARIFA PACOTE", account=self.scalar("SELECT finance.account_for('bank_fees')"),
                 bank_account=a, memo="Tarifa do pacote de serviços")
-        today = datetime.date.today()
+        today = ana_today()
         d = today.strftime("%Y%m%d")
         amount = Decimal(f"5{SUFFIX[-3:]}.37")
         r = self.ok("finance.import_statement", bank_account=a, closing_balance=str(-amount - Decimal("35.90")), closing_date=today.isoformat(),
@@ -5034,7 +5057,7 @@ class TestIntegratedFinance(Base):
             net += Decimal(amount) - Decimal("1.99")
         self.assertEqual(self.reconciliation()["gateway_receivable"], before["gateway_receivable"])   # the subledger moved with it
         bank = self.bank(4)
-        today = datetime.date.today()
+        today = ana_today()
         r = self.ok("finance.import_statement", bank_account=bank, closing_balance=str(net), closing_date=today.isoformat(),
                     content=self.ofx((today.strftime("%Y%m%d"), str(net), f"P1{SUFFIX}", "REPASSE GATEWAY")))
         self.assertEqual(r["reconciled"]["payouts"], 1)
@@ -5187,7 +5210,7 @@ class TestIntegratedFinance(Base):
         self.ok("projects.save_project", code=project, name="Projeto com horas", customer=cust, manager="admin", status="active",
                 billing="hourly", tasks=[{"code": "1", "name": "Trabalho"}], team=[{"employee": employee, "profile": "HW"}],
                 rates={"HW": "200"})
-        today = datetime.date.today()
+        today = ana_today()
         t = self.ok("projects.log_time", project=project, task="1", hours=3, description="bancada", employee=employee,
                     entry_date=today.isoformat())
         self.ok("projects.approve_time", project=project, ids=[t["id"]])
@@ -5208,7 +5231,7 @@ def license_text(**over):
     """A license signed with the vendor's test key (always non-production, D2)."""
     import base64 as b64
     from cryptography.hazmat.primitives import serialization
-    today = datetime.date.today()
+    today = ana_today()
     payload = {"id": f"T{SUFFIX}{len(over)}{time.time_ns() % 100000}", "kid": "test-2026", "customer": "Suíte de testes",
                "issued_at": today.isoformat(), "valid_from": (today - datetime.timedelta(days=1)).isoformat(),
                "valid_until": (today + datetime.timedelta(days=365)).isoformat(), "max_version": "0.9",
@@ -5298,7 +5321,7 @@ class TestLicensing(Base):
         reader, writer = f"test.lic_read_{SUFFIX}", f"test.lic_write_{SUFFIX}"
         self.save(reader, "def main():\n    return ana.sql_value('SELECT count(*) FROM base.party')\n")
         self.save(writer, "def main():\n    return ana.sql_value(\"INSERT INTO base.party (kind, name) VALUES ('customer', 'Licença teste') RETURNING id\")\n")
-        today = datetime.date.today()
+        today = ana_today()
         r = self.install(valid_from=(today - datetime.timedelta(days=400)).isoformat(),
                          valid_until=(today - datetime.timedelta(days=5)).isoformat())
         self.assertEqual(r["state"], "grace")                                                 # CA-009-05
@@ -5515,7 +5538,7 @@ class TestStatementSources(Base):
 
     def test_cnab240_statement_with_closing_balance_and_no_duplicates(self):
         bank = self.banks[0][0]
-        content = cnab240_statement(datetime.date.today(), [(Decimal("150.00"), "PIX RECEBIDO", "ORD-1"),
+        content = cnab240_statement(ana_today(), [(Decimal("150.00"), "PIX RECEBIDO", "ORD-1"),
                                                             (Decimal("-12.34"), "TARIFA PACOTE", None)], Decimal("137.66"))
         r = self.ok("finance.import_statement", bank_account=bank, content=content, reconcile=False)
         self.assertEqual((r["format"], r["lines"], Decimal(str(r["closing_balance"]))), ("cnab240", 2, Decimal("137.66")))
@@ -5535,7 +5558,7 @@ class TestStatementSources(Base):
         self.client.call("base.save_product", code=service, description="Serviço fonte", price="1", kind="service")
         o = self.client.call("sales.create_order", customer=customer, items=[{"product": service, "quantity": 1, "price": "77.70"}])
         self.client.call("sales.invoice_order", number=o["number"])
-        today = datetime.date.today().strftime("%Y%m%d")
+        today = ana_today().strftime("%Y%m%d")
         ofx = ("OFXHEADER:100\nDATA:OFXSGML\n<OFX><BANKMSGSRSV1><STMTTRNRS><STMTRS><BANKTRANLIST>\n"
                f"<STMTTRN><TRNTYPE>CREDIT<DTPOSTED>{today}120000<TRNAMT>77.70<FITID>FS{SUFFIX}<MEMO>PIX ORD-{o['number']} CLIENTE</STMTTRN>\n"
                "</BANKTRANLIST></STMTRS></STMTTRNRS></BANKMSGSRSV1></OFX>")
@@ -5569,7 +5592,7 @@ class TestStatementSources(Base):
             self.assertEqual((r["lines"], r["failed"]), (2, []))
             self.assertEqual(self.ok("finance.fetch_statements", bank_account=bank)["lines"], 0)          # the import deduplicates
             self.assertEqual(self.scalar(f"SELECT since FROM finance.statement_source WHERE bank_account = '{bank}'"),
-                             (datetime.date.today() - datetime.timedelta(days=1)).isoformat())
+                             (ana_today() - datetime.timedelta(days=1)).isoformat())
             # The generic adapter goes through the connector (here: an endpoint without transactions).
             g = self.ok("finance.bank_api_generic", connector=f"t{SUFFIX}_bank", bank_account=bank, options={"path": ""})
             self.assertEqual((g["format"], g["lines"]), ("lines", []))
@@ -5693,7 +5716,7 @@ class TestSimulation(Base):
 
     def test_ca_020_08_statement_rule_simulation_shows_lines_without_saving(self):
         c = self.client
-        day = datetime.date.today().strftime("%d/%m/%Y")
+        day = ana_today().strftime("%d/%m/%Y")
         tag = f"TARSIM{SUFFIX}"
         csv = "data;histórico;valor\n" + f"{day};{tag} PACOTE;-12,50\n{day};{tag} DOC;-3,10\n{day};PIX {tag} ENTRADA;40,00\n"
         c.call("finance.import_statement", bank_account="CAIXA", format="csv", content=csv, reconcile=False)
@@ -5884,7 +5907,7 @@ class TestFulfillment(Base):
         n = r["number"]
         ln = self.line(n)
         self.assertEqual((ln["fulfillment"], ln["kind"], str(ln["supply"]), str(ln["reserve"])), ("supply", "purchase", "5.000", "6.000"))
-        self.assertEqual(ln["promised"], (datetime.date.today() + datetime.timedelta(days=7)).isoformat())
+        self.assertEqual(ln["promised"], (ana_today() + datetime.timedelta(days=7)).isoformat())
         req = r["supply"]["requests"][0]
         self.assertEqual(self.scalar(f"SELECT l.quantity::text FROM supply.purchase_request_line l JOIN supply.purchase_request r "
                                      f"ON r.id = l.request_id WHERE r.number = {req} AND l.sales_order_id = "
@@ -6128,7 +6151,7 @@ class TestTrailFixes(Base):
         self.assertIn({"kind": "purchase_order", "key": str(po)}, [a.get("params") for a in acts])      # OC-n/n → the purchase order
         # Paid in the statement: the bill says how, the line opens and lists the bill back.
         doc = self.scalar(f"SELECT document FROM finance.bill WHERE id = {bill}")
-        day = datetime.date.today().strftime("%d/%m/%Y")
+        day = ana_today().strftime("%d/%m/%Y")
         self.ok("finance.import_statement", bank_account="CAIXA", format="csv", content=f"data;histórico;valor\n{day};PAG {doc} FORN;-36,00\n")
         s, c, _ = self.run_program("docs.view", {"kind": "bill", "key": str(bill)})
         how = [e["data"] for e in c["events"] if e.get("kind") == "table" and e["data"]["title"] == "Como foi baixado"][0]
@@ -6171,7 +6194,7 @@ class TestTrailSmallFixes(Base):
         e = self.err("field.log_work", order=num, hours=1)                                  # nobody scheduled yet
         self.assertIn("único técnico agendado", e["message"])
         self.ok("field.schedule", order=num, technician=emp,
-                start=(datetime.datetime.now() + datetime.timedelta(hours=2)).strftime("%Y-%m-%dT%H:%M"))
+                start=(ana_now() + datetime.timedelta(hours=2)).strftime("%Y-%m-%dT%H:%M"))
         self.ok("field.log_work", order=num, hours=1)                                        # the administrator logs it for him
         self.assertEqual(int(self.scalar(f"SELECT w.employee_id FROM field.work_log w JOIN field.service_order o ON o.id = w.order_id "
                                          f"WHERE o.number = {num}")), emp)
@@ -6291,7 +6314,7 @@ class TestTotalsOverWholeSets(Base):
         return c["result"]
 
     def test_e_04_totals_match_independent_counts(self):
-        start, end = "2020-01-01", datetime.date.today().isoformat()
+        start, end = "2020-01-01", ana_today().isoformat()
         r = self.result("field.sla_report", start=start, end=end)
         self.assertEqual(r["orders"], int(self.scalar("SELECT count(*) FROM field.service_order WHERE opened_at >= '2020-01-01' "
                                                       "AND status <> 'cancelled'")))
@@ -6929,7 +6952,7 @@ class TestBpm(Base):
             s, q, _ = http("POST", "/api/sql", {"sql": "SELECT b.document, b.amount FROM finance.bill b JOIN supply.receipt rc ON rc.bill_id = b.id "
                                                       f"JOIN supply.purchase_order o ON o.id = rc.order_id WHERE o.number = {order}"}, self.token)
             doc, amount = q["rows"][0]
-            day = datetime.date.today().strftime("%d/%m/%Y")
+            day = ana_today().strftime("%d/%m/%Y")
             self.ok("finance.import_statement", bank_account="CAIXA", format="csv",
                     content=f"data;histórico;valor\n{day};PAGTO {doc} FORNECEDOR;-{str(amount).replace('.', ',')}\n")
             c = self.wait_case(case, lambda c: c["case"]["status"] == "done")
@@ -7790,7 +7813,7 @@ class TestDiskEndurance(Base):
         print("\n  escrita medida (bytes de WAL):", json.dumps(got), file=sys.stderr)
         if os.environ.get("ANA_DISK_BUDGET") == "write":
             b = dict(self.budget)
-            b["version"] = datetime.date.today().isoformat()
+            b["version"] = ana_today().isoformat()
             b["idle_wal_bytes_per_hour"] = got["idle_wal_bytes_per_hour"]
             b["operations"] = {k: {**self.budget["operations"].get(k, {}), "wal_bytes": v}
                                for k, v in got.items() if k != "idle_wal_bytes_per_hour"}
@@ -7998,7 +8021,7 @@ class TestTaxEngine(Base):
         doc = {"operation": "x", "items": [{"amount": "1000.00", "attributes": {attr: "A"}}]}
         case = self.client.call("tax.save_case", name=f"Caso {tax}", document=doc,
                                 expected={"taxes": {tax: {"amount": "10.00"}}})["case"]
-        today = datetime.date.today()
+        today = ana_today()
         r2 = self.client.call("tax.copy_rule", rule=r1, valid_from=str(today),
                               formulas=[["base", "amount"], ["rate", "0.02"], ["amount", "round(base * rate, 2)"]])["rule"]
         a = self.client.call("tax.activate_rule", rule=r2, reason="nova alíquota")
@@ -8025,7 +8048,7 @@ class TestTaxEngine(Base):
     def test_ca_049_09_new_tax_attribute_table_and_validity_only_by_data(self):
         tax, attr = self.new_tax(), self.new_attr("party")
         tbl = f"rate_{self.s}"
-        nxt = datetime.date.today().year + 1
+        nxt = ana_today().year + 1
         self.client.call("tax.import_table", table=tbl, rehearse=False,
                          csv=f"key;valid_from;valid_to;value\nx;2020-01-01;{nxt - 1}-12-31;0.009\nx;{nxt}-01-01;;0.088")
         self.rule(tax, {f"recipient.{attr}": "sim"}, [["rate", f"table('{tbl}', 'x')"], ["base", "amount"],
@@ -8034,7 +8057,7 @@ class TestTaxEngine(Base):
         self.client.call("tax.set_attribute", attribute=f"party.{attr}", target=str(self.customer), value="sim",
                          valid_from=str(later))
         doc = {"operation": "service_sale", "recipient": self.customer, "items": [{"amount": "1000.00"}]}
-        now = self.client.call("tax.calculate", document={**doc, "date": str(datetime.date.today())})
+        now = self.client.call("tax.calculate", document={**doc, "date": str(ana_today())})
         then = self.client.call("tax.calculate", document={**doc, "date": str(later)})
         self.assertIsNone(self.amount(now, tax))                                             # attribute not yet valid
         self.assertEqual(self.amount(then, tax), "88.00")                                    # next year's rate
@@ -8050,7 +8073,7 @@ class TestTaxEngine(Base):
         self.rule(irrf, {"contract.code": code}, [["base", "amount"], ["rate", "0.015"], ["value", "round(base * rate, 2)"],
                                                   ["applies", "value > 10"], ["withheld", "value"]])
         self.client.call("projects.log_time", project=code, task="1", hours=10, description="firmware", employee=self.employee,
-                         entry_date=str(datetime.date.today() - datetime.timedelta(days=3)))
+                         entry_date=str(ana_today() - datetime.timedelta(days=3)))
         self.client.call("projects.approve_time", project=code)
         inv = self.client.call("projects.invoice_project", project=code)
         taxes = {t["tax"]: t for t in inv["taxes"]}
@@ -8111,7 +8134,7 @@ class TestTaxEngine(Base):
         tax = self.new_tax(payable="revenue_tax_payable")
         self.rule(tax, {"contract.code": code}, [["base", "amount"], ["rate", "0.1"], ["charged", "round(base * rate, 2)"]])
         self.client.call("projects.log_time", project=code, task="1", hours=10, description="firmware", employee=self.employee,
-                         entry_date=str(datetime.date.today() - datetime.timedelta(days=4)))
+                         entry_date=str(ana_today() - datetime.timedelta(days=4)))
         self.client.call("projects.approve_time", project=code)
         inv = self.client.call("projects.invoice_project", project=code)
         self.assertEqual((inv["total"], inv["net_amount"]), ("1000.00", "1100.00"))
@@ -8194,7 +8217,7 @@ class TestQualityGate(Base):
         s, c, _ = http("POST", "/api/programs/inspect", {"source": self.BAD}, self.token)
         fp = next(x for x in c["lint"] if x["rule"] == "dynamic_sql")["fingerprint"]
         dev, dev_token = new_user("developer")
-        until = str(datetime.date.today() + datetime.timedelta(days=10))
+        until = str(ana_today() + datetime.timedelta(days=10))
         s, c, _ = http("POST", "/api/quality/exemptions", {"program": name, "fingerprint": fp, "reason": "curto", "valid_until": until}, dev_token)
         self.assertEqual(s, 400, c)                                                          # reason too short
         s, c, _ = http("POST", "/api/quality/exemptions", {"program": name, "fingerprint": fp, "valid_until": until,
@@ -8433,7 +8456,7 @@ class TestCompanyValues(Base):
         self.assertIn("tipo", c["error"]["message"])
 
     def test_rf_065_11_schedule_templates_are_the_same_list(self):
-        utc = datetime.datetime.now(datetime.timezone.utc).date()
+        day = ana_today()            # a job created without a time zone takes ANA's
         body = {"name": f"t-cv-{SUFFIX}", "program": "demo.hello",
                 "params": {"name": "{{today}} {{last_month_end}} {{today-1}} {{desconhecido}}"},
                 "triggers": [{"kind": "cron", "cron": "0 3 1 1 *"}]}
@@ -8446,9 +8469,9 @@ class TestCompanyValues(Base):
             occ = [o for o in http("GET", f"/api/scheduler/jobs/{j['id']}/occurrences", token=self.token)[1] if o["status"] == "success"]
             time.sleep(0.5)
         self.assertTrue(occ)
-        lme = utc.replace(day=1) - datetime.timedelta(days=1)
+        lme = day.replace(day=1) - datetime.timedelta(days=1)
         self.assertEqual(occ[0]["result"]["message"],
-                         f"Olá, {utc.isoformat()} {lme.isoformat()} {(utc - datetime.timedelta(days=1)).isoformat()} {{{{desconhecido}}}}!")
+                         f"Olá, {day.isoformat()} {lme.isoformat()} {(day - datetime.timedelta(days=1)).isoformat()} {{{{desconhecido}}}}!")
 
     def test_ca_065_03_list_filters_report_and_guards_the_catalog(self):
         if not psql_available():
@@ -8812,7 +8835,7 @@ class TestCompanyValuesPhase2(Base):
         self.assertEqual(d["usage"]["maintained_by"], [keeper])
 
     def test_ca_065_02_closing_moves_the_open_period_and_what_reads_it_follows(self):
-        old = datetime.date.today() - datetime.timedelta(days=3650)
+        old = ana_today() - datetime.timedelta(days=3650)
         s, c, _ = self.run_program("finance.close_period", {})
         current = None
         if psql_available():
@@ -9589,7 +9612,7 @@ class TestUsageSimulation(Base):
             self.must("production.save_item_plan", product=made, make_or_buy="make", lead_time_days=1)
             self.must("production.save_structure", product=made, lines=[{"component": comp, "quantity": 1}])
             wo = self.must("production.create_order", product=made, quantity=2, warehouse="CENTRAL",
-                                  due_date=(datetime.date.today() + datetime.timedelta(days=2)).isoformat())["order"]
+                                  due_date=(ana_today() + datetime.timedelta(days=2)).isoformat())["order"]
             self.must("production.release_order", order=wo)
             end = time.time() + 90                                           # the automatic step tries (and fails: no stock)
             while time.time() < end and self.scalar(
