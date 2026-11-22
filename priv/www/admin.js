@@ -2677,7 +2677,72 @@
       ], convs, { empty: "Nenhuma conversa ainda." }));
   }
 
-  const SECTIONS = { users, groups, settings, company, values, home, assistant, commands, remote, accounts, limits, consumption, scheduler, monitor, audit, retention, health, alerts, core, disk, uiperf, sqlperf, advice, updates, integrations, checks, transports, datacopy, publicapi, license, extensions, telemetry };
+  // ------------------------------------------------------------------ usage simulation (spec 067)
+  const SIM_CATEGORY = { automation: "Automação", accounts: "Contas", usability: "Usabilidade", robustness: "Robustez",
+                         performance: "Desempenho", access: "Acesso" };
+  const SIM_SEVERITY = { critical: "crítico", serious: "sério", warning: "atenção", info: "informação" };
+  let simSelected = null;
+  async function simulation(runId) {
+    const r = await API.admin.simulation();
+    const days = el("input", { type: "number", min: 1, max: 60, value: 1, "aria-label": "Dias simulados" });
+    const perDay = el("input", { type: "number", min: 1, max: 200, value: 6, "aria-label": "Cenários por dia" });
+    const seed = el("input", { type: "number", min: 0, placeholder: "nova", "aria-label": "Semente" });
+    const flows = el("input", { type: "checkbox" });
+    const report = el("div", { class: "sim-report" });
+    const STATUS = { running: "em andamento", done: "concluída", failed: "falhou", stopped: "parada" };
+    main().replaceChildren(
+      ...header("Uso simulado", "Personas (usuários robô com acesso real) percorrem as esteiras inteiras — venda, compra, campo, produção, projeto, estoque — com variação e erros humanos, e apontam furos de automação, contas e robustez. Roda na instância de testes (nunca na produção), à noite pela rotina agendada \"uso.simulado\" ou aqui. A semente de um achado o reproduz."),
+      el("form", { class: "form-card inline", onsubmit: (e) => { e.preventDefault(); guard(async () => {
+        const s = await API.admin.simulationRun({ days: Number(days.value) || 1, per_day: Number(perDay.value) || 6,
+                                                  seed: seed.value === "" ? null : Number(seed.value), flows: flows.checked });
+        toast(`Simulação ${s.id} começou (semente ${s.seed}).`); simulation(s.id);
+      }); } },
+        field("Dias", days), field("Cenários por dia", perDay), field("Semente", seed), check("Ligar os passos automáticos das esteiras", flows),
+        el("div", { class: "row-buttons" }, el("button", { class: "primary", type: "submit", text: "Rodar agora" }))),
+      el("h3", { text: "Rodadas" }),
+      table([
+        { label: "Nº", value: (x) => x.id, class: "num" },
+        { label: "Situação", value: (x) => STATUS[x.status] || x.status },
+        { label: "Início", value: (x) => fmtDate(x.started_at) },
+        { label: "Semente", value: (x) => x.seed },
+        { label: "Dias × cenários", value: (x) => `${x.days} × ${x.per_day}` },
+        { label: "Passos", value: (x) => (x.stats && x.stats.steps) || "—", class: "num" },
+        { label: "Achados", value: (x) => `${x.findings}${x.new ? ` (${x.new} novo${x.new > 1 ? "s" : ""})` : ""}` },
+        { label: "", value: (x) => el("button", { type: "button", class: "quiet small", text: "Ver", onclick: () => guard(() => show(x.id)) }) },
+      ], r.runs, { empty: "Nenhuma simulação ainda.", emptyAction: { label: "Rodar agora", onClick: () => days.focus() } }),
+      report,
+      el("h3", { text: "Personas" }),
+      table([
+        { label: "Persona", value: (p) => p.label },
+        { label: "Usuário robô", value: (p) => el("code", { text: "sim_" + p.name }) },
+        { label: "Papel", value: (p) => p.role },
+        { label: "Erros humanos", value: (p) => `${Math.round(p.error_rate * 100)}%` },
+      ], r.personas, { empty: "Nenhuma persona." }));
+    async function show(id) {
+      const x = await API.admin.simulationReport(id);
+      simSelected = id;                       // the screen is redrawn by live events: the chosen run stays
+      const byCat = {};
+      for (const f of x.findings) (byCat[f.category] = byCat[f.category] || []).push(f);
+      report.replaceChildren(el("section", { class: "card" },
+        el("h3", { text: `Simulação ${x.id} — semente ${x.seed} — ${STATUS[x.status] || x.status}` }),
+        x.status === "running" ? el("button", { type: "button", class: "quiet small", text: "Parar", onclick: () => guard(async () => {
+          await API.admin.simulationStop(x.id); toast("Simulação parada."); simulation(x.id); }) }) : null,
+        el("p", { class: "muted", text: x.stats && x.stats.steps ? `${x.stats.steps} passos em ${x.stats.scenarios} cenários; ${x.stats.mistakes} erros humanos simulados; ${x.stats.failed} passos sem sucesso.` : (x.reason || "") }),
+        x.findings.length ? null : el("p", { text: x.status === "done" ? "Nenhum furo encontrado nesta rodada." : "" }),
+        ...Object.entries(byCat).map(([cat, list]) => el("div", {}, el("h4", { text: `${SIM_CATEGORY[cat] || cat} (${list.length})` }),
+          el("ul", { class: "sim-findings" }, ...list.map((f) => el("li", {},
+            el("strong", { text: f.title }), " ", pill(f.trend === "new" ? "novo" : "persistente", f.trend === "new" ? "warn" : ""),
+            " ", el("span", { class: "muted small", text: `${SIM_SEVERITY[f.severity] || f.severity}${f.scenario ? " · cenário " + f.scenario : ""}${f.persona ? " · persona " + f.persona : ""} · semente ${f.seed}` }),
+            f.steps && f.steps.length ? el("details", {}, el("summary", { text: `Passos para reproduzir (${f.steps.length})` }),
+              el("ol", {}, ...f.steps.map((st) => el("li", { class: "small", text: `${st.persona}: ${st.program} ${JSON.stringify(st.params)} → ${st.ok ? "ok" : (st.code || "falhou")}${st.mistake ? " (erro humano)" : ""}` })))) : null))))),
+        x.resolved && x.resolved.length ? el("div", {}, el("h4", { text: "Resolvidos desde a rodada anterior" }),
+          el("ul", {}, ...x.resolved.map((g) => el("li", { text: g.title })))) : null));
+    }
+    const pick = runId || simSelected;
+    if (pick) await guard(() => show(pick));
+  }
+
+  const SECTIONS = { users, groups, settings, company, values, home, assistant, simulation, commands, remote, accounts, limits, consumption, scheduler, monitor, audit, retention, health, alerts, core, disk, uiperf, sqlperf, advice, updates, integrations, checks, transports, datacopy, publicapi, license, extensions, telemetry };
 
   function show(section) {
     refreshUpdatesCount();

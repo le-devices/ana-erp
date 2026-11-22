@@ -38,7 +38,10 @@ apply() ->
 %% inactive (the company turns each one on in Agendamento), never recreated after being deleted or renamed.
 %% They run as an administrator because they post and invoice.
 routines() ->
-    [{<<"pedidos.liberar">>, <<"sales.release_held">>, #{}, <<"*/10 * * * *">>,
+    [%% Spec 067 (D6): the usage simulation, every night — turn it on in the test instance (refused in production).
+     {<<"uso.simulado">>, <<"simulation.start">>, #{<<"days">> => 1, <<"per_day">> => 12}, <<"0 2 * * *">>,
+      <<"Uso simulado: personas percorrem as esteiras inteiras à noite e apontam furos de automação, contas e robustez (só na instância de testes)."/utf8>>},
+     {<<"pedidos.liberar">>, <<"sales.release_held">>, #{}, <<"*/10 * * * *">>,
       <<"Pedidos retidos ou aguardando compra/produção: libera os que já têm estoque, do mais antigo para o mais novo (spec 041)."/utf8>>},
      {<<"extratos.buscar">>, <<"finance.fetch_statements">>, #{}, <<"0 7-19 * * 1-5">>,
       <<"Busca de extratos: lê de hora em hora, nos dias úteis, as pastas de arquivos (OFX, CNAB 240) e as APIs dos bancos de cada conta e concilia."/utf8>>},

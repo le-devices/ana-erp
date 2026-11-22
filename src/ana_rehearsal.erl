@@ -159,6 +159,9 @@ hold(<<"schedule">>, #{<<"name">> := N} = Req) ->
 hold(<<"set_value">>, #{<<"name">> := N} = Req) ->
     %% Spec 065 (D4): a company value the routine would keep.
     {hold, #{kind => <<"value">>, name => N, value => maps:get(<<"value">>, Req, null)}};
+hold(<<"simulation_start">>, Req) ->
+    %% Spec 067: a usage simulation runs in the background, outside this transaction — rehearsed, it only says so.
+    {hold, #{kind => <<"simulation">>, days => maps:get(<<"days">>, Req, null), per_day => maps:get(<<"per_day">>, Req, null)}};
 hold(_, _) -> pass.
 
 %% What the program receives for a held request: an answer saying it was held, in the shape it expects.
@@ -166,6 +169,7 @@ hold(_, _) -> pass.
 held_reply(#{kind := <<"http">>}) -> #{<<"status">> => 202, <<"headers">> => #{}, <<"text">> => <<>>, <<"held">> => true};
 held_reply(#{kind := <<"schedule">>}) -> #{<<"job">> => null, <<"held">> => true};
 held_reply(#{kind := <<"value">>, name := N, value := V}) -> #{<<"name">> => N, <<"value">> => V, <<"held">> => true};
+held_reply(#{kind := <<"simulation">>}) -> #{<<"id">> => null, <<"seed">> => null, <<"held">> => true};
 held_reply(#{kind := <<"files">>}) -> #{<<"file">> => null, <<"version">> => null, <<"id">> => null, <<"held">> => true};
 held_reply(_) -> #{<<"held">> => true}.
 

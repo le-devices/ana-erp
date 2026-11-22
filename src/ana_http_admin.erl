@@ -54,6 +54,16 @@ route(<<"PUT">>, [<<"assistant">>], U, Req) ->
 route(<<"GET">>, [<<"assistant">>, <<"conversations">>], _U, Req) ->
     home(ana_assistant:audit(ana_http:qs_map(Req)), Req);
 
+%% --- Usage simulation (spec 067) -------------------------------------------
+route(<<"GET">>, [<<"simulation">>], _U, Req) ->
+    home(ana_simulation:runs(), Req);
+route(<<"POST">>, [<<"simulation">>, <<"run">>], U, Req) ->
+    with_body(Req, fun(B, R) -> home(ana_simulation:start(B, U), R) end);
+route(<<"GET">>, [<<"simulation">>, <<"runs">>, Id], _U, Req) ->
+    with_id(Id, Req, fun(N) -> home(ana_simulation:report(N), Req) end);
+route(<<"POST">>, [<<"simulation">>, <<"runs">>, Id, <<"stop">>], _U, Req) ->
+    with_id(Id, Req, fun(N) -> home(ana_simulation:stop(N), Req) end);
+
 %% --- Telemetry (spec 009, D13) ----------------------------------------------
 route(<<"GET">>, [<<"telemetry">>], _U, Req) ->
     reply(ana_telemetry:status(), Req);

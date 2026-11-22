@@ -7864,6 +7864,11 @@ class TestDiskEndurance(Base):
         prog = f"test.disk_rewrite_{SUFFIX}"
         try:
             self.save(prog, f"def main():\n    return ana.sql_exec(\"UPDATE {table} SET pad = md5(random()::text) || pad\")\n")
+            # The rate spans the last five samples: the base is taken over a quiet moment of its own, so whatever the
+            # tests before wrote (the budget test samples heavy runs) does not inflate it and hide the jump.
+            for _ in range(5):
+                http("POST", "/api/admin/observability/disk/sample", {}, self.token)
+                time.sleep(0.2)
             s, r, _ = http("POST", "/api/admin/observability/disk/sample", {}, self.token)
             self.assertEqual(s, 200, r)
             base = r["rates"].get("wal_mb_per_hour", 0)
@@ -9496,3 +9501,86 @@ class TestProgramQualityPhase2(Base):
         self.save(prog, "TESTS = [{'name': 'a', 'params': {}}]\ndef main():\n    return 1\n")
         s, q, _ = http("GET", f"/api/programs/{prog}/quality", token=self.token)
         self.assertEqual((s, q["in_production"]), (200, False))       # the battery runs on a development instance
+
+
+class TestUsageSimulation(Base):
+    """Continuous usage simulation (spec 067, phase 1): personas as robot users run whole pipelines from a seed; findings
+    with what reproduces them; never in production."""
+
+    def simulate(self, seed, per_day=3, flows=False):
+        s, r, _ = http("POST", "/api/admin/simulation/run", {"seed": seed, "days": 1, "per_day": per_day, "flows": flows}, self.token)
+        self.assertEqual(s, 200, r)
+        end = time.time() + 300
+        while time.time() < end:
+            s, rep = http("GET", f"/api/admin/simulation/runs/{r['id']}", token=self.token)[:2]
+            if rep["status"] != "running":
+                return rep
+            time.sleep(1)
+        self.fail("a simulação não terminou em 5 minutos")
+
+    def must(self, program, **params):
+        s, c, _ = self.run_program(program, params)
+        self.assertNotIn("error", c, c.get("error"))
+        return c["result"]
+
+    def test_ca_067_01_personas_run_the_pipelines_and_the_run_reports(self):
+        rep = self.simulate(seed=67001)
+        self.assertEqual(rep["status"], "done", rep.get("reason"))
+        self.assertGreater(rep["stats"]["steps"], 20)                       # the setup and three scenarios
+        personas = {s["persona"] for s in rep["steps"]}
+        self.assertTrue(personas & {"vendedor", "comprador", "almoxarife", "financeiro", "tecnico", "gestor", "producao"}, personas)
+        some = next(s for s in rep["steps"] if s["persona"] not in ("admin", "esteira") and s["execution"])
+        s, ex = http("GET", f"/api/executions/{some['execution']}", token=self.token)[:2]
+        self.assertEqual(ex["username"], "sim_" + some["persona"])          # it ran as the persona's robot user
+        for f in rep["findings"]:                                            # every finding says how to reproduce it
+            self.assertEqual(f["seed"], 67001)
+            self.assertRegex(f["fingerprint"], "^[0-9a-f]{16}$")
+        s, runs = http("GET", "/api/admin/simulation", token=self.token)[:2]
+        self.assertEqual(runs["runs"][0]["id"], rep["id"])
+        self.assertEqual(len(runs["personas"]), 8)
+
+    def test_rehearsing_the_start_holds_the_run(self):
+        """A rehearsal (spec 056) of simulation.start lists the run it would begin and begins none: the run lives
+        outside the transaction, so the rehearsal could not undo it."""
+        before = psql("SELECT count(*) FROM ana_system.sim_run")
+        s, c, _ = self.run_program("simulation.start", {"days": 1, "per_day": 2}, rehearse=True)
+        self.assertEqual(s, 200, c)
+        self.assertEqual([h["kind"] for h in c["rehearsal"]["held"]], ["simulation"], c)
+        self.assertTrue(c["result"]["held"])
+        time.sleep(1)
+        self.assertEqual(psql("SELECT count(*) FROM ana_system.sim_run"), before)
+
+    def test_ca_067_04_the_same_seed_runs_the_same_steps(self):
+        a = self.simulate(seed=67004)
+        b = self.simulate(seed=67004)
+        shape = lambda rep: [(s["scenario"], s["persona"], s["program"], s["mistake"]) for s in rep["steps"]]  # noqa: E731
+        self.assertEqual(shape(a), shape(b))
+        self.assertNotEqual(shape(a), shape(self.simulate(seed=67005)))
+
+    def test_ca_067_02_a_pipeline_stopped_on_an_automatic_step_is_found(self):
+        saved = self.must("flows.configure", flow="production")
+        sfx = SUFFIX[-6:]
+        comp, made = f"SB{sfx}C", f"SB{sfx}M"
+        try:
+            self.must("flows.configure", flow="production", action="activate")
+            self.must("flows.configure", flow="production", action="mode", step=2, mode="auto")
+            self.must("base.save_product", code=comp, description="Componente sem estoque", price="5")
+            self.must("base.save_product", code=made, description="Produto com esteira quebrada", price="50")
+            self.must("production.save_item_plan", product=made, make_or_buy="make", lead_time_days=1)
+            self.must("production.save_structure", product=made, lines=[{"component": comp, "quantity": 1}])
+            wo = self.must("production.create_order", product=made, quantity=2, warehouse="CENTRAL",
+                                  due_date=(datetime.date.today() + datetime.timedelta(days=2)).isoformat())["order"]
+            self.must("production.release_order", order=wo)
+            end = time.time() + 90                                           # the automatic step tries (and fails: no stock)
+            while time.time() < end and self.scalar(
+                    "SELECT count(*) FROM flow.instance i JOIN flow.instance_step x ON x.instance_id = i.id "
+                    f"WHERE i.flow_code = 'production' AND i.doc_key = '{wo}' AND x.status = 'failed'") == 0:
+                time.sleep(1)
+            rep = self.simulate(seed=67002, per_day=1)
+            stopped = [f for f in rep["findings"] if f["category"] == "automation" and "production" in f["title"]]
+            self.assertTrue(stopped, [f["title"] for f in rep["findings"]])
+        finally:
+            self.must("flows.configure", flow="production", action="activate" if saved["active"] else "deactivate")
+            for st in saved["steps"]:
+                if st["mode"] != "wait":
+                    self.must("flows.configure", flow="production", action="mode", step=st["seq"], mode=st["mode"])
