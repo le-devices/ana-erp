@@ -193,6 +193,12 @@
       `/api/executions/${enc(id)}/events?since=${since}&wait=1`, undefined, { signal }),
     command: (id, cmd) => API.request("POST", `/api/executions/${enc(id)}/command`, cmd),
     routines: () => API.request("GET", "/api/routines"),
+    // Spec 051 (D3): the person's suggestions from usage.
+    suggestions: {
+      mine: () => API.request("GET", "/api/suggestions"),
+      accept: (id, body) => API.request("POST", `/api/suggestions/${id}/accept`, body || {}),
+      decline: (id) => API.request("POST", `/api/suggestions/${id}/decline`, {}),
+    },
     favorite: (p) => API.request("PUT", `/api/me/favorites/${enc(p)}`, {}),
     unfavorite: (p) => API.request("DELETE", `/api/me/favorites/${enc(p)}`),
     commands: () => API.request("GET", "/api/commands"),
@@ -248,6 +254,16 @@
     uiSettings: () => API.request("GET", "/api/ui/settings"),
     putUiSetting: (key, value) => API.request("PUT", "/api/ui/settings", { key, value }),
     admin: {
+      // Spec 051: automations (central, rules "quando… então…", suggestions on demand).
+      automations: () => API.request("GET", "/api/admin/automations"),
+      automationActive: (kind, id, active) => API.request("POST", `/api/admin/automations/${kind}/${encodeURIComponent(id)}/active`, { active }),
+      analyzeSuggestions: () => API.request("POST", "/api/admin/automations/suggestions/analyze", {}),
+      rules: () => API.request("GET", "/api/admin/automations/rules"),
+      rulesCatalog: () => API.request("GET", "/api/admin/automations/rules/catalog"),
+      rule: (id) => API.request("GET", `/api/admin/automations/rules/${id}`),
+      saveRule: (body) => API.request("POST", "/api/admin/automations/rules", body),
+      deleteRule: (id) => API.request("DELETE", `/api/admin/automations/rules/${id}`),
+      rehearseRule: (id, document) => API.request("POST", `/api/admin/automations/rules/${id}/rehearse`, { document }),
       // Spec 067: usage simulation.
       simulation: () => API.request("GET", "/api/admin/simulation"),
       simulationRun: (body) => API.request("POST", "/api/admin/simulation/run", body),

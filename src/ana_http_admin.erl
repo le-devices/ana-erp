@@ -54,6 +54,33 @@ route(<<"PUT">>, [<<"assistant">>], U, Req) ->
 route(<<"GET">>, [<<"assistant">>, <<"conversations">>], _U, Req) ->
     home(ana_assistant:audit(ana_http:qs_map(Req)), Req);
 
+%% --- Automations (spec 051) -------------------------------------------------
+route(<<"GET">>, [<<"automations">>], _U, Req) ->
+    home(ana_automation:central(), Req);
+route(<<"POST">>, [<<"automations">>, <<"suggestions">>, <<"analyze">>], _U, Req) ->
+    home(ana_suggestions:run_now(), Req);
+route(<<"GET">>, [<<"automations">>, <<"rules">>, <<"catalog">>], _U, Req) ->
+    home({ok, ana_rules:catalog()}, Req);
+route(<<"GET">>, [<<"automations">>, <<"rules">>], _U, Req) ->
+    home({ok, ana_rules:list()}, Req);
+route(<<"GET">>, [<<"automations">>, <<"rules">>, Id], _U, Req) ->
+    with_id(Id, Req, fun(N) -> rule_reply(ana_rules:get(N), Req) end);
+route(<<"POST">>, [<<"automations">>, <<"rules">>], #{username := Who}, Req) ->
+    with_body(Req, fun(B, R) -> rule_reply(ana_rules:save(B, Who), R) end);
+route(<<"DELETE">>, [<<"automations">>, <<"rules">>, Id], #{username := Who}, Req) ->
+    with_id(Id, Req, fun(N) -> rule_reply(ana_rules:delete(N, Who), Req) end);
+route(<<"POST">>, [<<"automations">>, <<"rules">>, Id, <<"rehearse">>], #{username := Who}, Req) ->
+    with_id(Id, Req, fun(N) ->
+        with_body(Req, fun(B, R) -> rule_reply(ana_rules:rehearse(N, maps:get(<<"document">>, B, null), Who), R) end)
+    end);
+route(<<"POST">>, [<<"automations">>, Kind, Id, <<"active">>], U, Req) ->
+    with_body(Req, fun(B, R) ->
+        case maps:get(<<"active">>, B, null) of
+            A when is_boolean(A) -> home(ana_automation:set_active(Kind, Id, A, U), R);
+            _ -> invalid(R)
+        end
+    end);
+
 %% --- Usage simulation (spec 067) -------------------------------------------
 route(<<"GET">>, [<<"simulation">>], _U, Req) ->
     home(ana_simulation:runs(), Req);
@@ -499,6 +526,14 @@ read_raw(Req, Max, Acc) ->
 
 home({ok, V}, Req) -> ana_http:json(200, V, Req);
 home({error, Status, Code, Msg}, Req) -> ana_http:reply_error(Status, Code, Msg, Req).
+
+%% Spec 051: the rules answer {ok, _} | ok | {error, not_found} | {error, Code, Message}.
+rule_reply(ok, Req) -> ana_http:json(200, #{ok => true}, Req);
+rule_reply({ok, V}, Req) when is_integer(V) -> ana_http:json(200, #{id => V}, Req);
+rule_reply({ok, V}, Req) -> ana_http:json(200, V, Req);
+rule_reply({error, not_found}, Req) -> ana_http:reply_error(404, <<"NOT_FOUND">>, <<"regra não encontrada"/utf8>>, Req);
+rule_reply({error, <<"NOT_FOUND">> = C, M}, Req) -> ana_http:reply_error(404, C, M, Req);
+rule_reply({error, C, M}, Req) -> ana_http:reply_error(400, C, M, Req).
 
 with_body(Req, Fun) ->
     case ana_http:read_json(Req) of

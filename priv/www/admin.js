@@ -2742,7 +2742,237 @@
     if (pick) await guard(() => show(pick));
   }
 
-  const SECTIONS = { users, groups, settings, company, values, home, assistant, simulation, commands, remote, accounts, limits, consumption, scheduler, monitor, audit, retention, health, alerts, core, disk, uiperf, sqlperf, advice, updates, integrations, checks, transports, datacopy, publicapi, license, extensions, telemetry };
+  // ------------------------------------------------------------------ automations (spec 051)
+  // D1: everything that runs by itself in one list; D2: rules "quando… então…" with the condition builder, rehearsed
+  // before they are turned on; D3: suggestions from usage (analysed in the background, here on demand).
+  const AUTO_KIND = { schedule: "Agendamento", flow: "Esteira", process: "Processo", rule: "Regra", alert: "Alerta", connector: "Conector" };
+  const RULE_TRIGGER = { created: "Documento criado", status: "Mudança de situação", schedule: "Horário", metric: "Limite de métrica", message: "Mensagem recebida" };
+  const RULE_ACTION = { task: "Criar tarefa", run: "Executar rotina", notify: "Avisar", email: "Enviar e-mail", connector: "Chamar conector" };
+  const FIRE = { done: "feito", failed: "falhou", blocked: "bloqueada", rehearsal: "ensaio", skipped: "pulado" };
+  let autoFilter = { kind: "", state: "", q: "" };
+  async function automations() {
+    const parts = (location.hash.split("?")[0] || "").split("/");       // #/admin/automations/rules/<id>
+    if (parts[3] === "rules") return parts[4] === "new" ? ruleEditor(null) : parts[4] ? ruleDetail(Number(parts[4])) : rulesList();
+    const r = await API.admin.automations();
+    const kind = el("select", { "aria-label": "Tipo" }, el("option", { value: "", text: "Todos os tipos" }),
+      ...Object.entries(AUTO_KIND).map(([v, l]) => el("option", { value: v, text: l })));
+    const state = el("select", { "aria-label": "Situação" }, ...[["", "Todas"], ["on", "Ligadas"], ["off", "Desligadas"], ["failing", "Com falha"]]
+      .map(([v, l]) => el("option", { value: v, text: l })));
+    const q = el("input", { type: "search", placeholder: "Buscar por nome, dono ou rotina", "aria-label": "Buscar" });
+    kind.value = autoFilter.kind; state.value = autoFilter.state; q.value = autoFilter.q;
+    const box = el("div");
+    const draw = () => {
+      autoFilter = { kind: kind.value, state: state.value, q: q.value };
+      const term = q.value.trim().toLowerCase();
+      const items = r.items.filter((i) => (!kind.value || i.kind === kind.value)
+        && (!state.value || (state.value === "on" ? i.active : state.value === "off" ? !i.active : i.failures > 0))
+        && (!term || [i.name, i.owner, i.program, i.description].some((x) => x && String(x).toLowerCase().includes(term))));
+      box.replaceChildren(table([
+        { label: "Tipo", value: (i) => i.kind_label },
+        { label: "Nome", value: (i) => el("a", { href: i.link, text: i.name || String(i.id) }) },
+        { label: "Dono", value: (i) => i.owner || "—" },
+        { label: "Situação", value: (i) => pill(i.active ? "ligada" : "desligada", i.active ? "on" : "off") },
+        { label: "Último resultado", value: (i) => i.last_at ? `${fmtDate(i.last_at)}${i.last_status ? " · " + (FIRE[i.last_status] || i.last_status) : ""}` : "—" },
+        { label: "Próxima", value: (i) => i.next_at ? fmtDate(i.next_at) : "—" },
+        { label: "Falhas", value: (i) => i.failures ? el("span", { class: "error", title: i.last_error || "", text: `${i.failures}${i.last_error ? " — " + String(i.last_error).slice(0, 80) : ""}` }) : "—" },
+        { label: "", value: (i) => el("div", { class: "row-buttons" },
+            i.toggle ? el("button", { type: "button", class: "quiet small", text: i.active ? "Desligar" : "Ligar",
+              onclick: () => guard(async () => { await API.admin.automationActive(i.kind, i.id, !i.active); toast(i.active ? "Desligada." : "Ligada."); automations(); }) }) : null,
+            i.kind === "rule" ? el("button", { type: "button", class: "quiet small", text: "Abrir", onclick: () => window.AnaStudio.go(i.link) }) : null) },
+      ], items, { empty: r.items.length ? "Nada com esse filtro." : "Nada roda sozinho ainda.",
+                  emptyAction: { label: "Criar uma regra", onClick: () => window.AnaStudio.go("#/admin/automations/rules/new") } }));
+    };
+    for (const x of [kind, state]) x.addEventListener("change", draw);
+    q.addEventListener("input", draw);
+    const s = r.summary;
+    main().replaceChildren(
+      ...header("Automações", "Tudo o que roda sozinho, num lugar só: agendamentos e rotinas do produto, esteiras, processos, regras \"quando… então…\", alertas e conectores — com dono, último resultado, próxima execução e as falhas com o motivo. Liga e desliga pelo mesmo caminho da tela de cada um."),
+      el("p", { class: "muted", text: `${s.total} automações · ${s.active} ligadas · ${s.failing} com falha` }),
+      el("div", { class: "row-buttons" },
+        el("button", { type: "button", class: "primary", text: "Regras \"quando… então…\"", onclick: () => window.AnaStudio.go("#/admin/automations/rules") }),
+        el("button", { type: "button", class: "quiet", text: "Analisar o uso agora (sugestões)", onclick: () => guard(async () => {
+          const a = await API.admin.analyzeSuggestions();
+          toast(`Uso analisado: ${a.schedule} sugestão(ões) de agendar e ${a.variant} de variante.`); }) })),
+      el("div", { class: "md-toolbar" }, kind, state, q), box);
+    draw();
+  }
+
+  async function rulesList() {
+    const rules = await API.admin.rules();
+    main().replaceChildren(
+      ...header("Regras \"quando… então…\"", "Quando um documento é criado ou muda de situação, num horário, quando uma métrica passa do limite ou quando chega uma mensagem — se as condições valem, então a regra cria uma tarefa, executa uma rotina, avisa, envia e-mail ou chama um conector. Sem programar. Toda regra tem dono, é ensaiada antes de ligar e nunca entra em laço."),
+      el("div", { class: "row-buttons" },
+        el("button", { type: "button", class: "primary", text: "Nova regra", onclick: () => window.AnaStudio.go("#/admin/automations/rules/new") }),
+        el("button", { type: "button", class: "quiet", text: "Voltar às automações", onclick: () => window.AnaStudio.go("#/admin/automations") })),
+      table([
+        { label: "Regra", value: (x) => el("a", { href: `#/admin/automations/rules/${x.id}`, text: x.name }) },
+        { label: "Quando", value: (x) => `${RULE_TRIGGER[x.trigger_kind]}${x.entity_label ? " · " + x.entity_label : ""}${x.status_to ? " → " + x.status_to : ""}${x.cron ? " · " + x.cron : ""}` },
+        { label: "Então", value: (x) => RULE_ACTION[x.action.kind] || x.action.kind },
+        { label: "Dono", value: (x) => x.owner },
+        { label: "Situação", value: (x) => x.blocked_reason ? pill("bloqueada", "off") : pill(x.active ? "ligada" : x.rehearsed_version === x.version ? "ensaiada" : "a ensaiar", x.active ? "on" : "") },
+        { label: "Disparos", value: (x) => `${x.fired}${x.failed ? ` (${x.failed} com falha)` : ""}`, class: "num" },
+      ], rules, { empty: "Nenhuma regra ainda.", emptyAction: { label: "Nova regra", onClick: () => window.AnaStudio.go("#/admin/automations/rules/new") } }));
+  }
+
+  async function ruleEditor(rule) {
+    const cat = await API.admin.rulesCatalog();
+    const r = rule || { trigger_kind: "created", conditions: [], action: { kind: "task", task_kind: "human" }, max_fires: 20, window_minutes: 60,
+                        owner: window.AnaStudio.user().username };
+    const opt = (list, value, blank) => [blank ? el("option", { value: "", text: blank }) : null,
+      ...list.map((x) => Array.isArray(x) ? el("option", { value: x[0], text: x[1] }) : el("option", { value: x, text: x }))]
+      .filter(Boolean).map((o) => { if (o.value === String(value ?? "")) o.selected = true; return o; });
+    const name = el("input", { value: r.name || "", required: true, maxlength: 120 });
+    const desc = el("input", { value: r.description || "" });
+    const owner = el("select", {}, ...opt(cat.users, r.owner));
+    const trig = el("select", {}, ...opt(Object.entries(RULE_TRIGGER), r.trigger_kind));
+    const entity = el("select", {}, ...opt(cat.documents.map((d) => [d.entity, d.label]), r.entity));
+    const status = el("select", {});
+    const cron = el("input", { value: r.cron || "0 8 * * 1-5", placeholder: "minuto hora dia mês dia-da-semana" });
+    const metric = el("select", {}, ...opt(cat.metrics, r.metric));
+    const op = el("select", {}, ...opt([">", ">=", "<", "<="], r.metric_op || ">"));
+    const mval = el("input", { type: "number", step: "any", value: r.metric_value ?? "" });
+    const conn = el("select", {}, ...opt(cat.connectors, r.connector, "—"));
+    const trigBox = el("div", { class: "form-grid" });
+    let conditions = r.conditions;
+    const condBox = el("div");
+    const drawConditions = () => {
+      const doc = cat.documents.find((d) => d.entity === entity.value);
+      const fields = (["created", "status"].includes(trig.value) && doc ? doc.fields : []).map((f) => ({ ...f, label: f.name.replace(/_/g, " ") }));
+      condBox.replaceChildren(window.AnaConditions.builder({ fields, value: conditions, free: true, onChange: (c) => { conditions = c; } }).node,
+        el("p", { class: "muted small", text: "Sem condição, a regra vale para todo evento. Os campos são os fatos do documento (os mesmos das esteiras)." }));
+    };
+    const drawTrigger = () => {
+      const doc = cat.documents.find((d) => d.entity === entity.value);
+      status.replaceChildren(...opt(doc ? doc.statuses : [], r.status_to, "qualquer situação"));
+      const k = trig.value;
+      trigBox.replaceChildren(...(k === "created" ? [field("Documento", entity)]
+        : k === "status" ? [field("Documento", entity), field("Quando passa para", status)]
+        : k === "schedule" ? [field("Horário (cron)", cron)]
+        : k === "metric" ? [field("Métrica", metric), field("Comparação", op), field("Limite", mval)]
+        : [field("Conector", conn)]));
+      drawConditions();
+    };
+    trig.addEventListener("change", drawTrigger);
+    entity.addEventListener("change", drawTrigger);
+    const a = r.action;
+    const act = el("select", {}, ...opt(Object.entries(RULE_ACTION), a.kind));
+    const inp = (k, v, extra = {}) => el("input", { value: v ?? "", "data-k": k, ...extra });
+    const actBox = el("div", { class: "form-grid" });
+    const routines = el("datalist", { id: "rule-routines" });
+    API.routines().then((list) => routines.replaceChildren(...list.map((x) => el("option", { value: x.name, label: x.description })))).catch(() => {});
+    const drawAction = () => {
+      const k = act.value;
+      const jsonBox = (key, v) => el("textarea", { "data-k": key, "data-json": "1", rows: 3, text: JSON.stringify(v || {}, null, 1) });
+      actBox.replaceChildren(...(k === "task" ? [
+          field("Tarefa", inp("name", a.name, { placeholder: "Aprovar pedido acima do limite" })),
+          field("Tipo", el("select", { "data-k": "task_kind" }, ...opt([["human", "Fazer"], ["approval", "Aprovar ou recusar"]], a.task_kind))),
+          field("Para o grupo", el("select", { "data-k": "group" }, ...opt(cat.groups, a.group, "—"))),
+          field("Ou para a pessoa", el("select", { "data-k": "assignee" }, ...opt(cat.users, a.assignee, "—"))),
+          field("Instruções", inp("instructions", a.instructions)),
+          field("Rotina para abrir (opcional)", inp("program", a.program, { list: "rule-routines" }))]
+        : k === "run" ? [field("Rotina", inp("program", a.program, { list: "rule-routines", required: true })),
+                         field("Parâmetros (use {{campo}} para os fatos)", jsonBox("params", a.params))]
+        : k === "notify" ? [field("Pessoa", el("select", { "data-k": "user" }, ...opt(cat.users, a.user, "—"))),
+                            field("Ou grupo", el("select", { "data-k": "group" }, ...opt(cat.groups, a.group, "—"))),
+                            field("Mensagem ({{campo}} vale)", inp("message", a.message))]
+        : k === "email" ? [field("Para", inp("to", a.to, { type: "email" })), field("Assunto ({{campo}} vale)", inp("subject", a.subject)),
+                           field("Texto", el("textarea", { "data-k": "text", rows: 3, text: a.text || "" }))]
+        : [field("Conector", el("select", { "data-k": "connector" }, ...opt(cat.connectors, a.connector))),
+           field("Tipo da mensagem", inp("message_kind", a.message_kind, { placeholder: "pedido.grande" })),
+           field("Conteúdo (JSON; {{campo}} vale)", jsonBox("payload", a.payload))]), routines);
+    };
+    act.addEventListener("change", drawAction);
+    const max = el("input", { type: "number", min: 1, max: 10000, value: r.max_fires });
+    const win = el("input", { type: "number", min: 1, max: 10080, value: r.window_minutes });
+    const readAction = () => {
+      const out = { kind: act.value };
+      for (const x of actBox.querySelectorAll("[data-k]")) {
+        if (x.value === "") continue;
+        out[x.dataset.k] = x.dataset.json ? JSON.parse(x.value) : x.value;
+      }
+      return out;
+    };
+    main().replaceChildren(
+      ...header(rule ? `Regra: ${rule.name}` : "Nova regra", "Quando… (o gatilho), se… (as condições), então… (a ação). Salvar não liga a regra: ensaie primeiro."),
+      el("form", { class: "form-card", onsubmit: (e) => { e.preventDefault(); guard(async () => {
+        const body = { id: rule ? rule.id : null, name: name.value, description: desc.value, owner: owner.value, trigger_kind: trig.value,
+                       entity: entity.value, status_to: status.value || null, cron: cron.value, metric: metric.value, metric_op: op.value,
+                       metric_value: mval.value === "" ? null : Number(mval.value), connector: conn.value || null,
+                       conditions, action: readAction(), max_fires: Number(max.value), window_minutes: Number(win.value) };
+        const res = await API.admin.saveRule(body);
+        toast("Regra salva. Ensaie para poder ligar.");
+        window.AnaStudio.go(`#/admin/automations/rules/${res.id}`);
+      }); } },
+        el("div", { class: "form-grid" }, field("Nome", name), field("Dono (responde pela regra)", owner), field("Descrição", desc)),
+        el("h3", { text: "Quando" }), field("Gatilho", trig), trigBox,
+        el("h3", { text: "Se" }), condBox,
+        el("h3", { text: "Então" }), field("Ação", act), actBox,
+        el("h3", { text: "Limites (nunca em laço)" }),
+        el("div", { class: "form-grid" }, field("No máximo (disparos)", max), field("Em (minutos)", win)),
+        el("div", { class: "row-buttons" }, el("button", { class: "primary", type: "submit", text: "Salvar" }),
+          el("button", { type: "button", class: "quiet", text: "Cancelar", onclick: () => window.AnaStudio.go(rule ? `#/admin/automations/rules/${rule.id}` : "#/admin/automations/rules") }))));
+    drawTrigger();
+    drawAction();
+    name.focus();
+  }
+
+  function effectView(e) {
+    if (!e) return el("p", { class: "muted", text: "Nada a fazer: as condições não valem para este documento." });
+    const tables = e.tables || [], held = e.held || [], messages = e.messages || [];
+    return el("div", {},
+      tables.length ? el("ul", {}, ...tables.map((t) => el("li", { text: `${t.label || t.table}: ${t.rows} ${t.change === "created" ? "criado(s)" : t.change === "deleted" ? "excluído(s)" : "alterado(s)"}` }))) : null,
+      messages.length ? el("ul", {}, ...messages.map((m) => el("li", { text: `sairia: ${m.kind || "mensagem"}${m.connector ? " pelo conector " + m.connector : ""}` }))) : null,
+      held.length ? el("ul", {}, ...held.map((h) => el("li", { text: `retido: ${h.kind}${h.name ? " " + h.name : ""}` }))) : null,
+      !tables.length && !messages.length && !held.length ? el("p", { class: "muted", text: "A ação não mudaria nada." }) : null);
+  }
+
+  async function ruleDetail(id) {
+    const r = await API.admin.rule(id);
+    const doc = el("input", { placeholder: "o último", "aria-label": "Documento para o ensaio", size: 10 });
+    const out = el("div", { class: "card", hidden: true });
+    const rehearsed = r.rehearsed_version === r.version;
+    main().replaceChildren(
+      ...header(`Regra: ${r.name}`, r.description || ""),
+      r.blocked_reason ? el("p", { class: "error", text: `Bloqueada em ${fmtDate(r.blocked_at)}: ${r.blocked_reason}. Corrija e ensaie de novo para ligar.` }) : null,
+      el("dl", { class: "kv" },
+        el("dt", { text: "Quando" }), el("dd", { text: `${RULE_TRIGGER[r.trigger_kind]}${r.entity_label ? " · " + r.entity_label : ""}${r.status_to ? " → " + r.status_to : ""}${r.cron ? " · " + r.cron : ""}${r.metric ? ` · ${r.metric} ${r.metric_op} ${r.metric_value}` : ""}${r.connector ? " · " + r.connector : ""}` }),
+        el("dt", { text: "Se" }), el("dd", { text: window.AnaConditions.describe(r.conditions, []) || "sempre" }),
+        el("dt", { text: "Então" }), el("dd", { text: `${RULE_ACTION[r.action.kind]}${r.action.name ? ": " + r.action.name : ""}${r.action.program ? " · " + r.action.program : ""}${r.action.group ? " · grupo " + r.action.group : ""}` }),
+        el("dt", { text: "Dono" }), el("dd", { text: r.owner }),
+        el("dt", { text: "Limite" }), el("dd", { text: `${r.max_fires} disparo(s) em ${r.window_minutes} minuto(s)` }),
+        el("dt", { text: "Situação" }), el("dd", {}, pill(r.active ? "ligada" : "desligada", r.active ? "on" : "off"), " ",
+          rehearsed ? pill("ensaiada nesta versão", "") : pill("a ensaiar", "warn"))),
+      el("div", { class: "row-buttons" },
+        doc,
+        el("button", { type: "button", class: rehearsed ? "quiet" : "primary", text: "Ensaiar", onclick: () => guard(async () => {
+          const x = await API.admin.rehearseRule(id, doc.value || null);
+          out.hidden = false;
+          out.replaceChildren(el("h3", { text: `Ensaio no documento ${x.document ?? "—"}` }),
+            el("p", { text: x.conditions_hold ? "As condições valem: a regra faria isto (nada foi gravado):" : "As condições não valem para este documento." }),
+            x.conditions_hold ? effectView(x.effect) : null,
+            x.error ? el("p", { class: "error", text: `A ação falharia: ${x.error.message}` }) : null,
+            el("details", {}, el("summary", { text: "Fatos do documento" }), el("pre", { class: "small", text: JSON.stringify(x.facts, null, 1) })),
+            x.rehearsed ? el("button", { type: "button", class: "primary", text: "Ligar a regra", onclick: () => guard(async () => {
+              await API.admin.automationActive("rule", id, true); toast("Regra ligada."); ruleDetail(id); }) }) : null);
+        }) }),
+        el("button", { type: "button", class: "quiet", text: r.active ? "Desligar" : "Ligar", onclick: () => guard(async () => {
+          await API.admin.automationActive("rule", id, !r.active); toast(r.active ? "Regra desligada." : "Regra ligada."); ruleDetail(id); }) }),
+        el("button", { type: "button", class: "quiet", text: "Editar", onclick: () => guard(() => ruleEditor(r)) }),
+        el("button", { type: "button", class: "quiet danger", text: "Excluir", onclick: () => guard(async () => {
+          if (!confirm(`Excluir a regra "${r.name}" e o histórico dela? Não dá para desfazer.`)) return;
+          await API.admin.deleteRule(id); toast("Regra excluída."); window.AnaStudio.go("#/admin/automations/rules"); }) })),
+      out,
+      el("h3", { text: "Histórico" }),
+      table([
+        { label: "Quando", value: (f) => fmtDate(f.at) },
+        { label: "Documento", value: (f) => f.doc_key || "—" },
+        { label: "Resultado", value: (f) => pill(FIRE[f.outcome] || f.outcome, f.outcome === "done" ? "on" : f.outcome === "rehearsal" ? "" : "off") },
+        { label: "Detalhe", value: (f) => f.detail && (f.detail.reason || (f.detail.error && f.detail.error.message)) || (f.execution_id ? el("a", { href: `#/ops/executions/${f.execution_id}`, text: "execução" }) : "") },
+        { label: "Por", value: (f) => f.by || "" },
+      ], r.fires, { empty: "Ainda não disparou." }));
+  }
+
+  const SECTIONS = { users, groups, settings, company, values, home, assistant, simulation, automations, commands, remote, accounts, limits, consumption, scheduler, monitor, audit, retention, health, alerts, core, disk, uiperf, sqlperf, advice, updates, integrations, checks, transports, datacopy, publicapi, license, extensions, telemetry };
 
   function show(section) {
     refreshUpdatesCount();

@@ -9627,3 +9627,291 @@ class TestUsageSimulation(Base):
             for st in saved["steps"]:
                 if st["mode"] != "wait":
                     self.must("flows.configure", flow="production", action="mode", step=st["seq"], mode=st["mode"])
+
+
+# ---------------------------------------------------------------- spec 051
+class TestAutomation(Base):
+    """Automation by default (spec 051): rules "quando… então…" rehearsed before they are turned on and never in a loop;
+    the central of everything that runs by itself; every routine automatable; suggestions from usage; exceptions as
+    tasks with context that close by themselves."""
+
+    @classmethod
+    def setUpClass(cls):
+        super().setUpClass()
+        c = cls.client
+        cls.sfx = SUFFIX[-6:]
+        cls.big, cls.cheap = f"AB{cls.sfx}G", f"AB{cls.sfx}C"
+        c.call("base.save_product", code=cls.big, description="Item caro (regras)", price="60000")
+        c.call("base.save_product", code=cls.cheap, description="Item barato (regras)", price="10")
+        for p in (cls.big, cls.cheap):
+            c.call("inventory.stock_in", product=p, quantity=500, warehouse="CENTRAL")
+        cls.customers = [c.call("base.save_party", name=f"Cliente Regras {SUFFIX} {i}", state="SP")["id"] for i in range(3)]
+        cls.group = f"dir{cls.sfx}"
+        http("PUT", f"/api/admin/groups/{cls.group}", {"description": "Diretoria (regras)", "program_patterns": []}, cls.token)
+        cls.director, cls.director_token = new_user("user", [cls.group])
+        cls.rules = []
+
+    @classmethod
+    def tearDownClass(cls):
+        for r in cls.rules:
+            http("DELETE", f"/api/admin/automations/rules/{r}", token=cls.token)
+        super().tearDownClass()
+
+    def wait(self, cond, what, seconds=30):
+        end = time.time() + seconds
+        while time.time() < end:
+            v = cond()
+            if v:
+                return v
+            time.sleep(0.5)
+        self.fail(f"não aconteceu em {seconds} s: {what}")
+
+    def order(self, product, customer=0):
+        return self.client.call("sales.create_order", customer=self.customers[customer],
+                                items=[{"product": product, "quantity": 1}])["number"]
+
+    def rule(self, **body):
+        body.setdefault("name", f"Regra {SUFFIX} {len(self.rules)}")
+        body.setdefault("owner", "admin")
+        s, c, _ = http("POST", "/api/admin/automations/rules", body, self.token)
+        self.assertEqual(s, 200, c)
+        self.rules.append(c["id"])
+        return c["id"]
+
+    def rehearse(self, rid, document=None):
+        s, c, _ = http("POST", f"/api/admin/automations/rules/{rid}/rehearse", {"document": document}, self.token)
+        self.assertEqual(s, 200, c)
+        return c
+
+    def active(self, rid, on=True):
+        return http("POST", f"/api/admin/automations/rule/{rid}/active", {"active": on}, self.token)[:2]
+
+    def rule_tasks(self, key):
+        return int(psql("SELECT count(*) FROM bpm.task t JOIN bpm.case c ON c.id = t.case_id WHERE c.process_code = 'erp.tarefa' "
+                        f"AND c.doc_entity = 'sales_order' AND c.doc_key = '{key}' AND t.group_name = '{self.group}'"))
+
+    def test_ca_051_01_big_order_creates_an_approval_task_rehearsed_first(self):
+        # No rule watching: creating an order writes nothing for the automations (P15).
+        ins = lambda: int(psql("SELECT n_tup_ins FROM pg_stat_user_tables WHERE relid = 'automation.pending'::regclass"))  # noqa: E731
+        before = ins()
+        self.order(self.cheap)
+        time.sleep(1.5)
+        self.assertEqual(ins(), before)
+        rid = self.rule(trigger_kind="created", entity="sales_order", conditions=[{"field": "total", "op": ">", "value": 50000}],
+                        action={"kind": "task", "name": "Aprovar pedido acima de R$ 50 mil", "task_kind": "approval",
+                                "group": self.group, "instructions": "Confira o cliente e a margem."})
+        s, c = self.active(rid)
+        self.assertEqual((s, c["error"]["code"]), (409, "NOT_REHEARSED"), c)           # rehearsed before it is turned on
+        big = self.order(self.big)
+        tasks = psql("SELECT count(*) FROM bpm.task")
+        x = self.rehearse(rid, str(big))
+        self.assertTrue(x["conditions_hold"] and x["rehearsed"], x)
+        self.assertIn("bpm.task", [t["table"] for t in x["effect"]["tables"]], x["effect"])
+        self.assertEqual(psql("SELECT count(*) FROM bpm.task"), tasks)                     # nothing kept
+        self.assertEqual(self.active(rid)[0], 200)
+        small = self.order(self.cheap)
+        big2 = self.order(self.big)
+        self.wait(lambda: self.rule_tasks(big2) == 1, "tarefa de aprovação do pedido grande")
+        self.assertEqual(self.rule_tasks(small), 0)
+        # The director sees it in "Minhas tarefas", with the document's facts as context.
+        s, c, _ = self.run_program("bpm.tasks", {"scope": "mine"}, token=self.director_token)
+        mine = [t for t in c["result"]["tasks"] if t["doc_key"] == str(big2)]
+        self.assertEqual((len(mine), mine[0]["kind"]), (1, "approval"), c)
+        self.assertEqual(float(mine[0]["context"]["total"]), 60000.0)
+        # The central lists it with its owner and its last result; the rule keeps its history.
+        s, c, _ = http("GET", "/api/admin/automations", token=self.token)
+        item = next(i for i in c["items"] if i["kind"] == "rule" and i["id"] == rid)
+        self.assertEqual((item["owner"], item["active"], item["last_status"]), ("admin", True, "done"), item)
+        s, r, _ = http("GET", f"/api/admin/automations/rules/{rid}", token=self.token)
+        self.assertEqual([f["outcome"] for f in r["fires"]][:2], ["done", "rehearsal"], r["fires"])
+        # A change turns it off: rehearsed again before it is turned on.
+        s, c, _ = http("POST", "/api/admin/automations/rules", {**{k: r[k] for k in ("id", "name", "owner", "trigger_kind", "entity",
+                                                                                  "conditions", "action")}, "description": "mudou"}, self.token)
+        self.assertEqual(s, 200, c)
+        self.assertEqual(self.active(rid)[0], 409)
+        self.active(rid, False)
+
+    def test_ca_051_03_a_rule_that_fires_itself_is_blocked(self):
+        prog = f"test.auto_loop_{SUFFIX}"
+        self.save(prog, "def main(customer, product):\n"
+                        "    return ana.call('sales.create_order', customer=customer, items=[{'product': product, 'quantity': 1}])\n")
+        cust = self.customers[1]
+        rid = self.rule(trigger_kind="created", entity="sales_order", conditions=[{"field": "customer_id", "op": "=", "value": cust}],
+                        action={"kind": "run", "program": prog, "params": {"customer": "{{customer_id}}", "product": self.cheap}})
+        first = self.order(self.cheap, 1)
+        self.assertTrue(self.rehearse(rid, str(first))["rehearsed"])
+        self.assertEqual(self.active(rid)[0], 200)
+        self.order(self.cheap, 1)
+        r = self.wait(lambda: (lambda x: x if x["blocked_reason"] else None)(
+            http("GET", f"/api/admin/automations/rules/{rid}", token=self.token)[1]), "regra bloqueada")
+        self.assertFalse(r["active"])
+        self.assertIn("si mesma", r["blocked_reason"])
+        self.assertEqual(sorted({f["outcome"] for f in r["fires"]}), ["blocked", "done", "rehearsal"])
+        # The order the rule created set it off again, and that is where it stopped: three orders, not a flood.
+        time.sleep(2)
+        self.assertEqual(int(psql(f"SELECT count(*) FROM sales.sales_order WHERE customer_id = {cust}")), 3)
+        self.assertEqual(int(psql("SELECT count(*) FROM ana_system.notice WHERE kind = 'automation_rule' "
+                                  f"AND link = '#/admin/automations/rules/{rid}'")), 1)
+
+    def test_rnf_051_01_the_limit_per_window_blocks_too(self):
+        cust = self.customers[2]
+        rid = self.rule(trigger_kind="created", entity="sales_order", conditions=[{"field": "customer_id", "op": "=", "value": cust}],
+                        action={"kind": "notify", "user": "admin", "message": "pedido {{number}} criado"},
+                        max_fires=1, window_minutes=60)
+        self.assertTrue(self.rehearse(rid, str(self.order(self.cheap, 2)))["rehearsed"])
+        self.assertEqual(self.active(rid)[0], 200)
+        self.order(self.cheap, 2)
+        self.order(self.cheap, 2)
+        r = self.wait(lambda: (lambda x: x if x["blocked_reason"] else None)(
+            http("GET", f"/api/admin/automations/rules/{rid}", token=self.token)[1]), "regra bloqueada pelo limite")
+        self.assertIn("limite de 1 disparos", r["blocked_reason"])
+
+    def test_ca_051_04_the_central_lists_what_runs_by_itself(self):
+        s, c, _ = http("POST", "/api/admin/observability/alerts/rules",
+                       {"name": f"Central {SUFFIX}", "source": "metric", "target": "memory_mb", "op": ">", "threshold": 999999,
+                        "window_s": 0, "severity": "warning", "level": None}, self.token)
+        self.assertEqual(s, 200, c)
+        alert = c["id"]
+        try:
+            rid = self.rule(trigger_kind="schedule", cron="0 3 * * *", action={"kind": "notify", "user": "admin", "message": "bom dia"})
+            s, c, _ = http("GET", "/api/admin/automations", token=self.token)
+            self.assertEqual(s, 200, c)
+            kinds = {i["kind"] for i in c["items"]}
+            self.assertTrue({"schedule", "flow", "rule", "alert"} <= kinds, kinds)
+            for i in c["items"]:
+                self.assertTrue({"owner", "active", "last_at", "next_at", "failures", "last_error", "link"} <= set(i), i)
+            self.assertIn(rid, [i["id"] for i in c["items"] if i["kind"] == "rule"])
+            # Turned on and off from the central, through the scheduler's own path.
+            job = next(i for i in c["items"] if i["kind"] == "schedule" and not i["active"])
+            for on in (True, False):
+                s, x = http("POST", f"/api/admin/automations/schedule/{job['id']}/active", {"active": on}, self.token)[:2]
+                self.assertEqual(s, 200, x)
+                self.assertEqual(psql(f"SELECT active FROM scheduler.job WHERE id = {job['id']}"), "t" if on else "f")
+        finally:
+            http("DELETE", f"/api/admin/observability/alerts/rules/{alert}", token=self.token)
+
+    def test_rf_051_04_every_routine_can_be_scheduled_fired_by_a_rule_and_put_in_a_process(self):
+        s, routines, _ = http("GET", "/api/routines", token=self.token)
+        names = [r["name"] for r in routines if not r["name"].startswith(("test.", "demo."))]
+        self.assertGreater(len(names), 100)
+        in_processes = set(psql("SELECT bpm.program_names()").splitlines())
+        refused = []
+        for n in names:
+            if n not in in_processes:
+                refused.append(f"{n}: fora da lista de tarefas automáticas dos processos")
+            s, c, _ = http("POST", "/api/admin/automations/rules",
+                           {"name": f"Catálogo {SUFFIX} {n}", "owner": "admin", "trigger_kind": "schedule", "cron": "0 3 * * *",
+                            "action": {"kind": "run", "program": n, "params": {}}}, self.token)
+            if s == 200:
+                http("DELETE", f"/api/admin/automations/rules/{c['id']}", token=self.token)
+            else:
+                refused.append(f"{n}: regra recusada: {c}")
+            job = f"t{self.sfx}.{n}"[:60].lower().replace("_", "-")
+            s, c, _ = http("POST", "/api/scheduler/jobs", {"name": job, "program": n, "active": False, "triggers": []}, self.token)
+            if s == 200:
+                http("DELETE", f"/api/scheduler/jobs/{c['id']}", token=self.token)
+            else:
+                refused.append(f"{n}: agendamento recusado: {c}")
+        self.assertEqual(refused, [])
+
+    # ------------------------------------------------------------ suggestions (D3)
+    def runs(self, user, program, params, days, at="08:05"):
+        """Executions of a person in the past (the log the suggestions read), as if typed on screen."""
+        for d in days:
+            psql("INSERT INTO ana_system.execution (id, program, username, origin, status, params, started_at, finished_at) "
+                 f"VALUES (gen_random_uuid(), '{program}', '{user}', 'studio', 'success', '{json.dumps(params)}'::jsonb, "
+                 f"('{d} {at}'::timestamp AT TIME ZONE 'America/Sao_Paulo'), "
+                 f"('{d} {at}'::timestamp AT TIME ZONE 'America/Sao_Paulo') + interval '1 second')")
+
+    def analyze(self):
+        psql("DELETE FROM automation.usage_day; DELETE FROM automation.mark")     # test setup only: read the 30 days again
+        s, c, _ = http("POST", "/api/admin/automations/suggestions/analyze", {}, self.token)
+        self.assertEqual(s, 200, c)
+        return c
+
+    def business_days(self, n):
+        holidays = set(psql("SELECT day FROM scheduler.holiday").splitlines())
+        d, out = ana_today(), []
+        while len(out) < n:
+            d -= datetime.timedelta(days=1)
+            if d.weekday() < 5 and d.isoformat() not in holidays:
+                out.append(d.isoformat())
+        return sorted(out)
+
+    def test_ca_051_02_four_business_days_at_the_same_time_suggest_a_schedule(self):
+        prog = f"test.auto_report_{SUFFIX}"
+        self.save(prog, "PARAMS = {'warehouse': {'type': 'str', 'label': 'depósito'}}\n\ndef main(warehouse=None):\n    return warehouse\n")
+        user, token = new_user("user")
+        self.runs(user, prog, {"warehouse": "CENTRAL"}, self.business_days(4))
+        self.analyze()
+        s, mine, _ = http("GET", "/api/suggestions", token=token)
+        sched = [x for x in mine if x["kind"] == "schedule" and x["program"] == prog]
+        self.assertEqual(len(sched), 1, mine)
+        self.assertIn("4 dias úteis seguidos", sched[0]["explanation"])
+        self.assertIn("08:05", sched[0]["explanation"])
+        s, r, _ = http("POST", f"/api/suggestions/{sched[0]['id']}/accept", {}, token)
+        self.assertEqual(s, 200, r)
+        try:
+            row = psql(f"SELECT j.program, j.run_as, j.variant_id IS NOT NULL, t.cron FROM scheduler.job j "
+                       f"JOIN scheduler.trigger t ON t.job_id = j.id WHERE j.id = {r['job']}")
+            self.assertEqual(row, f"{prog}|{user}|t|5 8 * * 1-5")
+            self.assertEqual(psql(f"SELECT entries FROM ana_system.run_variant WHERE id = {r['variant']}"),
+                             '{"warehouse": {"value": "CENTRAL"}}')
+            s, mine, _ = http("GET", "/api/suggestions", token=token)
+            self.assertNotIn(sched[0]["id"], [x["id"] for x in mine])
+        finally:
+            http("DELETE", f"/api/scheduler/jobs/{r['job']}", token=self.token)
+
+    def test_t_045_07b_the_same_values_three_times_suggest_a_variant_and_declined_never_return(self):
+        prog = f"test.auto_lookup_{SUFFIX}"
+        self.save(prog, "PARAMS = {'code': {'type': 'str', 'label': 'código'}}\n\ndef main(code=None):\n    return code\n")
+        user, token = new_user("user")
+        self.runs(user, prog, {"code": "XPTO"}, [ana_today().isoformat()] * 3, at="00:10")   # already past, today
+        self.analyze()
+        s, mine, _ = http("GET", "/api/suggestions", token=token)
+        var = [x for x in mine if x["kind"] == "variant" and x["program"] == prog]
+        self.assertEqual(len(var), 1, mine)
+        self.assertIn("3 vezes", var[0]["explanation"])
+        s, c, _ = http("POST", f"/api/suggestions/{var[0]['id']}/decline", {}, token)
+        self.assertEqual(s, 200, c)
+        self.runs(user, prog, {"code": "XPTO"}, [ana_today().isoformat()], at="00:20")
+        self.analyze()
+        s, mine, _ = http("GET", "/api/suggestions", token=token)
+        self.assertEqual([x for x in mine if x["program"] == prog], [])               # declined: it never comes back
+
+    # ------------------------------------------------------------ exceptions as tasks (D4)
+    def must(self, program, **params):
+        s, c, _ = self.run_program(program, params)
+        self.assertNotIn("error", c, c.get("error"))
+        return c["result"]
+
+    def test_rf_051_05_a_failed_automatic_step_becomes_a_task_that_closes_by_itself(self):
+        saved = self.must("flows.configure", flow="production")
+        sfx = self.sfx
+        comp, made = f"AX{sfx}C", f"AX{sfx}M"
+        try:
+            self.must("flows.configure", flow="production", action="activate")
+            self.must("flows.configure", flow="production", action="mode", step=2, mode="auto")
+            self.must("base.save_product", code=comp, description="Componente sem estoque (exceção)", price="5")
+            self.must("base.save_product", code=made, description="Produto da exceção", price="50")
+            self.must("production.save_item_plan", product=made, make_or_buy="make", lead_time_days=1)
+            self.must("production.save_structure", product=made, lines=[{"component": comp, "quantity": 1}])
+            wo = self.must("production.create_order", product=made, quantity=2, warehouse="CENTRAL",
+                                  due_date=(ana_today() + datetime.timedelta(days=2)).isoformat())["order"]
+            self.must("production.release_order", order=wo)
+            task = self.wait(lambda: psql(
+                "SELECT t.id || '|' || t.role || '|' || jsonb_array_length(t.actions) || '|' || (t.context ? 'erro') "
+                "FROM bpm.task t JOIN bpm.case c ON c.id = t.case_id WHERE c.process_code = 'erp.tarefa' AND t.status = 'waiting' "
+                f"AND c.doc_entity = 'work_order' AND c.doc_key = '{wo}'"), "tarefa da etapa parada", 90)
+            tid, role, n_actions, has_error = task.split("|")
+            self.assertEqual((role, n_actions, has_error), ("admin", "2", "true"))
+            # Resolved outside (stock arrives, someone tries again): the task closes by itself.
+            self.must("inventory.stock_in", product=comp, quantity=10, warehouse="CENTRAL")
+            act = json.loads(psql(f"SELECT actions -> 0 FROM bpm.task WHERE id = {tid}"))
+            self.must(act["program"], **act["params"])
+            self.wait(lambda: psql(f"SELECT status FROM bpm.task WHERE id = {tid}") == "done", "tarefa concluída sozinha", 90)
+        finally:
+            self.must("flows.configure", flow="production", action="activate" if saved["active"] else "deactivate")
+            for st in saved["steps"]:
+                if st["mode"] != "wait":
+                    self.must("flows.configure", flow="production", action="mode", step=st["seq"], mode=st["mode"])

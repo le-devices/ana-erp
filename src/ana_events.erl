@@ -34,7 +34,7 @@ send(Pids, Topic, Msg) ->
 %% ana_listener, channel "ana_wake": the payload is the topic ("integration", ...); `all` after a
 %% reconnection (notifications may have been missed) wakes every known topic.
 on_notify(_Channel, all) ->
-    _ = [publish_local(T, all) || T <- [<<"integration">>, <<"notices">>]],
+    _ = [publish_local(T, all) || T <- [<<"integration">>, <<"notices">>, <<"rules">>]],
     ok;
 on_notify(_Channel, Topic) when is_binary(Topic) ->
     publish_local(Topic, wake).

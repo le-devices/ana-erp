@@ -115,10 +115,41 @@
   }
 
   // ------------------------------------------------------------------ the company's spaces
+  // ------------------------------------------------------------------ suggestions from usage (spec 051, D3)
+  // What the person does again and again, offered to the ERP: accept does it at once; "Não sugerir mais" never returns.
+  async function suggestionsBox() {
+    let list = [];
+    try { list = await API.suggestions.mine(); } catch (_) { return null; }
+    if (!list.length) return null;
+    const box = el("section", { class: "home-space home-suggestions", "aria-label": "Sugestões do ERP" },
+      el("div", { class: "home-space-head" }, el("h2", { text: "Sugestões do ERP" }),
+        el("p", { class: "muted small", text: "O ERP percebeu algo que você faz sempre do mesmo jeito e pode fazer por você." })));
+    const ul = el("ul", { class: "suggestion-list" });
+    const drop = (li) => { li.remove(); if (!ul.children.length) box.remove(); };
+    for (const s of list) {
+      const li = el("li", { class: "suggestion" }, el("strong", { text: s.title }), el("p", { class: "small", text: s.explanation }));
+      li.append(el("div", { class: "row-buttons" },
+        el("button", { type: "button", class: "primary small", text: s.kind === "schedule" ? "Agendar" : "Salvar variante", onclick: async () => {
+          try {
+            const r = await API.suggestions.accept(s.id, {});
+            toast(s.kind === "schedule" ? `Agendado: ${s.program} de segunda a sexta (${r.cron}). Você pode mudar em Agendamento.` : "Variante salva: escolha pelo nome na próxima vez.");
+            drop(li);
+          } catch (e) { toast(window.AnaUI.errorText(e), true); }
+        } }),
+        el("button", { type: "button", class: "quiet small", text: "Não sugerir mais", onclick: async () => {
+          try { await API.suggestions.decline(s.id); toast("Combinado: não vamos sugerir isso de novo."); drop(li); } catch (e) { toast(window.AnaUI.errorText(e), true); }
+        } })));
+      ul.append(li);
+    }
+    box.append(ul);
+    return box;
+  }
+
   async function spaces(host) {
     stopTimers();
     let list;
     try { list = await API.home.spaces(); } catch (e) { host.replaceChildren(el("p", { class: "muted", text: window.AnaUI.errorText(e) })); return; }
+    const sugg = await suggestionsBox();
     const draw = () => {
       stopTimers();
       const sections = list.filter((s) => s.blocks.length).map((s) => {
@@ -136,7 +167,7 @@
           ? el("button", { type: "button", class: "quiet small", text: "Restaurar padrão", onclick: () => { saveLayout({}); toast("Painel no padrão da empresa."); draw(); } })
           : null,
         hidden && !editing ? el("span", { class: "muted small", text: `${hidden} bloco(s) escondido(s)` }) : null) : null;
-      host.replaceChildren(...(tools ? [tools] : []), ...sections);
+      host.replaceChildren(...(sugg && sugg.isConnected !== false && sugg.querySelector("li") ? [sugg] : []), ...(tools ? [tools] : []), ...sections);
     };
     draw();
   }
@@ -167,6 +198,8 @@
     items.push({ label: "Tarefas dos processos", n: tasks, go: "#/bpm" });
     const sched = await API.scheduler.notifications(true).then((l) => l.length).catch(() => 0);
     items.push({ label: "Avisos das rotinas agendadas", n: sched, go: "#/home" });
+    // Spec 051 (D3): what the ERP offers to do for the person.
+    items.push({ label: "Sugestões do ERP", n: await API.suggestions.mine().then((l) => l.length).catch(() => 0), go: "#/home" });
     if (isAdmin) {
       // Spec 065: versions of company values waiting for a second person.
       const vals = await API.values.list({}).then((r) => (r.values || []).reduce((a, v) => a + (v.pending || 0), 0)).catch(() => 0);
