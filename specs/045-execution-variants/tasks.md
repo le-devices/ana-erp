@@ -6,4 +6,4 @@
 - [x] T-045-04 Tela de parâmetros: escolher, salvar como, publicar (RF-045-01, 02)
 - [x] T-045-05 Uso em agendamento, API, atalhos e categorias; registro da variante na execução (RF-045-06, CA-045-03)
 - [x] T-045-06 Validação contra a versão do programa e nas atualizações do produto (RF-045-07, D6, CA-045-04)
-- [ ] T-045-07b Variantes na paleta de comandos (spec 050 fase 2, CA-045-05) e nos blocos do painel (spec 048); sugestão de "Salvar como variante" após três usos iguais (spec 051)
+- [x] T-045-07b Variantes na paleta de comandos (spec 050 fase 2, CA-045-05) e nos blocos do painel (spec 048); sugestão de "Salvar como variante" após três usos iguais (spec 051)
