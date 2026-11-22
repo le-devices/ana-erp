@@ -26,6 +26,7 @@ select_suites() {
     case "$f" in
       specs/*|*.md) ;;                                                     # documentation
       LICENSE|NOTICE|REUSE.toml|.github/workflows/cla.yml|.github/workflows/licensing.yml) ;;   # licensing (own workflows)
+      .github/workflows/simulation.yml|.github/simulation.py) ;;          # the nightly usage simulation (its own workflow)
       scripts/licensing_check.py) add static ;;
       priv/www/*|tests/studio/*|tests/a11y/*) add static studio ;;
       tests/integration/*) add static integration ;;

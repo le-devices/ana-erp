@@ -31,10 +31,15 @@
     executions = executions.filter((x) => routine(x.program));
 
     const user = window.AnaStudio.user();
+    // Spec 048: the search at the top, the company's spaces (live indicators), then the user's own space.
+    const spaces = el("div", { class: "home-spaces" });
     main.replaceChildren(
       el("div", { class: "home-head" },
         el("h1", { text: `Olá, ${user.name || user.username}` }),
-        el("p", { class: "lead", text: "Suas rotinas favoritas, suas categorias e as da empresa, e as usadas há pouco. Fixe com ☆ ou use “Copiar para categoria…” na rotina." })),
+        window.AnaHome.search()),
+      spaces,
+      el("h2", { class: "home-mine", text: "Meu espaço" }),
+      el("p", { class: "lead", text: "Suas tarefas, rotinas favoritas, suas categorias e as da empresa, e as usadas há pouco. Fixe com ☆ ou use “Copiar para categoria…” na rotina." }),
       el("section", { class: "card wide", id: "home-tasks", hidden: true }),
       tileGroup("Favoritas", favs, "Fixe rotinas com ☆ para vê-las aqui."),
       // RF-020-22: the user's and the company's categories, with their shortcuts (drag to reorder and move).
@@ -49,6 +54,7 @@
           { label: "Duração (ms)", value: (x) => x.duration_ms ?? "…", class: "num" },
         ], executions.slice(0, 10), { empty: "Nenhuma execução ainda.",
           onRow: (x) => routine(x.program) && window.AnaStudio.go(`#/ops/${R.moduleOf(x.program)}/${x.program}`) })));
+    window.AnaHome.spaces(spaces);                                                       // spec 048
     if (window.AnaBpm && $("#home-tasks")) window.AnaBpm.homeWidget($("#home-tasks"));    // spec 039: Minhas tarefas
     const warn = $("#home-warnings");
     if (warn && window.AnaScheduler) {

@@ -18,8 +18,11 @@ PARAMS = {"q": {"type": "str", "required": True, "label": "buscar"}}
 NUMBERED = [("order", "sales.sales_order", "Pedido de venda"), ("service_order", "field.service_order", "Ordem de serviço"),
             ("purchase_request", "supply.purchase_request", "Solicitação de compra"),
             ("purchase_order", "supply.purchase_order", "Ordem de compra"), ("work_order", "production.work_order", "Ordem de produção"),
-            ("shipment", "logistics.shipment", "Expedição"), ("project_invoice", "projects.invoice", "Fatura de projeto")]
-PREFIX = {"PV": "order", "PED": "order", "SC": "purchase_request", "EXP": "shipment", "INV": "project_invoice"}
+            ("shipment", "logistics.shipment", "Expedição"), ("project_invoice", "projects.invoice", "Fatura de projeto"),
+            ("bill", "finance.bill", "Título")]
+# The number column of each table (titles — invoices and installments — are numbered by their id).
+NUMBER_COLUMN = {"bill": "id"}
+PREFIX = {"PV": "order", "PED": "order", "SC": "purchase_request", "EXP": "shipment", "INV": "project_invoice", "TIT": "bill"}
 EACH = 5
 TAX_ID = re.compile(r"(?=(?:.*\d){2})[0-9A-Za-z]{2}\.?[0-9A-Za-z]{3}\.?[0-9A-Za-z]{3}/?[0-9A-Za-z]{4}-?\d{2}|\d{3}\.?\d{3}\.?\d{3}-?\d{2}")
 
@@ -49,9 +52,10 @@ def documents(q):
     for kind, table, label in NUMBERED:
         if kind not in kinds:
             continue
-        # ana:lint-ok sql_in_loop — one indexed lookup per kind of document (at most seven)
+        # ana:lint-ok sql_in_loop — one indexed lookup per kind of document (at most eight)
         # ana:lint-ok dynamic_sql — the table comes from the fixed list above; the number goes as $1
-        row = ana.sql_one(f"SELECT number, status FROM {table} WHERE number = $1", n)
+        col = NUMBER_COLUMN.get(kind, "number")
+        row = ana.sql_one(f"SELECT {col} AS number, status FROM {table} WHERE {col} = $1", n)
         if row:
             out.append({"group": "Documentos", "label": f"{label} {row['number']}", "detail": status_text(row["status"]) if row["status"] else "",
                         "hash": doc_hash(kind, row["number"])})

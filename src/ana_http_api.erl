@@ -318,6 +318,8 @@ route(<<"POST">>, [<<"programs">>, Name, <<"versions">>, V, <<"restore">>], Req)
         with_integer(V, Req, fun(N) -> save_reply(ana_program:restore(Name, N, U), Req) end)
     end) end);
 %% --- Execution variants (spec 045) -------------------------------------------
+route(<<"GET">>, [<<"variants">>], Req) ->
+    ana_http:require(Req, ?USER, fun(U) -> values_reply(ana_variants:visible(U), Req) end);
 route(<<"GET">>, [<<"programs">>, Name, <<"variants">>], Req) ->
     ana_http:require(Req, ?USER, fun(U) -> values_reply(ana_variants:list(Name, U), Req) end);
 route(<<"POST">>, [<<"programs">>, Name, <<"variants">>], Req) ->
@@ -377,6 +379,37 @@ route(<<"POST">>, [<<"executions">>, Id, <<"command">>], Req) ->
             (_, R) -> invalid(R)
         end)
     end);
+
+%% --- Home panel (spec 048) -------------------------------------------------
+route(<<"GET">>, [<<"home">>, <<"spaces">>], Req) ->
+    ana_http:require(Req, ?USER, fun(U) -> home_reply(ana_home:spaces(U), Req) end);
+route(<<"GET">>, [<<"home">>, <<"blocks">>, Id, <<"indicator">>], Req) ->
+    ana_http:require(Req, ?USER, fun(U) ->
+        with_integer(Id, Req, fun(N) ->
+            home_reply(ana_home:indicator(U, N, ana_http:qs_int(<<"fresh">>, Req, 0) =:= 1), Req)
+        end)
+    end);
+
+%% --- Quality of a program: tests, coverage, performance, failures (spec 064, phase 2) ---
+route(<<"POST">>, [<<"programs">>, Name, <<"tests">>, <<"run">>], Req) ->
+    ana_http:require(Req, ?DEV, fun(U) -> home_reply(ana_program_tests:run(Name, U), Req) end);
+route(<<"GET">>, [<<"programs">>, Name, <<"quality">>], Req) ->
+    ana_http:require(Req, ?DEV, fun(U) -> home_reply(ana_program_tests:overview(Name, U), Req) end);
+
+%% --- Assistant (spec 052) --------------------------------------------------
+route(<<"GET">>, [<<"assistant">>], Req) ->
+    ana_http:require(Req, ?USER, fun(U) -> home_reply(ana_assistant:config(U), Req) end);
+route(<<"POST">>, [<<"assistant">>, <<"ask">>], Req) ->
+    ana_http:require(Req, ?USER, fun(U) ->
+        with_body(Req, fun(#{<<"text">> := T} = B, R) when is_binary(T) ->
+            home_reply(ana_assistant:ask(U, maps:get(<<"conversation">>, B, null), string:trim(T)), R);
+            (_, R) -> invalid(R)
+        end)
+    end);
+route(<<"GET">>, [<<"assistant">>, <<"conversations">>, Id], Req) ->
+    ana_http:require(Req, ?USER, fun(U) -> home_reply(ana_assistant:conversation(U, Id), Req) end);
+route(<<"POST">>, [<<"assistant">>, <<"actions">>, Id, Decision], Req) when Decision =:= <<"confirm">>; Decision =:= <<"decline">> ->
+    ana_http:require(Req, ?USER, fun(U) -> home_reply(ana_assistant:decide(U, Id, Decision), Req) end);
 
 %% --- Undo (spec 050, D5) ---------------------------------------------------
 %% The routine that undoes runs as an ordinary execution of this user; the offer is theirs, once, within its time.
@@ -488,6 +521,9 @@ run(Name, U, Req) ->
         end;
         (_, R) -> invalid(R)
     end).
+
+home_reply({ok, V}, Req) -> ana_http:json(200, V, Req);
+home_reply({error, Status, Code, Msg}, Req) -> ana_http:reply_error(Status, Code, Msg, Req).
 
 with_variant(_, null, Given, _) -> {ok, Given, null};
 with_variant(Program, Ref, Given, U) when is_integer(Ref); is_binary(Ref) ->

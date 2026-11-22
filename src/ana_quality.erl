@@ -58,7 +58,10 @@ gate(Names) ->
            checked_at => list_to_binary(calendar:system_time_to_rfc3339(erlang:system_time(second), [{offset, "Z"}]))}}.
 
 program_report(Name, Source, Level, Baseline, Exempt) ->
-    Findings = case inspect(Source) of
+    Sha = ana_transport:item_sha(#{<<"kind">> => <<"program">>, <<"source">> => Source}),
+    %% Spec 064 (D4, D5): the latest test run of this exact source — failing tests, performance worse than the
+    %% previous version, and (by policy) a program that writes without a passing test.
+    Findings = ana_program_tests:gate_findings(Name, Sha) ++ case inspect(Source) of
         {ok, #{ok := true, lint := L}} -> L;
         {ok, #{ok := false, syntax := #{line := Ln, message := M}}} ->
             [#{<<"line">> => Ln, <<"rule">> => <<"syntax">>, <<"severity">> => <<"critical">>, <<"category">> => <<"robustness">>,
@@ -75,7 +78,7 @@ program_report(Name, Source, Level, Baseline, Exempt) ->
                     _ -> {[brief(F) | B], E, O}
                 end
         end, {[], [], []}, Relevant),
-    #{name => Name, sha256 => ana_transport:item_sha(#{<<"kind">> => <<"program">>, <<"source">> => Source}),
+    #{name => Name, sha256 => Sha,
       blocking => Blocking, exempted => Exempted, baseline => Old, findings => length(Findings)}.
 
 brief(F) -> maps:with([<<"line">>, <<"rule">>, <<"severity">>, <<"category">>, <<"message">>, <<"suggestion">>, <<"fingerprint">>], F).

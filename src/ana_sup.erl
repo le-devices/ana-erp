@@ -17,6 +17,7 @@ init([]) ->
     ok = ana_access:init_cache(),
     ok = ana_limits:init_cache(),
     ok = ana_values:init_cache(),             % spec 065: company values in memory on every node
+    ok = ana_home:init_cache(),               % spec 048: indicators of the home panel, per user, in memory
     ok = ana_breaker:init_table(),
     ok = ana_metrics:init_table(),
     ok = ana_connector:init_tables(),

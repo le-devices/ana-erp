@@ -604,6 +604,11 @@ def make_ana_module(channel, output, context):
         return channel.request("offer_undo", {"program": str(program), "params": data, "label": label,
                                               "seconds": int(seconds)})
 
+    def simulate(days=1, per_day=6, seed=None, flows=False):
+        """Starts the usage simulation (spec 067) in the background; only the routine simulation.start may."""
+        return channel.request("simulation_start", {"days": int(days), "per_day": int(per_day),
+                                                    "seed": int(seed) if seed is not None else None, "flows": bool(flows)})
+
     def can_run(program):
         """True when the user of this execution may run `program` (role, groups, license) — spec 050."""
         return channel.request("can_run", {"program": str(program)}) is True
@@ -968,6 +973,7 @@ def make_ana_module(channel, output, context):
     m.set_value = set_value
     m.offer_undo = offer_undo
     m.can_run = can_run
+    m.simulate = simulate
     m.Selection = Selection
     m.remote = remote
     m.http = http
@@ -1384,6 +1390,65 @@ def _error_line(exc, filename):
     return None
 
 
+class Coverage:
+    """Lines of one program that ran (spec 064, D4): a trace function only for frames of the program's own file."""
+
+    def __init__(self, filename):
+        self.filename = filename
+        self.executed = set()
+        self.executable = set()
+
+    def start(self, code):
+        stack = [code]
+        while stack:
+            co = stack.pop()
+            self.executable.update(line for _, _, line in co.co_lines() if line)
+            stack.extend(c for c in co.co_consts if hasattr(c, "co_lines"))
+        sys.settrace(self._global)
+
+    def _global(self, frame, event, arg):
+        if frame.f_code.co_filename != self.filename:
+            return None
+        return self._local
+
+    def _local(self, frame, event, arg):
+        if event == "line":
+            self.executed.add(frame.f_lineno)
+        return self._local
+
+    def stop(self):
+        sys.settrace(None)
+
+    def report(self):
+        self.stop()
+        return {"executed": sorted(self.executed & self.executable), "executable": sorted(self.executable)}
+
+
+TEST_NAME = re.compile(r"^test_[a-z0-9_]{1,60}$")
+
+
+def run_entry(entry, module_globals):
+    """Spec 064 (D4): the declared cases (TESTS) and the test functions, or one test function run in place of main."""
+    if entry == "__list_tests__":
+        cases = module_globals.get("TESTS") or []
+        if not isinstance(cases, list):
+            raise Error("INVALID_TESTS", "TESTS deve ser uma lista de casos {name, params, expect | error}")
+        functions = sorted(n for n, f in module_globals.items() if TEST_NAME.match(n) and callable(f))
+        return {"cases": cases, "functions": functions}
+    fn = module_globals.get(entry)
+    if not TEST_NAME.match(str(entry)) or not callable(fn):
+        raise Error("TEST_NOT_FOUND", f"teste {entry} não existe no programa")
+    try:
+        fn()
+    except AssertionError as e:
+        raise Error("TEST_FAILED", str(e) or "asserção falhou") from None
+    return {"passed": True}
+
+
+def to_json_safe(value):
+    return json.loads(json.dumps(value, default=str))
+
+
 def run(channel, msg, output_limit):
     program = msg["program"]
     source = msg["source"]
@@ -1411,12 +1476,26 @@ def run(channel, msg, output_limit):
     module_globals = {"__name__": "__ana__", "__file__": filename,
                       "__builtins__": builtins, "ana": ana_mod}
     channel.usage_baseline = apply_execution_limits(limits)
+    # Spec 064 (D4): the tests of a program — "__list_tests__" lists them, "test_<name>" runs one in place of main;
+    # with "coverage", the lines of the program that ran are counted (sys.settrace, only for this program's code).
+    entry = msg.get("entry")
+    coverage = Coverage(filename) if msg.get("coverage") and not debugger else None
     try:
         code = compile(source, filename, "exec")
+        if coverage:
+            coverage.start(code)
         if debugger:
             debugger.run_debugged(lambda: exec(code, module_globals))
         else:
             exec(code, module_globals)
+        if entry:
+            result = run_entry(entry, module_globals)
+            if coverage:
+                coverage.stop()
+            output.flush()
+            channel.send({"type": "end", "ok": True, "result": to_json_safe(result),
+                          "coverage": coverage.report() if coverage else None})
+            return
         main = module_globals.get("main")
         if not callable(main):
             raise Error("NO_MAIN", "o programa não define main(**params)")
@@ -1440,7 +1519,10 @@ def run(channel, msg, output_limit):
             to_json(result)
         except (TypeError, ValueError) as e:
             raise Error("INVALID_RESULT", str(e)) from None
-        channel.send({"type": "end", "ok": True, "result": result, "profile": profile_of(profiler, channel)})
+        if coverage:
+            coverage.stop()
+        channel.send({"type": "end", "ok": True, "result": result, "profile": profile_of(profiler, channel),
+                      "coverage": coverage.report() if coverage else None})
     except CpuLimitExceeded:
         signal.setitimer(signal.ITIMER_PROF, 0)
         output.flush()
@@ -1476,6 +1558,9 @@ def run(channel, msg, output_limit):
             "line": _error_line(e, filename),
             "trace": _program_trace(e),
             "frames": frames, "locals": local_vars}, "profile": profile_of(profiler, channel)})
+    finally:
+        if coverage:
+            coverage.stop()                      # the worker process is reused: never leave the trace on
 
 
 def profile_of(profiler, channel):
@@ -1542,7 +1627,7 @@ def inspect(channel, msg):
 # does; and the edges "function>library:function" (or ">program" for ana.call) to what it uses. The catalog joins
 # the edges of all programs, so a report that only reads through a library is not taken for one that writes.
 WRITE_SQL_RE = re.compile(r"\b(INSERT\s+INTO|UPDATE\s+[\w.\"]+\s+SET|DELETE\s+FROM|MERGE\s+INTO|TRUNCATE)\b", re.I)
-WRITE_CALLS = {"sql_exec", "sql_batch", "send_email", "schedule_job", "remote", "set_value"}
+WRITE_CALLS = {"sql_exec", "sql_batch", "send_email", "schedule_job", "remote", "set_value", "simulate"}
 READ_FILE_CALLS = {"get", "list", "folder"}
 DB_CALL_RE = re.compile(r"\b([a-z_][a-z0-9_]*\.[a-z_][a-z0-9_]*)\s*\(", re.I)
 

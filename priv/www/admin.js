@@ -2545,7 +2545,204 @@
           }) })));
   }
 
-  const SECTIONS = { users, groups, settings, company, values, commands, remote, accounts, limits, consumption, scheduler, monitor, audit, retention, health, alerts, core, disk, uiperf, sqlperf, advice, updates, integrations, checks, transports, datacopy, publicapi, license, extensions, telemetry };
+  // ------------------------------------------------------------------ home panel (spec 048, RF-048-02)
+  async function home() {
+    const r = await API.admin.home();
+    const routines = (await window.AnaOps.loadRoutines().catch(() => [])).slice().sort((a, b) => (a.description || a.name).localeCompare(b.description || b.name));
+    const SIZES = [["small", "Pequeno"], ["medium", "Médio"], ["wide", "Largo"]];
+    const groupsBox = (chosen) => {
+      const box = el("div", { class: "check-list" }, ...r.groups.map((g) => check(g.name + (g.description ? ` — ${g.description}` : ""),
+        el("input", { type: "checkbox", value: g.name, checked: chosen.includes(g.name) }))));
+      box.value = () => [...box.querySelectorAll("input:checked")].map((i) => i.value);
+      return box;
+    };
+    const spaceForm = (sp) => {
+      const name = el("input", { value: sp ? sp.name : "", "aria-label": "Nome do espaço" });
+      const desc = el("input", { value: sp ? sp.description : "", "aria-label": "Descrição do espaço" });
+      const pos = el("input", { type: "number", value: sp ? sp.position : 0, "aria-label": "Ordem do espaço" });
+      const groups = groupsBox(sp ? sp.access_groups : []);
+      return el("form", { class: "form-card", onsubmit: (e) => { e.preventDefault(); guard(async () => {
+        await API.admin.homeSpace(sp && sp.id, { name: name.value, description: desc.value, position: Number(pos.value) || 0, access_groups: groups.value() });
+        toast("Espaço salvo."); home();
+      }); } },
+        el("h3", { text: sp ? `Espaço: ${sp.name}` : "Novo espaço" }),
+        field("Nome", name), field("Descrição", desc), field("Ordem", pos),
+        el("fieldset", {}, el("legend", { text: "Publicado para os grupos (nenhum marcado = todos)" }), groups),
+        el("div", { class: "row-buttons" }, el("button", { class: "primary", type: "submit", text: sp ? "Salvar o espaço" : "Criar espaço" }),
+          sp ? el("button", { type: "button", class: "danger", text: "Apagar o espaço", onclick: () => guard(async () => {
+            if (!confirm(`Apagar o espaço "${sp.name}" e os blocos dele? Os usuários deixam de vê-lo.`)) return;
+            await API.admin.homeSpaceDelete(sp.id); toast("Espaço apagado."); home();
+          }) }) : null));
+    };
+    const blockForm = (sp) => {
+      const title = el("input", { "aria-label": "Título do bloco" });
+      const program = el("select", { "aria-label": "Rotina que o bloco abre" }, el("option", { value: "", text: "— rotina —" }),
+        ...routines.map((x) => el("option", { value: x.name, text: `${x.description || x.name} (${x.name})` })));
+      const variant = el("select", { "aria-label": "Variante da empresa" }, el("option", { value: "", text: "— sem variante —" }));
+      const indicator = el("select", { "aria-label": "Indicador do bloco" }, el("option", { value: "", text: "— sem indicador —" }),
+        ...r.indicators.map((i) => el("option", { value: i.name, text: `${i.description || i.name} (a cada ${Math.round(i.refresh_s / 60)} min)` })));
+      const size = el("select", { "aria-label": "Tamanho do bloco" }, ...SIZES.map(([k, v]) => el("option", { value: k, text: v })));
+      size.value = "medium";
+      const pos = el("input", { type: "number", value: sp.blocks.length + 1, "aria-label": "Ordem do bloco" });
+      program.addEventListener("change", () => guard(async () => {
+        variant.replaceChildren(el("option", { value: "", text: "— sem variante —" }));
+        if (!program.value) return;
+        const vs = await API.runVariants.list(program.value).catch(() => ({ variants: [] }));
+        for (const v of (vs.variants || []).filter((x) => x.owner === null && x.published)) variant.append(el("option", { value: String(v.id), text: v.name }));
+        if (!title.value) title.value = (routines.find((x) => x.name === program.value) || {}).description || "";
+      }));
+      return el("form", { class: "form-card", onsubmit: (e) => { e.preventDefault(); guard(async () => {
+        await API.admin.homeBlock(sp.id, null, { title: title.value, program: program.value, variant_id: variant.value ? Number(variant.value) : null,
+                                                indicator: indicator.value || null, size: size.value, position: Number(pos.value) || 0 });
+        toast("Bloco incluído."); home();
+      }); } },
+        el("h3", { text: `Novo bloco em ${sp.name}` }),
+        field("Título", title), field("Abre a rotina", program), field("Com a variante (da empresa, publicada)", variant),
+        field("Indicador (número, situação e linha curta)", indicator), field("Tamanho", size), field("Ordem", pos),
+        el("div", { class: "row-buttons" }, el("button", { class: "primary", type: "submit", text: "Incluir bloco" })));
+    };
+    const as = el("input", { "aria-label": "Usuário para pré-visualizar", placeholder: "usuário" });
+    const preview = el("div", { class: "home-preview" });
+    main().replaceChildren(
+      ...header("Painel inicial", "Espaços com blocos que a empresa publica para os grupos de acesso: cada bloco abre uma rotina (com variante, se quiser) e pode mostrar um indicador ao vivo. Quem não pode executar a rotina não vê o bloco; quem não pode executar o indicador vê o bloco sem o número."),
+      ...r.spaces.map((sp) => el("section", { class: "card" }, spaceForm(sp),
+        table([
+          { label: "Ordem", value: (b) => b.position, class: "num" },
+          { label: "Título", value: (b) => b.title },
+          { label: "Abre", value: (b) => el("span", {}, el("code", { text: b.program }), b.variant_name ? ` · variante ${b.variant_name}` : "") },
+          { label: "Indicador", value: (b) => (b.indicator ? el("code", { text: b.indicator }) : "—") },
+          { label: "Tamanho", value: (b) => (SIZES.find(([k]) => k === b.size) || [0, b.size])[1] },
+          { label: "", value: (b) => el("button", { class: "danger small", text: "Remover", onclick: () => guard(async () => {
+            if (!confirm(`Remover o bloco "${b.title}"?`)) return;
+            await API.admin.homeBlockDelete(b.id); toast("Bloco removido."); home();
+          }) }) },
+        ], sp.blocks, { empty: "Nenhum bloco neste espaço ainda.", emptyAction: { label: "Incluir bloco", onClick: () => main().querySelector(`#home-new-${sp.id} select`)?.focus() } }),
+        el("div", { id: `home-new-${sp.id}` }, blockForm(sp)))),
+      el("section", { class: "card" }, spaceForm(null)),
+      el("section", { class: "card" }, el("h3", { text: "Ver como um usuário vê" }),
+        el("form", { class: "row-buttons", onsubmit: (e) => { e.preventDefault(); guard(async () => {
+          const v = await API.admin.homePreview(as.value.trim());
+          preview.replaceChildren(...(v.spaces.length ? v.spaces.map((sp) => el("div", {}, el("strong", { text: sp.name }),
+            el("ul", {}, ...sp.blocks.map((b) => el("li", { text: b.title + (b.indicator ? " · com indicador" : "") })))))
+            : [el("p", { class: "muted", text: `${v.user} não vê nenhum espaço da empresa.` })]));
+        }); } }, field("Usuário", as), el("button", { type: "submit", text: "Ver" })), preview));
+  }
+
+  // ------------------------------------------------------------------ assistant (spec 052)
+  async function assistant() {
+    const [cfg, conns, convs] = await Promise.all([API.admin.assistant(), API.admin.connectors().catch(() => []),
+                                                   API.admin.assistantConversations().catch(() => [])]);
+    const http = (Array.isArray(conns) ? conns : conns.connectors || []).filter((c) => c.kind === "http_api");
+    const enabled = el("input", { type: "checkbox", checked: cfg.enabled });
+    const provider = el("select", { "aria-label": "Provedor do modelo" },
+      el("option", { value: "anthropic", text: "Modelo de linguagem (Claude) por conector" }),
+      el("option", { value: "program", text: "Modelo local (sem internet): acha a rotina pelas palavras" }));
+    provider.value = cfg.provider;
+    const connector = el("select", { "aria-label": "Conector do modelo" }, el("option", { value: "", text: "— conector —" }),
+      ...http.map((c) => el("option", { value: c.name, text: `${c.name} — ${c.base_url || ""}` })));
+    connector.value = cfg.connector || "";
+    const model = el("input", { value: cfg.model, "aria-label": "Modelo" });
+    const effort = el("select", { "aria-label": "Esforço do modelo" }, ...[["low", "Baixo"], ["medium", "Médio"], ["high", "Alto"]].map(([k, v]) => el("option", { value: k, text: v })));
+    effort.value = cfg.effort;
+    const program = el("input", { value: cfg.program || "", "aria-label": "Programa do modelo local" });
+    const daily = el("input", { type: "number", min: 1000, value: cfg.daily_tokens, "aria-label": "Limite diário de tokens por pessoa" });
+    const blocked = el("input", { value: (cfg.blocked || []).join(", "), placeholder: "ex.: finance.close_period, tax.*", "aria-label": "Rotinas fora do alcance do assistente" });
+    const viaConnector = el("div", {}, field("Conector (base https://api.anthropic.com, autenticação por chave no cabeçalho x-api-key, chave no cofre)", connector),
+      field("Modelo", model), field("Esforço", effort));
+    const viaProgram = el("div", {}, field("Programa do modelo local", program));
+    const sync = () => { viaConnector.hidden = provider.value !== "anthropic"; viaProgram.hidden = provider.value !== "program"; };
+    provider.addEventListener("change", sync);
+    sync();
+    const KIND = { question: "pergunta", answer: "resposta", query: "consulta", rehearsal: "ensaio", refused_tool: "ferramenta recusada",
+                   confirmed: "confirmada e executada", declined: "recusada pela pessoa", expired: "expirou", failed: "falhou" };
+    main().replaceChildren(
+      ...header("Assistente", "Pergunte ou peça em linguagem natural. O assistente usa só as rotinas que a pessoa pode executar; o que só consulta roda na hora (sem poder gravar) e o que grava é ensaiado e só executa quando a pessoa confirma na tela. Dados pessoais vão mascarados ao modelo; tudo fica registrado abaixo."),
+      el("form", { class: "form-card", onsubmit: (e) => { e.preventDefault(); guard(async () => {
+        await API.admin.saveAssistant({ enabled: enabled.checked, provider: provider.value, connector: connector.value || null, model: model.value.trim(),
+                                        effort: effort.value, program: program.value.trim() || null, daily_tokens: Number(daily.value) || 300000,
+                                        blocked: blocked.value.split(",").map((x) => x.trim()).filter(Boolean) });
+        toast("Assistente salvo."); if (window.AnaAssistant) window.AnaAssistant.refresh(); assistant();
+      }); } },
+        check("Ligado para os usuários", enabled), field("Provedor", provider), viaConnector, viaProgram,
+        field("Limite diário por pessoa (tokens)", daily), field("Fora do alcance do assistente (nomes ou padrões)", blocked),
+        el("div", { class: "row-buttons" }, el("button", { class: "primary", type: "submit", text: "Salvar" }))),
+      el("h3", { text: "Conversas" }),
+      table([
+        { label: "Quando", value: (c) => fmtDate(c.updated_at) },
+        { label: "Usuário", value: (c) => c.username },
+        { label: "Assunto", value: (c) => c.title },
+        { label: "Registro", value: (c) => el("ul", { class: "small" }, ...c.events.map((ev) => el("li", {},
+            `${KIND[ev.kind] || ev.kind}${ev.program ? " · " + ev.program : ""}${ev.detail && ev.detail.text ? " — " + String(ev.detail.text).slice(0, 120) : ""}`,
+            ev.execution_id ? el("span", { class: "muted", text: ` (execução ${ev.execution_id.slice(0, 8)})` }) : null))) },
+      ], convs, { empty: "Nenhuma conversa ainda." }));
+  }
+
+  // ------------------------------------------------------------------ usage simulation (spec 067)
+  const SIM_CATEGORY = { automation: "Automação", accounts: "Contas", usability: "Usabilidade", robustness: "Robustez",
+                         performance: "Desempenho", access: "Acesso" };
+  const SIM_SEVERITY = { critical: "crítico", serious: "sério", warning: "atenção", info: "informação" };
+  let simSelected = null;
+  async function simulation(runId) {
+    const r = await API.admin.simulation();
+    const days = el("input", { type: "number", min: 1, max: 60, value: 1, "aria-label": "Dias simulados" });
+    const perDay = el("input", { type: "number", min: 1, max: 200, value: 6, "aria-label": "Cenários por dia" });
+    const seed = el("input", { type: "number", min: 0, placeholder: "nova", "aria-label": "Semente" });
+    const flows = el("input", { type: "checkbox" });
+    const report = el("div", { class: "sim-report" });
+    const STATUS = { running: "em andamento", done: "concluída", failed: "falhou", stopped: "parada" };
+    main().replaceChildren(
+      ...header("Uso simulado", "Personas (usuários robô com acesso real) percorrem as esteiras inteiras — venda, compra, campo, produção, projeto, estoque — com variação e erros humanos, e apontam furos de automação, contas e robustez. Roda na instância de testes (nunca na produção), à noite pela rotina agendada \"uso.simulado\" ou aqui. A semente de um achado o reproduz."),
+      el("form", { class: "form-card inline", onsubmit: (e) => { e.preventDefault(); guard(async () => {
+        const s = await API.admin.simulationRun({ days: Number(days.value) || 1, per_day: Number(perDay.value) || 6,
+                                                  seed: seed.value === "" ? null : Number(seed.value), flows: flows.checked });
+        toast(`Simulação ${s.id} começou (semente ${s.seed}).`); simulation(s.id);
+      }); } },
+        field("Dias", days), field("Cenários por dia", perDay), field("Semente", seed), check("Ligar os passos automáticos das esteiras", flows),
+        el("div", { class: "row-buttons" }, el("button", { class: "primary", type: "submit", text: "Rodar agora" }))),
+      el("h3", { text: "Rodadas" }),
+      table([
+        { label: "Nº", value: (x) => x.id, class: "num" },
+        { label: "Situação", value: (x) => STATUS[x.status] || x.status },
+        { label: "Início", value: (x) => fmtDate(x.started_at) },
+        { label: "Semente", value: (x) => x.seed },
+        { label: "Dias × cenários", value: (x) => `${x.days} × ${x.per_day}` },
+        { label: "Passos", value: (x) => (x.stats && x.stats.steps) || "—", class: "num" },
+        { label: "Achados", value: (x) => `${x.findings}${x.new ? ` (${x.new} novo${x.new > 1 ? "s" : ""})` : ""}` },
+        { label: "", value: (x) => el("button", { type: "button", class: "quiet small", text: "Ver", onclick: () => guard(() => show(x.id)) }) },
+      ], r.runs, { empty: "Nenhuma simulação ainda.", emptyAction: { label: "Rodar agora", onClick: () => days.focus() } }),
+      report,
+      el("h3", { text: "Personas" }),
+      table([
+        { label: "Persona", value: (p) => p.label },
+        { label: "Usuário robô", value: (p) => el("code", { text: "sim_" + p.name }) },
+        { label: "Papel", value: (p) => p.role },
+        { label: "Erros humanos", value: (p) => `${Math.round(p.error_rate * 100)}%` },
+      ], r.personas, { empty: "Nenhuma persona." }));
+    async function show(id) {
+      const x = await API.admin.simulationReport(id);
+      simSelected = id;                       // the screen is redrawn by live events: the chosen run stays
+      const byCat = {};
+      for (const f of x.findings) (byCat[f.category] = byCat[f.category] || []).push(f);
+      report.replaceChildren(el("section", { class: "card" },
+        el("h3", { text: `Simulação ${x.id} — semente ${x.seed} — ${STATUS[x.status] || x.status}` }),
+        x.status === "running" ? el("button", { type: "button", class: "quiet small", text: "Parar", onclick: () => guard(async () => {
+          await API.admin.simulationStop(x.id); toast("Simulação parada."); simulation(x.id); }) }) : null,
+        el("p", { class: "muted", text: x.stats && x.stats.steps ? `${x.stats.steps} passos em ${x.stats.scenarios} cenários; ${x.stats.mistakes} erros humanos simulados; ${x.stats.failed} passos sem sucesso.` : (x.reason || "") }),
+        x.findings.length ? null : el("p", { text: x.status === "done" ? "Nenhum furo encontrado nesta rodada." : "" }),
+        ...Object.entries(byCat).map(([cat, list]) => el("div", {}, el("h4", { text: `${SIM_CATEGORY[cat] || cat} (${list.length})` }),
+          el("ul", { class: "sim-findings" }, ...list.map((f) => el("li", {},
+            el("strong", { text: f.title }), " ", pill(f.trend === "new" ? "novo" : "persistente", f.trend === "new" ? "warn" : ""),
+            " ", el("span", { class: "muted small", text: `${SIM_SEVERITY[f.severity] || f.severity}${f.scenario ? " · cenário " + f.scenario : ""}${f.persona ? " · persona " + f.persona : ""} · semente ${f.seed}` }),
+            f.steps && f.steps.length ? el("details", {}, el("summary", { text: `Passos para reproduzir (${f.steps.length})` }),
+              el("ol", {}, ...f.steps.map((st) => el("li", { class: "small", text: `${st.persona}: ${st.program} ${JSON.stringify(st.params)} → ${st.ok ? "ok" : (st.code || "falhou")}${st.mistake ? " (erro humano)" : ""}` })))) : null))))),
+        x.resolved && x.resolved.length ? el("div", {}, el("h4", { text: "Resolvidos desde a rodada anterior" }),
+          el("ul", {}, ...x.resolved.map((g) => el("li", { text: g.title })))) : null));
+    }
+    const pick = runId || simSelected;
+    if (pick) await guard(() => show(pick));
+  }
+
+  const SECTIONS = { users, groups, settings, company, values, home, assistant, simulation, commands, remote, accounts, limits, consumption, scheduler, monitor, audit, retention, health, alerts, core, disk, uiperf, sqlperf, advice, updates, integrations, checks, transports, datacopy, publicapi, license, extensions, telemetry };
 
   function show(section) {
     refreshUpdatesCount();

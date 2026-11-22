@@ -28,6 +28,7 @@
 -define(MAX_RESULT, 8 * 1024 * 1024).
 -define(I_EXEC, 1).
 -define(I_DEBUG, 2).
+-define(INDICATOR_TIMEOUT_MS, 5000).
 
 -record(frame, {
     port :: port(),
@@ -56,6 +57,14 @@
     %% Spec 065 (D4): company values the routine keeps (ana.set_value), written right after its COMMIT.
     value_sets = [] :: [map()],
     read_only = false :: boolean(),          % simulation or restricted license: nothing is kept after the run
+    %% Spec 052: the caller asks a read-only transaction (the assistant's queries — the database refuses any write).
+    force_read_only = false :: boolean(),
+    %% Spec 064 (D4, D5): a test entry in place of main, line coverage, and an earlier version of the program
+    %% (only in a rehearsal: everything undone).
+    entry = undefined :: binary() | undefined,
+    coverage_req = false :: boolean(),
+    coverage = null :: map() | null,
+    version_req = undefined :: pos_integer() | undefined,
     %% Spec 050 (D5): the undo the routine offers (ana.offer_undo), recorded after its COMMIT; then what was offered.
     undo = undefined :: map() | undefined,
     undo_offered = null :: map() | null,
@@ -284,6 +293,13 @@ init(#{id := Id, program := Program, params := Params, user := User,
                       andalso ana_security:has_role(User, <<"developer">>)
                       andalso maps:get(rehearse, Op, false) =/= true,
              rehearse = maps:get(rehearse, Op, false) =:= true,
+             force_read_only = maps:get(read_only, Op, false) =:= true,
+             entry = case maps:get(entry, Op, undefined) of E when is_binary(E) -> E; _ -> undefined end,
+             coverage_req = maps:get(coverage, Op, false) =:= true,
+             version_req = case {maps:get(version, Op, undefined), maps:get(rehearse, Op, false)} of
+                 {V, true} when is_integer(V), V > 0 -> V;
+                 _ -> undefined
+             end,
              variant = maps:get(variant, Op, null),
              breakpoints = [L || L <- maps:get(breakpoints, Op, []), is_integer(L)],
              stop_on_entry = maps:get(stop_on_entry, Op, false) =:= true,
@@ -408,7 +424,7 @@ terminate(_Reason, St) ->
 %% ==========================================================================
 
 prepare(St0 = #st{program = Name, user = U}) ->
-    case load(Name, U) of
+    case with_version(load(Name, U), Name, St0#st.version_req) of
         {ok, P} ->
             %% Spec 012: effective limits and concurrency/rate slots.
             L = ana_limits:effective(P, U, St0#st.requested),
@@ -422,7 +438,11 @@ prepare(St0 = #st{program = Name, user = U}) ->
 
 prepare_run(P, L, St) ->
     St1 = St#st{version = maps:get(<<"version">>, P), limits = L,
-                timeout_ms = maps:get(<<"timeout_ms">>, L),
+                %% Spec 048 (D1): an indicator answers in a few seconds or the block says "indisponível".
+                timeout_ms = case indicator(P) of
+                    true -> min(?INDICATOR_TIMEOUT_MS, maps:get(<<"timeout_ms">>, L));
+                    false -> maps:get(<<"timeout_ms">>, L)
+                end,
                 output_max = maps:get(<<"output_kb">>, L) * 1024},
     %% RF-025-04: short synchronous executions are written once, at the end.
     _ = case St1#st.debug orelse St1#st.caller =:= undefined of
@@ -431,7 +451,8 @@ prepare_run(P, L, St) ->
     end,
     case ana_db:checkout(?POOL, 15000) of
         {ok, C} ->
-            St2 = St1#st{conn = C, read_only = ana_license:restricted() orelse simulating(P, St1#st.params)},
+            St2 = St1#st{conn = C, read_only = ana_license:restricted() orelse simulating(P, St1#st.params)
+                                                orelse indicator(P) orelse St1#st.force_read_only},
             %% RF-022-05: a part may read the snapshot exported by its main execution.
             Snap = case St1#st.snapshot_in of
                 undefined -> "BEGIN; ";
@@ -442,7 +463,9 @@ prepare_run(P, L, St) ->
             Q = fun(V) -> binary:replace(iolist_to_binary(V), <<"'">>, <<"''">>, [global]) end,
             %% Spec 009 (RF-009-05): restricted license → the database itself refuses every write.
             %% Spec 020 (RF-020-13): so does a simulation ("Simular" never saves, whatever the program does).
-            ReadOnly = case ana_license:restricted() orelse simulating(P, St1#st.params) of
+            %% Spec 048 (D1): so does an indicator — it only reads, whatever its code does.
+            ReadOnly = case ana_license:restricted() orelse simulating(P, St1#st.params) orelse indicator(P)
+                            orelse St1#st.force_read_only of
                 true -> "SET TRANSACTION READ ONLY; ";
                 false -> ""
             end,
@@ -511,6 +534,18 @@ simulating(#{<<"params">> := Decl}, Params) when is_map(Decl), is_map(Params) ->
               end, maps:to_list(Decl));
 simulating(_, _) -> false.
 
+%% Spec 064 (D5): an earlier version of the program, to compare (asked only by rehearsals of the tests).
+with_version({ok, P}, _, undefined) -> {ok, P};
+with_version({ok, P}, Name, V) ->
+    case ana_program:version(Name, V) of
+        {ok, #{<<"source">> := Src}} when is_binary(Src) -> {ok, P#{<<"source">> => Src, <<"version">> => V}};
+        _ -> {error, err(<<"VERSION_NOT_FOUND">>, <<"versão inexistente do programa"/utf8>>)}
+    end;
+with_version(Other, _, _) -> Other.
+
+indicator(#{<<"indicator_refresh_s">> := S}) when is_integer(S) -> true;
+indicator(_) -> false.
+
 first_missing(Modules) ->
     case [M || M <- Modules, not ana_license:allowed(M)] of
         [M | _] -> M;
@@ -549,7 +584,9 @@ open_frame(P, RequestId, Savepoint, St = #st{stack = Stack}) ->
                     profile => Root andalso St#st.profile_req andalso not St#st.debug,
                     limits => maps:with([<<"cpu_ms">>, <<"memory_mb">>, <<"output_kb">>], St#st.limits),
                     breakpoints => St#st.breakpoints,
-                    stop_on_entry => St#st.stop_on_entry},
+                    stop_on_entry => St#st.stop_on_entry,
+                    entry => case {Root, St#st.entry} of {true, E} when is_binary(E) -> E; _ -> null end,
+                    coverage => Root andalso St#st.coverage_req},
             true = ana_py:send(Port, Msg),
             F = #frame{port = Port, ospid = OsPid, program = Name,
                        version = maps:get(<<"version">>, P), request_id = RequestId,
@@ -677,6 +714,20 @@ request(<<"offer_undo">>, Id, A, St = #st{user = User, stack = [#frame{program =
 request(<<"offer_undo">>, Id, _A, St) ->
     respond(Id, {ok, #{offered => false}}, St),
     St;
+%% Spec 067 (D6): the usage simulation starts in the background — only from the routine simulation.start.
+request(<<"simulation_start">>, Id, _A, St = #st{read_only = true}) ->
+    %% A run that keeps nothing (simulation, restricted license, read-only option) never starts one.
+    respond(Id, {error, err(<<"READ_ONLY">>, <<"esta execução não grava: a simulação não começa"/utf8>>)}, St),
+    St;
+request(<<"simulation_start">>, Id, A, St = #st{user = User, stack = [#frame{program = <<"simulation.start">>} | _]}) ->
+    respond(Id, case ana_simulation:start(A, User) of
+                    {ok, M} -> {ok, M};
+                    {error, _, Code, Msg} -> {error, err(Code, Msg)}
+                end, St),
+    St;
+request(<<"simulation_start">>, Id, _A, St) ->
+    respond(Id, {error, err(<<"FORBIDDEN">>, <<"só a rotina simulation.start começa a simulação"/utf8>>)}, St),
+    St;
 %% Spec 050: may this user run that program (role, groups, license)? — what a screen offers follows the answer.
 request(<<"can_run">>, Id, #{<<"program">> := Name}, St = #st{user = User}) when is_binary(Name) ->
     respond(Id, {ok, can_run(Name, User)}, St),
@@ -799,7 +850,8 @@ nested_end2(M, F = #frame{savepoint = Sp, request_id = RequestId}, St = #st{conn
     St.
 
 root_end(M, St0) ->
-    root_end2(M, add_usage(M, St0#st{profile = maps:get(<<"profile">>, M, null)})).
+    root_end2(M, add_usage(M, St0#st{profile = maps:get(<<"profile">>, M, null),
+                                     coverage = maps:get(<<"coverage">>, M, null)})).
 
 root_end2(#{<<"ok">> := true} = M, St0 = #st{conn = C}) ->
     Result = maps:get(<<"result">>, M, null),
@@ -1270,11 +1322,14 @@ finish(Status, Data, St00) ->
 sync_reply(<<"success">>, Result, _, Duration, St) ->
     R = #{id => St#st.id, result => Result, duration_ms => Duration, usage => usage(St),
           events => lists:reverse(St#st.events)},
-    {ok, with_undo(with_rehearsal(R, rehearsal, St), St)};
+    {ok, with_coverage(with_undo(with_rehearsal(R, rehearsal, St), St), St)};
 sync_reply(_, _, Error, _, St) ->
     {error, with_rehearsal(Error#{<<"events">> => lists:reverse(St#st.events)}, <<"rehearsal">>, St)}.
 
 %% Spec 050 (D5): the answer carries the undo the routine offered (recorded after its COMMIT).
+with_coverage(M, #st{coverage = null}) -> M;
+with_coverage(M, #st{coverage = C}) -> M#{coverage => C}.
+
 with_undo(M, #st{undo_offered = null}) -> M;
 with_undo(M, #st{undo_offered = U}) -> M#{undo => U}.
 

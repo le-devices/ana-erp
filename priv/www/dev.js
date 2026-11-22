@@ -87,6 +87,8 @@ def main(name="mundo"):
     if (tab === "executions") loadExecutions();
     if (tab === "schedules") loadSchedules();
     if (tab === "perf") loadPerformance();
+    // Spec 064 (D8): findings, tests, coverage, performance against the previous version, failures by version.
+    if (tab === "quality" && state.current && state.current.version) window.AnaQuality.render($("#ptab-quality"), state.current.name);
   }
 
   function notice(msg, isError = false) {

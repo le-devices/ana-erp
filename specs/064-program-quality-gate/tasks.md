@@ -8,7 +8,7 @@ Fase 1 — inspeção e portão
 - [x] T-064-05 Programas do produto pelo portão na bateria do ANA (RF-064-09, CA-064-06)
 
 Fase 2 — testes, desempenho comparado e falhas
-- [ ] T-064-06 Testes de programas em transação desfeita e cobertura (RF-064-04, D4)
-- [ ] T-064-07 Comparação de desempenho com a versão anterior na instância de testes (RF-064-05, D5, RNF-064-02, 03, CA-064-03)
-- [ ] T-064-08 Falhas ligadas à versão e ao pacote (RF-064-06, D6, CA-064-05)
-- [ ] T-064-09 Tela "Qualidade" e explicação pelo assistente (RF-064-08, D8)
+- [x] T-064-06 Testes de programas em transação desfeita e cobertura (RF-064-04, D4)
+- [x] T-064-07 Comparação de desempenho com a versão anterior na instância de testes (RF-064-05, D5, RNF-064-02, 03, CA-064-03)
+- [x] T-064-08 Falhas ligadas à versão e ao pacote (RF-064-06, D6, CA-064-05)
+- [x] T-064-09 Tela "Qualidade" e explicação pelo assistente (RF-064-08, D8)

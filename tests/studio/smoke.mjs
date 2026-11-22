@@ -121,7 +121,7 @@ await until(() => text("#program-name") === "demo.hello", "program after library
 ok(!d.querySelector("#run").disabled, "programa comum volta a ter Executar");
 await until(() => text("#program-name") === "demo.hello", "program", jsErrors);
 ok(d.querySelector("#editor textarea").value.includes("def main"), "código no editor");
-ok([...d.querySelectorAll("[data-ptab]")].map((b) => b.textContent).join("|") === "Código|Propriedades e limites|Versões|Execuções|Agendamentos|Desempenho", "abas do programa");
+ok([...d.querySelectorAll("[data-ptab]")].map((b) => b.textContent).join("|") === "Código|Propriedades e limites|Versões|Execuções|Agendamentos|Desempenho|Qualidade", "abas do programa");
 ok([...d.querySelectorAll("[data-panel]")].map((b) => b.textContent).join("|") === "Saída|Resultado", "painel inferior só com Saída e Resultado (CA-020-02)");
 d.querySelector('[data-ptab="props"]').click();
 await until(() => d.querySelectorAll("#limits-box input").length === 10, "limits", jsErrors);
@@ -787,6 +787,101 @@ ok(true, "API pública: clientes, novo cliente e chamadas (spec 010)");
   await until(() => d.querySelector("#ops-main input[name=key]").value === String(num) && !d.querySelector(".scan-dialog"), "scanned", jsErrors);
   ok(true, "câmera lê o código e preenche o campo (RF-050-08)");
   delete w.BarcodeDetector;
+}
+// ---------------------------------------------------------------- spec 048: home panel
+{
+  w.AnaPrefs.set("home.layout", null);
+  await go(w, "#/home");
+  await until(() => d.querySelector("#area-home .home-search-input") && text("#area-home .home-spaces").includes("Visão geral"), "home spaces", jsErrors);
+  const first = () => d.querySelector("#area-home .home-block .block-open");
+  // The home is drawn again right after login: wait for the blocks of the last drawing, with their numbers.
+  await until(() => first() && [...d.querySelectorAll("#area-home .home-block .block-value")].every((v) => v.textContent !== "…"), "indicators", jsErrors);
+  ok(/Pedidos com falta: .+/.test(first().getAttribute("aria-label")) && d.querySelector("#area-home .block-status"),
+     "Início: espaço da empresa com indicadores (número, situação e texto no nome acessível)");
+  ok(text("#area-home").includes("Meu espaço") && text("#area-home").includes("Favoritas"), "os blocos pessoais continuam (RF-048-07)");
+  const btn = (label) => [...d.querySelectorAll("#area-home button")].find((b) => b.textContent === label);
+  btn("Personalizar").click();
+  await until(() => btn("Concluir"), "personalize", jsErrors);
+  [...d.querySelectorAll("#area-home .home-block")][0].querySelector(".block-edit button:last-child").click();   // Esconder
+  btn("Concluir").click();
+  await until(() => !text("#area-home .home-spaces").includes("Pedidos com falta") && text("#area-home").includes("1 bloco(s) escondido(s)"), "hidden", jsErrors);
+  await go(w, "#/ops");
+  await go(w, "#/home");
+  await until(() => text("#area-home .home-spaces").includes("Títulos vencidos"), "home again", jsErrors);
+  ok(!text("#area-home .home-spaces").includes("Pedidos com falta"), "bloco escondido continua escondido ao voltar (CA-048-03)");
+  btn("Restaurar padrão").click();
+  await until(() => text("#area-home .home-spaces").includes("Pedidos com falta"), "restored", jsErrors);
+  ok(true, "Restaurar padrão volta ao painel da empresa (CA-048-03)");
+  d.querySelector("#notices-btn").click();
+  await until(() => d.querySelector(".notices-dialog"), "notice center", jsErrors);
+  ok(text(".notices-dialog").includes("Tarefas dos processos") && text(".notices-dialog").includes("Avisos das verificações do sistema"),
+     "centro de avisos reúne tarefas, rotinas agendadas, aprovações e verificações (D4)");
+  [...d.querySelectorAll(".notices-dialog button")].find((b) => b.textContent === "Fechar").click();
+  await go(w, "#/admin/home");
+  await until(() => text("#admin-main").includes("Ver como um usuário vê") && text("#admin-main").includes("Visão geral"), "home editor", jsErrors);
+  ok(true, "Administração → Painel inicial: espaços, blocos e pré-visualização (RF-048-02)");
+}
+// ---------------------------------------------------------------- spec 052: assistant
+{
+  await w.AnaApi.admin.saveAssistant({ enabled: true, provider: "program", program: "assistant.local_model" });
+  try {
+    await w.AnaAssistant.refresh();
+    ok(!d.querySelector("#assistant-btn").hidden, "entrada do assistente no topo quando ligado");
+    const num = (await rpc("sales.create_order", { customer: 1, items: [{ product: "FEIJAO-1", quantity: 1 }] })).number;
+    await go(w, "#/home");
+    d.dispatchEvent(new w.KeyboardEvent("keydown", { key: "k", ctrlKey: true, bubbles: true, cancelable: true }));
+    await until(() => d.querySelector(".palette-dialog .palette-input"), "palette", jsErrors);
+    const pin = d.querySelector(".palette-dialog .palette-input");
+    pin.value = `cancele o pedido ${num}`;
+    pin.dispatchEvent(new w.Event("input", { bubbles: true }));
+    const askItem = () => [...d.querySelectorAll(".palette-dialog .palette-item")].find((i) => i.textContent.startsWith("Perguntar ao assistente"));
+    await until(askItem, "ask item", jsErrors);
+    askItem().click();
+    await until(() => d.querySelector("#assistant-panel .assistant-action button.primary"), "rehearsed action", jsErrors);
+    ok(text("#assistant-panel").includes("Ensaiado — nada foi gravado"), "pedido que grava volta ensaiado, com o efeito, esperando confirmação (CA-052-01)");
+    const before = await w.AnaApi.run("sales.reopen_order", { params: { number: num } });
+    ok(before.error && before.error.code === "ORDER_NOT_CANCELLED", "nada foi cancelado antes de confirmar");
+    d.querySelector("#assistant-panel .assistant-action button.primary").click();
+    await until(() => text("#assistant-panel .assistant-action").includes("Confirmado e executado") && d.querySelector("#undo-bar"), "confirmed", jsErrors);
+    ok(true, "confirmar executa e oferece Desfazer (spec 050)");
+    d.querySelector("#undo-bar .undo-button").click();
+    await until(() => !d.querySelector("#undo-bar"), "undone", jsErrors);
+    d.querySelector("#assistant-panel .assistant-head button[aria-label='Fechar o assistente']").click();
+    await go(w, "#/admin/assistant");
+    await until(() => text("#admin-main").includes("Conversas") && text("#admin-main").includes("confirmada e executada"), "assistant audit", jsErrors);
+    ok(true, "Administração → Assistente: configuração e registro das conversas (CA-052-04)");
+  } finally {
+    await w.AnaApi.admin.saveAssistant({ enabled: false });
+    await w.AnaAssistant.refresh();
+  }
+}
+// ---------------------------------------------------------------- spec 064, phase 2: Quality tab of a program
+{
+  const prog = "test.qtab_" + Date.now().toString().slice(-7);
+  const src = "TESTS = [{'name': 'um', 'params': {}, 'expect': {'n': 1}}, {'name': 'dois', 'params': {}, 'expect': {'n': 2}}]\n"
+    + "def main():\n    return {'n': 1}\n";
+  await w.AnaApi.saveProgram(prog, { source: src });
+  await go(w, "#/dev/program/" + prog);
+  await until(() => d.querySelector("[data-ptab=quality]") && text("#program-name").includes(prog), "program opened", jsErrors);
+  d.querySelector("[data-ptab=quality]").click();
+  await until(() => [...d.querySelectorAll("#ptab-quality button")].some((b) => b.textContent === "Rodar os testes"), "quality tab", jsErrors);
+  [...d.querySelectorAll("#ptab-quality button")].find((b) => b.textContent === "Rodar os testes").click();
+  await until(() => text("#ptab-quality").includes("1 passaram, 1 falharam") && text("#ptab-quality").includes("cobertura de linhas"), "tests ran", jsErrors);
+  ok(text("#ptab-quality").includes("esperava") && text("#ptab-quality").includes("portão bloqueia o transporte"),
+     "aba Qualidade: testes, cobertura, motivo da falha e portão bloqueado pelo teste que falha (T-064-06, T-064-09)");
+  await w.AnaApi.purgeProgram(prog);
+}
+// ---------------------------------------------------------------- spec 067: usage simulation
+{
+  await go(w, "#/admin/simulation");
+  await until(() => text("#admin-main").includes("Rodadas") && text("#admin-main").includes("Personas"), "simulation screen", jsErrors);
+  ok(text("#admin-main").includes("sim_vendedor"), "Uso simulado: personas como usuários robô");
+  const see = [...d.querySelectorAll("#admin-main button")].find((b) => b.textContent === "Ver");
+  if (see) {
+    see.click();
+    await until(() => text("#admin-main .sim-report").includes("semente"), "simulation report (aviso: " + text("#toast") + ")", jsErrors);
+    ok(true, "Uso simulado: relatório de uma rodada com semente e achados (RF-067-06)");
+  }
 }
 ok(true, "todas as seções administrativas abrem");
 ok(jsErrors.length === 0, "nenhum erro de JavaScript (admin)" + (jsErrors.length ? ": " + jsErrors.join("; ") : ""));
