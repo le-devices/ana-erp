@@ -67,6 +67,7 @@ Tarefas adiadas já concluídas (ordem acordada em out/2026): T-017-05b ✓, T-0
 16b. ✓ Correções achadas em 22/11/2026 (antes da 051): (1) varredura das esteiras: `flow.document_bills` faz leitura completa de `finance.bill` (LIKE com parâmetro) para cada etapa à espera, a cada 30 s — com ~1.500 etapas à espera mantém uma CPU ocupada sem parar; índice por faixa com COLLATE "C", varrer só documentos que mudaram e teste de tempo e de SQL na bateria (`fix/flow-sweep-index`); (2) testes de integração com a data de negócio do ANA em vez da data do executor (UTC), que falham entre 21h e 24h de Brasília (`fix/business-date-in-tests`, começada em 22/11/2026)
 17. ✓ 051 — automação por padrão (`specs/051-automation-by-default`); T-051-06 vai com a 050 fase 3; T-051-04b (sequência e correção repetidas) depende da spec 046
 18. 050 fase 3 — auditoria de experiência de todas as áreas (T-050-09..16), junto com a auditoria de automação (T-051-06)
+18a. 068 — mudanças vigiadas: gatilho "alterado" em cadastros e documentos, com custo de escrita, desempenho e segurança medidos (`specs/068-change-watch`; plan.md primeiro, com as medições)
 19. 062 fase 3 — revisão de todos os subsistemas já implementados com o critério P20 (T-062-10..13)
 20. 063 fase 2 — revisão de escrita desnecessária em todas as funcionalidades já implementadas (T-063-06..08)
 21. 049 fase 2 — ICMS (ST, DIFAL, FCP), IPI, PIS/COFINS, Simples (T-049-08)
