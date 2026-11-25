@@ -62,5 +62,6 @@ def main(project=None):
                 "custo": money(r["cost"]) if r["cost"] is not None else "—",
                 "faturado": money(r["invoiced"]), "a faturar": money(r["to_invoice"]),
                 "margem": money(r["margin"]) if r["margin"] is not None else "—"} for r in out],
-              title="Projetos")
+              title="Projetos", empty="Nenhum projeto para mostrar com estes filtros.",
+              empty_action={"label": "Novo projeto", "program": "projects.save_project"})
     return out

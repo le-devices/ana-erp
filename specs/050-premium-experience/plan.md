@@ -80,3 +80,40 @@ dos parâmetros. Nenhuma facilidade contorna permissão, licença, auditoria ou 
 - Estúdio: Ctrl+K acha a rotina, o pedido pelo número e o cliente pelo CNPJ e executa (CA-050-02); `?` lista os
   atalhos; barra de desfazer após cancelar e desfazer pelo botão; diálogo de confirmação; padrão pelo cliente e
   último uso; câmera com leitor simulado.
+
+## Fase 3 — auditoria de todas as áreas (T-050-09..16, RF-050-09, CA-050-05) e auditoria de automação (T-051-06)
+
+A auditoria deixa de depender de alguém lembrar de cada tela: o que pode ser verificado vira teste, e o teste cobre
+tudo o que existe e o que vier depois.
+
+### Todas as telas, sem lista
+- `tests/studio/crawl.mjs` (parte de `make teste-estudio`): entra como administrador e como usuário de operação e,
+  a partir do Início, percorre os mesmos destinos da barra "Ir para…" e da paleta (rotinas, categorias, programas,
+  tabelas, seções da Administração) e todo link interno ("#/…") que encontrar. Cada tela passa pelo verificador
+  (`ux_check.mjs`). Rotinas que só leem são executadas com os valores padrão, e a tela de resultado também é verificada;
+  rotina que grava nunca é executada (só o formulário). O rastreador nunca confirma diálogos. Programas e tabelas do
+  Desenvolvimento abrem a mesma tela: bastam alguns de cada. Uma tela é dada como pronta quando nenhuma chamada está
+  em andamento por um instante. Ao final, as telas mais lentas para assentar são listadas.
+- O rastreador roda **sem** linha de base: toda violação em qualquer tela alcançável falha a bateria (CA-050-05).
+  A linha de base `ux_baseline.json` continua só para o teste de fumaça, e é zerada por área ao fim desta fase.
+- Primeira rodada (25/11/2026): 456 telas (266 do administrador, 190 do usuário), 25 violações — listas vazias sem
+  ação na Administração e em resultados de rotinas, campos sem nome na Administração, e três rotinas fiscais sem
+  `PARAMS` que mostravam uma caixa de JSON ao usuário de operação.
+
+### Regras verificadas nos programas (sem tela)
+- `tests/runtime/test_experience.py`: toda rotina (não biblioteca, não indicador) declara `PARAMS` — sem isso o
+  Estúdio mostra uma caixa de JSON (RF-050-02).
+- `ana.table(rows, title, empty=…, empty_action={label, program, params})`: a tabela vazia diz por quê e oferece a
+  rotina que a preenche (D3); o Estúdio mostra o botão, que abre a rotina (nunca executa nada).
+
+### Auditoria de automação (T-051-06, RF-051-06, D5 da spec 051)
+- As rotinas periódicas do produto (`ana_seeds:routines/0`) são criadas desligadas, para cada empresa escolher.
+  Isso deixava um passo manual: alguém precisa saber que existem e ligá-las. Agora o ERP percebe: quando o programa de
+  uma rotina do produto desligada foi executado à mão ao menos 2 vezes em 30 dias, cada administrador recebe a
+  sugestão "Ligar a rotina do produto …" (tipo `routine`, migração 077), com a explicação do uso; aceitar liga a rotina
+  (registrado como retomada na auditoria); recusada, não volta. A sugestão de agendar pessoalmente a mesma rotina deixa
+  de aparecer quando o produto já traz a rotina.
+- Nova rotina do produto: planejamento de necessidades (`production.plan`) todo dia útil às 5h, antes da reposição de
+  estoque (só propõe; aprovar continua com uma pessoa).
+- Relatório por área: `specs/050-premium-experience/audit.md` (o que foi apontado, o que foi corrigido, o que deixou
+  de ser manual e o que ficou para depois, com a tarefa).

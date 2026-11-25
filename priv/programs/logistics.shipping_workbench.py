@@ -29,7 +29,8 @@ def main():
                                                   "lookup": {"program": "logistics.lookup", "params": {"kind": "carriers"}}},
                                       "tracking": {"type": "str", "label": "rastreio"},
                                       "weight_kg": {"type": "decimal", "label": "peso (kg)"}}}]}
-               for r in rows], title="Pedidos a expedir")
+               for r in rows], title="Pedidos a expedir",
+              empty="Nenhum pedido esperando expedição.", empty_action={"label": "Novo pedido de venda", "program": "sales.create_order"})
     road = ana.sql("SELECT s.number, o.number AS order_number, p.name, c.name AS carrier, s.tracking, s.expected_date "
                    "FROM logistics.shipment s JOIN sales.sales_order o ON o.id = s.sales_order_id JOIN base.party p ON p.id = o.customer_id "
                    "LEFT JOIN logistics.carrier c ON c.id = s.carrier_id WHERE s.status = 'shipped' ORDER BY s.expected_date LIMIT 200")
@@ -38,5 +39,6 @@ def main():
                 "_actions": [{"label": "Entregue", "program": "logistics.deliver", "params": {"shipment": r["number"]}, "style": "primary",
                               "ask": {"received_by": {"type": "str", "label": "recebido por", "required": True}}},
                              {"label": "Voltou", "program": "logistics.deliver", "params": {"shipment": r["number"], "returned": True},
-                              "confirm": "A mercadoria voltou para o depósito?"}]} for r in road], title="Em trânsito")
+                              "confirm": "A mercadoria voltou para o depósito?"}]} for r in road], title="Em trânsito",
+              empty="Nada em trânsito.", empty_good=True)
     return {"counts": c}

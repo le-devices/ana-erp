@@ -232,7 +232,7 @@
       });
       const span = cols.length + (hasBulk ? 1 : 0) + (def.extra ? 1 : 0);
       if (!rows.length) trs.push(el("tr", {}, window.AnaUI && window.AnaUI.emptyCell
-        ? window.AnaUI.emptyCell(span, def.empty, def.emptyAction)
+        ? window.AnaUI.emptyCell(span, def.empty, def.emptyAction, def.emptyGood)
         : el("td", { colspan: span, class: "muted empty-state", text: def.empty || "Nada para mostrar." })));
       else if (!shown.length) trs.push(el("tr", {}, el("td", { colspan: span, class: "muted", text: "Nenhuma linha com essa busca ou filtro." })));
       else if (list.length < shown.length) trs.push(el("tr", {}, el("td", { colspan: span, class: "muted" },
@@ -398,7 +398,7 @@
 
   /** Program output table (columns = names, rows = arrays): `extra(i)` / `onOpen(i)` work with the row index.
    *  `screen` remembers the layout per user (RF-020-17). */
-  function dataTable(columns, rows, title, extra, onOpen, screen) {
+  function dataTable(columns, rows, title, extra, onOpen, screen, empty) {
     // Key of a column = its name (a layout survives a program that reorders columns); repeated or empty
     // names fall back to the position.
     const seen = new Map();
@@ -410,6 +410,7 @@
       extra: extra || undefined,
       onOpen: onOpen ? (i) => onOpen(i) : undefined,
       opens: onOpen ? (i) => !!onOpen(i, true) : undefined,
+      empty: empty && empty.text, emptyAction: empty && empty.action, emptyGood: empty && empty.good,
     });
   }
 

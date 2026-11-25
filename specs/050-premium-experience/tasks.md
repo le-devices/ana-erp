@@ -21,3 +21,9 @@ Fase 3 — auditoria de todas as áreas (D8, RF-050-09, CA-050-05)
 - [ ] T-050-14 Processos (BPM), esteiras, agendamento
 - [ ] T-050-15 Administração, observabilidade, integrações, API pública
 - [ ] T-050-16 Desenvolvimento (editor, depurador, transporte)
+
+Depois da fase 3 — o que a auditoria mediu e ficou pendente (audit.md)
+- [ ] T-050-17 Próximo passo (D3) nas 108 rotinas que gravam listadas em `tests/runtime/next_step_pending.txt`, por área na ordem do processo (Logística e campo, Projetos, Processos, Financeiro…)
+- [ ] T-050-18 Desfazer (D5) onde a rotina inversa já existe: cancelar fatura, bloquear/liberar crédito, ativar/desativar cadastro
+- [ ] T-050-19 Valores padrão pelo contexto (D6): recebimento, OS, apontamento de horas
+- [ ] T-050-20 Conferir num navegador real os formulários mais lentos para assentar no rastreador (pedido de venda, política de atendimento, requisição de compra, devolução, projeto, bloqueio de crédito: 10–13 s com 0,7 CPU) contra o orçamento de 1 s (D2); otimizar as consultas de listas se passarem

@@ -90,7 +90,8 @@ def main(status="active"):
     if ranked:
         ana.chart(type="bar", title="Lucro previsto por projeto", subtitle="cenário base", format="money",
                   x=[d["code"] for d in ranked], series=[{"name": "Lucro previsto", "values": [d["forecast_profit"]["base"] for d in ranked]}])
-    ana.table(out, title="Projetos")
+    ana.table(out, title="Projetos", empty="Nenhum projeto em andamento no portfólio.",
+              empty_action={"label": "Novo projeto", "program": "projects.save_project"})
     team = [r["employee_id"] for r in ana.sql(
         "SELECT DISTINCT pm.employee_id FROM projects.project_member pm JOIN projects.project p ON p.id = pm.project_id "
         "WHERE p.id = ANY($1::int[])", [r["id"] for r in rows])]

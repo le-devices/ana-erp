@@ -9879,6 +9879,32 @@ class TestAutomation(Base):
         s, mine, _ = http("GET", "/api/suggestions", token=token)
         self.assertEqual([x for x in mine if x["program"] == prog], [])               # declined: it never comes back
 
+    def test_t_051_06_a_product_routine_run_by_hand_is_offered_to_the_administrators(self):
+        """Automation audit: the product's routines are created off; people still running the program by hand make
+        the ERP offer the administrators to turn the routine on — accepting turns it on, a plain user is not asked."""
+        prog = f"test.auto_daily_{SUFFIX}"
+        self.save(prog, "PARAMS = {}\n\ndef main():\n    return 1\n")
+        s, j, _ = http("POST", "/api/scheduler/jobs", {"name": f"t-prod-{SUFFIX}", "program": prog, "active": False,
+                                                       "triggers": [{"kind": "cron", "cron": "0 6 * * 1-5"}]}, self.token)
+        self.assertEqual(s, 200, j)
+        psql(f"UPDATE scheduler.job SET owner = 'system' WHERE id = {j['id']}")           # as ana_seeds creates them
+        admin, admin_token = new_user("admin")
+        user, token = new_user("user")
+        try:
+            self.runs(user, prog, {}, self.business_days(2))
+            self.analyze()
+            s, mine, _ = http("GET", "/api/suggestions", token=admin_token)
+            rt = [x for x in mine if x["kind"] == "routine" and x["program"] == prog]
+            self.assertEqual(len(rt), 1, mine)
+            self.assertIn("2 vezes", rt[0]["explanation"])
+            s, theirs, _ = http("GET", "/api/suggestions", token=token)
+            self.assertEqual([x for x in theirs if x["program"] == prog], [], "usuário comum não liga rotinas do produto")
+            s, r, _ = http("POST", f"/api/suggestions/{rt[0]['id']}/accept", {}, admin_token)
+            self.assertEqual(s, 200, r)
+            self.assertEqual(psql(f"SELECT active FROM scheduler.job WHERE id = {j['id']}"), "t")
+        finally:
+            http("DELETE", f"/api/scheduler/jobs/{j['id']}", token=self.token)
+
     # ------------------------------------------------------------ exceptions as tasks (D4)
     def must(self, program, **params):
         s, c, _ = self.run_program(program, params)

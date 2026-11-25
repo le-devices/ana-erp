@@ -129,10 +129,12 @@
     for (const s of list) {
       const li = el("li", { class: "suggestion" }, el("strong", { text: s.title }), el("p", { class: "small", text: s.explanation }));
       li.append(el("div", { class: "row-buttons" },
-        el("button", { type: "button", class: "primary small", text: s.kind === "schedule" ? "Agendar" : "Salvar variante", onclick: async () => {
+        el("button", { type: "button", class: "primary small", text: { schedule: "Agendar", routine: "Ligar a rotina" }[s.kind] || "Salvar variante", onclick: async () => {
           try {
             const r = await API.suggestions.accept(s.id, {});
-            toast(s.kind === "schedule" ? `Agendado: ${s.program} de segunda a sexta (${r.cron}). Você pode mudar em Agendamento.` : "Variante salva: escolha pelo nome na próxima vez.");
+            toast(s.kind === "schedule" ? `Agendado: ${s.program} de segunda a sexta (${r.cron}). Você pode mudar em Agendamento.`
+              : s.kind === "routine" ? "Rotina ligada: ela roda sozinha no horário de Agendamento, onde você pode mudar ou desligar."
+              : "Variante salva: escolha pelo nome na próxima vez.");
             drop(li);
           } catch (e) { toast(window.AnaUI.errorText(e), true); }
         } }),

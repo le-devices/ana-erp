@@ -29,7 +29,9 @@ def main(days=30):
     if by_product:
         ana.chart(type="bar", title="Vendas por item", format="money", x=[r["description"] for r in by_product[:12]],
                   series=[{"name": "Vendas", "values": [r["amount"] for r in by_product[:12]]}])
-    ana.table([{**r, "amount": money(r["amount"])} for r in by_product], title="Vendas por item")
-    ana.table([{**r, "amount": money(r["amount"])} for r in by_customer], title="Principais clientes")
+    ana.table([{**r, "amount": money(r["amount"])} for r in by_product], title="Vendas por item",
+              empty="Nenhuma venda faturada no período.", empty_action={"label": "Novo pedido de venda", "program": "sales.create_order"})
+    ana.table([{**r, "amount": money(r["amount"])} for r in by_customer], title="Principais clientes",
+              empty="Nenhuma venda faturada no período.", empty_action={"label": "Novo pedido de venda", "program": "sales.create_order"})
     total = sum((r["amount"] for r in by_product), start=0)
     return {"total": total, "products": len(by_product)}

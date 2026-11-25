@@ -14,6 +14,9 @@ const clean = page(`<h1>Pedidos</h1><label>Cliente <input name="c"></label><butt
   <table><tr><td class="muted empty-state">Nenhum pedido. <button>Criar pedido</button></td></tr></table>`);
 ok(audit(clean).length === 0, "tela dentro do padrão não tem apontamentos");
 
+const good = page(`<h1>Saúde</h1><table><tr><td class="muted empty-state empty-good">Nenhum incidente.</td></tr></table>`);
+ok(audit(good).length === 0, "lista vazia que é boa notícia (empty-good) não exige ação (D3)");
+
 const bad = audit(page(`<input name="cliente"><button></button><img src="x.png">
   <table><tr><td class="muted empty-state">Nada para mostrar.</td></tr></table><p>Erro: undefined</p>`));
 const rules = new Set(bad.map((v) => v.rule));

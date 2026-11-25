@@ -2,6 +2,7 @@
 # ana:exposed yes
 # ana:command cancelinvoice
 # ana:category Projetos/Faturamento e custos
+# ana:confirm A fatura de serviço é estornada na contabilidade e as horas, despesas e marcos voltam a faturar. O histórico fica; a fatura pode ser emitida de novo.
 """RF-008-13: only while the bill is still open. Posts a reversal entry
 (never deletes accounting history) and returns sources to their prior state."""
 

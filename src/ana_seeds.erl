@@ -58,6 +58,10 @@ routines() ->
      {<<"projetos.faturamento">>, <<"projects.invoice_all">>,
       #{<<"through">> => <<"{{last_month_end}}">>}, <<"0 5 1 * *">>,
       <<"Faturamento mensal de projetos: horas, despesas refaturáveis e marcos concluídos até o fim do mês anterior."/utf8>>},
+     %% T-051-06: the requirements planning, every business day before the replenishment (it only proposes; approving
+     %% the suggestions stays with a person, production.approve_suggestions).
+     {<<"producao.planejamento">>, <<"production.plan">>, #{}, <<"0 5 * * 1-5">>,
+      <<"Planejamento de necessidades: explode as estruturas e atualiza as sugestões de ordens de produção e de compra (só propõe; aprovar continua com uma pessoa)."/utf8>>},
      {<<"estoque.reposicao">>, <<"supply.suggest_replenishment">>,
       #{<<"create">> => true}, <<"30 5 * * 1-5">>,
       <<"Reposição de estoque: abaixo do ponto de pedido vira solicitação de compra (segue a alçada de aprovação)."/utf8>>},

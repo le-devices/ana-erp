@@ -84,7 +84,9 @@ def main(action=None, mode=None, transfer_first=None, auto_order_max=None, allow
                 "quando falta": F.LABEL[r["mode"]], "transferir antes": "política" if r["transfer_first"] is None else "sim" if r["transfer_first"] else "não",
                 "observação": r["note"], "_actions": [{"label": "Apagar", "program": "sales.fulfillment_policy", "params": {"action": "remove", "rule": r["id"]},
                                                         "confirm": f"Apagar a exceção {r['id']}?"}]} for r in rules],
-              title="Exceções (a mais específica vale)")
+              title="Exceções (a mais específica vale)",
+              empty="Nenhuma exceção: a política vale para todos os clientes e itens.",
+              empty_action={"label": "Incluir uma exceção", "program": "sales.fulfillment_policy", "params": {"action": "rule"}})
     return {"policy": pol, "rules": len(rules)}
 
 

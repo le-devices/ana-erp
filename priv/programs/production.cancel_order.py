@@ -1,6 +1,7 @@
 # ana:description Cancela ordem de produção ainda sem componentes requisitados (libera as reservas)
 # ana:exposed yes
 # ana:category Produção/Ordens de produção
+# ana:confirm A ordem de produção é cancelada e as reservas dos componentes são liberadas. Não há desfazer: para produzir, crie outra ordem.
 """RF-014-06. An order with issued components or reported hours is finished (deliver/close),
 never cancelled: what was consumed must stay accounted."""
 

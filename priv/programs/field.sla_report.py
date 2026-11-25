@@ -51,7 +51,8 @@ def main(start=None, end=None):
                 "aberta": f"{r['opened_at']:%d/%m %H:%M}", "prazo": f"{r['due_at']:%d/%m %H:%M}",
                 "resposta (h)": round(float(r["response_h"]), 1) if r["response_h"] is not None else None,
                 "atrasada": "sim" if r["late_open"] or r["late_done"] else ""} for r in rows],
-              title="Ordens de serviço" + (f" (as 2000 primeiras de {t['n']})" if t["n"] > len(rows) else ""))
+              title="Ordens de serviço" + (f" (as 2000 primeiras de {t['n']})" if t["n"] > len(rows) else ""),
+              empty="Nenhuma OS no período.", empty_action={"label": "Nova OS", "program": "field.open_order"})
     if per_tech:
         ana.chart(type="bar", title="Visitas por técnico", x=[t["name"] for t in per_tech],
                   series=[{"name": "Visitas", "values": [t["visits"] for t in per_tech]}])

@@ -4,7 +4,9 @@
 %% and again and offers to do it. In the background, once an hour (leader only), it reads the executions since the last
 %% mark into a daily aggregate (automation.usage_day) — never a cost in the execution itself — and looks for:
 %%   - schedule: the same routine with the same values on 4 business days in a row, about the same time (±1 h);
-%%   - variant: the same values 3 times in 30 days, typed again each time (no variant used).
+%%   - variant: the same values 3 times in 30 days, typed again each time (no variant used);
+%%   - routine (T-051-06): a routine of the product (created off) whose program people still run by hand — the
+%%     administrators are offered to turn it on.
 %% Each suggestion explains itself in Portuguese and has a fingerprint per person: declined, it never comes back.
 -module(ana_suggestions).
 -behaviour(gen_server).
@@ -16,6 +18,7 @@
 -define(DAYS, 30).
 -define(SCHEDULE_DAYS, 4).
 -define(VARIANT_RUNS, 3).
+-define(ROUTINE_RUNS, 2).
 -define(WEEKDAY, [<<"segunda"/utf8>>, <<"terça"/utf8>>, <<"quarta"/utf8>>, <<"quinta"/utf8>>, <<"sexta"/utf8>>,
                   <<"sábado"/utf8>>, <<"domingo"/utf8>>]).
 
@@ -58,8 +61,9 @@ analyze() ->
     {ok, Added} = aggregate(Tz),
     S = schedules(),
     V = variants(),
+    PR = product_routines(),
     {ok, _} = ana_db:exec("DELETE FROM automation.usage_day WHERE day < current_date - 60", []),
-    #{<<"aggregated">> => Added, <<"schedule">> => S, <<"variant">> => V}.
+    #{<<"aggregated">> => Added, <<"schedule">> => S, <<"variant">> => V, <<"routine">> => PR}.
 
 %% Executions of people (no robots, rehearsals, debugging, simulations, nested calls), of routines of the menu.
 aggregate(Tz) ->
@@ -94,7 +98,8 @@ schedules() ->
         "FROM automation.usage_day u WHERE u.day >= current_date - $1::int "
         "  AND NOT EXISTS (SELECT 1 FROM automation.suggestion s WHERE s.username = u.username "
         "                  AND s.fingerprint = 'schedule:' || u.program || ':' || u.params_hash) "
-        "  AND NOT EXISTS (SELECT 1 FROM scheduler.job j WHERE j.program = u.program AND j.run_as = u.username) "
+        "  AND NOT EXISTS (SELECT 1 FROM scheduler.job j WHERE j.program = u.program "
+        "                  AND (j.run_as = u.username OR j.owner = 'system')) "
         "GROUP BY 1, 2, 3, 4 HAVING count(*) >= $2::int", [?DAYS, ?SCHEDULE_DAYS]),
     Holidays = holidays(),
     lists:foldl(fun(R = #{<<"days">> := Days, <<"times">> := Times}, N) ->
@@ -171,6 +176,31 @@ variants() ->
                    <<"Salvar como variante: "/utf8, Label/binary>>, Explain, #{<<"params">> => Params})
     end, 0, Rows).
 
+%% T-051-06: a routine of the product (owner "system", created off so each company chooses) whose program was run by
+%% hand at least twice in 30 days: every administrator is offered to turn it on. Accepting turns that routine on.
+product_routines() ->
+    {ok, Rows} = ana_db:rows(
+        "SELECT a.username, j.id, j.name, j.description, j.program, r.runs, r.people "
+        "FROM scheduler.job j "
+        "JOIN LATERAL (SELECT sum(u.runs)::int AS runs, count(DISTINCT u.username)::int AS people "
+        "              FROM automation.usage_day u WHERE u.program = j.program AND u.day >= current_date - $1::int) r "
+        "  ON r.runs >= $2::int "
+        "JOIN ana_system.app_user a ON a.role = 'admin' AND a.active AND a.kind = 'human' "
+        "WHERE j.owner = 'system' AND NOT j.active "
+        "  AND NOT EXISTS (SELECT 1 FROM automation.suggestion s WHERE s.username = a.username "
+        "                  AND s.fingerprint = 'routine:' || j.id)", [?DAYS, ?ROUTINE_RUNS]),
+    lists:foldl(fun(#{<<"username">> := U, <<"id">> := J, <<"name">> := Name, <<"description">> := D,
+                      <<"program">> := P, <<"runs">> := Runs, <<"people">> := People}, N) ->
+        Explain = iolist_to_binary([case D of B when is_binary(B), B =/= <<>> -> [B, <<" "/utf8>>]; _ -> <<>> end,
+                                    <<"Nos últimos 30 dias, "/utf8>>, label(P), <<" foi executada à mão "/utf8>>,
+                                    integer_to_binary(Runs), <<" vezes"/utf8>>,
+                                    case People of 1 -> <<>>; _ -> [<<" por "/utf8>>, integer_to_binary(People), <<" pessoas"/utf8>>] end,
+                                    <<". O produto já traz esta rotina pronta, desligada: ligada, ela roda sozinha "
+                                      "no horário de Agendamento."/utf8>>]),
+        N + insert(U, <<"routine">>, <<"routine:", (integer_to_binary(J))/binary>>, P,
+                   <<"Ligar a rotina do produto "/utf8, Name/binary>>, Explain, #{<<"job">> => J})
+    end, 0, Rows).
+
 insert(U, Kind, Fp, P, Title, Explain, Payload) ->
     {ok, N} = ana_db:exec("INSERT INTO automation.suggestion (username, kind, fingerprint, program, title, explanation, payload) "
                           "VALUES ($1, $2, $3, $4, $5, $6, $7) ON CONFLICT (username, fingerprint) DO NOTHING",
@@ -222,6 +252,8 @@ mine(Who) ->
 -spec accept(integer(), map(), map()) -> {ok, map()} | {error, integer(), binary(), binary()}.
 accept(Id, B, User = #{username := Who}) ->
     case ana_db:one("SELECT * FROM automation.suggestion WHERE id = $1 AND username = $2", [Id, Who]) of
+        {ok, #{<<"status">> := <<"new">>, <<"kind">> := <<"routine">>, <<"payload">> := #{<<"job">> := J}}} ->
+            turn_on(Id, J, User);
         {ok, #{<<"status">> := <<"new">>, <<"kind">> := Kind, <<"program">> := P, <<"payload">> := Pay}} ->
             Name = case maps:get(<<"name">>, B, null) of
                 N when is_binary(N), N =/= <<>> -> N;
@@ -257,6 +289,18 @@ accept(Id, B, User = #{username := Who}) ->
         {ok, #{}} -> {error, 409, <<"INVALID_STATE">>, <<"esta sugestão já foi respondida"/utf8>>};
         _ -> {error, 404, <<"NOT_FOUND">>, <<"sugestão não encontrada"/utf8>>}
     end.
+
+%% Only an administrator turns a routine of the product on (the same rule as Agendamento); logged as a resume.
+turn_on(Id, J, User = #{role := <<"admin">>}) ->
+    case ana_schedule:set_active(J, true, User) of
+        {ok, _} ->
+            Res = #{<<"job">> => J, <<"active">> => true},
+            {ok, _} = ana_db:exec("UPDATE automation.suggestion SET status = 'accepted', decided_at = now(), "
+                                  "result = $2 WHERE id = $1", [Id, Res]),
+            {ok, Res};
+        {error, not_found} -> {error, 404, <<"NOT_FOUND">>, <<"a rotina não existe mais"/utf8>>}
+    end;
+turn_on(_, _, _) -> {error, 403, <<"FORBIDDEN">>, <<"só um administrador liga rotinas do produto"/utf8>>}.
 
 schedule(P, VId, #{<<"cron">> := Cron} = Pay, Name, User = #{username := Who}) ->
     JobName = iolist_to_binary(["sugestao.", slug(Who), ".", slug(P), ".", integer_to_binary(erlang:unique_integer([positive]) rem 100000)]),

@@ -52,8 +52,11 @@ def main(weeks=4, start=None):
         prow.append(row)
     ana.metrics([{"label": "Colaboradores", "value": len(people)},
                  {"label": "Sobrecargas (pessoa × semana)", "value": len(overloaded), "status": "bad" if overloaded else "ok"}])
-    ana.table(overloaded, title="Sobrecarregados" if overloaded else "Ninguém acima da capacidade")
-    ana.table(rows, title="Por colaborador (alocado / disponível)")
-    ana.table(prow, title="Por perfil (inclui alocação ainda sem pessoa)")
+    ana.table(overloaded, title="Sobrecarregados" if overloaded else "Ninguém acima da capacidade",
+              empty="Ninguém acima da capacidade.", empty_good=True)
+    ana.table(rows, title="Por colaborador (alocado / disponível)", empty="Nenhum colaborador com disponibilidade cadastrada.",
+              empty_action={"label": "Disponibilidade de um colaborador", "program": "projects.save_availability"})
+    ana.table(prow, title="Por perfil (inclui alocação ainda sem pessoa)", empty="Nenhuma alocação por perfil.",
+              empty_action={"label": "Plano de alocação", "program": "projects.allocation_plan"})
     return {"overloaded": [{"employee": o["colaborador"], "week": o["semana"], "allocated": o["alocado"],
                             "capacity": o["disponível"]} for o in overloaded]}

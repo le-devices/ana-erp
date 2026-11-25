@@ -496,12 +496,18 @@
     } : null;
     // The layout each user leaves on this table (columns, order, filters, variants) comes back (RF-020-17).
     const screen = ctx && ctx.screen ? `${ctx.screen}:${d.title || "itens"}` : null;
-    if (!d.row_actions) return dataTable(d.columns, d.rows, d.title, null, onOpen, screen);
+    // Spec 050 (D3): an empty table says why and offers the routine that fills it.
+    const ea = d.empty_action;
+    // The button opens the routine's form with the values filled in — never runs it (it may write).
+    const openForm = ea && window.AnaOps && window.AnaStudio
+      ? () => window.AnaStudio.go(window.AnaOps.routineHash(ea.program, ea.params || {}, { _form: "1" })) : null;
+    const empty = d.empty || ea ? { text: d.empty, good: !!d.empty_good, action: openForm ? { label: ea.label, onClick: openForm } : null } : null;
+    if (!d.row_actions) return dataTable(d.columns, d.rows, d.title, null, onOpen, screen, empty);
     const box = dataTable(d.columns, d.rows, d.title, (i) => {
       const slot = el("div", { class: "action-form-row", hidden: true });
       const wrap = el("div", {}, (d.row_actions[i] || []).map((a) => actionButton(a, ctx, slot)), slot);
       return wrap;
-    }, onOpen, screen);
+    }, onOpen, screen, empty);
     return box;
   }
 

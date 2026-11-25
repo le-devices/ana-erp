@@ -1,6 +1,7 @@
 # ana:description Cancela solicitação ou ordem de compra
 # ana:exposed yes
 # ana:category Compras/Solicitações
+# ana:confirm A solicitação ou ordem de compra é cancelada (numa ordem com recebimento parcial, só o que falta). Não há desfazer: para comprar, crie outra.
 """Requests: the requester or an admin, before ordering. Orders: an admin or whoever created
 them; an order partly received keeps what came and only the rest is cancelled."""
 
