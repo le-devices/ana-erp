@@ -33,7 +33,7 @@ def main(tax=None, status="active", on=None):
         out.append({"regra": r["id"], "tributo": r["tax_name"], "nome": r["name"], "de": r["valid_from"], "até": r["valid_to"],
                     "critérios": ", ".join(f"{k} = {v}" for k, v in crit.items()) or "geral",
                     "situação": STATUS.get(r["status"], r["status"]), "origem": r["package"] or "empresa", "_actions": acts})
-    ana.table(out, title="Regras de impostos")
+    ana.table(out, title="Regras de impostos", empty="Nenhuma regra com esses filtros.", empty_action={"label": "Nova regra", "program": "tax.save_rule"})
     ana.actions([{"label": "Nova regra", "program": "tax.save_rule", "open": True},
                  {"label": "Qual regra vale?", "program": "tax.which_rule", "open": True}],
                 title="Nenhuma regra com esses filtros" if not out else None)

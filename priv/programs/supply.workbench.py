@@ -51,7 +51,8 @@ def main(view="approve"):
                         {"label": "Recusar", "program": "supply.approve_request",
                          "params": {"request": r["number"], "decision": "reject"},
                          "ask": {"reason": {"type": "str", "label": "motivo", "required": True}}}]}
-                   for r in rows], title="Solicitações aguardando aprovação")
+                   for r in rows], title="Solicitações aguardando aprovação",
+                  empty="Nenhuma solicitação aguardando aprovação.", empty_good=True)
     elif view == "buy":
         rows = ana.sql(
             "SELECT r.number, r.requester, r.need_date, r.total, r.approved_by, "
@@ -65,7 +66,8 @@ def main(view="approve"):
         ana.table([{"solicitação": r["number"], "_open": doc_link("purchase_request", r["number"]), "solicitante": r["requester"], "itens e fornecedores": r["items"],
                     "necessária em": r["need_date"], "aprovada por": r["approved_by"], "total": r["total"],
                     "_actions": [{"label": "Gerar ordem", "program": "supply.create_orders", "params": {"requests": [r["number"]]}}]}
-                   for r in rows], title="Aprovadas, aguardando compra")
+                   for r in rows], title="Aprovadas, aguardando compra",
+                  empty="Nenhuma solicitação aprovada esperando compra.", empty_good=True)
         if rows:
             ana.actions([{"label": "Gerar ordens de todas", "program": "supply.create_orders", "style": "primary",
                           "confirm": f"Gerar ordens para {len(rows)} solicitação(ões)?"}])
@@ -87,7 +89,9 @@ def main(view="approve"):
                                   "params": {"order": r["number"], "_form": "1"}, "open": True},
                                  {"label": "Novo prazo", "program": "supply.confirm_delivery_date", "params": {"order": r["number"]},
                                   "ask": {"promised_date": {"type": "date", "label": "nova data", "required": True}}}]}
-                   for r in rows], title="Ordens atrasadas" if view == "late" else "Ordens aguardando recebimento")
+                   for r in rows], title="Ordens atrasadas" if view == "late" else "Ordens aguardando recebimento",
+                  empty="Nenhuma ordem atrasada." if view == "late" else "Nenhuma ordem aguardando recebimento.",
+                  empty_action={"label": "Nova solicitação de compra", "program": "supply.request_purchase"})
     ana.actions([{"label": "Nova solicitação", "program": "supply.request_purchase", "open": True},
                  {"label": "Sugestão de reposição", "program": "supply.suggest_replenishment", "open": True},
                  {"label": "Desempenho de fornecedores", "program": "supply.supplier_performance", "open": True}],

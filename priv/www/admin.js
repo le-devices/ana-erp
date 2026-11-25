@@ -12,6 +12,13 @@
   let current = "users";
 
   function main() { return $("#admin-main"); }
+  // Spec 050 (D3): the action of an empty list takes the person to what fills it on the same screen.
+  const toForm = (label) => ({ label, onClick: () => {
+    const f = main().querySelector("form input:not([type=hidden]):not([type=file]), form select, form textarea, textarea");
+    if (f) { f.scrollIntoView && f.scrollIntoView({ block: "center" }); f.focus(); } } });
+  const pressing = (label, text) => ({ label, onClick: () => {
+    const b = [...main().querySelectorAll("button")].find((x) => x.textContent.trim().startsWith(text));
+    if (b) { b.scrollIntoView && b.scrollIntoView({ block: "center" }); b.focus(); } } });
 
   function header(title, lead) {
     return [el("h2", { text: title }), el("p", { class: "lead", text: lead })];
@@ -216,7 +223,7 @@
           { label: "Programas", value: (g) => el("span", {}, (g.program_patterns || []).map((p) => pill(p))) },
           { label: "Dados", value: (g) => el("span", {}, scopePills(g)) },
           { label: "Membros", value: (g) => g.members, class: "num" },
-        ], list, { onRow: showForm })), side));
+        ], list, { emptyAction: { label: "Criar um grupo", onClick: () => showForm(null) }, onRow: showForm })), side));
     showForm(null);
   }
 
@@ -445,7 +452,7 @@
           { label: "Usuário", value: (s) => s.username || "—" },
           { label: "Senha", value: (s) => s.has_password ? pill("definida", "ok") : pill("ausente", "warn") },
           { label: "Situação", value: (s) => s.active ? pill("ativo", "ok") : pill("inativo", "off") },
-        ], list, { onRow: (s) => { name.value = s.name; url.value = s.url; username.value = s.username || ""; timeout.value = s.timeout_ms; active.checked = s.active; password.value = ""; } })),
+        ], list, { emptyAction: toForm("Cadastrar um sistema remoto"), onRow: (s) => { name.value = s.name; url.value = s.url; username.value = s.username || ""; timeout.value = s.timeout_ms; active.checked = s.active; password.value = ""; } })),
         el("form", { class: "form-card", onsubmit: async (e) => {
           e.preventDefault();
           await guard(async () => {
@@ -790,7 +797,7 @@
         { label: "Origem", value: (p) => p.origin },
         { label: "Status", value: (p) => el("span", { class: "status-" + p.status, text: p.status }) },
         { label: "Removidos", value: (p) => p.detail ? el("code", { class: "muted", text: p.detail }) : "" },
-      ], r.last_purges, { empty: "Nenhum expurgo ainda." }),
+      ], r.last_purges, { empty: "Nenhum expurgo ainda.", emptyGood: true }),
       out);
   }
 
@@ -845,7 +852,7 @@
         { label: "Fim", value: (i) => i.closed_at ? fmtDate(i.closed_at) : pill("■ aberto", "off") },
         { label: "Duração", value: (i) => `${Math.round(i.seconds / 60)} min`, class: "num" },
         { label: "Mensagem", value: (i) => i.silenced && !i.notified_at ? el("span", {}, pill("silenciado"), " ", i.message) : i.message },
-      ], h.incidents, { empty: "Nenhum incidente." }),
+      ], h.incidents, { empty: "Nenhum incidente.", emptyGood: true }),
       el("h3", { text: "Mudanças de estado (72 h)" }),
       table([
         { label: "Quando", value: (e) => fmtDate(e.at) },
@@ -1085,7 +1092,7 @@
       el("h3", { text: "Tabelas que mais cresceram (30 dias)" }),
       table([{ label: "Tabela", value: (g) => el("code", { text: g.table_name }) }, { label: "Tamanho", value: (g) => mb(g.bytes), class: "num" },
              { label: "Crescimento", value: (g) => mb(g.growth_bytes), class: "num" }],
-        d.growth || [], { empty: "O crescimento aparece depois da primeira análise diária." }),
+        d.growth || [], { empty: "O crescimento aparece depois da primeira análise diária.", emptyGood: true }),
       el("h3", { text: "Sugestões para o servidor" }),
       el("p", { class: "muted", text: "O ERP nunca muda a configuração do sistema operacional nem desliga proteções do banco (fsync, full_page_writes): só sugere." }),
       el("ul", {}, (d.suggestions || []).map((t) => el("li", { text: t }))));
@@ -1115,7 +1122,7 @@
         { label: "p95 (ms)", value: (r) => r.kind === "open" && (r.p95_ms === null || r.p95_ms > r.budget_ms)
             ? pill(`▲ ${ms(r.p95_ms)}`, "warn") : ms(r.p95_ms), class: "num" },
         { label: "Travamentos", value: (r) => n2(r.long_tasks), class: "num" },
-      ], rows, { empty: "Ainda sem medições: as telas se medem sozinhas enquanto as pessoas usam o Estúdio.",
+      ], rows, { emptyGood: true, empty: "Ainda sem medições: as telas se medem sozinhas enquanto as pessoas usam o Estúdio.",
                  emptyAction: { label: "Atualizar", onClick: () => guard(() => uiperf(days)) } }));
   }
 
@@ -1145,7 +1152,7 @@
         { label: "Varredura completa", value: (r) => (r.plan_summary && r.plan_summary.seq_scans && r.plan_summary.seq_scans.length)
             ? r.plan_summary.seq_scans.map((s) => `${s.table} (${n2(s.table_rows)} linhas)`).join(", ") : "" },
         { label: "Programas", value: (r) => (r.programs || []).join(", ") },
-      ], rows, { empty: "Ainda sem medições — execute programas e clique em Atualizar agora.", onRow: (r) => sqlDetail(r.hash, detail) }),
+      ], rows, { empty: "Ainda sem medições: execute programas e grave as do último minuto.", emptyAction: pressing("Atualizar agora", "Atualizar agora"), onRow: (r) => sqlDetail(r.hash, detail) }),
       detail);
   }
 
@@ -1334,7 +1341,7 @@
             return v ? el("span", {}, ...v.map((f) => el("span", {}, sevChip(f.severity), " ", f.evidence.osv_id,
                                                                   f.evidence.fixed ? ` → ${f.evidence.fixed}` : "", " "))) : "—";
           } },
-      ], rows, { title: "Componentes", empty: "Inventário ainda não coletado: clique em Verificar em Componentes." }));
+      ], rows, { title: "Componentes", empty: "Inventário ainda não coletado.", emptyAction: pressing("Verificar agora", "Verificar") }));
     };
     const box = el("div");
     search.addEventListener("input", render);
@@ -1374,7 +1381,7 @@
       { label: "Autor", value: (t) => t.author },
       { label: "Situação", value: (t) => { const [l, c] = T_STATUS[t.status] || [t.status, ""]; return pill(l, c); } },
       { label: "Quando", value: (t) => fmtDate(t.imported_at || t.received_at || t.created_at) },
-    ], list, { empty: "Nenhum pacote ainda.", onRow: (t) => guard(() => transports("list", t.id)) }));
+    ], list, { empty: "Nenhum pacote ainda.", emptyAction: { label: "Enviar um pacote", onClick: () => guard(() => transports("send")) }, onRow: (t) => guard(() => transports("list", t.id)) }));
   }
 
   async function transportDetail(head, tabs, id) {
@@ -1613,7 +1620,7 @@
         { label: "", value: (c) => c.direction === "out" && c.status === "ready"
             ? el("button", { type: "button", class: "small", text: "Baixar", onclick: () => guard(() => API.download(`/api/admin/datacopy/${c.id}/download`, `copia-${c.id}.anadc`)) })
             : c.direction === "in" && ["uploaded", "checked", "failed"].includes(c.status) && !isProd ? copyImportButtons(c) : "" },
-      ], copies, { empty: "Nenhuma cópia." }));
+      ], copies, { empty: "Nenhuma cópia.", emptyAction: pressing("Exportar dados mascarados", "Exportar dados") }));
   }
 
   function copyImportButtons(c) {
@@ -1672,7 +1679,7 @@
         { label: "p95 (ms)", value: (c) => c.p95_ms ?? "—" },
         { label: "Fila de saída", value: (c) => `${c.out_pending}` + (c.out_dead ? ` · ${c.out_dead} esgotada(s)` : "") },
         { label: "Fila de entrada", value: (c) => `${c.in_pending}` + (c.in_dead ? ` · ${c.in_dead} esgotada(s)` : "") },
-      ], rows, { empty: "Nenhum conector cadastrado.", onRow: (c) => guard(() => integrations(c.kind === "http_api" ? "outbox" : "inbox", { connector: c.name })) }));
+      ], rows, { empty: "Nenhum conector cadastrado.", emptyAction: { label: "Cadastrar um conector", onClick: () => guard(() => integrations("connectors")) }, onRow: (c) => guard(() => integrations(c.kind === "http_api" ? "outbox" : "inbox", { connector: c.name })) }));
     } else if (tab === "connectors") {
       body.replaceChildren(await connectorsView());
     } else {
@@ -1795,7 +1802,7 @@
             : c.base_url || `/hooks/${c.name}` },
           { label: "Segredos", value: (c) => (c.secrets.length ? c.secrets.map((x) => x.key).join(", ") : "—") },
           { label: "Situação", value: (c) => (c.active ? pill("ativo", "ok") : pill("inativo", "off")) },
-        ], data.connectors, { empty: "Nenhum conector.", onRow: (c) => form(c) })),
+        ], data.connectors, { empty: "Nenhum conector.", emptyAction: toForm("Cadastrar um conector"), onRow: (c) => form(c) })),
       side);
   }
 
@@ -1823,7 +1830,7 @@
             ["dead", "pending"].includes(m.status) ? el("button", { class: "small quiet", text: "Descartar", onclick: () => guard(async () => {
               if (!confirm(`Descartar a mensagem ${m.id}? Ela não será entregue.`)) return;
               await API.admin.integrationAction(kind, m.id, "discard"); reload(); }) }) : null) },
-      ], rows, { empty: "Nenhuma mensagem.", onRow: (m) => detail.replaceChildren(el("h4", { text: `Mensagem ${m.id}` }),
+      ], rows, { empty: "Nenhuma mensagem.", emptyGood: true, onRow: (m) => detail.replaceChildren(el("h4", { text: `Mensagem ${m.id}` }),
         el("pre", { class: "code-view", text: JSON.stringify({ payload: m.payload, result: m.result, headers: m.headers }, null, 2) })) }),
       detail);
   }
@@ -1878,7 +1885,7 @@
         { label: "Cliente", value: (h) => h.customer },
         { label: "Validade", value: (h) => fmtDate(h.valid_until) },
         { label: "", value: (h) => (h.active ? pill("em uso", "ok") : "") },
-      ], l.history, { empty: "Nenhuma licença instalada ainda." }));
+      ], l.history, { empty: "Nenhuma licença instalada ainda.", emptyAction: toForm("Instalar licença") }));
   }
 
   // ------------------------------------------------------------------ telemetry (spec 009, D13)
@@ -2028,7 +2035,7 @@
         { label: "Detectada em", value: (u) => fmtDate(u.detected_at) },
         { label: "", value: (u) => el("button", { class: "quiet small", text: u.status === "available" ? "Comparar e decidir" : "Ver",
                                                    onclick: () => guard(() => updateDetail(u.name)) }) },
-      ], r.updates, { empty: "Todos os programas do produto estão em dia." }));
+      ], r.updates, { empty: "Todos os programas do produto estão em dia.", emptyGood: true }));
   }
 
   async function updateDetail(name) {
@@ -2092,7 +2099,7 @@
       { label: "Escopo", value: (c) => c.scopes.join(", ") || "—" },
       { label: "Hoje", value: (c) => String(c.today), class: "num" },
       { label: "Situação", value: (c) => apiClientState(c) },
-    ], list, { empty: "Nenhum cliente: a API pública está fechada.", onRow: (c) => guard(() => publicapi("clients", c.client_id)) }),
+    ], list, { empty: "Nenhum cliente: a API pública está fechada.", emptyAction: { label: "Novo cliente", onClick: () => guard(() => publicapi("new")) }, onRow: (c) => guard(() => publicapi("clients", c.client_id)) }),
     el("div", { class: "form-card" },
       el("h3", { text: "Chaves de assinatura dos tokens" }),
       el("p", { class: "muted", text: "Os tokens de acesso duram 10 minutos. Trocar a chave não derruba quem já tem token: a anterior segue valendo até eles vencerem." }),
@@ -2208,7 +2215,7 @@
         { label: "Situação", value: (r) => pill(String(r.status), r.status < 300 ? "ok" : r.status === 429 ? "warn" : "off") },
         { label: "ms", value: (r) => r.duration_ms == null ? "" : String(r.duration_ms), class: "num" },
         { label: "Origem", value: (r) => r.ip || "" },
-      ], rows, { empty: "Nenhuma chamada registrada." }));
+      ], rows, { empty: "Nenhuma chamada registrada.", emptyGood: true }));
   }
 
   async function scheduler() {

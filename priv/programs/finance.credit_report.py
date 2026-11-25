@@ -55,5 +55,6 @@ def main(only_issues=True):
                             [{"label": "Liberar um pedido", "program": "finance.credit_block",
                               "params": {"customer": r["id"], "action": "release_order"},
                               "ask": {"reason": {"type": "str", "label": "justificativa", "required": True}}}]}
-               for r in rows], title="Crédito por cliente" + (f" (os 500 primeiros de {all_['n']})" if all_["n"] > len(rows) else ""))
+               for r in rows], title="Crédito por cliente" + (f" (os 500 primeiros de {all_['n']})" if all_["n"] > len(rows) else ""),
+              empty="Nenhum cliente com títulos em aberto.", empty_action={"label": "Perfil de crédito de um cliente", "program": "finance.save_credit_profile"})
     return {"customers": all_["n"], "blocked": list(all_["blocked"])}

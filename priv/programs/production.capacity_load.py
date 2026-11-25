@@ -95,8 +95,10 @@ def main(weeks=8, resource=None):
                   x=[f"{wk:%d/%m}" for wk in shown], format="hours",
                   series=[{"name": "Carga", "values": [sum((load.get((c, wk), ZERO) for c in codes), ZERO) for wk in shown]},
                           {"name": "Capacidade", "values": [sum((capacity[(c, wk)] for c in codes), ZERO) for wk in shown]}])
-    ana.table(rows, title="Utilização por recurso e semana")
-    ana.table(moves, title="Datas sugeridas (capacidade finita)" if moves else "Tudo cabe na capacidade")
+    ana.table(rows, title="Utilização por recurso e semana", empty="Nenhum recurso com carga no horizonte.",
+              empty_action={"label": "Cadastrar recurso", "program": "production.save_resource"})
+    ana.table(moves, title="Datas sugeridas (capacidade finita)" if moves else "Tudo cabe na capacidade",
+              empty="Nenhuma data precisa mudar.", empty_good=True)
     return {"load": [{"resource": c, "week": wk, "hours": load.get((c, wk), ZERO), "capacity": capacity[(c, wk)],
                       "pct": (load.get((c, wk), ZERO) / capacity[(c, wk)] * 100).quantize(Decimal("1")) if capacity[(c, wk)] else None}
                      for c in codes for wk in shown],

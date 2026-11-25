@@ -46,7 +46,8 @@ def main(bank_account="CAIXA", tolerance_days=3):
                         "ask": {"reason": {"type": "str", "label": "motivo", "required": True}}})
         rows.append({"linha": l["id"], "data": l["posted_on"], "valor": l["amount"], "histórico": l["description"],
                      "documento": l["document"], "sugestões": sug or "—", "_actions": actions})
-    ana.table(rows, title=f"Extrato em aberto — {account}")
+    ana.table(rows, title=f"Extrato em aberto — {account}", empty="Nenhuma linha de extrato em aberto nesta conta.",
+              empty_action={"label": "Buscar extratos", "program": "finance.fetch_statements"})
     ana.actions([{"label": "Conciliar automaticamente", "program": "finance.reconcile", "params": {"bank_account": account}},
                  {"label": "Importar extrato", "program": "finance.import_statement", "params": {"bank_account": account},
                   "open": True}], title="Outras tarefas")

@@ -33,7 +33,8 @@ def main():
                 "regras ativas": counts.get(t["code"], {}).get("active", 0),
                 "rascunhos": counts.get(t["code"], {}).get("drafts", 0), "pacote": t["package"] or "da empresa",
                 "_actions": [{"label": "Regras", "program": "tax.rules", "params": {"tax": t["code"]}, "open": True}]}
-               for t in taxes], title="Tributos cadastrados")
+               for t in taxes], title="Tributos cadastrados",
+              empty="Nenhum tributo cadastrado.", empty_action={"label": "Aplicar um pacote de regras", "program": "tax.apply_package"})
     if not taxes:
         ana.actions([{"label": "Aplicar um pacote de regras para começar", "program": "tax.apply_package", "open": True}],
                     title="Nenhum tributo cadastrado")

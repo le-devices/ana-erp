@@ -29,5 +29,6 @@ def main(week=None):
             if key:
                 txt = f"{r['b']:%H:%M}–{r['e']:%H:%M} OS {r['number']} {r['customer']}" + (f" (+{r['travel_min']} min)" if r["travel_min"] else "")
                 tech[key] = (tech[key] + " · " if tech[key] else "") + txt
-    ana.table(list(techs.values()), title=f"Agenda de {first:%d/%m} a {(last - datetime.timedelta(days=1)):%d/%m}")
+    ana.table(list(techs.values()), title=f"Agenda de {first:%d/%m} a {(last - datetime.timedelta(days=1)):%d/%m}",
+              empty="Nenhum técnico com OS agendada nesta semana.", empty_action={"label": "Agendar chamados", "program": "field.workbench"})
     return {"technicians": len(techs), "visits": sum(1 for r in rows if r["aid"])}

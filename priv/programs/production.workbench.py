@@ -44,7 +44,8 @@ def main():
     ana.table([{"ordem": r["number"], "_open": doc_link("work_order", r["number"]), "item": f"{r['code']} — {r['description']}", "quantidade": r["quantity"],
                 "boas": r["good_qty"], "início": r["start_date"], "término": r["due_date"],
                 "situação": STATUS[r["status"]] + (" (atrasada)" if r["due_date"] < today and r["status"] != "completed" else ""),
-                "projeto": r["project"], "_actions": step(r)} for r in rows], title="Ordens de produção em aberto")
+                "projeto": r["project"], "_actions": step(r)} for r in rows], title="Ordens de produção em aberto",
+              empty="Nenhuma ordem de produção em aberto.", empty_action={"label": "Nova ordem de produção", "program": "production.create_order"})
     ana.actions([{"label": "Planejar necessidades", "program": "production.plan", "open": True},
                  {"label": "Carga × capacidade", "program": "production.capacity_load", "open": True},
                  {"label": "Capacidade de serviços", "program": "production.service_capacity", "open": True},

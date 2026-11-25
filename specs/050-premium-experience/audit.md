@@ -26,6 +26,28 @@ a rotina que a preenche.
 Segunda rodada, depois das correções: as mesmas 456 telas, sem nenhuma violação (CA-050-05). O
 rastreador roda sem linha de base em `make teste-estudio`.
 
+**Banco vazio, como no CI.** O CI começa de um banco vazio, e muitas listas que no banco de
+desenvolvimento tinham dados aparecem vazias. Essa rodada achou mais 17 listas da Administração e
+tabelas de resultado de 14 rotinas:
+- painel de vendas;
+- agenda e SLA de campo;
+- crédito por cliente e conciliação;
+- bancada de expedição;
+- carga de capacidade, capacidade de serviço e bancada de produção;
+- desempenho de fornecedores e bancada de compras;
+- impostos, regras e casos de teste.
+
+Todas foram corrigidas, e o teste de fumaça e o rastreador passaram também com o banco vazio.
+
+Regra explicitada (D3): uma lista vazia ou:
+- oferece a ação que a preenche, quando a pessoa pode executá-la;
+- ou é marcada como boa notícia, quando não há o que fazer. São os casos de "nenhum incidente",
+  "todos os programas em dia", "nada em trânsito" e de medições que se preenchem sozinhas, com
+  `emptyGood` no Estúdio e `ana.table(…, empty_good=True)` nas rotinas.
+
+Quem não pode executar a rotina que preencheria a lista recebe só a explicação. O botão da lista
+vazia abre o formulário da rotina já preenchido e nunca a executa, porque a rotina pode gravar.
+
 As telas mais lentas para assentar foram formulários com listas de consulta (pedido de venda, política
 de atendimento, requisição de compra, devolução, projeto, bloqueio de crédito): de 10 a 13 s, com o
 rastreador limitado a 0,7 CPU num computador compartilhado. Isso precisa ser conferido num navegador

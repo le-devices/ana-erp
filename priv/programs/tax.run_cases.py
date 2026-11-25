@@ -19,7 +19,8 @@ def main():
     ana.metrics([{"label": "Casos", "value": len(rows)},
                  {"label": "Conferem", "value": len(rows) - bad, "status": "ok"},
                  {"label": "Não conferem", "value": bad, "status": "bad" if bad else "ok"}], title="Casos de teste tributários")
-    ana.table(rows, title="Resultado por caso")
+    ana.table(rows, title="Resultado por caso", empty="Nenhum caso cadastrado: crie um a partir de uma fatura real.",
+              empty_action={"label": "Novo caso de teste", "program": "tax.save_case"})
     ana.actions([{"label": "Novo caso de teste", "program": "tax.save_case", "open": True}],
                 title="Nenhum caso cadastrado: crie um a partir de uma fatura real" if not rows else None)
     return {"cases": len(rows), "failing": bad}

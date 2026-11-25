@@ -43,5 +43,6 @@ def main(start=None, end=None, supplier=None):
     if rated:
         ana.chart(type="bar", title="Pontualidade por fornecedor", subtitle=f"{start:%d/%m/%Y} a {end:%d/%m/%Y}",
                   format="percent", x=[r["name"] for r in rated], series=[{"name": "No prazo", "values": [r["on_time_pct"] for r in rated]}])
-    ana.table(table, title="Desempenho de fornecedores")
+    ana.table(table, title="Desempenho de fornecedores", empty="Nenhum recebimento no período para medir.",
+              empty_action={"label": "Receber mercadoria", "program": "supply.receive"})
     return {"start": start, "end": end, "suppliers": table}

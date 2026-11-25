@@ -51,7 +51,7 @@
   function table(columns, rows, options = {}) {
     if (options.screen && window.AnaTable) {
       return window.AnaTable.create({ title: options.title, screen: options.screen, rows, empty: options.empty,
-        emptyAction: options.emptyAction, onRow: options.onRow, bulk: options.bulk,
+        emptyAction: options.emptyAction, emptyGood: options.emptyGood, onRow: options.onRow, bulk: options.bulk,
         columns: columns.map((c, i) => ({ key: c.key || c.label || "#" + i, label: c.label, value: c.value, class: c.class })) });
     }
     const t = el("table", { class: "grid-table" });
@@ -66,18 +66,20 @@
       }
       tb.append(tr);
     }
-    if (!rows.length) tb.append(el("tr", {}, emptyCell(columns.length, options.empty, options.emptyAction)));
+    if (!rows.length) tb.append(el("tr", {}, emptyCell(columns.length, options.empty, options.emptyAction, options.emptyGood)));
     t.append(tb);
     return t;
   }
 
   /** Spec 050 (D3, P18): an empty list says why and offers the action that fills it
-   *  (emptyAction: {label, onClick} or {label, href}). */
-  function emptyCell(span, text, action) {
+   *  (emptyAction: {label, onClick} or {label, href}). An empty list that is good news ("Nenhum incidente",
+   *  "Todos em dia") or that fills by itself (measurements) says so with `good` and needs no action. */
+  function emptyCell(span, text, action, good) {
     const btn = !action ? null : action.href
       ? el("a", { href: action.href, class: "button small", text: action.label })
       : el("button", { type: "button", class: "small", text: action.label, onclick: action.onClick });
-    return el("td", { colspan: span, class: "muted empty-state" }, el("span", { text: (text || "Nada para mostrar.") + (btn ? " " : "") }), btn);
+    return el("td", { colspan: span, class: "muted empty-state" + (good && !btn ? " empty-good" : "") },
+      el("span", { text: (text || "Nada para mostrar.") + (btn ? " " : "") }), btn);
   }
 
   const cellText = (v) => (v === null || v === undefined ? "" : typeof v === "object" ? JSON.stringify(v) : String(v));

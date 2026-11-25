@@ -42,7 +42,8 @@ export function audit(d) {
       if (visible(b) && !b.textContent.trim() && !nameOf(b)) add("control-name", b);
     }
     for (const i of root.querySelectorAll("img")) if (visible(i) && !i.hasAttribute("alt")) add("image-alt", i);
-    for (const e of root.querySelectorAll(".empty-state")) {
+    // An empty list that is good news or fills by itself (.empty-good) needs no action (spec 050, D3).
+    for (const e of root.querySelectorAll(".empty-state:not(.empty-good)")) {
       if (visible(e) && !e.querySelector("button, a[href]")) add("empty-without-action", e);
     }
     if (!root.matches(TECH_OK) && TECHNICAL.test(visibleText(root))) add("technical-text", root);

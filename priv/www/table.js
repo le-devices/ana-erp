@@ -232,7 +232,7 @@
       });
       const span = cols.length + (hasBulk ? 1 : 0) + (def.extra ? 1 : 0);
       if (!rows.length) trs.push(el("tr", {}, window.AnaUI && window.AnaUI.emptyCell
-        ? window.AnaUI.emptyCell(span, def.empty, def.emptyAction)
+        ? window.AnaUI.emptyCell(span, def.empty, def.emptyAction, def.emptyGood)
         : el("td", { colspan: span, class: "muted empty-state", text: def.empty || "Nada para mostrar." })));
       else if (!shown.length) trs.push(el("tr", {}, el("td", { colspan: span, class: "muted", text: "Nenhuma linha com essa busca ou filtro." })));
       else if (list.length < shown.length) trs.push(el("tr", {}, el("td", { colspan: span, class: "muted" },
@@ -410,7 +410,7 @@
       extra: extra || undefined,
       onOpen: onOpen ? (i) => onOpen(i) : undefined,
       opens: onOpen ? (i) => !!onOpen(i, true) : undefined,
-      empty: empty && empty.text, emptyAction: empty && empty.action,
+      empty: empty && empty.text, emptyAction: empty && empty.action, emptyGood: empty && empty.good,
     });
   }
 

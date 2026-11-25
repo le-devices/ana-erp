@@ -49,5 +49,7 @@ def main(situation=None):
                      "prometido": o["last_promised"].strftime("%d/%m/%Y") + (" ⚠ vencido" if o["last_promised"] < today else "") if o["last_promised"] else "—",
                      "suprimento": ", ".join(reqs.get(o["id"], []) + wos.get(o["id"], [])) or "—",
                      "_actions": acts, "_open": {"program": "docs.view", "params": {"kind": "order", "key": str(o["number"])}}})
-    ana.table(rows, title="Pedidos com falta" + (f" (os 1000 primeiros de {t['n']})" if t["n"] > len(orders) else ""))
+    ana.table(rows, title="Pedidos com falta" + (f" (os 1000 primeiros de {t['n']})" if t["n"] > len(orders) else ""),
+              empty="Nenhum pedido em aberto com falta de estoque.",
+              empty_action={"label": "Ver a reposição de estoque", "program": "supply.suggest_replenishment"})
     return {"orders": t["n"], "late": late}
