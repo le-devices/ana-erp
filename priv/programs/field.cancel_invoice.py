@@ -1,6 +1,7 @@
 # ana:description Cancela a fatura de uma ordem de serviço avulsa: estorno do lançamento, dos títulos e das cobranças; a OS volta a concluída
 # ana:exposed yes
 # ana:category Logística e campo/Serviços em campo
+# ana:confirm A fatura da OS é estornada: lançamento, títulos e cobranças cancelados, e a OS volta a concluída. As peças usadas continuam consumidas; a fatura pode ser emitida de novo.
 """Spec 038 (RF-038-08). Only for orders invoiced to the customer (orders of projects are invoiced by the
 project: cancel the project invoice instead), while every bill is open and no charge was paid. Parts
 used stay consumed (they were used); the invoice can be issued again."""

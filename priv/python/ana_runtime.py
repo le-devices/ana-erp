@@ -763,9 +763,11 @@ def make_ana_module(channel, output, context):
         output.flush()
         output.emit("log", {"level": str(level), "message": str(message)})
 
-    def table(rows, title=None):
+    def table(rows, title=None, empty=None, empty_action=None):
         """Rows are dicts; the optional key `_actions` holds per-row actions and `_open` the
-        document the row opens when clicked (spec 035: {"program", "params"})."""
+        document the row opens when clicked (spec 035: {"program", "params"}). `empty` is the text shown
+        when there are no rows and `empty_action` ({"label", "program", "params"?}) the routine that fills
+        the table (spec 050, D3: an empty list explains and offers the next step)."""
         output.flush()
         rows = list(rows)
         columns = []
@@ -780,6 +782,10 @@ def make_ana_module(channel, output, context):
         }
         if any(rec.get("_actions") for rec in rows):
             data["row_actions"] = [_actions(rec.get("_actions") or []) for rec in rows]
+        if empty:
+            data["empty"] = str(empty)
+        if empty_action:
+            data["empty_action"] = _actions([{**empty_action, "open": True}])[0]
         if any(rec.get("_open") for rec in rows):
             data["row_open"] = [_actions([{"label": "Abrir", **rec["_open"], "open": True}])[0] if rec.get("_open") else None
                                 for rec in rows]

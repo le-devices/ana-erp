@@ -398,7 +398,7 @@
 
   /** Program output table (columns = names, rows = arrays): `extra(i)` / `onOpen(i)` work with the row index.
    *  `screen` remembers the layout per user (RF-020-17). */
-  function dataTable(columns, rows, title, extra, onOpen, screen) {
+  function dataTable(columns, rows, title, extra, onOpen, screen, empty) {
     // Key of a column = its name (a layout survives a program that reorders columns); repeated or empty
     // names fall back to the position.
     const seen = new Map();
@@ -410,6 +410,7 @@
       extra: extra || undefined,
       onOpen: onOpen ? (i) => onOpen(i) : undefined,
       opens: onOpen ? (i) => !!onOpen(i, true) : undefined,
+      empty: empty && empty.text, emptyAction: empty && empty.action,
     });
   }
 

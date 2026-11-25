@@ -7,3 +7,4 @@
 - [x] T-051-05 Exceções como tarefas com contexto (RF-051-05, D4)
 - [ ] T-051-06 Auditoria de automação por área (RF-051-06, D5)
 - [ ] T-051-04b Sugestões de sequência repetida de rotinas (virar regra) e de correção manual repetida (ajustar política), sobre o agregado da spec 046
+- [ ] T-051-07 Régua de cobrança: lembretes automáticos de títulos a vencer e vencidos por e-mail (spec 044) e portal, com política por cliente (achado da auditoria T-051-06)

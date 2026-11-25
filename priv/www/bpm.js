@@ -245,12 +245,13 @@
     const work = m.nodes.filter((n) => !["start", "end", "annotation"].includes(n.type) && !n.type.startsWith("gw"));
     const nodeRows = work.map((n) => {
       const d = durs[n.id] || {};
-      const dist = el("select", {}, ...[["", "padrão"], ["fixed", "fixa"], ["triangular", "mín/provável/máx"], ["uniform", "entre mín e máx"], ["exponential", "exponencial (média)"], ["empirical", "medida (calibrada)"]]
+      const who = n.name || n.label || n.id;
+      const dist = el("select", { "aria-label": `Distribuição da duração: ${who}` }, ...[["", "padrão"], ["fixed", "fixa"], ["triangular", "mín/provável/máx"], ["uniform", "entre mín e máx"], ["exponential", "exponencial (média)"], ["empirical", "medida (calibrada)"]]
         .map(([v, l]) => el("option", { value: v, text: l })));
       dist.value = d.dist || "";
-      const a = el("input", { type: "text", inputmode: "decimal", value: d.dist === "fixed" ? d.value ?? "" : d.min ?? d.mean ?? "", placeholder: "mín / valor / média" });
-      const b = el("input", { type: "text", inputmode: "decimal", value: d.mode ?? "", placeholder: "provável" });
-      const c = el("input", { type: "text", inputmode: "decimal", value: d.max ?? "", placeholder: "máx" });
+      const a = el("input", { type: "text", inputmode: "decimal", value: d.dist === "fixed" ? d.value ?? "" : d.min ?? d.mean ?? "", placeholder: "mín / valor / média", "aria-label": `Mínimo, valor ou média: ${who}` });
+      const b = el("input", { type: "text", inputmode: "decimal", value: d.mode ?? "", placeholder: "provável", "aria-label": `Provável: ${who}` });
+      const c = el("input", { type: "text", inputmode: "decimal", value: d.max ?? "", placeholder: "máx", "aria-label": `Máximo: ${who}` });
       const auto = el("input", { type: "checkbox" });
       auto.checked = (p0.automate || []).includes(n.id);
       const keep = d.dist === "empirical" ? d.values : null;
@@ -636,8 +637,8 @@
         el("button", { type: "button", class: "quiet small", text: "Comentar", onclick: () => { const c = prompt("Comentário:"); if (c) act("comment", { comment: c }); } })));
   }
   async function tasks() {
-    const q = el("input", { type: "search", placeholder: "Buscar tarefa" });
-    const scope = el("select", {}, ...[["mine", "Minhas e do meu papel/grupo"], ["assigned", "Só as atribuídas a mim"], ["all", "Todas (administrador)"]].map(([v, l]) => el("option", { value: v, text: l })));
+    const q = el("input", { type: "search", placeholder: "Buscar tarefa", "aria-label": "Buscar tarefa" });
+    const scope = el("select", { "aria-label": "Quais tarefas" }, ...[["mine", "Minhas e do meu papel/grupo"], ["assigned", "Só as atribuídas a mim"], ["all", "Todas (administrador)"]].map(([v, l]) => el("option", { value: v, text: l })));
     const list = el("div", { class: "bpm-tasks" });
     let t = null;
     const load = async () => {

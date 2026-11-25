@@ -45,7 +45,9 @@ def main(flow="sales", step=None, condition=None, simulate=False):
         ana.table([{"documento": d["doc_key"], "situação": common.INSTANCE_STATUS.get(d["status"], d["status"]),
                     **{labels.get(k, k): d["facts"].get(k) for k in keys},
                     "_open": {"program": "flows.board", "params": {"flow": flow, "document": d["doc_key"]}}} for d in hits],
-                  title="Documentos que tornariam a etapa automática")
+                  title="Documentos que tornariam a etapa automática",
+                  empty="Nenhum documento recente da esteira atende esta condição.",
+                  empty_action={"label": "Ver a esteira", "program": "flows.board", "params": {"flow": flow}})
         return {"simulated": True, "matches": len(hits), "sample": len(docs), "text": text}
     ana.sql_exec("UPDATE flow.step SET condition = $3::text::jsonb WHERE flow_code = $1 AND seq = $2", flow, step, json.dumps(stored))
     ana.sql_exec("UPDATE flow.definition SET updated_by = $2, updated_at = now() WHERE code = $1", flow, ana.context.user)

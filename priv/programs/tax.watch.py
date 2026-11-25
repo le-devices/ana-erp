@@ -6,6 +6,8 @@ heads the tax area home (tax.overview)."""
 
 from ana_lib.tax import admin
 
+PARAMS = {}
+
 
 def main():
     alerts = admin.alerts()

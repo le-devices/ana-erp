@@ -28,12 +28,15 @@ def main():
                                                      "lookup": {"program": "logistics.lookup", "params": {"kind": "technicians"}}},
                                       "start": {"type": "datetime", "label": "início", "required": True},
                                       "hours": {"type": "decimal", "label": "duração (h)"}}}]} for r in rows],
-              title="Chamados a agendar")
+              title="Chamados a agendar", empty="Nenhum chamado esperando agenda.",
+              empty_action={"label": "Nova OS", "program": "field.open_order"})
     done = ana.sql("SELECT o.number, p.name, o.done_at FROM field.service_order o JOIN base.party p ON p.id = o.customer_id "
                    "WHERE o.status = 'done' ORDER BY o.done_at LIMIT 200")
     ana.table([{"OS": r["number"], "_open": doc_link("service_order", r["number"]), "cliente": r["name"], "concluída": f"{r['done_at']:%d/%m %H:%M}",
                 "_actions": [{"label": "Faturar", "program": "field.invoice_orders", "params": {"orders": [r["number"]]},
-                              "style": "primary"}]} for r in done], title="Concluídas, a faturar")
+                              "style": "primary"}]} for r in done], title="Concluídas, a faturar",
+              empty="Nenhuma OS concluída esperando faturamento.",
+              empty_action={"label": "Agenda da semana", "program": "field.agenda"})
     ana.actions([{"label": "Nova OS", "program": "field.open_order", "open": True},
                  {"label": "Agenda da semana", "program": "field.agenda", "open": True},
                  {"label": "Indicadores de SLA", "program": "field.sla_report", "open": True}], title="Outras tarefas")

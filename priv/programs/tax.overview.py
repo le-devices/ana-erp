@@ -8,6 +8,8 @@ from ana_lib.tax import admin
 
 ME = "tax.overview"
 
+PARAMS = {}
+
 
 def main():
     alerts = admin.alerts()

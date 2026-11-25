@@ -63,7 +63,8 @@ def main(week=None):
                 {"label": "Projeto", "program": "projects.workspace", "open": True,
                  "params": {"project": r["project"], "view": "activity", "activity": r["code"]}},
             ]})
-    ana.table(out, title="Minhas atividades")
+    ana.table(out, title="Minhas atividades", empty="Nenhuma atividade sua em aberto nesta semana.",
+              empty_action={"label": "Apontar horas", "program": "projects.log_time"})
     if not out:
         ana.log("nenhuma atividade alocada a você nesta semana", "info")
     return {"week": w, "capacity": cap, "allocated": total_alloc, "logged": total_logged, "activities": rows}

@@ -5,6 +5,8 @@
 
 from ana_lib.tax import admin, engine
 
+PARAMS = {}
+
 
 def main():
     data = engine.load()

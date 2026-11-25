@@ -168,7 +168,7 @@
     const box = el("div", {}, el("div", { class: "muted", text: "Chaves de API" }));
     const list = el("div");
     const name = el("input", { "aria-label": "nome (ex.: integração loja)", placeholder: "nome (ex.: integração loja)" });
-    const days = el("input", { type: "number", min: 1, placeholder: "validade em dias (vazio = sem)" });
+    const days = el("input", { type: "number", min: 1, placeholder: "validade em dias (vazio = sem)", "aria-label": "Validade em dias (vazio = sem validade)" });
     const ips = el("input", { "aria-label": "IPs/redes permitidos, separados por vírgula (vazio = qualquer)", placeholder: "IPs/redes permitidos, separados por vírgula (vazio = qualquer)" });
     const out = el("div");
     async function load() {
@@ -306,7 +306,7 @@
         { label: "Faixa", value: (s) => `${s.min} – ${s.max}`, class: "num" },
         { label: "Padrão", value: (s) => s.default, class: "num" },
         { label: "Valor", value: (s) => {
-            const input = el("input", { type: "number", min: s.min, max: s.max, value: s.value });
+            const input = el("input", { type: "number", min: s.min, max: s.max, value: s.value, "aria-label": s.description || s.key });
             const btn = el("button", { text: "Salvar", onclick: () => guard(async () => {
               await API.admin.saveSetting(s.key, Number(input.value));
               toast(`${s.key} = ${input.value}`);
@@ -488,14 +488,14 @@
     const target = el("input", { "aria-label": "user | developer | admin | nome do grupo", placeholder: "user | developer | admin | nome do grupo", list: "limit-targets" });
     const targets = el("datalist", { id: "limit-targets" },
       ["user", "developer", "admin", ...groupsList.map((g) => g.name)].map((t) => el("option", { value: t })));
-    const inputs = Object.fromEntries(LIMIT_KEYS.map((k) => [k, el("input", { type: "number", min: 0, placeholder: k })]));
+    const inputs = Object.fromEntries(LIMIT_KEYS.map((k) => [k, el("input", { type: "number", min: 0, placeholder: k, "aria-label": k })]));
     const fill = (p) => {
       kind.value = p.target_kind; target.value = p.target;
       for (const k of LIMIT_KEYS) inputs[k].value = p.limits[k] ?? "";
     };
     const quotaUser = el("input", { "aria-label": "login", placeholder: "login" });
-    const quotaMax = el("input", { type: "number", min: 0, placeholder: "simultâneas" });
-    const quotaRate = el("input", { type: "number", min: 0, placeholder: "por minuto" });
+    const quotaMax = el("input", { type: "number", min: 0, placeholder: "simultâneas", "aria-label": "simultâneas" });
+    const quotaRate = el("input", { type: "number", min: 0, placeholder: "por minuto", "aria-label": "por minuto" });
 
     main().replaceChildren(
       ...header("Limites e cotas", "Perfis de limite por papel e por grupo (grupos concedem; nunca acima do teto) e cota de um usuário. Tetos e padrões ficam em Sistema → Parâmetros; a cota também pode ser ajustada na ficha do usuário."),
@@ -508,7 +508,8 @@
               await API.admin.deleteLimitProfile(p.target_kind, p.target);
               await limits();
             }) })) },
-        ], profiles, { onRow: fill, empty: "Nenhum perfil: valem os padrões e tetos globais." })),
+        ], profiles, { onRow: fill, empty: "Nenhum perfil: valem os padrões e tetos globais.",
+                       emptyAction: { label: "Criar um perfil", onClick: () => target.focus() } })),
         el("form", { class: "form-card", onsubmit: async (e) => {
           e.preventDefault();
           const body = {};
@@ -588,7 +589,7 @@
             toast("Execução parada.");
             await monitor();
           }) })) },
-      ], m.running, { empty: "Nenhuma execução em andamento." }));
+      ], m.running, { empty: "Nenhuma execução em andamento.", emptyAction: { label: "Ver as execuções recentes", href: "#/admin/audit" } }));
     clearTimeout(monitorTimer);
     monitorTimer = setTimeout(() => { if (current === "monitor" && !$("#area-admin").hidden) guard(monitor); }, 5000);
   }
@@ -752,7 +753,7 @@
     const meta = Object.fromEntries(settingsList.map((s) => [s.key, s]));
     const dayInput = (c) => {
       const s = meta[c.setting] || {};
-      const i = el("input", { type: "number", min: s.min ?? 1, max: s.max ?? 36500, value: c.days, class: "num-input" });
+      const i = el("input", { type: "number", min: s.min ?? 1, max: s.max ?? 36500, value: c.days, class: "num-input", "aria-label": `Dias de retenção: ${c.label}` });
       i.addEventListener("change", () => guard(async () => {
         await API.admin.saveSetting(c.setting, parseInt(i.value, 10));
         toast(`Prazo de "${c.label}" alterado para ${i.value} dias.`);
@@ -910,7 +911,7 @@
     };
     fill(null);
 
-    const silRule = el("select", {}, opt("", "todas as regras"), a.rules.map((r) => opt(r.id, r.name)));
+    const silRule = el("select", { "aria-label": "Regra a silenciar" }, opt("", "todas as regras"), a.rules.map((r) => opt(r.id, r.name)));
     const silTarget = el("input", { "aria-label": "alvo (vazio = todos)", placeholder: "alvo (vazio = todos)", list: "alert-targets" });
     const silTargets = el("datalist", { id: "alert-targets" }, [...a.components, ...a.metrics].map((t) => opt(t, COMPONENT[t] || METRIC[t] || t)));
     const silNode = el("input", { "aria-label": "nó (vazio = todos)", placeholder: "nó (vazio = todos)" });
@@ -976,7 +977,7 @@
             await API.admin.endSilence(x.id);
             await alerts();
           }) })) : pill("encerrado") },
-      ], a.silences, { empty: "Nenhum silêncio nos últimos 7 dias." }));
+      ], a.silences, { empty: "Nenhum silêncio nos últimos 7 dias.", emptyAction: { label: "Silenciar uma regra", onClick: () => silRule.focus() } }));
   }
 
   // Spec 062 (D6): a read-only look inside the running core.
@@ -1122,7 +1123,7 @@
     const rows = await API.admin.obsSql(filters);
     const detail = el("div");
     const program = el("input", { "aria-label": "Programa (opcional)", placeholder: "Programa (opcional)", value: filters.program || "" });
-    const order = el("select", {}, [["total", "Tempo total"], ["mean", "Tempo médio"], ["max", "Tempo máximo"], ["calls", "Chamadas"]]
+    const order = el("select", { "aria-label": "Ordenar por" }, [["total", "Tempo total"], ["mean", "Tempo médio"], ["max", "Tempo máximo"], ["calls", "Chamadas"]]
       .map(([v, l]) => el("option", { value: v, text: "Ordenar por " + l.toLowerCase() })));
     order.value = filters.order || "total";
     const apply = () => sqlperf({ program: program.value.trim(), order: order.value });
@@ -1909,9 +1910,9 @@
   // ------------------------------------------------------------------ extension points (spec 009, D9)
   async function extensions() {
     const r = await API.admin.extensions();
-    const point = el("select", {}, r.points.map((p) => el("option", { value: p.point, text: `${p.label} — ${p.point}` })));
+    const point = el("select", { "aria-label": "Ponto de extensão" }, r.points.map((p) => el("option", { value: p.point, text: `${p.label} — ${p.point}` })));
     const program = el("input", { "aria-label": "ex.: cli.validar_faturamento", placeholder: "ex.: cli.validar_faturamento" });
-    const position = el("input", { type: "number", value: 100, min: 1 });
+    const position = el("input", { type: "number", value: 100, min: 1, "aria-label": "Ordem" });
     const byPoint = Object.fromEntries(r.points.map((p) => [p.point, p]));
     main().replaceChildren(
       ...header("Extensões", "Regras da sua empresa nos programas do produto, sem copiá-los: um programa seu roda no ponto escolhido, na mesma transação. Os de \"antes\" podem recusar (com ana.Error) ou ajustar os campos permitidos; os de \"depois\" recebem o resultado. O programa recebe main(point, data)."),
@@ -1924,7 +1925,8 @@
           if (!confirm(`Desligar ${x.program} de ${x.point}?`)) return;
           await API.admin.deleteExtension(x.id); toast("Extensão removida."); extensions();
         }) }) },
-      ], r.extensions, { empty: "Nenhuma extensão: os programas do produto rodam como vieram." }),
+      ], r.extensions, { empty: "Nenhuma extensão: os programas do produto rodam como vieram.",
+                        emptyAction: { label: "Ligar um programa seu", onClick: () => program.focus() } }),
       el("form", { class: "form-card", onsubmit: (e) => { e.preventDefault(); guard(async () => {
         await API.admin.saveExtension({ point: point.value, program: program.value.trim(), position: Number(position.value) || 100 });
         toast("Extensão registrada."); extensions();

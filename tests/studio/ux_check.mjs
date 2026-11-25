@@ -66,11 +66,11 @@ function visibleText(root) {
 
 /** Collects violations per screen and judges them against the baseline at the end. */
 export class Verifier {
-  constructor() {
+  constructor({ baseline = true } = {}) {
     this.seen = new Map();          // key "screen|rule|element" → true
     this.screens = new Set();
     let base = [];
-    try { base = JSON.parse(fs.readFileSync(BASELINE, "utf8")); } catch (_) { /* no baseline yet */ }
+    if (baseline) try { base = JSON.parse(fs.readFileSync(BASELINE, "utf8")); } catch (_) { /* no baseline yet */ }
     this.baseline = new Set(base);
   }
   check(d, screen) {
