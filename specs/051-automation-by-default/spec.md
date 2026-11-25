@@ -1,6 +1,6 @@
 # 051 — Automação por padrão
 
-Situação: implementada (nov/2026), menos a auditoria por área (T-051-06, junto com a 050 fase 3) e as sugestões de sequência e de correção repetida (T-051-04b, sobre a spec 046): regras "quando… então…" ensaiadas antes de ligar e nunca em laço, central de automações, toda rotina automatizável, sugestões de agendar e de variante a partir do uso, exceções de esteira como tarefas que se concluem sozinhas.
+Situação: implementada (nov/2026), com a auditoria por área (T-051-06: rotinas do produto desligadas sugeridas ao administrador quando executadas à mão; planejamento de necessidades como rotina do produto; relatório em specs/050-premium-experience/audit.md), menos a régua de cobrança (T-051-07) e as sugestões de sequência e de correção repetida (T-051-04b, sobre a spec 046): regras "quando… então…" ensaiadas antes de ligar e nunca em laço, central de automações, toda rotina automatizável, sugestões de agendar e de variante a partir do uso, exceções de esteira como tarefas que se concluem sozinhas.
 
 ## Problema
 O ANA já automatiza muito: esteiras (spec 030), BPM (spec 039), agendamento

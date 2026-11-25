@@ -13,14 +13,14 @@ Fase 2 — recursos transversais
 - [x] T-050-08 Código de barras e QR pela câmera (RF-050-08)
 
 Fase 3 — auditoria de todas as áreas (D8, RF-050-09, CA-050-05)
-- [ ] T-050-09 Vendas, atendimento do pedido, crédito e documentos
-- [ ] T-050-10 Compras, estoque, logística e campo
-- [ ] T-050-11 Produção, projetos e consultoria
-- [ ] T-050-12 Financeiro, contabilidade, conciliações e fechamento
-- [ ] T-050-13 Cadastros, arquivos, portal do cliente
-- [ ] T-050-14 Processos (BPM), esteiras, agendamento
-- [ ] T-050-15 Administração, observabilidade, integrações, API pública
-- [ ] T-050-16 Desenvolvimento (editor, depurador, transporte)
+- [x] T-050-09 Vendas, atendimento do pedido, crédito e documentos
+- [x] T-050-10 Compras, estoque, logística e campo
+- [x] T-050-11 Produção, projetos e consultoria
+- [x] T-050-12 Financeiro, contabilidade, conciliações e fechamento
+- [x] T-050-13 Cadastros, arquivos, portal do cliente
+- [x] T-050-14 Processos (BPM), esteiras, agendamento
+- [x] T-050-15 Administração, observabilidade, integrações, API pública
+- [x] T-050-16 Desenvolvimento (editor, depurador, transporte)
 
 Depois da fase 3 — o que a auditoria mediu e ficou pendente (audit.md)
 - [ ] T-050-17 Próximo passo (D3) nas 108 rotinas que gravam listadas em `tests/runtime/next_step_pending.txt`, por área na ordem do processo (Logística e campo, Projetos, Processos, Financeiro…)
