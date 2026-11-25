@@ -68,9 +68,12 @@ Tarefas adiadas já concluídas (ordem acordada em out/2026): T-017-05b ✓, T-0
 17. ✓ 051 — automação por padrão (`specs/051-automation-by-default`); T-051-06 vai com a 050 fase 3; T-051-04b (sequência e correção repetidas) depende da spec 046
 18. 050 fase 3 — auditoria de experiência de todas as áreas (T-050-09..16), junto com a auditoria de automação (T-051-06)
 18a. 068 — mudanças vigiadas: gatilho "alterado" em cadastros e documentos, com custo de escrita, desempenho e segurança medidos (`specs/068-change-watch`; plan.md primeiro, com as medições)
+18b. 069 — cenários "e se…": projeção base e cenários em cascata (`specs/069-what-if-scenarios`)
 19. 062 fase 3 — revisão de todos os subsistemas já implementados com o critério P20 (T-062-10..13)
 20. 063 fase 2 — revisão de escrita desnecessária em todas as funcionalidades já implementadas (T-063-06..08)
 21. 049 fase 2 — ICMS (ST, DIFAL, FCP), IPI, PIS/COFINS, Simples (T-049-08)
+21a. 070 — legislação vigiada (`specs/070-legislation-watch`), depois da 049 fase 2
+21b. 071 — fornecedores certificados (fase 1) e carbono (fase 2) (`specs/071-carbon-and-certifications`)
 22. 061 — implantação guiada (`specs/061-guided-onboarding`)
 23. 053 — regressão automática dos processos do cliente (`specs/053-customer-regression`)
 24. 055 — fechamento contínuo (`specs/055-continuous-close`)
