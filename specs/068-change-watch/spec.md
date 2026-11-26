@@ -1,6 +1,6 @@
 # 068 — Mudanças vigiadas: qualquer alteração vira evento, sem custo quando ninguém vigia
 
-Situação: especificada (nov/2026).
+Situação: especificada (nov/2026); plano com medições (plan.md, 26/11/2026).
 
 ## Problema
 As regras "quando… então…" da spec 051 só reagem a um documento **criado** ou
