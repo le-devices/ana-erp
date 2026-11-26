@@ -1,4 +1,6 @@
 #!/bin/bash
+# SPDX-FileCopyrightText: 2026 André Luis Pereira dos Santos
+# SPDX-License-Identifier: AGPL-3.0-or-later
 # Spec 068 plan.md measurements on the dev database (container capped). Steady state: no CHECKPOINT between runs,
 # the first run of each case is a warm-up and is discarded; cases are interleaved so drift hits all of them.
 set -e

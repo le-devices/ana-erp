@@ -1,3 +1,5 @@
+-- SPDX-FileCopyrightText: 2026 André Luis Pereira dos Santos
+-- SPDX-License-Identifier: AGPL-3.0-or-later
 CREATE OR REPLACE FUNCTION bench068.stmt_bulk2() RETURNS trigger LANGUAGE plpgsql AS $$
 BEGIN
     IF NOT EXISTS (SELECT 1 FROM bench068.rule r WHERE r.active AND r.entity = 'doc') THEN RETURN NULL; END IF;

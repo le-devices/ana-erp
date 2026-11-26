@@ -125,10 +125,10 @@ São ≈ 95 B por evento no `DELETE` mais o `VACUUM`, contra ≈ 0 na partição
 - No armazenamento, cada **comando** grava uma linha: três `UPDATE` do mesmo pedido na mesma transação gravam
   três linhas, +642 B. O upsert gravaria uma, +535 B, mas faria de cada comando de uma transação longa uma
   regravação da linha que cresce. A diferença medida é de 107 B por transação com três comandos.
-- Proposta para o texto do RNF-068-01, a decidir com o dono do produto: "no máximo uma linha de evento por
+- Aprovado pelo dono do produto (26/11/2026), já no texto do RNF-068-01: "no máximo uma linha de evento por
   **comando**; um disparo por documento e por transação".
 
-## 3. Onde o alvo não foi atingido (para decidir)
+## 3. Onde o alvo não foi atingido (decidido)
 
 **RNF-068-02 / CA-068-09, "com regra ativa, no máximo 15% mais lento".** Pior caso: todas as 10 mil linhas
 mudam o campo vigiado.
@@ -145,7 +145,8 @@ O que fazer:
    - ou aceitar a forma por linha com `WHEN`, que custa +2% quando o campo vigiado não muda, mas +94% quando
      muda.
 
-A recomendação é a primeira saída.
+A recomendação é a primeira saída. **Aprovada pelo dono do produto (26/11/2026):** 15% no caso realista e 40% no
+pior caso, já no texto do RNF-068-02 e do CA-068-09.
 
 ## 4. Lacunas do modelo de dados encontradas
 - **Conta bancária do fornecedor (CA-068-01):**
@@ -208,3 +209,35 @@ Entradas novas, medidas por `TestDiskEndurance`:
 7. T-068-10 telas, T-068-11 sugestão e T-068-12 uso simulado.
 
 Migração prevista: `078_change_watch.sql`.
+
+## 9. Feito: catálogo (T-068-01) e conta bancária do fornecedor (T-068-13)
+
+Migração `078_change_watch.sql`, sem nenhum gatilho novo de vigilância.
+
+**Catálogo** (`automation.watch_entity` e `automation.watch_field`, lidos pela visão `automation.watchable`):
+- 16 entidades vigiáveis, 11 cadastros e 5 documentos, com 157 campos;
+- os campos de item (pedido, solicitação, agenda da OS) levam a coluna de ligação ao documento;
+- 3 entidades de muito movimento ficam só para explicar a alternativa (D7).
+
+**O banco recusa**, por gatilho, quem quer que escreva:
+- esquema fora dos de negócio, tabela ou coluna inexistente, coluna com nome de segredo;
+- campo de cadastro numa tabela que não grava o histórico daquela entidade;
+- campo em entidade de muito movimento.
+
+O papel dos programas (`ana_exec`) só lê o catálogo.
+
+**Extensão pelo cliente.** O produto não deixa o cliente criar tabelas: os dados da empresa são os campos próprios
+dos cadastros (`master.custom_field`). Eles entram no catálogo sozinhos, pela visão, com a classificação escolhida
+junto com o campo (comum, pessoal ou sigiloso). Ninguém precisa listá-los, e o portão da spec 064 continua valendo
+para os programas que os usam.
+
+**Classificação (D10):**
+- sigiloso: dados bancários, custos e limite de crédito;
+- pessoal: nome, documento, contato e localização de pessoas (LGPD).
+
+**Conta bancária do fornecedor:**
+- tabela `base.party_bank`, com formato conferido no banco;
+- histórico com agência, conta e chave PIX mascaradas, inclusive para o administrador;
+- aba "Dados bancários" na ficha;
+- permissão por aba (`edit: admin`): só o administrador altera, os demais veem mascarado e só para leitura;
+- programa `base.save_party_bank`.

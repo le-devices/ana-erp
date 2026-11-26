@@ -1,3 +1,5 @@
+-- SPDX-FileCopyrightText: 2026 André Luis Pereira dos Santos
+-- SPDX-License-Identifier: AGPL-3.0-or-later
 -- Spec 068 plan.md measurements. Scratch schema, dropped at the end.
 DROP SCHEMA IF EXISTS bench068 CASCADE;
 CREATE SCHEMA bench068;

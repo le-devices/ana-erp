@@ -9941,3 +9941,136 @@ class TestAutomation(Base):
             for st in saved["steps"]:
                 if st["mode"] != "wait":
                     self.must("flows.configure", flow="production", action="mode", step=st["seq"], mode=st["mode"])
+
+
+class TestChangeWatch(Base):
+    """Spec 068 (change watch): the catalog of what may be watched (T-068-01) and the supplier's bank account
+    (T-068-13)."""
+
+    def ok(self, program, client=None, **params):
+        return (client or self.client).call(program, **params)
+
+    def err(self, program, client=None, **params):
+        with self.assertRaises(AnaRemoteError) as ctx:
+            (client or self.client).call(program, **params)
+        return ctx.exception
+
+    def setUp(self):
+        if not psql_available():
+            self.skipTest("psql no contêiner indisponível")
+
+    def refused(self, sql):
+        with self.assertRaises(RuntimeError) as ctx:
+            psql(sql)
+        return str(ctx.exception)
+
+    def test_rf_068_02_the_catalog_has_only_business_fields_with_their_classification(self):
+        rows = [r.split("|") for r in psql("SELECT entity, source, table_name, field, classification FROM automation.watchable "
+                                           "WHERE NOT custom").splitlines()]
+        self.assertGreater(len(rows), 100)
+        allowed = {"base", "finance", "inventory", "sales", "supply", "production", "logistics", "field", "projects"}
+        self.assertEqual(sorted({t for _, _, t, _, _ in rows if t.split(".")[0] not in allowed}), [])
+        cls = {(e, t, f): c for e, _, t, f, c in rows}
+        # D10: bank data, costs and the credit limit never leave the ERP; contacts of people are personal (LGPD).
+        for key in [("party", "base.party_bank", "account"), ("party", "base.party_bank", "pix_key"),
+                    ("party", "finance.credit_profile", "credit_limit"), ("employee", "projects.employee", "hourly_cost"),
+                    ("product", "production.item_plan", "standard_cost"), ("resource", "production.resource", "cost_per_hour")]:
+            self.assertEqual(cls.get(key), "secret", key)
+        for key in [("party", "base.party", "email"), ("party", "base.party", "tax_id"), ("party", "base.party", "address"),
+                    ("employee", "projects.employee", "tax_id")]:
+            self.assertEqual(cls.get(key), "personal", key)
+        # Every field a master sheet shows is in the catalog, and what the sheet hides is secret there too.
+        d = self.ok("master.describe")["entities"]
+        logged = set(psql("SELECT DISTINCT table_name FROM automation.watch_field").splitlines())
+        ents = {r.split("|")[0]: r.split("|")[1] for r in psql("SELECT entity, table_name FROM automation.watch_entity "
+                                                              "WHERE source = 'master'").splitlines()}
+        for e in d:
+            if e["name"] not in ents:
+                continue
+            for f in e["fields"]:
+                if f["name"] == e["key"] or f.get("readonly") or f.get("custom"):
+                    continue
+                self.assertIn((e["name"], ents[e["name"]], f["name"]), cls, f"{e['name']}.{f['name']} fora do catálogo")
+        self.assertIn("base.party_bank", logged)
+        # D7: what moves too much is in the catalog only to explain the alternative.
+        high = psql("SELECT string_agg(entity, ',' ORDER BY entity) FROM automation.watch_entity WHERE volume = 'high'")
+        self.assertEqual(high, "journal_entry,stock_movement,time_entry")
+        self.assertEqual(psql("SELECT count(*) FROM automation.watch_field f JOIN automation.watch_entity e USING (entity) "
+                              "WHERE e.volume = 'high'"), "0")
+
+    def test_ca_068_08_the_database_refuses_internal_tables_and_fields_outside_the_catalog(self):
+        ins = ("INSERT INTO automation.watch_field (entity, table_name, column_name, label, type) "
+               "VALUES ('party', '{t}', '{c}', 'Teste', 'text')")
+        self.assertIn("não pode ser vigiada", self.refused(ins.format(t="ana_system.app_user", c="password_hash")))
+        self.assertIn("não pode ser vigiada", self.refused(ins.format(t="master.change_log", c="changes")))
+        self.assertIn("não pode ser vigiada", self.refused(ins.format(t="automation.rule", c="active")))
+        self.assertIn("não pode ser vigiada", self.refused(ins.format(t="integration.connector", c="base_url")))
+        self.assertIn("não existe", self.refused(ins.format(t="base.party", c="no_such_column")))
+        self.assertIn("não existe", self.refused(ins.format(t="base.no_such_table", c="id")))
+        # A master field must come from a table that writes the entity's history.
+        self.assertIn("não grava o histórico", self.refused(ins.format(t="sales.sales_order", c="total")))
+        self.assertIn("muito movimento", self.refused(
+            "INSERT INTO automation.watch_field (entity, table_name, column_name, label, type) "
+            "VALUES ('stock_movement', 'inventory.stock_movement', 'quantity', 'Quantidade', 'number')"))
+        self.assertIn("não pode ser vigiada", self.refused(
+            "INSERT INTO automation.watch_entity (entity, label, source, table_name, key_column, id_column) "
+            "VALUES ('usuarios', 'Usuários', 'master', 'ana_system.app_user', 'username', 'username')"))
+        # Nobody but the product writes the catalog: the role of the programs only reads it.
+        s, c, _ = http("POST", "/api/sql", {"sql": "SELECT has_table_privilege('ana_exec', 'automation.watch_field', 'INSERT')"},
+                       self.token)
+        self.assertEqual(s, 200, c)
+        self.assertFalse(c["rows"][0][0])
+
+    def test_rf_068_02_the_companys_own_fields_are_watchable_with_their_classification(self):
+        name = f"cw{SUFFIX}"
+        self.ok("master.settings", entity="party",
+                field={"name": name, "label": f"Código interno {SUFFIX}", "type": "text", "classification": "personal"})
+        try:
+            got = psql(f"SELECT label || '|' || classification || '|' || type FROM automation.watchable "
+                       f"WHERE entity = 'party' AND field = 'custom.{name}'")
+            self.assertEqual(got, f"Código interno {SUFFIX}|personal|text")
+            e = self.err("master.settings", entity="party", field={"name": name, "label": "x", "classification": "public"})
+            self.assertEqual(e.code, "INVALID_PARAMETER")
+        finally:
+            self.ok("master.settings", entity="party", field={"name": name, "label": f"Código interno {SUFFIX}", "active": False})
+        self.assertEqual(psql(f"SELECT count(*) FROM automation.watchable WHERE field = 'custom.{name}'"), "0")
+
+    def test_t_068_13_supplier_bank_account_secret_in_the_sheet_and_in_the_history(self):
+        sup = self.ok("master.save", entity="party", values={"name": f"Fornecedor Banco {SUFFIX}", "kind": "supplier"},
+                      confirm_duplicate=True, reason="teste automatizado")
+        key = str(sup["id"])
+        rec = self.ok("master.save", entity="party", key=key, version=sup["version"],
+                      tabs={"Dados bancários": [{"bank": "341", "branch": "1234", "account": "56789-0", "kind": "checking",
+                                                 "pix_key": f"pix{SUFFIX}@exemplo.com.br", "main": True}]})
+        self.assertEqual(rec["tabs"]["Dados bancários"][0]["account"], "56789-0")      # the administrator sees it
+        self.assertEqual(psql(f"SELECT account FROM base.party_bank WHERE party_id = {key}"), "56789-0")
+        # The history records the change, never the value — not even for an administrator.
+        hist = [h for h in self.ok("master.history", entity="party", key=key)["changes"]
+                if h["field"] in ("Dados bancários: Conta", "Dados bancários: Chave PIX")]
+        self.assertTrue(hist)
+        self.assertTrue(all(h["before"] in ("***", None) and h["after"] in ("***", None) for h in hist), hist)
+        self.assertNotIn("56789", psql(f"SELECT string_agg(changes::text, ' ') FROM master.change_log "
+                                       f"WHERE entity = 'party' AND row_key = '{key}'"))
+        # Another user sees the tab masked and cannot change it, by the sheet or by the writer.
+        _, t = new_user("user")
+        user = Ana(URL, token=t)
+        tab = next(x for x in next(e for e in self.ok("master.describe", user)["entities"] if e["name"] == "party")["tabs"]
+                   if x["label"] == "Dados bancários")
+        self.assertFalse(tab["can_edit"])
+        got = self.ok("master.get", user, entity="party", key=key)
+        self.assertEqual(got["tabs"]["Dados bancários"][0]["account"], "***")
+        self.assertEqual(got["tabs"]["Dados bancários"][0]["bank"], "341")
+        e = self.err("master.save", user, entity="party", key=key, version=got["version"],
+                     tabs={"Dados bancários": [{"bank": "001", "branch": "1", "account": "1-1"}]})
+        self.assertEqual(e.code, "FORBIDDEN")
+        e = self.err("base.save_party_bank", user, party=sup["id"], bank="001", branch="1", account="1-1")
+        self.assertEqual(e.code, "FORBIDDEN")
+        # The database checks the format, whoever writes.
+        e = self.err("base.save_party_bank", party=sup["id"], bank="12", branch="1", account="1-1")
+        self.assertEqual(e.code, "INVALID_VALUE")
+        self.assertIn("check", self.refused(f"INSERT INTO base.party_bank (party_id, bank, branch, account) "
+                                            f"VALUES ({key}, 'abc', '1', '1')").lower())
+        # Removing the line from the sheet removes the account.
+        rec = self.ok("master.get", entity="party", key=key)
+        self.ok("master.save", entity="party", key=key, version=rec["version"], tabs={"Dados bancários": []})
+        self.assertEqual(psql(f"SELECT count(*) FROM base.party_bank WHERE party_id = {key}"), "0")

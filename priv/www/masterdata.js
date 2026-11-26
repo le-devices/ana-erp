@@ -301,6 +301,8 @@
 
     const tabState = {};
     for (const t of e.tabs) {
+      // A tab may ask for more than the record (spec 068: bank data only by an administrator).
+      const tabEditable = editable && t.can_edit !== false;
       const data = rec ? rec.tabs[t.label] : (t.kind === "rows" ? [] : {});
       if (t.kind === "view") {
         if (!existing) continue;
@@ -316,7 +318,7 @@
         tabs.push({ label: t.label, node });
       } else if (t.kind === "one") {
         const grid = el("div", { class: "form-grid md-grid" });
-        const tb = t.fields.map((f) => fieldBox(f, data ? data[f.name] : f.default ?? null, { existing, readonly: !editable, entity: e.name }));
+        const tb = t.fields.map((f) => fieldBox(f, data ? data[f.name] : f.default ?? null, { existing, readonly: !tabEditable, entity: e.name }));
         tb.forEach((b) => grid.append(b.node));
         tabState[t.label] = { kind: "one", boxes: tb, original: null };
         tabs.push({ label: t.label, node: grid });
@@ -324,9 +326,9 @@
         const st = { kind: "rows", t, rows: [], original: null };
         const body = el("tbody");
         const addRow = (values) => {
-          const rb = t.fields.map((f) => fieldBox(f, values ? values[f.name] : f.default ?? null, { existing: false, readonly: !editable, entity: e.name }));
+          const rb = t.fields.map((f) => fieldBox(f, values ? values[f.name] : f.default ?? null, { existing: false, readonly: !tabEditable, entity: e.name }));
           const tr = el("tr", {}, ...rb.map((b) => el("td", {}, b.node)),
-            editable ? el("td", {}, el("button", { type: "button", class: "quiet small", text: "Remover", title: "Remover a linha",
+            tabEditable ? el("td", {}, el("button", { type: "button", class: "quiet small", text: "Remover", title: "Remover a linha",
               onclick: () => { st.rows = st.rows.filter((x) => x.tr !== tr); tr.remove(); markDirty(); } })) : null);
           for (const b of rb) if (b.ctl.input) b.ctl.input.addEventListener("input", markDirty);
           st.rows.push({ tr, boxes: rb });
@@ -336,8 +338,8 @@
         tabState[t.label] = st;
         tabs.push({ label: t.label, node: el("div", {},
           el("div", { class: "table-box" }, el("table", { class: "data-table md-rows" },
-            el("thead", {}, el("tr", {}, ...t.fields.map((f) => el("th", { text: f.label + (f.required ? " *" : "") })), editable ? el("th") : null)), body)),
-          editable ? el("button", { type: "button", class: "quiet", text: "Adicionar linha", onclick: () => { addRow(null); markDirty(); } }) : null) });
+            el("thead", {}, el("tr", {}, ...t.fields.map((f) => el("th", { text: f.label + (f.required ? " *" : "") })), tabEditable ? el("th") : null)), body)),
+          tabEditable ? el("button", { type: "button", class: "quiet", text: "Adicionar linha", onclick: () => { addRow(null); markDirty(); } }) : null) });
       }
     }
     if (existing) {

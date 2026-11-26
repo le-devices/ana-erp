@@ -71,6 +71,11 @@ def can(d, action):
     return ROLE_RANK.get(role(), 0) >= ROLE_RANK.get(need, 2)
 
 
+def can_edit_tab(d, t):
+    """A tab may ask for more than the entity (spec 068, T-068-13: bank data is changed only by an administrator)."""
+    return can(d, "edit") and ROLE_RANK.get(role(), 0) >= ROLE_RANK.get(t.get("edit", "user"), 2)
+
+
 def require(d, action):
     if not can(d, action):
         raise ana.Error("FORBIDDEN", f"sem permissão para {ACTIONS.get(action, action)} {d['plural'].lower()}")
@@ -113,7 +118,8 @@ def describe(name=None):
             continue
         out.append({"name": n, "label": d["label"], "plural": d["plural"], "group": d["group"], "key": d["key"],
                     "fields": [public_field(f) for f in d["fields"]],
-                    "tabs": [{"label": t["label"], "kind": t["kind"], "fields": [public_field(f) for f in t.get("fields", [])]}
+                    "tabs": [{"label": t["label"], "kind": t["kind"], "fields": [public_field(f) for f in t.get("fields", [])],
+                              "can_edit": t["kind"] != "view" and can_edit_tab(d, t)}
                              for t in d["tabs"]],
                     "can_edit": can(d, "edit"), "can_approve": can(d, "approve"), "approval": bool(policies.get(n)),
                     "quality": [q["label"] for q in d.get("quality", [])],
@@ -499,6 +505,8 @@ def save(name, key=None, values=None, tabs=None, version=None, confirm_duplicate
     for t in d["tabs"]:
         if t["kind"] == "view" or t["label"] not in tabs:
             continue
+        if not can_edit_tab(d, t):
+            raise ana.Error("FORBIDDEN", f"sem permissão para alterar {t['label'].lower()}")
         given = tabs[t["label"]]
         if t["kind"] == "one":
             tab_data[t["label"]] = validate_tab(t, [given or {}], errors)[0]

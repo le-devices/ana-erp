@@ -165,15 +165,18 @@ Três riscos precisam ser controlados desde o desenho:
     e em documentos;
   - cadastro vigiado: zero bytes a mais por alteração (só o avanço do
     ponto processado, por lote);
-  - documento vigiado: no máximo uma linha de evento por documento e por
-    transação, com o orçamento medido no plan.md;
+  - documento vigiado: no máximo uma linha de evento por **comando** (a
+    lista dos documentos alterados vai nela) e um **disparo** por documento
+    e por transação, com o orçamento medido no plan.md;
   - sistema ocioso com regras ativas: nada além do orçamento de ocioso
     da spec 063.
 - **RNF-068-02 (desempenho).** Medidos na bateria:
   - uma atualização em lote de 10 mil linhas numa tabela do catálogo, sem
     regra ativa, fica no máximo 3% mais lenta que sem a funcionalidade;
-  - com uma regra ativa sobre um campo que muda, fica no máximo 15% mais
-    lenta;
+  - com uma regra ativa sobre um campo vigiado, fica no máximo 15% mais
+    lenta no caso realista (só parte das linhas muda o campo vigiado, como
+    no CA-068-05) e no máximo 40% no pior caso (todas as linhas mudam o
+    campo vigiado), medidos na bateria (plan.md, seção 3);
   - um evento vira disparo em até 2 segundos no p95, com o sistema em carga
     normal;
   - ligar ou desligar uma regra nunca espera mais que um instante por
@@ -224,7 +227,9 @@ Três riscos precisam ser controlados desde o desenho:
 - **CA-068-08** Tentar vigiar uma tabela interna ou um campo fora do
   catálogo é recusado pelo banco mesmo por chamada direta à API.
 - **CA-068-09** Uma atualização em lote de 10 mil linhas sem regra ativa
-  fica dentro dos 3% de RNF-068-02, e com uma regra ativa dentro dos 15%.
+  fica dentro dos 3% de RNF-068-02, e com uma regra ativa dentro dos 15%
+  quando só parte das linhas muda o campo vigiado e dentro dos 40% quando
+  todas mudam.
 - **CA-068-10** Em "Avisar quando mudar" no histórico de um cliente, a
   regra abre preenchida, o ensaio mostra quantas vezes teria disparado nos
   últimos dias, e ligar a regra não trava quem está gravando clientes.
