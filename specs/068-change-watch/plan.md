@@ -398,3 +398,31 @@ Migração `082_change_watch_security.sql`.
 - uma tarefa sobre um cadastro abre um caso sem documento do BPM (`none`), com a chave no título;
 - o banco recusa que essa pessoa assuma ou conclua a tarefa, administrador ou não;
 - a tela de tarefas explica a recusa antes.
+
+## 15. T-068-08: saída por conector uma vez, em ordem e assinada (verificação no CI)
+
+Migração `083_change_watch_outbound.sql`.
+
+**Uma vez:**
+- a mensagem de uma regra leva o identificador do evento (`rule:<regra>:<evento>`);
+- `integration.enqueue` com `p_event_id` enfileira uma vez por conector: um disparo retomado depois de uma queda
+  encontra a mensagem já na fila;
+- o núcleo manda o identificador no cabeçalho de evento do conector, e o destino descarta a repetição, mesmo
+  quando a própria entrega se repete (entrega ao menos uma vez, spec 017).
+
+**Em ordem.** A chave de ordem da fila é o registro.
+
+**Assinada:**
+- com `sign=True` em `ana.http`, o núcleo assina `"<carimbo>.<corpo>"` com a `hmac_key` do conector no cofre
+  (HMAC-SHA256), o mesmo esquema que o ANA confere nos webhooks de entrada;
+- o programa não vê a chave nem forja os cabeçalhos.
+
+**Limitada.** A mensagem tem no máximo 64 KB; listas longas são cortadas com "+N" e `truncated`.
+
+**Programa novo `integration.webhook_out`.** Entrega genérica: um erro 5xx tenta de novo; um 4xx fica para o
+administrador.
+
+**Filtro.** A direção (subir ou descer) compara também datas ISO: "data de entrega adiada".
+
+**Teste.** O "sistema externo" é o próprio ANA, recebendo pelo webhook de entrada, que confere a assinatura e
+descarta a repetição.

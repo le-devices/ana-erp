@@ -37,11 +37,19 @@ cond_ok(<<"direction">>, <<"up">>, B, A) -> cmp_num(B, A, fun(X, Y) -> Y > X end
 cond_ok(<<"direction">>, <<"down">>, B, A) -> cmp_num(B, A, fun(X, Y) -> Y < X end);
 cond_ok(_, _, _, _) -> false.
 
+%% Numbers, or ISO dates and date-times ("a data de entrega foi adiada"), which order as text.
 cmp_num(B, A, F) ->
     case {num(B), num(A)} of
         {X, Y} when is_number(X), is_number(Y) -> F(X, Y);
-        _ -> false
+        _ ->
+            case iso(B) andalso iso(A) of
+                true -> F(B, A);
+                false -> false
+            end
     end.
+
+iso(V) when is_binary(V) -> re:run(V, "^\\d{4}-\\d{2}-\\d{2}", [{capture, none}]) =:= match;
+iso(_) -> false.
 
 same(null, V) -> empty(V);
 same(V, X) -> to_text(V) =:= to_text(X).

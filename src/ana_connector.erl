@@ -25,7 +25,8 @@ init_tables() ->
 
 lookup(Name) ->
     ana_db:one("SELECT name, kind, base_url, auth, api_key_header, token_url, allowed_hosts, timeout_ms, rate_per_min, "
-               "active FROM integration.connector WHERE name = $1", [Name]).
+               "active, signature_header, timestamp_header, event_id_header FROM integration.connector WHERE name = $1",
+               [Name]).
 
 %% Opts: json | body (+ content type header), headers (map), params (query map).
 -spec http(binary(), binary(), binary(), map(), binary() | null) -> {ok, map()} | {error, map()}.
@@ -105,7 +106,7 @@ rate_ok(#{<<"name">> := Name, <<"rate_per_min">> := Max}) ->
     _ = N =:= 1 andalso ets:select_delete(?RATE, [{{{Name, '$1'}, '_'}, [{'<', '$1', Minute}], [true]}]) >= 0,
     N =< Max.
 
-do_call(C = #{<<"name">> := Name, <<"timeout_ms">> := T}, Method, Url, Opts, Retries) ->
+do_call(C, Method, Url, Opts, Retries) ->
     case auth_headers(C) of
         {error, Msg} -> fail(<<"CONNECTOR_AUTH">>, Msg);
         {ok, AuthH} ->
@@ -117,7 +118,38 @@ do_call(C = #{<<"name">> := Name, <<"timeout_ms">> := T}, Method, Url, Opts, Ret
                 #{<<"body">> := B} when is_binary(B) -> {proplists:get_value(<<"content-type">>, Clean, <<"text/plain">>), B};
                 _ -> {undefined, undefined}
             end,
-            Headers = [{binary_to_list(K), binary_to_list(V)} || {K, V} <- AuthH ++ Clean, K =/= <<"content-type">>],
+            case signed_headers(C, Opts, Body) of
+                {error, SignMsg} -> fail(<<"CONNECTOR_SIGNING">>, SignMsg);
+                {ok, SignH} -> send(C, Method, Url, Opts, Retries, AuthH, Clean, SignH, CT, Body)
+            end
+    end.
+
+%% Spec 068 (D11): a message that must arrive once and from us carries the event id (the destination drops a repeat)
+%% and the HMAC-SHA256 signature of "<timestamp>.<body>" with the connector's hmac_key secret — the same scheme the
+%% ANA checks on its inbound webhooks (ana_http_hooks). The program never sees the key; it cannot forge these headers.
+signed_headers(C, Opts, Body) ->
+    Ev = case maps:get(<<"event_id">>, Opts, null) of
+        Id when is_binary(Id), Id =/= <<>> -> [{string:lowercase(maps:get(<<"event_id_header">>, C)), Id}];
+        _ -> []
+    end,
+    case {maps:get(<<"sign">>, Opts, false), Body} of
+        {true, undefined} -> {error, <<"só uma mensagem com corpo pode ser assinada"/utf8>>};
+        {true, _} ->
+            case ana_vault:fetch(maps:get(<<"name">>, C), <<"hmac_key">>) of
+                {ok, Key} ->
+                    Ts = integer_to_binary(erlang:system_time(second)),
+                    {ok, Ev ++ [{string:lowercase(maps:get(<<"timestamp_header">>, C)), Ts},
+                                {string:lowercase(maps:get(<<"signature_header">>, C)),
+                                 <<"sha256=", (ana_http_hooks:signature(Key, Ts, Body))/binary>>}]};
+                {error, _} -> {error, <<"guarde a chave de assinatura (hmac_key) do conector no cofre"/utf8>>}
+            end;
+        _ -> {ok, Ev}
+    end.
+
+send(C = #{<<"name">> := Name, <<"timeout_ms">> := T}, Method, Url, Opts, Retries, AuthH, Clean0, SignH, CT, Body) ->
+            Own = [K || {K, _} <- SignH],
+            Clean = [{K, V} || {K, V} <- Clean0, not lists:member(K, Own)],
+            Headers = [{binary_to_list(K), binary_to_list(V)} || {K, V} <- AuthH ++ SignH ++ Clean, K =/= <<"content-type">>],
             Req = case Body of
                 undefined -> {binary_to_list(Url), Headers};
                 _ -> {binary_to_list(Url), Headers, binary_to_list(CT), Body}
@@ -133,8 +165,7 @@ do_call(C = #{<<"name">> := Name, <<"timeout_ms">> := T}, Method, Url, Opts, Ret
                     {ok, response(Status, RespHeaders, RespBody)};
                 {error, Reason} ->
                     fail(<<"CONNECTOR_FAILED">>, unicode:characters_to_binary(io_lib:format("falha de rede: ~0p", [Reason])))
-            end
-    end.
+            end.
 
 valid_header(K, V) ->
     re:run(K, "^[a-z0-9-]{1,64}$", [{capture, none}]) =:= match andalso

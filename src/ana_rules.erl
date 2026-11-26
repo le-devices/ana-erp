@@ -297,7 +297,8 @@ run_claimed() -> run_claimed(50).
 run_claimed(0) -> waiting();
 run_claimed(Rounds) ->
     case ana_db:rows("SELECT f.id AS fire_id, f.entity AS ev_entity, f.doc_key AS ev_key, f.detail AS ev_detail, "
-                     "  f.chain AS ev_chain, r.* FROM automation.fire f JOIN automation.rule r ON r.id = f.rule_id "
+                     "  f.chain AS ev_chain, f.event_ref AS ev_ref, r.* FROM automation.fire f "
+                     "  JOIN automation.rule r ON r.id = f.rule_id "
                      "WHERE f.id IN (SELECT automation.ready_fires($1)) ORDER BY f.id", [?BATCH]) of
         {ok, []} -> waiting();
         {ok, Rows} ->
@@ -314,7 +315,7 @@ run_claimed(Rounds) ->
 
 fire_claimed(X = #{<<"fire_id">> := F, <<"ev_entity">> := Ent, <<"ev_key">> := Key,
                    <<"ev_detail">> := #{<<"event">> := Ev0}, <<"ev_chain">> := Chain0, <<"active">> := Active}) ->
-    R = maps:without([<<"fire_id">>, <<"ev_entity">>, <<"ev_key">>, <<"ev_detail">>, <<"ev_chain">>], X),
+    R = maps:without([<<"fire_id">>, <<"ev_entity">>, <<"ev_key">>, <<"ev_detail">>, <<"ev_chain">>, <<"ev_ref">>], X),
     Chain1 = chain(Chain0),
     Kind = case Ev0 of
         #{<<"origin_kind">> := K} -> K;
@@ -364,7 +365,7 @@ fire_in_reach(R = #{<<"id">> := Id, <<"owner">> := Owner}, X, F, Ent, Key, Ev1, 
             end
     end.
 
-fire_now(R = #{<<"id">> := Id}, _X, F, Ent, Key, Ev1, Items, Chain, Kind) ->
+fire_now(R = #{<<"id">> := Id}, X, F, Ent, Key, Ev1, Items, Chain, Kind) ->
     Count = maps:get(<<"count">>, Ev1, length(Items)),
     Grouped = Count > 1 andalso ana_watch_match:grouped(maps:get(<<"watch_mode">>, R), Kind, Count,
                                                         maps:get(<<"watch_key">>, R, null)),
@@ -373,7 +374,8 @@ fire_now(R = #{<<"id">> := Id}, _X, F, Ent, Key, Ev1, Items, Chain, Kind) ->
         false ->
             Key1 = case Items of [#{<<"key">> := K1}] -> K1; _ -> Key end,
             Facts = changed_facts(Ent, Key1, Ev1, Grouped),
-            Ev = #{kind => <<"changed">>, entity => Ent, key => Key1, facts => Facts, chain => Chain},
+            Ev = #{kind => <<"changed">>, entity => Ent, key => Key1, facts => Facts, chain => Chain,
+                   ref => maps:get(<<"ev_ref">>, X, null)},
             fire_checked(R, Ev, Facts, F)
     end.
 
@@ -587,7 +589,8 @@ act(R = #{<<"id">> := Id, <<"owner">> := Owner, <<"action">> := A}, Ev, Facts, R
         _ ->
             {<<"automation.act">>, #{<<"action">> => ana_flows:render(A, Facts), <<"facts">> => Facts,
                                      <<"rule">> => Id, <<"rule_name">> => maps:get(<<"name">>, R),
-                                     <<"entity">> => maps:get(entity, Ev, null), <<"key">> => maps:get(key, Ev, null)}}
+                                     <<"entity">> => maps:get(entity, Ev, null), <<"key">> => maps:get(key, Ev, null),
+                                     <<"event_ref">> => maps:get(ref, Ev, null)}}
     end,
     Opts0 = #{origin => <<"internal">>, rule_chain => Chain},
     Opts = case Rehearse of true -> Opts0#{rehearse => true}; false -> Opts0 end,

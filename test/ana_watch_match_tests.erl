@@ -69,3 +69,13 @@ filter_check_test() ->
     ?assertEqual(ok, ana_watch_match:check_filter(#{}, true)),
     ?assertMatch({error, _}, ana_watch_match:check_filter(#{<<"min_change_pct">> => -3}, false)),
     ?assertMatch({error, _}, ana_watch_match:check_filter(#{<<"became">> => <<"x">>}, false)).
+
+%% CA-068-04: "a data de entrega foi adiada" — ISO dates compare in time.
+dates_direction_test() ->
+    D = <<"sales.sales_order_item.promised_date">>,
+    R = rule([D], #{<<"direction">> => <<"up">>}),
+    ?assert(ana_watch_match:item(R, ch(D, <<"2031-02-01">>, <<"2031-02-05">>))),
+    ?assertNot(ana_watch_match:item(R, ch(D, <<"2031-02-05">>, <<"2031-02-01">>))),
+    ?assertNot(ana_watch_match:item(R, ch(D, null, <<"2031-02-01">>))),
+    ?assert(ana_watch_match:item(rule([D], #{<<"direction">> => <<"down">>}),
+                                 ch(D, <<"2031-02-05T10:00:00">>, <<"2031-02-04T09:00:00">>))).

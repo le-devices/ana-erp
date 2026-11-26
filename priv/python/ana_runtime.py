@@ -623,10 +623,16 @@ def make_ana_module(channel, output, context):
         def ok(self):
             return 200 <= self.get("status", 0) < 300
 
-    def http(connector, method, path="", json=None, body=None, headers=None, params=None):
+    def http(connector, method, path="", json=None, body=None, headers=None, params=None, sign=False, event_id=None):
         """HTTP call through a connector (spec 017): the core adds credentials, checks the
-        allowed hosts and applies limits. Programs never see secrets nor open sockets."""
+        allowed hosts and applies limits. Programs never see secrets nor open sockets.
+        sign=True: the core signs "<timestamp>.<body>" with the connector's hmac_key (spec 068, D11);
+        event_id: sent in the connector's event id header, so the destination drops a repeat."""
         options = {}
+        if sign:
+            options["sign"] = True
+        if event_id:
+            options["event_id"] = str(event_id)
         if json is not None:
             options["json"] = json
         elif body is not None:
@@ -639,11 +645,16 @@ def make_ana_module(channel, output, context):
                                      "options": options})
         return HttpResponse(r)
 
-    def send(connector, kind, payload, key=None):
+    def send(connector, kind, payload, key=None, event_id=None):
         """Queue a message for the connector in this same transaction (outbox, spec 017):
-        delivered after the commit, with retries; nothing is sent if the execution fails."""
-        return sql_value("SELECT integration.enqueue($1, $2, $3::text::jsonb, $4) AS id", str(connector), str(kind),
-                         to_json(payload), key)
+        delivered after the commit, with retries; nothing is sent if the execution fails.
+        key orders the messages of one record; event_id (spec 068, D11) queues a message once: the same id again
+        returns the message already queued."""
+        if event_id is None:
+            return sql_value("SELECT integration.enqueue($1, $2, $3::text::jsonb, $4) AS id", str(connector), str(kind),
+                             to_json(payload), key)
+        return sql_value("SELECT integration.enqueue($1, $2, $3::text::jsonb, $4, $5) AS id", str(connector), str(kind),
+                         to_json(payload), key, str(event_id))
 
     _EMAIL = re.compile(r"[^@\s<>\"(),;:\\\[\]]{1,64}@[A-Za-z0-9.-]{1,190}\.[A-Za-z]{2,}")
 

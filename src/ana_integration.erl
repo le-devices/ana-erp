@@ -143,7 +143,7 @@ run(Kind, M = #{<<"id">> := Id, <<"connector">> := Name, <<"attempts">> := Attem
             User = #{username => maps:get(<<"username">>, C), role => maps:get(<<"role">>, C)},
             Params = case Kind of
                 outbox -> #{<<"message">> => maps:with([<<"id">>, <<"kind">>, <<"ordering_key">>, <<"payload">>,
-                                                        <<"created_by">>], M#{<<"attempt">> => Attempt})};
+                                                        <<"created_by">>, <<"event_id">>], M#{<<"attempt">> => Attempt})};
                 inbox -> #{<<"event">> => maps:with([<<"id">>, <<"event_id">>, <<"payload">>, <<"headers">>], M)}
             end,
             Conn = #{<<"name">> => Name, <<"options">> => maps:get(<<"options">>, C)},

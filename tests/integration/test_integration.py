@@ -10689,3 +10689,89 @@ class TestChangeWatchSecurity(Base):
             self.assertEqual(s, 200, c)
         finally:
             http("DELETE", f"/api/admin/connectors/{name}/personal-data", token=self.token)
+
+
+class TestChangeWatchOutbound(Base):
+    """Spec 068 (T-068-08, D11, CA-068-04): a rule's message to another system goes once, in order per record,
+    signed — delivered here to the ANA's own inbound webhook, which checks the signature and drops a repeat."""
+
+    rules = []
+
+    @classmethod
+    def tearDownClass(cls):
+        for r in cls.rules:
+            http("DELETE", f"/api/admin/automations/rules/{r}", token=cls.token)
+        for name in (f"cwo{SUFFIX}", f"cwi{SUFFIX}"):
+            http("PUT", f"/api/admin/connectors/{name}", {"kind": "webhook_in", "active": False}, cls.token)
+
+    def setUp(self):
+        if not psql_available():
+            self.skipTest("psql no contêiner indisponível")
+
+    def run_ok(self, program, params):
+        s, c, _ = self.run_program(program, params)
+        self.assertEqual(s, 200, c)
+        self.assertNotIn("error", c, c.get("error"))
+        return c["result"]
+
+    def test_ca_068_04_postponed_delivery_goes_out_once_signed_and_a_repeat_is_dropped(self):
+        inn, out, key = f"cwi{SUFFIX}", f"cwo{SUFFIX}", f"chave-{SUFFIX}-assinatura"
+        recv = f"test.cwi{SUFFIX}.receive"
+        self.save(recv, "def main(event, connector, attempt=1):\n    return {'got': event['event_id']}\n")
+        for name, body in ((inn, {"kind": "webhook_in", "inbound_program": recv}),
+                           (out, {"kind": "http_api", "base_url": "http://localhost:8080",
+                                  "outbound_program": "integration.webhook_out", "options": {"path": f"/hooks/{inn}"}})):
+            s, c, _ = http("PUT", f"/api/admin/connectors/{name}", body, self.token)
+            self.assertEqual(s, 200, c)
+            s, c, _ = http("PUT", f"/api/admin/connectors/{name}/secrets/hmac_key", {"value": key}, self.token)
+            self.assertEqual(s, 200, c)
+        self.run_ok("inventory.stock_in", {"product": "ACUCAR-1", "quantity": 2, "document": f"CWO-{SUFFIX}"})
+        number = self.run_ok("sales.create_order", {"customer": 2, "items": [{"product": "ACUCAR-1", "quantity": 1}]})["number"]
+        s, c, _ = http("POST", "/api/admin/automations/rules", {
+            "name": f"Entrega adiada {SUFFIX}", "owner": "admin", "trigger_kind": "changed", "entity": "sales_order",
+            "watch_fields": ["sales.sales_order_item.promised_date"], "watch_filter": {"direction": "up"},
+            "action": {"kind": "connector", "connector": out, "message_kind": "order.delivery_postponed"}}, self.token)
+        self.assertEqual(s, 200, c)
+        rid = c["id"]
+        self.rules.append(rid)
+        s, r, _ = http("POST", f"/api/admin/automations/rules/{rid}/rehearse", {"document": str(number)}, self.token)
+        self.assertTrue(r.get("rehearsed"), r)
+        s, c, _ = http("POST", f"/api/admin/automations/rule/{rid}/active", {"active": True}, self.token)
+        self.assertEqual(s, 200, c)
+        wait_watch("sales.sales_order_item")
+        # A first promised date is not a postponement (empty → date): nothing fires.
+        psql(f"UPDATE sales.sales_order_item SET promised_date = DATE '2031-01-20' "
+             f"WHERE order_id = (SELECT id FROM sales.sales_order WHERE number = {number})")
+        # Postponed three times in one transaction: one firing, one message.
+        psql("BEGIN; " + " ".join(
+            f"UPDATE sales.sales_order_item SET promised_date = DATE '2031-02-0{d}' "
+            f"WHERE order_id = (SELECT id FROM sales.sales_order WHERE number = {number});" for d in (1, 3, 5)) + " COMMIT;")
+        f = wait_fires(rid, 1)
+        self.assertEqual(f[0]["outcome"], "done", f)
+        end, row = time.time() + 60, ""
+        while time.time() < end:
+            row = psql(f"SELECT status || '|' || event_id || '|' || ordering_key FROM integration.outbox WHERE connector = '{out}'")
+            if row.startswith("done|"):
+                break
+            time.sleep(0.5)
+        status, event_id, ordering = row.split("|")
+        self.assertEqual(status, "done", row)
+        self.assertTrue(event_id.startswith(f"rule:{rid}:doc:"), event_id)
+        self.assertIn(str(number), ordering)                                 # in order per record
+        # The destination got it once, signed (the inbound webhook checks the HMAC), with the last date.
+        got = json.loads(psql(f"SELECT payload FROM integration.inbox WHERE connector = '{inn}' AND event_id = '{event_id}'"))
+        self.assertEqual(got["kind"], "order.delivery_postponed")
+        self.assertEqual(got["data"]["facts"]["promised_date"], "2031-02-05")
+        # A firing taken again queues nothing new; a delivery repeated is dropped by the destination.
+        again = f"test.cwo{SUFFIX}.again"
+        self.save(again, "def main(event_id, connector, path):\n"
+                         "    q = ana.send(connector, 'order.delivery_postponed', {'x': 1}, key='k', event_id=event_id)\n"
+                         "    r = ana.http(connector, 'POST', path, json={'id': event_id, 'kind': 'x', 'data': {}}, sign=True,\n"
+                         "                 event_id=event_id)\n"
+                         "    return {'queued': q, 'status': r['status'], 'json': r.get('json')}\n")
+        r = self.run_ok(again, {"event_id": event_id, "connector": out, "path": f"/hooks/{inn}"})
+        self.assertEqual(r["queued"], int(psql(f"SELECT id FROM integration.outbox WHERE connector = '{out}' "
+                                               f"AND event_id = '{event_id}'")))
+        self.assertEqual((r["status"], r["json"].get("duplicate")), (200, True), r)
+        self.assertEqual(psql(f"SELECT count(*) FROM integration.inbox WHERE connector = '{inn}'"), "1")
+        self.assertEqual(psql(f"SELECT count(*) FROM integration.outbox WHERE connector = '{out}'"), "1")
