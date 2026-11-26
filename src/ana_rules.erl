@@ -313,8 +313,7 @@ run_claimed(Rounds) ->
     end.
 
 fire_claimed(X = #{<<"fire_id">> := F, <<"ev_entity">> := Ent, <<"ev_key">> := Key,
-                   <<"ev_detail">> := D = #{<<"event">> := Ev0}, <<"ev_chain">> := Chain0, <<"id">> := Id,
-                   <<"active">> := Active}) ->
+                   <<"ev_detail">> := #{<<"event">> := Ev0}, <<"ev_chain">> := Chain0, <<"active">> := Active}) ->
     R = maps:without([<<"fire_id">>, <<"ev_entity">>, <<"ev_key">>, <<"ev_detail">>, <<"ev_chain">>], X),
     Chain1 = chain(Chain0),
     Kind = case Ev0 of
@@ -332,19 +331,100 @@ fire_claimed(X = #{<<"fire_id">> := F, <<"ev_entity">> := Ent, <<"ev_key">> := K
         _ -> Chain1
     end,
     Items = maps:get(<<"items">>, Ev1, []),
-    Count = maps:get(<<"count">>, Ev1, length(Items)),
-    Grouped = Count > 1 andalso ana_watch_match:grouped(maps:get(<<"watch_mode">>, R), Kind, Count,
-                                                        maps:get(<<"watch_key">>, R, null)),
     case {Active, ana_watch_match:origin_allowed(maps:get(<<"watch_origins">>, R, null), Kind)} of
         {false, _} -> finish(F, <<"skipped">>, #{<<"reason">> => <<"regra desligada antes do disparo">>}, null, Chain);
         {_, false} -> finish(F, <<"skipped">>, #{<<"reason">> => <<"origem não vigiada pela regra: "/utf8, Kind/binary>>,
                                                 <<"event">> => Ev1}, null, Chain);
-        _ when Count > 1, not Grouped -> split(F, Id, Ent, Ev1, Items, Chain);
-        _ ->
-            Facts = changed_facts(Ent, Key, Ev1, Grouped),
-            Ev = #{kind => <<"changed">>, entity => Ent, key => Key, facts => Facts, chain => Chain},
-            _ = D,
+        _ -> fire_in_reach(R, X, F, Ent, Key, Ev1, Items, Chain, Kind)
+    end.
+
+%% D9, CA-068-06: the rule acts as its owner — what the owner cannot see does not fire for them, and the firing keeps
+%% no value of it ("fora do alcance do dono"). D10: a personal field to a connector no longer authorized does not go.
+fire_in_reach(R = #{<<"id">> := Id, <<"owner">> := Owner}, X, F, Ent, Key, Ev1, Items0, Chain, Kind) ->
+    case visible_keys(Owner, Ent, lists:usort([K || #{<<"key">> := K} <- Items0])) of
+        {error, _} ->
+            finish(F, <<"failed">>, #{<<"reason">> => <<"não foi possível conferir o alcance do dono"/utf8>>,
+                                      <<"event">> => keys_only(Ev1)}, null, Chain);
+        {ok, Vis} ->
+            {Items, Out} = lists:partition(fun(#{<<"key">> := K}) -> Vis =:= all orelse lists:member(K, Vis) end, Items0),
+            case {Items, connector_blocked(R)} of
+                {[], _} ->
+                    finish(F, <<"skipped">>, #{<<"reason">> => <<"fora do alcance do dono"/utf8>>, <<"out_of_reach">> => length(Out),
+                                               <<"event">> => keys_only(Ev1)}, null, Chain);
+                {_, true} ->
+                    finish(F, <<"skipped">>, #{<<"reason">> => <<"o conector não está mais autorizado a receber dados pessoais"/utf8>>,
+                                               <<"event">> => keys_only(Ev1)}, null, Chain);
+                _ ->
+                    _ = Out =/= [] andalso
+                        {ok, 1} =:= ana_db:exec("UPDATE automation.fire SET detail = jsonb_set(detail, '{event,items}', $2) || $3 "
+                                                "WHERE id = $1", [F, Items, #{<<"out_of_reach">> => length(Out)}]),
+                    Count = case Out of [] -> maps:get(<<"count">>, Ev1, length(Items)); _ -> length(Items) end,
+                    Ev2 = Ev1#{<<"items">> => Items, <<"count">> => Count},
+                    fire_now(R#{<<"id">> => Id}, X, F, Ent, Key, Ev2, Items, Chain, Kind)
+            end
+    end.
+
+fire_now(R = #{<<"id">> := Id}, _X, F, Ent, Key, Ev1, Items, Chain, Kind) ->
+    Count = maps:get(<<"count">>, Ev1, length(Items)),
+    Grouped = Count > 1 andalso ana_watch_match:grouped(maps:get(<<"watch_mode">>, R), Kind, Count,
+                                                        maps:get(<<"watch_key">>, R, null)),
+    case Count > 1 andalso not Grouped of
+        true -> split(F, Id, Ent, Ev1, Items, Chain);
+        false ->
+            Key1 = case Items of [#{<<"key">> := K1}] -> K1; _ -> Key end,
+            Facts = changed_facts(Ent, Key1, Ev1, Grouped),
+            Ev = #{kind => <<"changed">>, entity => Ent, key => Key1, facts => Facts, chain => Chain},
             fire_checked(R, Ev, Facts, F)
+    end.
+
+keys_only(Ev) ->
+    Ev#{<<"items">> => [maps:with([<<"key">>, <<"log">>], I) || I <- maps:get(<<"items">>, Ev, [])]}.
+
+connector_blocked(#{<<"action">> := #{<<"kind">> := <<"connector">>, <<"connector">> := C}, <<"entity">> := E,
+                    <<"watch_fields">> := Fs}) ->
+    case ana_db:one("SELECT EXISTS (SELECT 1 FROM automation.watchable w WHERE w.entity = $1 AND w.classification = 'personal' "
+                    "  AND CASE WHEN w.custom THEN w.field ELSE w.table_name || '.' || w.field END = ANY($2::text[])) AS p",
+                    [E, Fs]) of
+        {ok, #{<<"p">> := true}} -> not ana_connectors:personal_allowed(C);
+        _ -> false
+    end;
+connector_blocked(_) -> false.
+
+%% The keys of the entity the owner can see, through the same data scope as the owner's executions (spec 009,
+%% D10): a read-only transaction as ana_scoped with the owner's scope. Unrestricted owners see everything.
+visible_keys(_, _, []) -> {ok, all};
+visible_keys(Owner, Ent, Keys) ->
+    User = ana_flows:user(Owner),
+    case iolist_size(ana_access:scope_sql(User)) of
+        0 -> {ok, all};
+        _ ->
+            case ana_db:one("SELECT table_name, key_column FROM automation.watch_entity WHERE entity = $1", [Ent]) of
+                {ok, #{<<"table_name">> := T, <<"key_column">> := Kc}} -> scoped_keys(User, Owner, T, Kc, Keys);
+                _ -> {error, unknown_entity}
+            end
+    end.
+
+scoped_keys(User, Owner, T, Kc, Keys) ->
+    Ident = "^[a-z_][a-z0-9_]*$",
+    [_, _] = [ok || P <- binary:split(T, <<".">>), re:run(P, Ident) =/= nomatch],          % from the catalog only
+    match = re:run(Kc, Ident, [{capture, none}]),
+    Q = fun(V) -> binary:replace(V, <<"'">>, <<"''">>, [global]) end,
+    case ana_db:checkout(ana_db_exec, 5000) of
+        {ok, C} ->
+            try
+                {ok, [], []} = epgsql:squery(C, "BEGIN READ ONLY"),
+                Set = epgsql:squery(C, iolist_to_binary([ana_access:scope_sql(User),
+                                                         "SET LOCAL ana.username = '", Q(Owner), "'"])),
+                [] = [E || {error, E} <- lists:flatten([Set])],       % never decide with the scope half applied
+                {ok, Rows} = ana_db:rows(C, ["SELECT ", Kc, "::text AS k FROM ", T, " WHERE ", Kc, "::text = ANY($1::text[])"],
+                                         [Keys]),
+                {ok, [K || #{<<"k">> := K} <- Rows]}
+            catch Cl:Re -> {error, {Cl, Re}}
+            after
+                _ = epgsql:squery(C, "ROLLBACK"),
+                ana_db:checkin(ana_db_exec, C)
+            end;
+        {error, _} = E -> E
     end.
 
 %% One firing per record (D6, mode "record" or a few changes by a person): the unit becomes one firing per record,
@@ -725,6 +805,7 @@ validate(In) ->
         Conds = maps:get(<<"conditions">>, In, []),
         (is_list(Conds) orelse is_map(Conds)) orelse throw(<<"condições inválidas"/utf8>>),
         Action = action(maps:get(<<"action">>, In, null), Owner),
+        personal_ok(Trigger, Action),
         Max = int(maps:get(<<"max_fires">>, In, 20), 1, 10000, <<"limite de disparos entre 1 e 10.000"/utf8>>),
         Win = int(maps:get(<<"window_minutes">>, In, 60), 1, 10080, <<"janela entre 1 minuto e 7 dias"/utf8>>),
         {ok, maps:merge(Trigger, #{<<"name">> => Name, <<"description">> => maps:get(<<"description">>, In, <<>>),
@@ -807,8 +888,17 @@ trigger(<<"changed">>, In) ->
     lists:member(Mode, [<<"auto">>, <<"record">>, <<"grouped">>]) orelse
         throw(<<"disparo por registro, agrupado ou automático"/utf8>>),
     #{<<"entity">> => E, <<"watch_fields">> => lists:usort(Fields), <<"watch_filter">> => Filter,
-      <<"watch_origins">> => Origins, <<"watch_key">> => Key, <<"watch_mode">> => Mode};
+      <<"watch_origins">> => Origins, <<"watch_key">> => Key, <<"watch_mode">> => Mode,
+      <<"_personal">> => [F || F <- Fields, maps:get(F, Class) =:= <<"personal">>]};
 trigger(K, _) -> throw(<<"gatilho desconhecido: "/utf8, K/binary>>).
+
+%% D10, CA-068-07: a personal field (LGPD) goes out only to a connector authorized for personal data (four eyes).
+personal_ok(#{<<"_personal">> := [_ | _] = P}, #{<<"kind">> := <<"connector">>, <<"connector">> := C}) ->
+    ana_connectors:personal_allowed(C) orelse
+        throw(<<"o conector "/utf8, C/binary, " não está autorizado a receber dados pessoais ("/utf8,
+                (iolist_to_binary(lists:join(<<", ">>, P)))/binary,
+                "). Em Integrações, peça a autorização com a finalidade; outra pessoa aprova (quatro olhos)."/utf8>>);
+personal_ok(_, _) -> ok.
 
 role(U) ->
     case ana_db:one("SELECT role FROM ana_system.app_user WHERE username = $1", [U]) of
@@ -832,7 +922,7 @@ action(#{<<"kind">> := <<"task">>} = A, _) ->
         orelse throw(<<"diga para quem é a tarefa (pessoa, grupo ou papel)"/utf8>>),
     TaskKind = maps:get(<<"task_kind">>, A, <<"human">>),
     lists:member(TaskKind, [<<"human">>, <<"approval">>]) orelse throw(<<"tarefa é de fazer ou de aprovar"/utf8>>),
-    maps:merge(maps:with([<<"instructions">>, <<"priority">>, <<"program">>, <<"params">>], A),
+    maps:merge(maps:with([<<"instructions">>, <<"priority">>, <<"program">>, <<"params">>, <<"not_by_changer">>], A),
                To#{<<"kind">> => <<"task">>, <<"name">> => Name, <<"task_kind">> => TaskKind});
 action(#{<<"kind">> := <<"notify">>} = A, _) ->
     Msg = trim(req(<<"message">>, A, <<"diga a mensagem do aviso"/utf8>>)),

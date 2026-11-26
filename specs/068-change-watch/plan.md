@@ -371,3 +371,26 @@ fora do catálogo; entidade de muito movimento.
 - lote de 10 mil pedidos: +25% com todas as linhas mudando o campo vigiado (alvo 40%) e +3% com parte delas (alvo
   15%);
 - o orçamento de escrita foi trazido para os valores do CI.
+
+## 14. T-068-07: segurança no disparo e na saída (verificação no CI)
+
+Migração `082_change_watch_security.sql`.
+
+**Alcance do dono (D9, CA-068-06):**
+- antes de agir, o `ana_rules` confere quais registros o dono vê, numa transação só de leitura como `ana_scoped`
+  com o escopo do dono (o mesmo das execuções dele, spec 009) e no padrão da prévia de escopo;
+- o que ele não vê não dispara: o disparo fica `skipped`, "fora do alcance do dono", só com as chaves e nenhum
+  valor;
+- num lote, age sobre os visíveis e conta os demais;
+- dono sem restrição: nenhuma consulta a mais.
+
+**Dado pessoal (D10, CA-068-07):**
+- o conector ganha a autorização com finalidade (pedido de uma pessoa, aprovação de outra, conferida pelo banco),
+  com auditoria;
+- salvar uma regra que manda campo pessoal a um conector sem autorização é recusado, com o caminho;
+- no disparo, uma autorização revogada impede o envio.
+
+**Conferência por outra pessoa (CA-068-01):**
+- a ação "criar tarefa" tem a opção "exceto quem alterou" (`not_by_changer`), que grava `bpm.task.not_by`;
+- o banco recusa que essa pessoa assuma ou conclua a tarefa, administrador ou não;
+- a tela de tarefas explica a recusa antes.

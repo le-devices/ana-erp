@@ -29,6 +29,10 @@ def main(action, facts=None, rule=None, rule_name=None, entity=None, key=None):
             ((action.get("instructions") or "") + f"\n\n{origin}.").strip(), action.get("program") or None,
             action.get("params") or {}, facts or {}, action.get("actions") or [],
             int(action.get("priority") or 3), ana.context.user)
+        # Spec 068 (CA-068-01): a check of a change is done by someone else — the database refuses the one who changed it.
+        changer = (facts or {}).get("changed_by") if action.get("not_by_changer") else None
+        if changer:
+            ana.sql_exec("UPDATE bpm.task SET not_by = $2 WHERE id = $1", task, changer)
         return {"task": task}
     if kind == "notify":
         n = ana.sql_value("SELECT automation.notify($1, $2, $3)", action.get("user") or None, action.get("group") or None,

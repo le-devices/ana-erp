@@ -200,6 +200,12 @@ route(<<"PUT">>, [<<"connectors">>, Name], U, Req) ->
     with_body(Req, fun(B, R) -> reply(ana_connectors:save(Name, B, U), R) end);
 route(<<"POST">>, [<<"connectors">>, Name, <<"smtp-test">>], U, Req) ->
     with_body(Req, fun(B, R) -> reply(ana_connectors:smtp_test(Name, B, U), R) end);
+route(<<"POST">>, [<<"connectors">>, Name, <<"personal-data">>], U, Req) ->
+    with_body(Req, fun(B, R) -> reply(ana_connectors:personal_request(Name, B, U), R) end);
+route(<<"POST">>, [<<"connectors">>, Name, <<"personal-data">>, <<"approve">>], U, Req) ->
+    reply(ana_connectors:personal_approve(Name, U), Req);
+route(<<"DELETE">>, [<<"connectors">>, Name, <<"personal-data">>], U, Req) ->
+    reply(ana_connectors:personal_revoke(Name, U), Req);
 route(<<"DELETE">>, [<<"connectors">>, Name], U, Req) ->
     reply(ana_connectors:remove(Name, U), Req);
 route(<<"PUT">>, [<<"connectors">>, Name, <<"secrets">>, Key], U, Req) ->

@@ -10545,3 +10545,144 @@ class TestChangeWatchRules(Base):
             time.sleep(0.5)
         self.assertEqual(psql(f"SELECT active FROM automation.rule WHERE id = {rid}"), "f")
         self.assertIn("disparou a si mesma", psql(f"SELECT blocked_reason FROM automation.rule WHERE id = {rid}"))
+
+
+class TestChangeWatchSecurity(Base):
+    """Spec 068 (T-068-07, D9, D10): the rule acts as its owner (what the owner cannot see does not fire, and keeps no
+    value), a personal field goes out only to a connector authorized by two people, and a change is checked by someone
+    other than who made it."""
+
+    rules = []
+
+    @classmethod
+    def tearDownClass(cls):
+        for r in cls.rules:
+            http("DELETE", f"/api/admin/automations/rules/{r}", token=cls.token)
+
+    def setUp(self):
+        if not psql_available():
+            self.skipTest("psql no contêiner indisponível")
+
+    def ok(self, program, client=None, **params):
+        return (client or self.client).call(program, **params)
+
+    def err(self, program, client=None, **params):
+        with self.assertRaises(AnaRemoteError) as ctx:
+            (client or self.client).call(program, **params)
+        return ctx.exception
+
+    def save_rule(self, **body):
+        body.setdefault("name", f"Seg {SUFFIX} {len(self.rules)}")
+        body.setdefault("owner", "admin")
+        body.setdefault("trigger_kind", "changed")
+        s, c, _ = http("POST", "/api/admin/automations/rules", body, self.token)
+        if s == 200:
+            self.rules.append(c["id"])
+        return s, c
+
+    def turn_on(self, rid):
+        s, r, _ = http("POST", f"/api/admin/automations/rules/{rid}/rehearse", {}, self.token)
+        self.assertEqual(s, 200, r)
+        s, c, _ = http("POST", f"/api/admin/automations/rule/{rid}/active", {"active": True}, self.token)
+        self.assertEqual(s, 200, c)
+
+    def group(self, name, **scope):
+        s, c, _ = http("PUT", f"/api/admin/groups/{name}", {"description": "teste 068", "program_patterns": [], **scope},
+                       self.token)
+        self.assertEqual(s, 200, c)
+
+    def test_ca_068_01_bank_account_change_is_checked_by_someone_else_without_the_value(self):
+        g = f"fin{SUFFIX}"
+        self.group(g)
+        _, t = new_user("user", groups=(g,))
+        other = Ana(URL, token=t)
+        sup = self.ok("master.save", entity="party", values={"name": f"Fornecedor Conferido {SUFFIX}", "kind": "supplier"},
+                      confirm_duplicate=True, reason="teste automatizado")
+        s, c = self.save_rule(entity="party", watch_fields=["base.party_bank.account"],
+                              action={"kind": "task", "name": "Conferir conta bancária do fornecedor", "group": g,
+                                      "not_by_changer": True,
+                                      "instructions": "Conta bancária alterada ({{account}}) por {{changed_by}}"})
+        self.assertEqual(s, 200, c)
+        rid = c["id"]
+        self.turn_on(rid)
+        wait_log_reader()
+        self.ok("master.save", entity="party", key=str(sup["id"]), version=sup["version"],
+                tabs={"Dados bancários": [{"bank": "237", "branch": "4321", "account": "11223-4", "kind": "checking"}]})
+        f = wait_fires(rid, 1, timeout=60)
+        self.assertEqual(f[0]["outcome"], "done", f)
+        task = int(psql(f"SELECT t.id FROM bpm.task t JOIN bpm.case c ON c.id = t.case_id WHERE c.process_code = 'erp.tarefa' "
+                        f"AND c.doc_key = '{sup['id']}' AND t.group_name = '{g}' ORDER BY t.id DESC LIMIT 1"))
+        row = json.loads(psql(f"SELECT row_to_json(t) FROM (SELECT not_by, instructions, context FROM bpm.task "
+                              f"WHERE id = {task}) t"))
+        self.assertEqual(row["not_by"], "admin")
+        self.assertIn("Conta bancária alterada (***) por admin", row["instructions"])
+        self.assertNotIn("11223", json.dumps(row))
+        # Who changed it cannot take it nor finish it — not even an administrator (checked by the database too).
+        for action in ("claim", "complete"):
+            e = self.err("bpm.task_action", task=task, action=action)
+            self.assertEqual(e.code, "FORBIDDEN", action)
+        with self.assertRaises(RuntimeError) as ctx:
+            psql(f"UPDATE bpm.task SET assignee = 'admin' WHERE id = {task}")
+        self.assertIn("quatro olhos", str(ctx.exception))
+        r = self.ok("bpm.task_action", other, task=task, action="complete", comment="conferido com o fornecedor")
+        self.assertEqual(r["status"], "done")
+
+    def test_ca_068_06_out_of_the_owners_reach_does_not_fire_and_keeps_no_value(self):
+        g = f"cart{SUFFIX}"
+        self.group(g, data_portfolio=True)
+        seller, _ = new_user("user", groups=(g,))
+        mine = self.ok("base.save_party", name=f"Cliente Da Carteira {SUFFIX}", kind="customer", salesperson=seller)
+        theirs = self.ok("base.save_party", name=f"Cliente De Outro {SUFFIX}", kind="customer", salesperson="admin")
+        s, c = self.save_rule(entity="party", watch_fields=["base.party.city"], owner=seller,
+                              action={"kind": "notify", "user": seller, "message": "Cliente {{key}} mudou de cidade: {{city}}"})
+        self.assertEqual(s, 200, c)
+        rid = c["id"]
+        self.turn_on(rid)
+        wait_log_reader()
+        self.ok("base.save_party", id=theirs["id"], name=f"Cliente De Outro {SUFFIX}", kind="customer", salesperson="admin",
+                city="Cidade Secreta")
+        f = wait_fires(rid, 1, timeout=60)
+        self.assertEqual((f[0]["outcome"], f[0]["detail"]["reason"]), ("skipped", "fora do alcance do dono"), f)
+        self.assertNotIn("Cidade Secreta", json.dumps(f))
+        self.ok("base.save_party", id=mine["id"], name=f"Cliente Da Carteira {SUFFIX}", kind="customer", salesperson=seller,
+                city="Campinas")
+        f = wait_fires(rid, 2, timeout=60)
+        self.assertEqual(f[1]["outcome"], "done", f)
+        self.assertEqual(psql(f"SELECT count(*) FROM bpm.notification WHERE username = '{seller}' "
+                              f"AND message LIKE 'Cliente %Cidade Secreta%'"), "0")
+
+    def test_ca_068_07_personal_data_only_to_a_connector_authorized_by_two_people(self):
+        name = f"cw{SUFFIX}"
+        s, c, _ = http("PUT", f"/api/admin/connectors/{name}", {"kind": "http_api", "base_url": "https://exemplo.com.br/api",
+                                                                 "allowed_hosts": ["exemplo.com.br"]}, self.token)
+        self.assertEqual(s, 200, c)
+        try:
+            body = dict(entity="party", watch_fields=["base.party.email"],
+                        action={"kind": "connector", "connector": name, "message_kind": "party.changed"})
+            s, c = self.save_rule(**body)
+            self.assertEqual(s, 400, c)
+            self.assertIn("não está autorizado a receber dados pessoais", c["error"]["message"])
+            s, c, _ = http("POST", f"/api/admin/connectors/{name}/personal-data", {"purpose": "curto"}, self.token)
+            self.assertEqual(s, 400, c)
+            s, c, _ = http("POST", f"/api/admin/connectors/{name}/personal-data",
+                           {"purpose": "CRM da empresa: atualizar o contato do cliente"}, self.token)
+            self.assertEqual(s, 200, c)
+            s, c, _ = http("POST", f"/api/admin/connectors/{name}/personal-data/approve", {}, self.token)
+            self.assertEqual(s, 400, c)                                      # the same person: four eyes
+            self.assertIn("quatro olhos", c["error"]["message"])
+            s, c = self.save_rule(**body)
+            self.assertEqual(s, 400, c)                                      # asked, not approved yet
+            _, t2 = new_user("admin")
+            s, c, _ = http("POST", f"/api/admin/connectors/{name}/personal-data/approve", {}, t2)
+            self.assertEqual(s, 200, c)
+            s, c = self.save_rule(**body)
+            self.assertEqual(s, 200, c)
+            log = psql(f"SELECT string_agg(action, ',' ORDER BY id) FROM ana_system.admin_log WHERE target = '{name}' "
+                       f"AND action LIKE 'connector.personal%'")
+            self.assertEqual(log, "connector.personal_request,connector.personal_approve")   # the short one never counted
+            # A non-personal field needs no authorization.
+            s, c = self.save_rule(entity="party", watch_fields=["base.party.city"],
+                                  action={"kind": "connector", "connector": name, "message_kind": "party.changed"})
+            self.assertEqual(s, 200, c)
+        finally:
+            http("DELETE", f"/api/admin/connectors/{name}/personal-data", token=self.token)

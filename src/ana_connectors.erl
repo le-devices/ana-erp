@@ -4,6 +4,7 @@
 %% goes to admin_log. Secrets are write-only: the API reports which keys exist.
 -module(ana_connectors).
 -export([list/0, save/3, remove/2, put_secret/4, delete_secret/3, smtp_test/3]).
+-export([personal_request/3, personal_approve/2, personal_revoke/2, personal_allowed/1]).
 
 -define(FIELDS, [<<"description">>, <<"kind">>, <<"base_url">>, <<"auth">>, <<"api_key_header">>, <<"token_url">>,
                  <<"allowed_hosts">>, <<"timeout_ms">>, <<"rate_per_min">>, <<"outbound_program">>,
@@ -16,7 +17,8 @@ list() ->
         "SELECT c.name, c.description, c.kind, c.base_url, c.auth, c.api_key_header, c.token_url, c.allowed_hosts, "
         "  c.timeout_ms, c.rate_per_min, c.outbound_program, c.inbound_program, c.signature_header, c.timestamp_header, "
         "  c.event_id_header, c.replay_window_s, c.max_attempts, c.run_as, c.active, c.options, c.updated_at, c.updated_by, "
-        "  c.default_email, "
+        "  c.default_email, c.personal_purpose, c.personal_requested_by, c.personal_requested_at, "
+        "  c.personal_approved_by, c.personal_approved_at, "
         "  COALESCE((SELECT jsonb_agg(jsonb_build_object('key', s.key, 'expires_at', s.expires_at, "
         "     'expiring', s.expires_at < current_date + 30) ORDER BY s.key) "
         "   FROM integration.secret s WHERE s.connector = c.name), '[]') AS secrets "
@@ -70,6 +72,52 @@ save(Name, Body, #{username := Who}) ->
                 {error, #{message := M}} -> {error, M};
                 {error, _} -> {error, <<"dados inválidos"/utf8>>}
             end
+    end.
+
+%% ---------------------------------------------------------------- personal data (spec 068, D10, CA-068-07)
+%% A connector receives personal data (LGPD) only with a purpose, asked by one person and approved by another; the
+%% database refuses the same person approving (four eyes). Asking again (a new purpose) needs a new approval.
+personal_request(Name, #{<<"purpose">> := P}, #{username := Who}) when is_binary(P) ->
+    Purpose = string:trim(P),
+    case byte_size(Purpose) >= 10 of
+        false -> {error, <<"diga a finalidade (pelo menos 10 caracteres): para que o sistema de destino usa os dados"/utf8>>};
+        true ->
+            case ana_db:exec("UPDATE integration.connector SET personal_purpose = $2, personal_requested_by = $3, "
+                             "  personal_requested_at = now(), personal_approved_by = NULL, personal_approved_at = NULL "
+                             "WHERE name = $1", [Name, Purpose, Who]) of
+                {ok, 0} -> {error, not_found};
+                {ok, _} ->
+                    ok = ana_admin:log(Who, <<"connector.personal_request">>, Name, null, #{purpose => Purpose}),
+                    {ok, #{name => Name, status => <<"requested">>}}
+            end
+    end;
+personal_request(_, _, _) -> {error, <<"diga a finalidade"/utf8>>}.
+
+personal_approve(Name, #{username := Who}) ->
+    case ana_db:one("UPDATE integration.connector SET personal_approved_by = $2, personal_approved_at = now() "
+                    "WHERE name = $1 AND personal_purpose IS NOT NULL RETURNING personal_purpose", [Name, Who]) of
+        {ok, #{<<"personal_purpose">> := P}} ->
+            ok = ana_admin:log(Who, <<"connector.personal_approve">>, Name, null, #{purpose => P}),
+            {ok, #{name => Name, status => <<"approved">>}};
+        {ok, undefined} -> {error, <<"não há pedido de autorização para este conector"/utf8>>};
+        {error, #{sqlstate := <<"23514">>}} ->
+            {error, <<"quem pediu a autorização não pode aprová-la: outra pessoa precisa aprovar (quatro olhos)"/utf8>>};
+        {error, E} -> {error, iolist_to_binary(io_lib:format("~0p", [E]))}
+    end.
+
+personal_revoke(Name, #{username := Who}) ->
+    case ana_db:exec("UPDATE integration.connector SET personal_purpose = NULL, personal_requested_by = NULL, "
+                     "  personal_requested_at = NULL, personal_approved_by = NULL, personal_approved_at = NULL "
+                     "WHERE name = $1", [Name]) of
+        {ok, 0} -> {error, not_found};
+        {ok, _} -> ok = ana_admin:log(Who, <<"connector.personal_revoke">>, Name, null, null), {ok, #{name => Name}}
+    end.
+
+-spec personal_allowed(binary()) -> boolean().
+personal_allowed(Name) ->
+    case ana_db:one("SELECT personal_approved_by IS NOT NULL AS ok FROM integration.connector WHERE name = $1", [Name]) of
+        {ok, #{<<"ok">> := true}} -> true;
+        _ -> false
     end.
 
 remove(Name, #{username := Who}) ->
