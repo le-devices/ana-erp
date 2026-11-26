@@ -10585,6 +10585,7 @@ class TestChangeWatchSecurity(Base):
     def turn_on(self, rid):
         s, r, _ = http("POST", f"/api/admin/automations/rules/{rid}/rehearse", {}, self.token)
         self.assertEqual(s, 200, r)
+        self.assertTrue(r.get("rehearsed"), r)                    # the rehearsal's error, when there is one
         s, c, _ = http("POST", f"/api/admin/automations/rule/{rid}/active", {"active": True}, self.token)
         self.assertEqual(s, 200, c)
 

@@ -391,6 +391,10 @@ Migração `082_change_watch_security.sql`.
 - no disparo, uma autorização revogada impede o envio.
 
 **Conferência por outra pessoa (CA-068-01):**
-- a ação "criar tarefa" tem a opção "exceto quem alterou" (`not_by_changer`), que grava `bpm.task.not_by`;
+- a ação "criar tarefa" tem a opção "exceto quem alterou" (`not_by_changer`);
+- quem não pode concluir é gravado em `bpm.task.not_by` quando a tarefa nasce, por `automation.create_task` (a
+  versão com 16 parâmetros, `SECURITY DEFINER`); nenhum programa pode mudar a coluna depois, porque `ana_exec` não
+  tem `UPDATE` nela;
+- uma tarefa sobre um cadastro abre um caso sem documento do BPM (`none`), com a chave no título;
 - o banco recusa que essa pessoa assuma ou conclua a tarefa, administrador ou não;
 - a tela de tarefas explica a recusa antes.
