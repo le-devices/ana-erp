@@ -241,3 +241,18 @@ para os programas que os usam.
 - aba "Dados bancários" na ficha;
 - permissão por aba (`edit: admin`): só o administrador altera, os demais veem mascarado e só para leitura;
 - programa `base.save_party_bank`.
+
+## 10. Feito: linha de base (T-068-02)
+
+`TestDiskEndurance` mede, antes de qualquer vigilância, duas operações novas do orçamento:
+- `change_party`: alterar um cadastro de cliente, já com a linha do histórico;
+- `change_order_field`: alterar um campo do pedido por rotina.
+
+Medição local: 2.529 B e 6.647 B, com a rotina curta em 2.277 B. No orçamento entraram escaladas pela rotina curta
+(5.259 B no CI): 5.841 B e 15.352 B.
+
+Essas entradas não podem crescer sem regra (CA-068-02). As entradas "com regra" entram com a T-068-03 e a T-068-04,
+porque precisam do leitor e da verificação.
+
+A comparação de tempo do lote de 10 mil linhas (RNF-068-02, CA-068-09) também fica para a T-068-04: ela só faz
+sentido medindo com e sem a verificação instalada, na mesma rodada.

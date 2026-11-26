@@ -7796,6 +7796,25 @@ class TestDiskEndurance(Base):
         r = self.run_ok("master.import", {"entity": "party", "content": content, "confirm": True})
         self.assertEqual(r["new"], 1000, r)
 
+    # Spec 068 (T-068-02): the baseline of a change, before any watching exists — what must not grow without a rule.
+    def party_setup(self):
+        return self.run_ok("base.save_party", {"name": f"Disco Vigia {SUFFIX}", "kind": "customer"})["id"]
+
+    def party_change(self, pid, i):
+        self.run_ok("base.save_party", {"id": pid, "name": f"Disco Vigia {SUFFIX}", "kind": "customer",
+                                        "email": f"vigia{i}.{SUFFIX}@exemplo.com.br", "city": "Campinas", "state": "SP"})
+
+    def order_field_setup(self):
+        name = f"test.disk{SUFFIX}.order_note"
+        if name not in CREATED_PROGRAMS:
+            self.save(name, "def main(number, note):\n"
+                            "    ana.sql_exec('UPDATE sales.sales_order SET notes = $2 WHERE number = $1', number, note)\n"
+                            "    return {'number': number}\n")
+        return self.new_orders(1)[0]
+
+    def order_field_change(self, number, i):
+        self.run_ok(f"test.disk{SUFFIX}.order_note", {"number": number, "note": f"observação {i}"})
+
     def test_ca_063_01_writing_within_budget(self):
         self.idle = self.idle_rate()
         got = {"idle_wal_bytes_per_hour": round(self.idle * 3600)}
@@ -7807,6 +7826,8 @@ class TestDiskEndurance(Base):
             "public_api_call": (self.api_setup, self.api_call, 20, 11.0),
             "import_1000_parties": (self.import_setup, self.import_run, 1, 2.0),
             "alert_cycle": (None, lambda _c, _i: http("POST", "/api/admin/observability/health/check", {}, self.token), 10, 1.0),
+            "change_party": (self.party_setup, self.party_change, 10, 2.0),
+            "change_order_field": (self.order_field_setup, self.order_field_change, 10, 2.0),
         }
         for name, (setup, op, n, settle) in ops.items():
             got[name] = self.measure(setup, op, n, settle=settle, trials=1 if name == "import_1000_parties" else 2)
