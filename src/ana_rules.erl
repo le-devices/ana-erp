@@ -408,7 +408,7 @@ fire_checked(R = #{<<"id">> := Id, <<"max_fires">> := Max, <<"window_minutes">> 
                                                                 [Max, Win])), F);
                 false ->
                     case ana_flows:condition(maps:get(<<"conditions">>, R), Facts) of
-                        false -> finish(F, <<"skipped">>, #{<<"reason">> => <<"condições não atendidas">>}, null, Chain);
+                        false -> finish(F, <<"skipped">>, #{<<"reason">> => <<"condições não atendidas"/utf8>>}, null, Chain);
                         true -> act_and_record(R, Ev, Facts, F)
                     end
             end
