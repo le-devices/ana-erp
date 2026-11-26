@@ -9,7 +9,7 @@ Plano com as medições feito (plan.md, 26/11/2026): verificação instalada sob
 - [x] T-068-05 Alterações em massa: eventos numa gravação por comando, disparo por registro ou agrupado, padrão agrupado para importação e rotina (RF-068-05, D6, CA-068-05)
 - [x] T-068-06 (a tela fica na T-068-10) Gatilho "alterado" nas regras: de/para, variação mínima, esvaziado/preenchido, origem e registro específico; ciclo e limite da spec 051 (RF-068-01, D1)
 - [x] T-068-07 Segurança no disparo e na saída: dono e escopo de dados, campo sigiloso nunca sai, dado pessoal só para conector autorizado com quatro olhos, auditoria (RF-068-06, D9, D10, RNF-068-03, CA-068-01, CA-068-06, CA-068-07)
-- [ ] T-068-08 Saída por conector idempotente, ordenada por registro, limitada e assinada (RF-068-07, D11, CA-068-04)
+- [x] T-068-08 Saída por conector idempotente, ordenada por registro, limitada e assinada (RF-068-07, D11, CA-068-04)
 - [x] T-068-09 Fila curta e descartável, com retenção dos disparos e ocioso sem escrita (D8, RNF-068-01)
 - [ ] T-068-10 Telas: "Avisar quando mudar" no histórico, editor com classificação visível, ensaio sobre mudanças reais, central com disparos, agrupamentos e fora do alcance; verificador da spec 050 (RF-068-08, D12, CA-068-10)
 - [ ] T-068-11 Sugestão de "Avisar quando mudar" a partir de consultas repetidas ao histórico (RF-068-09)
