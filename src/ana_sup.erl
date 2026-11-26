@@ -40,6 +40,7 @@ init([]) ->
             worker(ana_bpm, []),          % single process engine: BPM cases and esteiras (specs 030, 039)
             worker(ana_rules, []),        % spec 051: rules "when… then…" and ERP tasks that resolve by themselves
             worker(ana_watch, []),        % spec 068: change watch installed only where an active rule needs it
+            worker(ana_watch_log, []),    % spec 068: master data watched from the history (leader only)
             worker(ana_suggestions, []),  % spec 051: suggestions from usage (background, hourly)
             #{id => ana_connector_sup, start => {ana_connector_sup, start_link, []}, type => supervisor},
             worker(ana_integration, []),

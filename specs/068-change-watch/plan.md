@@ -302,3 +302,40 @@ Tirar a ordenação das chaves dentro do gatilho baixou o pior caso de +38% para
 
 **Orçamento de escrita.** `change_order_field_watched` é `change_order_field` mais a linha de evento: ≈ 215 B, ou
 ≈ 508 B na escala do CI. O ruído do ocioso local é maior que essa diferença, e o CI confere.
+
+## 12. Feito: cadastros lidos do histórico (T-068-03) e o disparo que não perde nem repete
+
+Migração `080_change_watch_masters.sql` e processo `ana_watch_log`.
+
+**Leitura** (`automation.read_log`):
+- devolve todas as linhas do histórico depois do ponto (para distinguir um buraco de uma linha que ninguém vigia),
+  mais os `id` que faltavam;
+- só traz alterações das entidades vigiadas, nunca um pedido de alteração aguardando aprovação;
+- as chaves são as referências do catálogo, e os campos próprios da empresa saem um a um;
+- sigiloso sai `***`, e o que o histórico já mascara conta como alterado.
+
+**Leitor** (`ana_watch_log`, só no líder):
+- lê a cada 1 s, e só enquanto houver regra "alterado" sobre um cadastro;
+- os buracos ficam em memória por 15 minutos; a conta é pura e testada em eunit (`advance/5`);
+- o ponto é gravado com os disparos, ou a cada 5 minutos;
+- sem regra, o ponto é apagado, e a próxima regra começa do seu próprio momento, nunca do passado;
+- quem deixa de ser líder esquece tudo, e o novo líder retoma do ponto.
+
+**Disparo sem perder nem repetir (RNF-068-04, CA-068-11):**
+- o evento casado (entidade e campos da regra) é reivindicado como `running` em `automation.fire`, com
+  `event_ref` único por regra (`log:<id>` ou `doc:<xid>:<chave>`);
+- a reivindicação acontece na mesma transação que grava o ponto ou que tira os eventos da fila;
+- o `ana_rules` age depois sobre as reivindicações, inclusive as que uma queda deixou para trás, passando por
+  laço, limite e condições, como na spec 051;
+- os fatos são os do documento, mais cada campo alterado (`campo` e `campo_before`), `changed_by` e `origin`.
+
+**Lote (base do D6).** Uma transação que altera mais de 20 documentos de uma entidade vira um disparo agrupado por
+regra, com `{{count}}` e a lista de até 1.000 chaves. O lote de 10 mil pedidos gera 15 disparos em 15 lotes, e a
+regra não é bloqueada pelo limite.
+
+**Defeito encontrado e corrigido no caminho.** Os eventos de documento saíam com o nome da coluna, e não com a
+referência do catálogo. A regra não casava, e o evento se perdia sem disparo. O teste de ponta a ponta pegou o
+defeito.
+
+Medido de novo, com a fila vazia antes de cada rodada (o líder processa o lote anterior em segundo plano): +20% no
+pior caso; o caso realista ficou dentro do ruído.

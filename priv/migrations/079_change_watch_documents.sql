@@ -65,7 +65,7 @@ SELECT DISTINCT f.entity, f.table_name, f.column_name, f.via_column, f.classific
 ALTER TABLE automation.pending DROP CONSTRAINT pending_kind_check;
 ALTER TABLE automation.pending ADD CONSTRAINT pending_kind_check CHECK (kind IN ('created', 'status', 'message', 'changed'));
 ALTER TABLE automation.pending
-    ADD COLUMN changes jsonb,                                    -- 'changed': [{"k": key, "c": {field: [old, new]}}, …]
+    ADD COLUMN changes jsonb,                     -- 'changed': [{"k": key, "c": {"schema.table.column": [old, new]}}, …]
     ADD COLUMN rows    integer,                                  -- how many changed rows the command touched
     ADD COLUMN origin  text,
     ADD COLUMN xid     xid8;
@@ -91,7 +91,8 @@ BEGIN
         RAISE EXCEPTION 'FORBIDDEN: % não pode ser vigiada', p_table USING ERRCODE = 'insufficient_privilege';
     END IF;
     SELECT string_agg(format('o.%1$I IS DISTINCT FROM n.%1$I', column_name), ' OR ' ORDER BY column_name),
-           string_agg(format('%1$L, CASE WHEN o.%2$I IS DISTINCT FROM n.%2$I THEN %3$s END', column_name, column_name,
+           string_agg(format('%1$L, CASE WHEN o.%2$I IS DISTINCT FROM n.%2$I THEN %3$s END', table_name || '.' || column_name,
+                             column_name,
                              CASE WHEN classification = 'secret' THEN '''["***", "***"]''::jsonb'
                                   ELSE format('jsonb_build_array(to_jsonb(o.%1$I), to_jsonb(n.%1$I))', column_name) END),
                       ', ' ORDER BY column_name),

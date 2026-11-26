@@ -41,6 +41,10 @@
   "change_order_field_watched": {
    "label": "Alterar um campo do pedido vigiado por regra (um evento por comando)",
    "wal_bytes": 15860
+  },
+  "change_party_watched_other": {
+   "label": "Alterar cadastro de cliente com regra em outro campo (lido do histórico)",
+   "wal_bytes": 5841
   }
  }
 }

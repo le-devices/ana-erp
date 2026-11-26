@@ -17,9 +17,13 @@
 -export([start_link/0]).
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2]).
 -export([list/0, get/1, save/2, delete/2, activate/3, rehearse/3, catalog/0]).
+-export([claim_log/2]).
 
 -define(TICK_MS, 60000).
 -define(BATCH, 200).
+-define(TAKE, 20000).          % document events taken at once (whole transactions: a batch is one group)
+-define(GROUP, 20).           % more documents than this in one transaction: one grouped firing (spec 068, D6)
+-define(GROUP_LIST, 1000).
 -define(FIRES_SHOWN, 50).
 
 start_link() -> gen_server:start_link({local, ?MODULE}, ?MODULE, [], []).
@@ -47,7 +51,10 @@ work(S = #{worker := undefined}, Timed) ->
     case leader() of
         false -> S#{again := false};
         true ->
-            {_, Ref} = spawn_monitor(fun() -> drain(), lists:foreach(fun safe/1, Timed), resolve_tasks() end),
+            {_, Ref} = spawn_monitor(fun() ->
+                                         drain(), safe(fun drain_changed/0), safe(fun run_claimed/0),
+                                         lists:foreach(fun safe/1, Timed), resolve_tasks()
+                                     end),
             S#{worker := Ref, again := false}
     end;
 work(S, []) -> S;
@@ -188,6 +195,144 @@ facts(Ent, Key) ->
         _ -> #{<<"key">> => Key}
     end.
 
+%% ---------------------------------------------------------------- changes of fields (spec 068)
+
+%% An event is claimed for every active "changed" rule watching one of its fields: a firing 'running', unique per
+%% rule and event, written in the caller's transaction (with the point read in the history, or with the events taken
+%% from the queue) — so nothing is lost in a crash and nothing fires twice when the same events are read again
+%% (RNF-068-04, CA-068-11). The action runs afterwards (run_claimed).
+-spec claim_log(pid(), [map()]) -> non_neg_integer().
+claim_log(C, Events) ->
+    lists:sum([claim(C, #{entity => E, key => K, changes => Ch, username => U, origin => O, chain => [],
+                          ref => <<"log:", (integer_to_binary(Id))/binary>>, source => <<"master">>})
+               || #{<<"id">> := Id, <<"entity">> := E, <<"row_key">> := K, <<"changes">> := Ch, <<"username">> := U,
+                    <<"origin">> := O} <- Events, is_map(Ch), map_size(Ch) > 0]).
+
+claim(C, Ev = #{entity := E, key := K, changes := Ch, ref := Ref, chain := Chain}) ->
+    Event = #{<<"changes">> => Ch, <<"username">> => maps:get(username, Ev), <<"origin">> => maps:get(origin, Ev),
+              <<"source">> => maps:get(source, Ev)},
+    Detail = #{<<"event">> => case Ev of #{group := G} -> Event#{<<"group">> => G}; _ -> Event end},
+    {ok, Rows} = ana_db:rows(C, "INSERT INTO automation.fire (rule_id, entity, doc_key, outcome, detail, chain, by, event_ref) "
+                                "SELECT r.id, $1, $2, 'running', $3, $4::bigint[], 'system', $5 FROM automation.rule r "
+                                "WHERE r.active AND r.trigger_kind = 'changed' AND r.entity = $1 "
+                                "  AND r.watch_fields && $6::text[] "
+                                "ON CONFLICT (rule_id, event_ref) WHERE event_ref IS NOT NULL DO NOTHING RETURNING id",
+                             [E, K, Detail, Chain, Ref, maps:keys(Ch)]),
+    length(Rows).
+
+%% Documents: whole transactions taken from the queue and claimed in the same transaction (D5, D8). A transaction that
+%% changed more than ?GROUP documents of an entity (a batch, an import, a routine) is ONE grouped firing per rule,
+%% with the count and the list (D6, CA-068-05) — never an avalanche of notices.
+drain_changed() ->
+    R = ana_db:transaction(fun(C) ->
+        {ok, Evs} = ana_db:rows(C, "SELECT entity, doc_key, changes, xid::text AS xid, username, origin, chain "
+                                   "FROM automation.take_changed($1)", [?TAKE]),
+        Groups = lists:foldl(fun(E = #{<<"entity">> := Ent, <<"xid">> := X}, Acc) ->
+                                     maps:update_with({Ent, X}, fun(L) -> [E | L] end, [E], Acc)
+                             end, #{}, [E || E = #{<<"doc_key">> := K} <- Evs, is_binary(K)]),
+        _ = [claim_documents(C, Ent, X, lists:reverse(L)) || {{Ent, X}, L} <- maps:to_list(Groups)],
+        {ok, length(Evs)}
+    end),
+    case R of
+        {ok, 0} -> ok;
+        {ok, _} -> drain_changed();
+        {error, E} -> logger:warning("rules: changes not taken: ~0p", [E])
+    end.
+
+claim_documents(C, Ent, X, [#{<<"username">> := U, <<"origin">> := O, <<"chain">> := Chain} | _] = Evs)
+  when length(Evs) > ?GROUP ->
+    Fields = lists:usort(lists:append([maps:keys(Ch) || #{<<"changes">> := Ch} <- Evs])),
+    Items = [#{<<"key">> => K, <<"changes">> => Ch} || #{<<"doc_key">> := K, <<"changes">> := Ch} <- lists:sublist(Evs, ?GROUP_LIST)],
+    claim(C, #{entity => Ent, key => null, changes => maps:from_list([{F, null} || F <- Fields]), username => U, origin => O,
+               chain => chain(Chain), ref => <<"doc:", X/binary, ":*">>, source => <<"document">>,
+               group => #{<<"count">> => length(Evs), <<"items">> => Items}});
+claim_documents(C, Ent, X, Evs) ->
+    lists:sum([claim(C, #{entity => Ent, key => K, changes => Ch, username => U, origin => O, chain => chain(Chain),
+                          ref => <<"doc:", X/binary, ":", K/binary>>, source => <<"document">>})
+               || #{<<"doc_key">> := K, <<"changes">> := Ch, <<"username">> := U, <<"origin">> := O,
+                    <<"chain">> := Chain} <- Evs]).
+
+%% The claimed firings, in order; also the ones a crash or a leader change left behind.
+run_claimed() -> run_claimed(50).
+
+run_claimed(0) -> ok;
+run_claimed(Rounds) ->
+    case ana_db:rows("SELECT f.id AS fire_id, f.entity AS ev_entity, f.doc_key AS ev_key, f.detail AS ev_detail, "
+                     "  f.chain AS ev_chain, r.* FROM automation.fire f JOIN automation.rule r ON r.id = f.rule_id "
+                     "WHERE f.outcome = 'running' ORDER BY f.id LIMIT " ++ integer_to_list(?BATCH), []) of
+        {ok, []} -> ok;
+        {ok, Rows} ->
+            lists:foreach(fun(X = #{<<"fire_id">> := F}) ->
+                                  try fire_claimed(X)
+                                  catch Cl:Re:St ->
+                                      logger:warning("rules: firing ~b: ~0p:~0p ~0p", [F, Cl, Re, St]),
+                                      finish(F, <<"failed">>, #{<<"error">> => #{<<"message">> => <<"erro interno">>}}, null, [])
+                                  end
+                          end, Rows),
+            run_claimed(Rounds - 1);
+        {error, E} -> logger:warning("rules: claimed firings not read: ~0p", [E])
+    end.
+
+fire_claimed(X = #{<<"fire_id">> := F, <<"ev_entity">> := Ent, <<"ev_key">> := Key, <<"ev_detail">> := D,
+                   <<"ev_chain">> := Chain0, <<"id">> := Id, <<"active">> := Active,
+                   <<"max_fires">> := Max, <<"window_minutes">> := Win}) ->
+    R = maps:without([<<"fire_id">>, <<"ev_entity">>, <<"ev_key">>, <<"ev_detail">>, <<"ev_chain">>], X),
+    Chain = chain(Chain0),
+    Facts = changed_facts(Ent, Key, D),
+    Ev = #{kind => <<"changed">>, entity => Ent, key => Key, facts => Facts, chain => Chain},
+    case Active of
+        false -> finish(F, <<"skipped">>, #{<<"reason">> => <<"regra desligada antes do disparo">>}, null, Chain);
+        true ->
+            case lists:member(Id, Chain) of
+                true ->
+                    block(R, Ev, <<"a regra disparou a si mesma: a ação dela gerou de novo a mudança que a dispara "
+                                   "(cadeia de regras "/utf8, (chain_text(Chain ++ [Id]))/binary, ")">>, F);
+                false ->
+                    {ok, #{<<"n">> := N}} = ana_db:one("SELECT count(*)::int AS n FROM automation.fire WHERE rule_id = $1 "
+                                                       "AND outcome IN ('done', 'failed') "
+                                                       "AND at > now() - make_interval(mins => $2)", [Id, Win]),
+                    case N >= Max of
+                        true ->
+                            block(R, Ev, iolist_to_binary(io_lib:format("passou do limite de ~b disparos em ~b minuto(s)",
+                                                                        [Max, Win])), F);
+                        false ->
+                            case ana_flows:condition(maps:get(<<"conditions">>, R), Facts) of
+                                false -> finish(F, <<"skipped">>, #{<<"reason">> => <<"condições não atendidas">>}, null, Chain);
+                                true -> act_and_record(R, Ev, Facts, F)
+                            end
+                    end
+            end
+    end.
+
+%% The facts of a change: the document's facts (when it is a BPM document), each changed field by its column name
+%% (the value after) and <column>_before, who changed it and from where. A secret field is "***" (D10).
+changed_facts(Ent, _, #{<<"event">> := E = #{<<"group">> := #{<<"count">> := N, <<"items">> := Items}}}) ->
+    #{<<"entity">> => Ent, <<"grouped">> => true, <<"count">> => N,
+      <<"keys">> => iolist_to_binary(lists:join(<<", ">>, [K || #{<<"key">> := K} <- lists:sublist(Items, 50)])),
+      <<"changed_fields">> => maps:keys(maps:get(<<"changes">>, E, #{})),
+      <<"changed_by">> => maps:get(<<"username">>, E, null), <<"origin">> => maps:get(<<"origin">>, E, null)};
+changed_facts(Ent, Key, #{<<"event">> := E}) ->
+    Base = case entity_table(Ent) of
+        undefined -> #{<<"key">> => Key};
+        _ -> facts(Ent, Key)
+    end,
+    Ch = maps:get(<<"changes">>, E, #{}),
+    Fields = maps:fold(fun(Ref, [B, A], Acc) ->
+                               Name = lists:last(binary:split(Ref, <<".">>, [global])),
+                               Acc#{Name => A, <<Name/binary, "_before">> => B};
+                          (_, _, Acc) -> Acc
+                       end, #{}, Ch),
+    maps:merge(Base, Fields#{<<"key">> => Key, <<"entity">> => Ent, <<"changed_fields">> => maps:keys(Ch),
+                             <<"changed_by">> => maps:get(<<"username">>, E, null),
+                             <<"origin">> => maps:get(<<"origin">>, E, null)});
+changed_facts(_, Key, _) -> #{<<"key">> => Key}.
+
+finish(F, Outcome, Detail, Exec, Chain) ->
+    {ok, _} = ana_db:exec("UPDATE automation.fire SET outcome = $2, detail = detail || $3, execution_id = $4::text::uuid, "
+                          "chain = $5::bigint[], at = now() WHERE id = $1 AND outcome = 'running'",
+                          [F, Outcome, Detail, Exec, Chain]),
+    ok.
+
 %% ---------------------------------------------------------------- firing
 
 fire(R = #{<<"id">> := Id, <<"max_fires">> := Max, <<"window_minutes">> := Win}, Ev = #{chain := Chain}) ->
@@ -211,13 +356,18 @@ fire(R = #{<<"id">> := Id, <<"max_fires">> := Max, <<"window_minutes">> := Win},
             end
     end.
 
-act_and_record(R = #{<<"id">> := Id}, Ev = #{chain := Chain}, Facts) ->
+act_and_record(R, Ev, Facts) -> act_and_record(R, Ev, Facts, undefined).
+
+act_and_record(R = #{<<"id">> := Id}, Ev = #{chain := Chain}, Facts, Claimed) ->
     {Outcome, Detail, Exec} = case act(R, Ev, Facts, false) of
         {ok, #{id := X, result := Res}} -> {<<"done">>, #{<<"result">> => ana_flows:small(Res)}, X};
         {error, E} -> {<<"failed">>, #{<<"error">> => maps:with([<<"code">>, <<"message">>], E)},
                        maps:get(<<"execution_id">>, E, null)}
     end,
-    record(Id, Ev, Outcome, Detail, Exec, Chain ++ [Id], <<"system">>),
+    case Claimed of
+        undefined -> record(Id, Ev, Outcome, Detail, Exec, Chain ++ [Id], <<"system">>);
+        F -> finish(F, Outcome, Detail, Exec, Chain ++ [Id])
+    end,
     {ok, _} = ana_db:exec("UPDATE automation.rule SET last_fired_at = now() WHERE id = $1", [Id]),
     case Outcome of
         <<"failed">> -> notify_owner(R, <<"failed">>, <<"A regra \""/utf8, (maps:get(<<"name">>, R))/binary,
@@ -252,13 +402,19 @@ record(Id, Ev, Outcome, Detail, Exec, Chain, By) ->
     ok.
 
 %% RNF-051-01, CA-051-03: blocked and turned off, with a notice — never a loop, never silence.
-block(R = #{<<"id">> := Id, <<"name">> := Name}, Ev, Reason) ->
+block(R, Ev, Reason) -> block(R, Ev, Reason, undefined).
+
+block(R = #{<<"id">> := Id, <<"name">> := Name}, Ev, Reason, Claimed) ->
     {ok, N} = ana_db:exec("UPDATE automation.rule SET active = false, blocked_reason = $2, blocked_at = now() "
                           "WHERE id = $1 AND active", [Id, Reason]),
+    _ = Claimed =/= undefined andalso
+        ok =:= finish(Claimed, case N of 0 -> <<"skipped">>; _ -> <<"blocked">> end, #{<<"reason">> => Reason}, null,
+                      maps:get(chain, Ev, [])),
     case N of
         0 -> ok;                                                     % already blocked by another event of the batch
         _ ->
-            record(Id, Ev, <<"blocked">>, #{<<"reason">> => Reason}, null, maps:get(chain, Ev, []), <<"system">>),
+            _ = Claimed =:= undefined andalso
+                ok =:= record(Id, Ev, <<"blocked">>, #{<<"reason">> => Reason}, null, maps:get(chain, Ev, []), <<"system">>),
             Msg = <<"Regra \""/utf8, Name/binary, "\" bloqueada e desligada: "/utf8, Reason/binary>>,
             _ = ana_db:exec("INSERT INTO ana_system.notice (kind, severity, message, link) VALUES ('automation_rule', 'serious', $1, $2)",
                             [Msg, <<"#/admin/automations/rules/", (integer_to_binary(Id))/binary>>]),
