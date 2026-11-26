@@ -83,7 +83,7 @@ Tarefas adiadas já concluídas (ordem acordada em out/2026): T-017-05b ✓, T-0
 22. 061 — implantação guiada (`specs/061-guided-onboarding`)
 23. 053 — regressão automática dos processos do cliente (`specs/053-customer-regression`)
 24. 055 — fechamento contínuo (`specs/055-continuous-close`)
-25. 046 — diagnósticos de programas (`specs/046-diagnostics`)
+25. 046 — diagnósticos de programas (`specs/046-diagnostics`); revisada em 26/11/2026 com a tela "Erros" (grupos de todas as fontes, avisos sem inundar, "já é conhecido" para quem esbarra no erro): T-046-07..13 antes do agregado de longo prazo
 26. 047 — acesso emergencial e depuração em produção (`specs/047-emergency-access-debug`)
 27. 057 — central de suporte (T-057-01..03) (`specs/057-support-center`)
 28. 054 — chão de fábrica, bancada e rastreabilidade por número de série (`specs/054-shop-floor-traceability`)
