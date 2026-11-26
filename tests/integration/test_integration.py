@@ -10305,6 +10305,8 @@ class TestChangeWatchDocuments(Base):
             if rid:
                 unwatch(rid, ["sales.sales_order"])
             psql(f"DELETE FROM sales.sales_order WHERE notes = '{tag}'")
+            # The cleanup's own writing happens now, not as autovacuum inside the next test's measurement (spec 063).
+            psql("VACUUM sales.sales_order, sales.sales_order_item, automation.pending, automation.fire")
         self.assertFalse(watch_installed("sales.sales_order"))
 
     def test_t_068_09_firings_follow_the_retention_and_the_queue_is_emptied_as_read(self):

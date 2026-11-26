@@ -30,3 +30,37 @@ BEGIN
 END $$;
 CREATE TRIGGER task_not_by BEFORE UPDATE OF assignee, done_by, status ON bpm.task
     FOR EACH ROW WHEN (NEW.not_by IS NOT NULL) EXECUTE FUNCTION bpm.task_not_by();
+
+-- A task of a rule about master data (CA-068-01): the case has no BPM document of that kind.
+CREATE OR REPLACE FUNCTION automation.create_task(p_name text, p_kind text, p_entity text, p_key text, p_assignee text, p_role text,
+                                       p_group text, p_instructions text, p_program text, p_params jsonb, p_context jsonb,
+                                       p_actions jsonb, p_resolve jsonb, p_priority integer, p_by text) RETURNS bigint
+LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog, pg_temp AS $$
+DECLARE c bigint; t bigint; tk bigint;
+    -- Spec 068: a task about master data (a supplier, an item) is a case of no BPM document; the key stays in the title.
+    ent text := CASE WHEN EXISTS (SELECT 1 FROM bpm.document d WHERE d.entity = p_entity) THEN p_entity ELSE 'none' END;
+BEGIN
+    IF p_kind NOT IN ('human', 'approval') THEN
+        RAISE EXCEPTION 'INVALID_PARAMETER: tarefa é "human" ou "approval"' USING ERRCODE = 'check_violation';
+    END IF;
+    IF p_assignee IS NULL AND p_role IS NULL AND p_group IS NULL THEN
+        RAISE EXCEPTION 'INVALID_PARAMETER: diga para quem é a tarefa (pessoa, papel ou grupo)' USING ERRCODE = 'check_violation';
+    END IF;
+    INSERT INTO bpm.case (process_code, version, doc_entity, doc_key, title, data, started_by)
+    VALUES ('erp.tarefa', 1, ent, p_key,
+            p_name || CASE WHEN p_key IS NULL THEN '' ELSE ' — ' || p_key END, '{}', p_by)
+    RETURNING id INTO c;
+    INSERT INTO bpm.token (case_id, node) VALUES (c, 'tarefa') RETURNING id INTO tk;
+    INSERT INTO bpm.task (case_id, token_id, node, kind, name, status, assignee, role, group_name, program, params,
+                          instructions, priority, context, actions, resolve)
+    VALUES (c, tk, 'tarefa', p_kind, p_name, 'waiting', p_assignee, p_role, p_group, p_program, COALESCE(p_params, '{}'),
+            COALESCE(p_instructions, ''), COALESCE(p_priority, 3), p_context, p_actions, p_resolve)
+    RETURNING id INTO t;
+    INSERT INTO bpm.event (case_id, node, kind, by, detail) VALUES (c, 'tarefa', 'enter', p_by,
+        jsonb_build_object('document', ent, 'key', p_key));
+    IF p_assignee IS NOT NULL THEN
+        INSERT INTO bpm.notification (username, task_id, case_id, kind, message) VALUES (p_assignee, t, c, 'task', p_name);
+    END IF;
+    RETURN t;
+END $$;
+
