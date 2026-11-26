@@ -10727,6 +10727,9 @@ class TestChangeWatchOutbound(Base):
             self.assertEqual(s, 200, c)
         self.run_ok("inventory.stock_in", {"product": "ACUCAR-1", "quantity": 2, "document": f"CWO-{SUFFIX}"})
         number = self.run_ok("sales.create_order", {"customer": 2, "items": [{"product": "ACUCAR-1", "quantity": 1}]})["number"]
+        # The order is born with a promised date; this one is set before the rule exists (it would be a postponement).
+        psql(f"UPDATE sales.sales_order_item SET promised_date = DATE '2031-01-20' "
+             f"WHERE order_id = (SELECT id FROM sales.sales_order WHERE number = {number})")
         s, c, _ = http("POST", "/api/admin/automations/rules", {
             "name": f"Entrega adiada {SUFFIX}", "owner": "admin", "trigger_kind": "changed", "entity": "sales_order",
             "watch_fields": ["sales.sales_order_item.promised_date"], "watch_filter": {"direction": "up"},
@@ -10739,9 +10742,6 @@ class TestChangeWatchOutbound(Base):
         s, c, _ = http("POST", f"/api/admin/automations/rule/{rid}/active", {"active": True}, self.token)
         self.assertEqual(s, 200, c)
         wait_watch("sales.sales_order_item")
-        # A first promised date is not a postponement (empty → date): nothing fires.
-        psql(f"UPDATE sales.sales_order_item SET promised_date = DATE '2031-01-20' "
-             f"WHERE order_id = (SELECT id FROM sales.sales_order WHERE number = {number})")
         # Postponed three times in one transaction: one firing, one message.
         psql("BEGIN; " + " ".join(
             f"UPDATE sales.sales_order_item SET promised_date = DATE '2031-02-0{d}' "
