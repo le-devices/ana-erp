@@ -347,10 +347,21 @@
       tabs.push({ label: "Histórico", node: hist, lazy: async () => {
         try {
           const r = await call("master.history", { entity: e.name, key: rec.key });
-          hist.replaceChildren(r.changes.length ? el("div", { class: "table-box" }, el("table", { class: "data-table" },
-            el("thead", {}, el("tr", {}, ...["Quando", "Campo", "Antes", "Depois", "Por", "Origem"].map((h) => el("th", { text: h })))),
+          // Spec 068 (D12, CA-068-10): "Avisar quando mudar" opens a rule already filled with this record (and the
+          // field, from a line); rules are the administrator's (spec 051), so only they see it.
+          const admin = (window.AnaStudio.user() || {}).role === "admin";
+          const watch = (ref) => window.AnaStudio.go(`#/admin/automations/rules/new?entity=${encodeURIComponent(e.name)}` +
+            `&key=${encodeURIComponent(r.watch_key)}${ref ? `&field=${encodeURIComponent(ref)}` : ""}` +
+            `&back=${encodeURIComponent(location.hash)}`);
+          hist.replaceChildren(
+            admin ? el("div", { class: "row-buttons" }, el("button", { type: "button", class: "quiet", text: "Avisar quando mudar",
+              title: "Cria uma regra que avisa (ou chama um conector) quando este registro mudar", onclick: () => watch(null) })) : null,
+            r.changes.length ? el("div", { class: "table-box" }, el("table", { class: "data-table" },
+            el("thead", {}, el("tr", {}, ...["Quando", "Campo", "Antes", "Depois", "Por", "Origem"].map((h) => el("th", { text: h })), admin ? el("th") : null)),
             el("tbody", {}, ...r.changes.map((c) => el("tr", {}, el("td", { text: fmtDate(c.at) }), el("td", { text: c.field }),
-              el("td", { text: c.before ?? "—" }), el("td", { text: c.after ?? "—" }), el("td", { text: c.by || "" }), el("td", { text: c.origin || "" }))))))
+              el("td", { text: c.before ?? "—" }), el("td", { text: c.after ?? "—" }), el("td", { text: c.by || "" }), el("td", { text: c.origin || "" }),
+              admin ? el("td", {}, c.ref ? el("button", { type: "button", class: "quiet small", text: "Avisar quando mudar",
+                "aria-label": `Avisar quando ${c.field} mudar`, onclick: () => watch(c.ref) }) : null) : null)))))
             : el("p", { class: "muted", text: "Sem alterações registradas." }));
         } catch (err) { hist.replaceChildren(el("p", { class: "error", text: err.message })); }
       } });

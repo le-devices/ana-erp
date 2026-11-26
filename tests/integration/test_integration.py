@@ -10507,6 +10507,12 @@ class TestChangeWatchRules(Base):
         self.assertEqual(f[0]["detail"]["event"]["origin_kind"], "import")
         self.assertEqual(psql(f"SELECT message FROM bpm.notification WHERE message LIKE 'Importação {tag}:%'").split(" (Regra")[0],
                          f"Importação {tag}: 30 cadastros com e-mail novo")
+        # D12: the central shows, per rule, the grouped firings; the rule's history, how many records each covers.
+        s, rules, _ = http("GET", "/api/admin/automations/rules", token=self.token)
+        row = next(x for x in rules if x["id"] == grouped)
+        self.assertEqual((row["grouped"], row["out_of_reach"]), (1, 0), row)
+        s, one, _ = http("GET", f"/api/admin/automations/rules/{grouped}", token=self.token)
+        self.assertEqual([x["count"] for x in one["fires"] if x["outcome"] == "done"], [30])
         # D1: the rule that did not ask for imports does not fire for one.
         f = wait_fires(default, 1, timeout=60)
         self.assertEqual(f[0]["outcome"], "skipped", f)
@@ -10528,6 +10534,16 @@ class TestChangeWatchRules(Base):
         self.assertEqual((r["would_have_fired"], r["days"], r["history"], r["rehearsed"]), (3, 7, True, True), r)
         self.assertEqual(r["facts"]["email"], f"ensaio2.{SUFFIX}@exemplo.com.br")
         self.assertTrue(r["conditions_hold"])
+        # T-068-10 (D12): "teria disparado 3 vezes: …" — the latest first, only the watched field, with who and when.
+        ex = r["examples"]
+        self.assertEqual([e["changes"]["base.party.email"][1] for e in ex],
+                         [f"ensaio{i}.{SUFFIX}@exemplo.com.br" for i in (2, 1, 0)], ex)
+        self.assertTrue(all(set(e["changes"]) == {"base.party.email"} and e["by"] == "admin" and e["at"]
+                            and e["key"] == str(p["id"]) for e in ex), ex)
+        # CA-068-10: the record's history gives the field as the watch knows it, and the record's key.
+        h = self.ok("master.history", entity="party", key=str(p["id"]))
+        self.assertEqual(h["watch_key"], str(p["id"]))
+        self.assertIn("base.party.email", [c["ref"] for c in h["changes"]])
 
     def test_rnf_051_01_a_rule_whose_action_changes_what_it_watches_is_blocked(self):
         p = self.ok("master.save", entity="party", values={"name": f"Laço Vigia {SUFFIX}", "kind": "customer"},
@@ -10653,6 +10669,9 @@ class TestChangeWatchSecurity(Base):
         self.assertEqual(f[1]["outcome"], "done", f)
         self.assertEqual(psql(f"SELECT count(*) FROM bpm.notification WHERE username = '{seller}' "
                               f"AND message LIKE 'Cliente %Cidade Secreta%'"), "0")
+        # D12: the central counts the changes that stayed out of the owner's reach.
+        s, rules, _ = http("GET", "/api/admin/automations/rules", token=self.token)
+        self.assertEqual(next(x for x in rules if x["id"] == rid)["out_of_reach"], 1)
 
     def test_ca_068_07_personal_data_only_to_a_connector_authorized_by_two_people(self):
         name = f"cw{SUFFIX}"

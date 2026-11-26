@@ -688,9 +688,16 @@ def history(name, key, limit=200):
             if field in ("id", "custom", d["id"]) and r["op"] == "insert":
                 continue
             masked = field in secret
+            # Spec 068 (D12): the field as the change watch knows it ("Avisar quando mudar" opens the rule with it).
+            ref = f"{r['table_name']}.{field}" if field != "custom" else None
             out.append({"at": r["at"], "op": r["op"], "field": labels.get(field, field), "before": "***" if masked else before,
-                        "after": "***" if masked else after, "by": r["username"], "origin": r["origin"]})
+                        "after": "***" if masked else after, "by": r["username"], "origin": r["origin"], "ref": ref})
     return out
+
+
+def watch_key(name, key):
+    """Spec 068: the record as the change watch keys it (the row key of master.change_log)."""
+    return str(read_main(entity(name), key)["_id"])
 
 
 # ---------------------------------------------------------------- merge (RF-040-07)

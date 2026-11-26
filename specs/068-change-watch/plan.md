@@ -426,3 +426,43 @@ administrador.
 
 **Teste.** O "sistema externo" é o próprio ANA, recebendo pelo webhook de entrada, que confere a assinatura e
 descarta a repetição.
+
+## 16. T-068-10: telas (verificação no CI)
+
+**Histórico do cadastro.** Para o administrador (as regras são dele, spec 051), a aba "Histórico" ganha
+"Avisar quando mudar":
+- um botão para o registro todo;
+- um botão em cada linha, para o campo daquela linha.
+
+O programa `master.history` passa a devolver a referência do campo como o catálogo a conhece (`ref`) e a chave do
+registro usada pela vigia (`watch_key`). O botão abre a regra nova já preenchida:
+- entidade, registro e campo;
+- nome sugerido;
+- ação "avisar" para quem criou;
+- cancelar volta ao histórico.
+
+**Editor.** O gatilho "Campo alterado (cadastro ou documento)" mostra:
+- o cadastro ou documento;
+- o registro opcional;
+- os campos pelo rótulo, com 🔒 para sigiloso e 👤 para dado pessoal (com o texto para leitor de tela);
+- "como mudou": de, para, esvaziado ou preenchido, direção e variação mínima, desligados quando há campo sigiloso;
+- as origens, com a importação desmarcada por padrão;
+- o modo de disparo;
+- os registros de muito movimento, com a alternativa.
+
+**Ensaio.** "Teria disparado N vezes nos últimos 7 dias", com até 5 exemplos reais, do mais novo para o mais
+antigo. Cada exemplo traz:
+- quando e quem;
+- só os campos vigiados, e o sigiloso já como `***`.
+
+Documentos não guardam histórico campo a campo, e a tela diz isso.
+
+**Central.**
+- Lista de regras: as colunas "Agrupados" e "Fora do alcance".
+- Ficha da regra: cada disparo mostra quantos registros cobriu e quantos ficaram fora do alcance do dono. A
+  contagem vem de `detail.event` e é calculada na consulta, sem coluna nova.
+
+**Testes.**
+- Integração: exemplos do ensaio, `ref` e `watch_key` do histórico, contagem de agrupados e de fora do alcance.
+- Estúdio (CA-068-10): do histórico de um cliente até a regra preenchida, depois o ensaio com a mudança real, a
+  regra ligada e a gravação seguinte sem espera. Cada tela passa pelo verificador da spec 050.

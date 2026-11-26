@@ -24,8 +24,12 @@
 -define(TAKE, 20000).          % document events taken at once (whole transactions: a batch is one group)
 -define(GROUP_LIST, 1000).
 -define(REHEARSAL_DAYS, 7).
+-define(EXAMPLES, 5).
 -define(CLAIM_RETRY_MS, 2500).
 -define(FIRES_SHOWN, 50).
+%% Spec 068 (D12): how many records a firing covers (more than one: a grouped firing).
+-define(FIRE_COUNT, "COALESCE((f.detail->'event'->>'count')::int, CASE WHEN jsonb_typeof(f.detail->'event'->'items') = "
+                    "'array' THEN jsonb_array_length(f.detail->'event'->'items') ELSE 1 END)").
 
 start_link() -> gen_server:start_link({local, ?MODULE}, ?MODULE, [], []).
 
@@ -670,6 +674,11 @@ list() ->
         "SELECT r.*, COALESCE(d.label, w.label) AS entity_label, "
         "  (SELECT count(*) FROM automation.fire f WHERE f.rule_id = r.id AND f.outcome = 'done') AS fired, "
         "  (SELECT count(*) FROM automation.fire f WHERE f.rule_id = r.id AND f.outcome = 'failed') AS failed, "
+        %% Spec 068 (D12): per rule, the grouped firings and the changes out of the owner's reach.
+        "  (SELECT count(*) FROM automation.fire f WHERE f.rule_id = r.id AND f.outcome IN ('done', 'failed') "
+        "    AND " ?FIRE_COUNT " > 1) AS grouped, "
+        "  (SELECT COALESCE(sum((f.detail->>'out_of_reach')::int), 0) FROM automation.fire f "
+        "    WHERE f.rule_id = r.id AND f.detail ? 'out_of_reach') AS out_of_reach, "
         "  (SELECT jsonb_build_object('at', f.at, 'outcome', f.outcome, 'detail', f.detail) FROM automation.fire f "
         "    WHERE f.rule_id = r.id AND f.outcome <> 'rehearsal' ORDER BY f.id DESC LIMIT 1) AS last "
         "FROM automation.rule r LEFT JOIN bpm.document d ON d.entity = r.entity "
@@ -682,8 +691,9 @@ get(Id) ->
                     "LEFT JOIN bpm.document d ON d.entity = r.entity LEFT JOIN automation.watch_entity w ON w.entity = r.entity "
                     "WHERE r.id = $1", [Id]) of
         {ok, R = #{}} ->
-            {ok, Fires} = ana_db:rows("SELECT id, at, entity, doc_key, outcome, detail, execution_id, chain, by "
-                                      "FROM automation.fire WHERE rule_id = $1 ORDER BY id DESC LIMIT " ++
+            {ok, Fires} = ana_db:rows("SELECT id, at, entity, doc_key, outcome, detail, execution_id, chain, by, "
+                                      "  " ?FIRE_COUNT " AS count "
+                                      "FROM automation.fire f WHERE rule_id = $1 ORDER BY id DESC LIMIT " ++
                                       integer_to_list(?FIRES_SHOWN), [Id]),
             {ok, R#{<<"fires">> => Fires}};
         _ -> {error, not_found}
@@ -1041,17 +1051,18 @@ rehearse(Id, Key0, Who) ->
 %% the latest document is used, as it is now.
 rehearse_changed(R = #{<<"id">> := Id, <<"entity">> := Ent, <<"version">> := Ver}, Key0, Who) ->
     Master = entity_table(Ent) =:= undefined,
-    {Count, Sample} = case Master of
+    {Count, Sample, Examples} = case Master of
         true ->
             {ok, Rows} = ana_db:rows("SELECT * FROM automation.read_log(0, '{}'::bigint[], 5000, $1, "
                                      "  now() - make_interval(days => $2))", [Ent, ?REHEARSAL_DAYS]),
-            Hits = [#{key => K, changes => Ch, log => L} || #{<<"id">> := L, <<"row_key">> := K, <<"changes">> := Ch} <- Rows,
-                                                            is_map(Ch), (Key0 =:= null orelse Key0 =:= <<>> orelse K =:= Key0),
-                                                            ana_watch_match:item(R, #{key => K, changes => Ch})],
-            {length(Hits), case Hits of [] -> null; _ -> lists:last(Hits) end};
+            Hits = [#{key => K, changes => Ch, log => L, by => U}
+                    || #{<<"id">> := L, <<"row_key">> := K, <<"changes">> := Ch, <<"username">> := U} <- Rows,
+                       is_map(Ch), (Key0 =:= null orelse Key0 =:= <<>> orelse K =:= Key0),
+                       ana_watch_match:item(R, #{key => K, changes => Ch})],
+            {length(Hits), case Hits of [] -> null; _ -> lists:last(Hits) end, examples(R, Hits)};
         false ->
             K = case Key0 of K0 when is_binary(K0), K0 =/= <<>> -> K0; _ -> latest_key(Ent) end,
-            {null, case K of null -> null; _ -> #{key => K, changes => #{}} end}
+            {null, case K of null -> null; _ -> #{key => K, changes => #{}} end, []}
     end,
     Ev0 = #{<<"origin_kind">> => <<"screen">>, <<"username">> => Who,
             <<"items">> => case Sample of
@@ -1072,7 +1083,7 @@ rehearse_changed(R = #{<<"id">> := Id, <<"entity">> := Ent, <<"version">> := Ver
     end,
     Out = #{<<"document">> => Key, <<"facts">> => Facts, <<"conditions_hold">> => Holds, <<"effect">> => Effect,
             <<"error">> => Error, <<"would_have_fired">> => Count, <<"days">> => ?REHEARSAL_DAYS,
-            <<"history">> => Master},
+            <<"history">> => Master, <<"examples">> => Examples},
     record(Id, Ev, <<"rehearsal">>, Out, null, [], Who),
     _ = case Error of
         null -> {ok, _} = ana_db:exec("UPDATE automation.rule SET rehearsed_version = $2 WHERE id = $1 AND version = $2",
@@ -1080,6 +1091,16 @@ rehearse_changed(R = #{<<"id">> := Id, <<"entity">> := Ent, <<"version">> := Ver
         _ -> ok
     end,
     {ok, Out#{<<"rehearsed">> => Error =:= null}}.
+
+%% D12: "teria disparado 7 vezes: …" — the latest few, newest first, with only the fields the rule watches (a secret
+%% one already "***" from automation.read_log).
+examples(R, Hits) ->
+    Last = lists:sublist(lists:reverse(Hits), ?EXAMPLES),
+    {ok, At} = ana_db:rows("SELECT id, at FROM master.change_log WHERE id = ANY($1::bigint[])", [[L || #{log := L} <- Last]]),
+    When = maps:from_list([{I, T} || #{<<"id">> := I, <<"at">> := T} <- At]),
+    Fields = maps:get(<<"watch_fields">>, R, []),
+    [#{<<"key">> => K, <<"by">> => By, <<"at">> => maps:get(L, When, null), <<"changes">> => maps:with(Fields, Ch)}
+     || #{key := K, changes := Ch, log := L, by := By} <- Last].
 
 sample_facts(<<"schedule">>, _) -> #{<<"at">> => fmt(minute_now())};
 sample_facts(<<"metric">>, #{<<"metric">> := M}) -> #{<<"metric">> => M, <<"value">> => maps:get(M, metrics_now(), null)};
