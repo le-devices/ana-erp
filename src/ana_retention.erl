@@ -71,7 +71,10 @@ categories() ->
      {bpm_events, <<"Trilha dos casos de processos"/utf8>>, retention_execution_days,
       "bpm.event", "at", "true"},
      {bpm_notices, <<"Avisos de tarefas lidos"/utf8>>, retention_scheduler_days,
-      "bpm.notification", "created_at", "read"}].
+      "bpm.notification", "created_at", "read"},
+     %% Specs 051 and 068 (D8): what the rules did. The queue itself is emptied as it is read; only the firings stay.
+     {automation_fires, <<"Disparos das regras"/utf8>>, retention_execution_days,
+      "automation.fire", "at", "true"}].
 
 %% Manual purge (RF-024-09): owned by the administrator who asked.
 -spec purge_now(map()) -> {ok, binary()} | {error, term()}.

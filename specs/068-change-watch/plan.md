@@ -256,3 +256,49 @@ porque precisam do leitor e da verificação.
 
 A comparação de tempo do lote de 10 mil linhas (RNF-068-02, CA-068-09) também fica para a T-068-04: ela só faz
 sentido medindo com e sem a verificação instalada, na mesma rodada.
+
+## 11. Feito: documentos vigiados (T-068-04) e fila (T-068-09)
+
+Migração `079_change_watch_documents.sql` e processo `ana_watch`.
+
+**Regras.** `automation.rule` aceita o gatilho `changed`, com `watch_fields` (`esquema.tabela.coluna` do catálogo,
+ou `custom.nome`).
+- A ligação fixa a `bpm.document` saiu, porque um cadastro também pode ser vigiado.
+- Um gatilho do banco confere a entidade e cada campo no catálogo e recusa o resto, mesmo por gravação direta.
+- A tela e a API das regras "alterado" chegam com a T-068-06.
+
+**Verificação:**
+- `automation.watch_need` diz o que as regras ligadas pedem;
+- `automation.install_watch(tabela)` gera a função a partir do catálogo, com `format('%I')`. Ela compara só as
+  colunas vigiadas, e uma coluna sigilosa sai como `"***"`;
+- a mesma função instala o gatilho por comando com `lock_timeout` de 100 ms, e só a função é trocada quando os
+  campos mudam;
+- o `ana_watch`, só no líder, reconcilia quando uma regra muda (NOTIFY `ana_wake/watch`) e a cada 30 s, sem gravar
+  nada. Ele tenta de novo com espera crescente, de 1 s a 60 s, e remove o gatilho 10 minutos depois da última regra
+  desligada; até lá, a função já não compara nada;
+- só a instalação e a remoção do gatilho fazem DDL; ninguém (nem `ana_exec`) executa as funções diretamente.
+
+**Itens.** Um campo de item, como a data prometida, sai com o número do pedido. Os valores de vários itens do mesmo
+pedido viram um campo do evento do pedido: o primeiro "antes" e o último "depois".
+
+**Fila:**
+- `automation.pending` ganhou o tipo `changed`, com a lista em `changes` e o `xid`;
+- `automation.take_changed` tira transações inteiras, apaga o que tirou e devolve um evento por documento e por
+  transação. Um campo que volta ao valor na mesma transação não conta;
+- a leitura antiga da spec 051 deixa esses eventos para ela;
+- os disparos (`automation.fire`) entraram na retenção da spec 024, com o prazo das execuções. Faltava isso desde a
+  spec 051.
+
+**Medido na bateria** (`test_ca_068_09`: 10 mil pedidos, tempo medido dentro de uma rotina, com o gatilho
+incluído):
+
+| Caso | Tempo | Alvo |
+|------|-------|------|
+| Sem regra | sem verificação na tabela (0%) | 3% |
+| Com regra, todas as linhas mudam o campo vigiado | +24% a +38% | 40% |
+| Com regra, parte das linhas muda o campo vigiado | dentro do ruído | 15% |
+
+Tirar a ordenação das chaves dentro do gatilho baixou o pior caso de +38% para +24%; a leitura da fila já ordena.
+
+**Orçamento de escrita.** `change_order_field_watched` é `change_order_field` mais a linha de evento: ≈ 215 B, ou
+≈ 508 B na escala do CI. O ruído do ocioso local é maior que essa diferença, e o CI confere.

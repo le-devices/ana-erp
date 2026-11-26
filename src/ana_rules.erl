@@ -143,7 +143,8 @@ active_rules(Kind) ->
 %% ---------------------------------------------------------------- events of documents and messages
 
 drain() ->
-    case ana_db:rows("DELETE FROM automation.pending WHERE id IN (SELECT id FROM automation.pending ORDER BY id "
+    %% Changes of fields (spec 068) are taken whole transactions at a time by automation.take_changed.
+    case ana_db:rows("DELETE FROM automation.pending WHERE id IN (SELECT id FROM automation.pending WHERE kind <> 'changed' ORDER BY id "
                      "LIMIT " ++ integer_to_list(?BATCH) ++ " FOR UPDATE SKIP LOCKED) RETURNING *", []) of
         {ok, []} -> ok;
         {ok, Events} ->
