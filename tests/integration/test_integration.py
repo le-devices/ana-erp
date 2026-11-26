@@ -10135,11 +10135,13 @@ def wait_fires(rule_id, n, timeout=40):
     end, rows = time.time() + timeout, []
     while time.time() < end:
         rows = [json.loads(r) for r in psql(f"SELECT row_to_json(f) FROM (SELECT id, doc_key, outcome, detail FROM "
-                                            f"automation.fire WHERE rule_id = {rule_id} ORDER BY id) f").splitlines()]
+                                            f"automation.fire WHERE rule_id = {rule_id} AND outcome <> 'rehearsal' "
+                                            f"ORDER BY id) f").splitlines()]
         if len(rows) >= n and all(r["outcome"] != "running" for r in rows):
             time.sleep(1.5)                                # nothing more is coming
             rows = [json.loads(r) for r in psql(f"SELECT row_to_json(f) FROM (SELECT id, doc_key, outcome, detail FROM "
-                                                f"automation.fire WHERE rule_id = {rule_id} ORDER BY id) f").splitlines()]
+                                                f"automation.fire WHERE rule_id = {rule_id} AND outcome <> 'rehearsal' "
+                                                f"ORDER BY id) f").splitlines()]
             if len(rows) > n:
                 raise AssertionError(f"disparos demais: {len(rows)} (esperado {n}): {rows[:3]}")
             return rows
@@ -10189,6 +10191,8 @@ class TestChangeWatchDocuments(Base):
 
     def test_rf_068_04_watched_only_while_a_rule_needs_it_one_firing_per_document_and_transaction(self):
         tables = ["sales.sales_order", "sales.sales_order_item"]
+        for t in tables:                                   # another test's check is dropped lazily (10 min): now
+            psql(f"SELECT automation.install_watch('{t}', true)")
         for t in tables:                                   # D3: without a rule the table has no check at all
             self.assertFalse(watch_installed(t), t)
         number = self.open_order()
@@ -10205,7 +10209,7 @@ class TestChangeWatchDocuments(Base):
                  f"WHERE order_id = (SELECT id FROM sales.sales_order WHERE number = {number}); COMMIT;")
             f = wait_fires(rid, 1)
             self.assertEqual((f[0]["doc_key"], f[0]["outcome"]), (str(number), "done"), f)
-            ch = f[0]["detail"]["event"]["changes"]
+            ch = f[0]["detail"]["event"]["items"][0]["changes"]
             self.assertEqual((ch["sales.sales_order.notes"][1], ch["sales.sales_order_item.promised_date"][1]),
                              ("três", "2031-01-10"))
             self.assertEqual(psql("SELECT count(*) FROM automation.pending WHERE kind = 'changed'"), "0")  # D8: gone
@@ -10222,7 +10226,7 @@ class TestChangeWatchDocuments(Base):
             self.run_ok(f"test.cw{SUFFIX}.note", {"number": number, "note": "pela rotina"})
             f = wait_fires(rid, 2)
             self.assertEqual([x["detail"]["event"]["username"] for x in f], [None, "admin"], f)
-            self.assertEqual(f[1]["detail"]["event"]["changes"]["sales.sales_order.notes"], ["três", "pela rotina"])
+            self.assertEqual(f[1]["detail"]["event"]["items"][0]["changes"]["sales.sales_order.notes"], ["três", "pela rotina"])
         finally:
             psql(f"UPDATE automation.rule SET active = false WHERE id = {rid}")
         # Turned off: the check stops comparing at once (the trigger is dropped later, without hurry).
@@ -10293,9 +10297,9 @@ class TestChangeWatchDocuments(Base):
             # D6: one grouped firing per batch, with the count (15 batches, under the rule's limit of 20).
             f = wait_fires(rid, 15, timeout=120)
             self.assertEqual({(x["doc_key"], x["outcome"]) for x in f}, {(None, "done")}, f[:2])
-            counts = sorted(x["detail"]["event"]["group"]["count"] for x in f)
+            counts = sorted(x["detail"]["event"]["count"] for x in f)
             self.assertEqual(counts[-1], 10000)
-            self.assertTrue(all(len(x["detail"]["event"]["group"]["items"]) <= 1000 for x in f))
+            self.assertTrue(all(len(x["detail"]["event"]["items"]) <= 1000 for x in f))
             self.assertEqual(psql(f"SELECT active FROM automation.rule WHERE id = {rid}"), "t")
         finally:
             if rid:
@@ -10357,7 +10361,7 @@ class TestChangeWatchMasters(Base):
             f = wait_fires(rid, 1)
             self.assertEqual((f[0]["doc_key"], f[0]["outcome"]), (key, "done"), f)
             ev = f[0]["detail"]["event"]
-            self.assertEqual(ev["changes"]["base.party_bank.account"], ["***", "***"])
+            self.assertEqual(ev["items"][0]["changes"]["base.party_bank.account"], ["***", "***"])
             self.assertEqual((ev["username"], ev["source"]), ("admin", "master"))
             self.assertNotIn("56789", json.dumps(f))
             msg = psql(f"SELECT message FROM bpm.notification WHERE message LIKE 'Conta bancária do fornecedor {key} %' "
@@ -10369,13 +10373,14 @@ class TestChangeWatchMasters(Base):
             # A secret value (credit limit) fires as "changed", never with the number.
             self.ok("finance.save_credit_profile", customer=sup["id"], credit_limit="98765")
             f2 = wait_fires(rid2, 1)
-            self.assertEqual(f2[0]["detail"]["event"]["changes"]["finance.credit_profile.credit_limit"], ["***", "***"])
+            self.assertEqual(f2[0]["detail"]["event"]["items"][0]["changes"]["finance.credit_profile.credit_limit"],
+                             ["***", "***"])
             self.assertNotIn("98765", psql(f"SELECT string_agg(message, ' ') FROM bpm.notification "
                                            f"WHERE message LIKE 'Limite do cliente {key}%'"))
             self.assertEqual(len(wait_fires(rid, 1)), 1)
             # RNF-068-04, CA-068-11: the same event read again (a restart, a new leader) is never claimed twice.
             ref = psql(f"SELECT event_ref FROM automation.fire WHERE rule_id = {rid}")
-            self.assertRegex(ref, r"^log:\d+$")
+            self.assertRegex(ref, r"^(log:\d+|exec:[0-9a-f-]+:party)$")
             psql(f"INSERT INTO automation.fire (rule_id, outcome, event_ref) VALUES ({rid}, 'running', '{ref}') "
                  f"ON CONFLICT (rule_id, event_ref) WHERE event_ref IS NOT NULL DO NOTHING")
             self.assertEqual(psql(f"SELECT count(*) FROM automation.fire WHERE rule_id = {rid}"), "1")
@@ -10386,3 +10391,157 @@ class TestChangeWatchMasters(Base):
         while time.time() < end and psql("SELECT count(*) FROM automation.mark WHERE name = 'change_log'") != "0":
             time.sleep(0.5)
         self.assertEqual(psql("SELECT count(*) FROM automation.mark WHERE name = 'change_log'"), "0")
+
+
+class TestChangeWatchRules(Base):
+    """Spec 068 (T-068-06, T-068-05): the "changed" trigger saved by the API with its filters, rehearsed over the real
+    changes, and a batch (an import) as one grouped firing."""
+
+    rules = []
+
+    @classmethod
+    def tearDownClass(cls):
+        for r in cls.rules:
+            http("DELETE", f"/api/admin/automations/rules/{r}", token=cls.token)
+
+    def setUp(self):
+        if not psql_available():
+            self.skipTest("psql no contêiner indisponível")
+
+    def ok(self, program, client=None, **params):
+        return (client or self.client).call(program, **params)
+
+    def save_rule(self, token=None, **body):
+        body.setdefault("name", f"Vigia {SUFFIX} {len(self.rules)}")
+        body.setdefault("owner", "admin")
+        body.setdefault("trigger_kind", "changed")
+        body.setdefault("action", {"kind": "notify", "user": "admin", "message": "mudou {{key}}"})
+        s, c, _ = http("POST", "/api/admin/automations/rules", body, token or self.token)
+        if s == 200:
+            self.rules.append(c["id"])
+        return s, c
+
+    def turn_on(self, rid):
+        s, r, _ = http("POST", f"/api/admin/automations/rules/{rid}/rehearse", {}, self.token)
+        self.assertEqual(s, 200, r)
+        s, c, _ = http("POST", f"/api/admin/automations/rule/{rid}/active", {"active": True}, self.token)
+        self.assertEqual(s, 200, c)
+        return r
+
+    def test_rf_068_01_changed_rule_by_the_api_only_with_catalog_fields_and_valid_filters(self):
+        s, c = self.save_rule(entity="party", watch_fields=["base.party.email"], watch_filter={"became": "filled"},
+                              watch_origins=["screen", "api"], watch_mode="record")
+        self.assertEqual(s, 200, c)
+        s, r, _ = http("GET", f"/api/admin/automations/rules/{c['id']}", token=self.token)
+        self.assertEqual((r["trigger_kind"], r["watch_fields"], r["watch_filter"], r["watch_origins"], r["watch_mode"],
+                          r["entity_label"]),
+                         ("changed", ["base.party.email"], {"became": "filled"}, ["api", "screen"], "record",
+                          "Cliente ou fornecedor"))
+        bad = [
+            ({"entity": "party", "watch_fields": ["ana_system.app_user.password_hash"]}, "fora do catálogo"),
+            ({"entity": "stock_movement", "watch_fields": ["inventory.stock_movement.quantity"]}, "muito movimento"),
+            ({"entity": "party", "watch_fields": []}, "ao menos um campo"),
+            ({"entity": "party", "watch_fields": ["base.party.email"], "watch_filter": {"sql": "1=1"}}, "filtro desconhecido"),
+            # D10: a secret field is only "changed" — no value is compared
+            ({"entity": "party", "watch_fields": ["base.party_bank.account"], "watch_filter": {"to": "1"}}, "sigiloso"),
+            ({"entity": "party", "watch_fields": ["base.party.email"], "watch_origins": ["tela"]}, "origem desconhecida"),
+            ({"entity": "party", "watch_fields": ["base.party.email"], "watch_mode": "sempre"}, "por registro"),
+        ]
+        for body, msg in bad:
+            s, c = self.save_rule(**body)
+            self.assertEqual(s, 400, (body, c))
+            self.assertIn(msg, c["error"]["message"], body)
+        # D9: whoever cannot read a secret field cannot watch it.
+        user, _ = new_user("user")
+        s, c = self.save_rule(entity="party", watch_fields=["base.party_bank.account"], owner=user,
+                              action={"kind": "notify", "user": user, "message": "x"})
+        self.assertEqual(s, 400, c)
+        self.assertIn("administrador", c["error"]["message"])
+        # The catalog the screen offers: by label, with the classification, and what moves too much apart.
+        s, cat, _ = http("GET", "/api/admin/automations/rules/catalog", token=self.token)
+        party = next(w for w in cat["watchable"] if w["entity"] == "party")
+        acc = next(f for f in party["fields"] if f["ref"] == "base.party_bank.account")
+        self.assertEqual((acc["label"], acc["classification"]), ("Dados bancários: Conta", "secret"))
+        self.assertIn("stock_movement", [h["entity"] for h in cat["high_volume"]])
+
+    def test_d1_value_filter_and_one_record(self):
+        self.ok("inventory.stock_in", product="ACUCAR-1", quantity=2, document=f"CWR-{SUFFIX}")
+        a = self.ok("sales.create_order", customer=2, items=[{"product": "ACUCAR-1", "quantity": 1}])["number"]
+        b = self.ok("sales.create_order", customer=2, items=[{"product": "ACUCAR-1", "quantity": 1}])["number"]
+        s, c = self.save_rule(entity="sales_order", watch_fields=["sales.sales_order.notes"],
+                              watch_filter={"to": "urgente"}, watch_key=str(a),
+                              action={"kind": "notify", "user": "admin", "message": "pedido {{key}} ficou urgente"})
+        self.assertEqual(s, 200, c)
+        rid = c["id"]
+        self.turn_on(rid)
+        wait_watch("sales.sales_order")
+        psql(f"UPDATE sales.sales_order SET notes = 'urgente' WHERE number = {b}")     # another order
+        psql(f"UPDATE sales.sales_order SET notes = 'calmo' WHERE number = {a}")       # another value
+        psql(f"UPDATE sales.sales_order SET notes = 'urgente' WHERE number = {a}")
+        f = wait_fires(rid, 1)
+        self.assertEqual((f[0]["doc_key"], f[0]["outcome"]), (str(a), "done"), f)
+
+    def test_ca_068_05_an_import_is_one_grouped_notice_and_is_out_by_default(self):
+        tag = str(int(time.time() * 1000))[-6:]
+        lines = ["Nome;Tipo;CNPJ/CPF;E-mail;UF"] + [
+            f"Vigia Import {tag} {i:03d};customer;{cnpj(f'{tag[-4:]}{i:04d}5432')};vigia{i}.{tag}@exemplo.com.br;SP"
+            for i in range(30)]
+        s, c = self.save_rule(entity="party", watch_fields=["base.party.email"], watch_origins=["import"],
+                              action={"kind": "notify", "user": "admin",
+                                      "message": f"Importação {tag}: {{{{count}}}} cadastros com e-mail novo"})
+        self.assertEqual(s, 200, c)
+        grouped = c["id"]
+        s, c = self.save_rule(entity="party", watch_fields=["base.party.email"],
+                              action={"kind": "notify", "user": "admin", "message": f"Fora {tag} {{{{key}}}}"})
+        default = c["id"]
+        self.turn_on(grouped)
+        self.turn_on(default)
+        wait_log_reader()
+        r = self.ok("master.import", entity="party", content="\n".join(lines) + "\n", confirm=True)
+        self.assertEqual(r["new"], 30, r)
+        f = wait_fires(grouped, 1, timeout=60)
+        self.assertEqual(f[0]["outcome"], "done", f)
+        self.assertEqual(f[0]["detail"]["event"]["count"], 30)
+        self.assertEqual(f[0]["detail"]["event"]["origin_kind"], "import")
+        self.assertEqual(psql(f"SELECT message FROM bpm.notification WHERE message LIKE 'Importação {tag}:%'").split(" (Regra")[0],
+                         f"Importação {tag}: 30 cadastros com e-mail novo")
+        # D1: the rule that did not ask for imports does not fire for one.
+        f = wait_fires(default, 1, timeout=60)
+        self.assertEqual(f[0]["outcome"], "skipped", f)
+        self.assertIn("import", f[0]["detail"]["reason"])
+        self.assertEqual(psql(f"SELECT count(*) FROM bpm.notification WHERE message LIKE 'Fora {tag}%'"), "0")
+
+    def test_d12_rehearsal_counts_the_real_changes_of_the_last_days(self):
+        p = self.ok("master.save", entity="party", values={"name": f"Ensaio Vigia {SUFFIX}", "kind": "customer"},
+                    confirm_duplicate=True, reason="teste automatizado")
+        for i in range(3):
+            self.ok("base.save_party", id=p["id"], name=f"Ensaio Vigia {SUFFIX}", kind="customer",
+                    email=f"ensaio{i}.{SUFFIX}@exemplo.com.br")
+        s, c = self.save_rule(entity="party", watch_fields=["base.party.email"], watch_key=str(p["id"]),
+                              action={"kind": "notify", "user": "admin", "message": "{{email_before}} → {{email}}"})
+        rid = c["id"]
+        s, c, _ = http("POST", f"/api/admin/automations/rule/{rid}/active", {"active": True}, self.token)
+        self.assertNotEqual(s, 200, c)                                         # rehearsed first (CA-051-01)
+        r = self.turn_on(rid)
+        self.assertEqual((r["would_have_fired"], r["days"], r["history"], r["rehearsed"]), (3, 7, True, True), r)
+        self.assertEqual(r["facts"]["email"], f"ensaio2.{SUFFIX}@exemplo.com.br")
+        self.assertTrue(r["conditions_hold"])
+
+    def test_rnf_051_01_a_rule_whose_action_changes_what_it_watches_is_blocked(self):
+        p = self.ok("master.save", entity="party", values={"name": f"Laço Vigia {SUFFIX}", "kind": "customer"},
+                    confirm_duplicate=True, reason="teste automatizado")
+        prog = f"test.cwloop{SUFFIX}.touch"
+        self.save(prog, "def main(party):\n"
+                        "    ana.sql_exec(\"UPDATE base.party SET city = coalesce(city, '') || '.' WHERE id = $1\", int(party))\n")
+        s, c = self.save_rule(entity="party", watch_fields=["base.party.city"], watch_key=str(p["id"]),
+                              action={"kind": "run", "program": prog, "params": {"party": "{{key}}"}})
+        self.assertEqual(s, 200, c)
+        rid = c["id"]
+        self.turn_on(rid)
+        wait_log_reader()
+        self.ok("base.save_party", id=p["id"], name=f"Laço Vigia {SUFFIX}", kind="customer", city="Campinas")
+        end = time.time() + 60
+        while time.time() < end and psql(f"SELECT active FROM automation.rule WHERE id = {rid}") == "t":
+            time.sleep(0.5)
+        self.assertEqual(psql(f"SELECT active FROM automation.rule WHERE id = {rid}"), "f")
+        self.assertIn("disparou a si mesma", psql(f"SELECT blocked_reason FROM automation.rule WHERE id = {rid}"))

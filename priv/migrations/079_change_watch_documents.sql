@@ -68,6 +68,7 @@ ALTER TABLE automation.pending
     ADD COLUMN changes jsonb,                     -- 'changed': [{"k": key, "c": {"schema.table.column": [old, new]}}, …]
     ADD COLUMN rows    integer,                                  -- how many changed rows the command touched
     ADD COLUMN origin  text,
+    ADD COLUMN execution_id text,                                -- the execution that changed it (origin, grouping)
     ADD COLUMN xid     xid8;
 CREATE INDEX pending_changed_idx ON automation.pending (id) WHERE kind = 'changed';
 
@@ -113,11 +114,11 @@ BEGIN
                                 e.id_column, via) END;
     RETURN format($f$
 BEGIN
-    INSERT INTO automation.pending (kind, entity, changes, rows, chain, username, origin, xid)
+    INSERT INTO automation.pending (kind, entity, changes, rows, chain, username, origin, execution_id, xid)
     SELECT 'changed', %1$L, jsonb_agg(jsonb_build_object('k', c.k, 'c', c.c)), count(*),
            COALESCE(string_to_array(NULLIF(current_setting('ana.rule_chain', true), ''), ',')::bigint[], '{}'),
            NULLIF(current_setting('ana.username', true), ''), NULLIF(current_setting('ana.origin', true), ''),
-           pg_current_xact_id()
+           NULLIF(current_setting('ana.execution_id', true), ''), pg_current_xact_id()
       FROM (SELECT %2$s AS k, jsonb_strip_nulls(jsonb_build_object(%3$s)) AS c
               FROM new_rows n JOIN old_rows o USING (%4$s) WHERE %5$s) c
     HAVING count(*) > 0;
@@ -196,7 +197,7 @@ $$;
 -- the same transaction is not a change, and a document left with no change is not an event.
 CREATE FUNCTION automation.take_changed(p_max integer DEFAULT 200)
 RETURNS TABLE (entity text, doc_key text, changes jsonb, xid xid8, first_id bigint, username text, origin text,
-               chain bigint[], command_rows integer)
+               execution_id text, chain bigint[], command_rows integer)
 LANGUAGE sql SECURITY DEFINER SET search_path = pg_catalog, pg_temp AS $$
     WITH tx AS (
         SELECT p.xid FROM automation.pending p WHERE p.kind = 'changed'
@@ -204,7 +205,8 @@ LANGUAGE sql SECURITY DEFINER SET search_path = pg_catalog, pg_temp AS $$
     ), gone AS (
         DELETE FROM automation.pending p USING tx WHERE p.kind = 'changed' AND p.xid = tx.xid RETURNING p.*
     ), cells AS (
-        SELECT g.id, g.entity, g.xid, g.username, g.origin, g.chain, g.rows, r.ord, r.v ->> 'k' AS k, c.key AS field,
+        SELECT g.id, g.entity, g.xid, g.username, g.origin, g.execution_id, g.chain, g.rows, r.ord, r.v ->> 'k' AS k,
+               c.key AS field,
                c.value AS pair
           FROM gone g
          CROSS JOIN LATERAL jsonb_array_elements(g.changes) WITH ORDINALITY AS r(v, ord)
@@ -216,15 +218,15 @@ LANGUAGE sql SECURITY DEFINER SET search_path = pg_catalog, pg_temp AS $$
                min(id) AS first_id
           FROM cells GROUP BY entity, xid, k, field
     ), meta AS (
-        SELECT DISTINCT ON (entity, xid, k) entity, xid, k, username, origin, chain
+        SELECT DISTINCT ON (entity, xid, k) entity, xid, k, username, origin, execution_id, chain
           FROM cells ORDER BY entity, xid, k, id
     )
     SELECT f.entity, f.k, jsonb_object_agg(f.field, jsonb_build_array(f.before, f.after)), f.xid, min(f.first_id),
-           m.username, m.origin, m.chain,
+           m.username, m.origin, m.execution_id, m.chain,
            (SELECT sum(g.rows)::integer FROM gone g WHERE g.xid = f.xid AND g.entity = f.entity)
       FROM per_field f JOIN meta m USING (entity, xid, k)
      WHERE f.before IS DISTINCT FROM f.after OR f.before = '"***"'::jsonb
-     GROUP BY f.entity, f.xid, f.k, m.username, m.origin, m.chain
+     GROUP BY f.entity, f.xid, f.k, m.username, m.origin, m.execution_id, m.chain
      ORDER BY min(f.first_id), f.k
 $$;
 

@@ -18,14 +18,19 @@ CREATE INDEX fire_running_idx ON automation.fire (id) WHERE outcome = 'running';
 -- id later). Every row comes back with its id, so the reader can tell a gap from a row nobody watches; only the rows of
 -- an entity some active rule watches come with their changes, keyed by the catalog's reference ("schema.table.column"
 -- or "custom.name"), only real changes (not a change waiting for approval), only fields of the catalog, and a secret field as "***" (D10: the value never leaves the history).
-CREATE FUNCTION automation.read_log(p_after bigint, p_missing bigint[], p_limit integer DEFAULT 500)
+-- With p_entity (and p_since): the changes of that entity only, whether a rule is active or not (the rehearsal of a
+-- rule over the real changes of the last days, D12).
+CREATE FUNCTION automation.read_log(p_after bigint, p_missing bigint[], p_limit integer DEFAULT 500,
+                                    p_entity text DEFAULT NULL, p_since timestamptz DEFAULT NULL)
 RETURNS TABLE (id bigint, entity text, row_key text, op text, changes jsonb, username text, origin text, execution_id text)
 LANGUAGE sql STABLE SECURITY DEFINER SET search_path = pg_catalog, pg_temp AS $$
     WITH watched AS (
         SELECT DISTINCT r.entity FROM automation.rule r JOIN automation.watch_entity e ON e.entity = r.entity
-         WHERE r.active AND r.trigger_kind = 'changed' AND e.source = 'master'
+         WHERE r.active AND r.trigger_kind = 'changed' AND e.source = 'master' AND p_entity IS NULL
+        UNION SELECT p_entity WHERE p_entity IS NOT NULL
     ), rows AS (
-        SELECT l.* FROM master.change_log l WHERE l.id > p_after
+        SELECT l.* FROM master.change_log l
+         WHERE l.id > p_after AND (p_entity IS NULL OR l.entity = p_entity) AND (p_since IS NULL OR l.at >= p_since)
          ORDER BY l.id LIMIT greatest(p_limit, 1)
     ), more AS (
         SELECT l.* FROM master.change_log l WHERE l.id = ANY (p_missing) AND l.id <= p_after
@@ -33,9 +38,13 @@ LANGUAGE sql STABLE SECURITY DEFINER SET search_path = pg_catalog, pg_temp AS $$
         SELECT * FROM rows UNION ALL SELECT * FROM more
     ), cells AS (
         -- the company's own fields are one change of "custom" in the history: split by field
-        SELECT p.id, 'custom.' || k AS ref, p.changes -> 'custom' -> 0 -> k AS before, p.changes -> 'custom' -> 1 -> k AS after
+        SELECT p.id, 'custom.' || k AS ref,
+               CASE WHEN jsonb_typeof(p.changes -> 'custom' -> 0) = 'object' THEN p.changes -> 'custom' -> 0 -> k END AS before,
+               CASE WHEN jsonb_typeof(p.changes -> 'custom' -> 1) = 'object' THEN p.changes -> 'custom' -> 1 -> k END AS after
           FROM picked p
-         CROSS JOIN LATERAL jsonb_object_keys(COALESCE(p.changes -> 'custom' -> 0, '{}') || COALESCE(p.changes -> 'custom' -> 1, '{}')) k
+         CROSS JOIN LATERAL jsonb_object_keys(
+                CASE WHEN jsonb_typeof(p.changes -> 'custom' -> 0) = 'object' THEN p.changes -> 'custom' -> 0 ELSE '{}' END ||
+                CASE WHEN jsonb_typeof(p.changes -> 'custom' -> 1) = 'object' THEN p.changes -> 'custom' -> 1 ELSE '{}' END) k
          WHERE p.entity IN (SELECT entity FROM watched) AND p.op IN ('insert', 'update', 'delete')
            AND jsonb_typeof(p.changes -> 'custom') = 'array'
         UNION ALL
@@ -59,7 +68,7 @@ LANGUAGE sql STABLE SECURITY DEFINER SET search_path = pg_catalog, pg_temp AS $$
      ORDER BY p.id
 $$;
 
-REVOKE ALL ON FUNCTION automation.read_log(bigint, bigint[], integer) FROM PUBLIC;
+REVOKE ALL ON FUNCTION automation.read_log(bigint, bigint[], integer, text, timestamptz) FROM PUBLIC;
 
 -- The point read in the history (ana_watch_log): written only with a batch that fired, or every few minutes, and
 -- removed when no rule watches a master any more (the next rule starts from that moment, not from the past).
