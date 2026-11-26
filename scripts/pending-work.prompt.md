@@ -74,6 +74,12 @@ Tarefas adiadas já concluídas (ordem acordada em out/2026): T-017-05b ✓, T-0
 21. 049 fase 2 — ICMS (ST, DIFAL, FCP), IPI, PIS/COFINS, Simples (T-049-08)
 21a. 070 — legislação vigiada (`specs/070-legislation-watch`), depois da 049 fase 2
 21b. 071 — fornecedores certificados (fase 1) e carbono (fase 2) (`specs/071-carbon-and-certifications`)
+21c. 072 — canal com os órgãos de governo (`specs/072-government-channel`): certificado A1 (perguntar ao dono por um certificado de teste), assinatura, transmissão, simulador local dos serviços do governo para o CI
+21d. 059 — documentos fiscais eletrônicos (`specs/059-electronic-invoices`): NFS-e nacional primeiro; NF-e e NFC-e depois da 049 fase 2
+21e. 073 — folha de pagamento, fase 1 (`specs/073-payroll`); casos de teste conferidos por um especialista antes da primeira instalação com empregados
+21f. 074 — eSocial, DCTFWeb e FGTS Digital (`specs/074-esocial`)
+21g. 075 — obrigações acessórias e agenda fiscal, fase 1 Simples Nacional (`specs/075-tax-obligations`)
+21h. 076 — funcionalidades por perfil (`specs/076-feature-profile`), antes da 061, que parte dos perfis
 22. 061 — implantação guiada (`specs/061-guided-onboarding`)
 23. 053 — regressão automática dos processos do cliente (`specs/053-customer-regression`)
 24. 055 — fechamento contínuo (`specs/055-continuous-close`)
@@ -82,7 +88,7 @@ Tarefas adiadas já concluídas (ordem acordada em out/2026): T-017-05b ✓, T-0
 27. 057 — central de suporte (T-057-01..03) (`specs/057-support-center`)
 28. 054 — chão de fábrica, bancada e rastreabilidade por número de série (`specs/054-shop-floor-traceability`)
 29. 060 — aplicativo no celular (`specs/060-mobile-app`)
-30. 059 — NFS-e e NF-e (depende de certificado digital e ambiente de homologação: perguntar ao dono antes) (`specs/059-electronic-invoices`)
+30. (059 foi para o item 21d)
 31. T-040-10b — importação em lote rápida de cadastros
 32. T-039-16b — editor BPM: arrastar da paleta, alinhar e distribuir
 33. Por último, as que dependem de infraestrutura ou decisão: filiais sem internet (058), painel do parceiro (T-057-04b), MQTT (T-054-07b), S3 (T-016-02b, T-036-07b), antivírus (T-016-04b), registro de imagem (T-036-08b), OpenTelemetry (T-019-09b), mTLS (T-017-02c), SFTP/pasta/e-mail de entrada (T-017-02b), pacotes de conectores (T-017-08b), transporte (T-034-07b..09b), API (T-010-10b..14b; a 14b exige decisão), geocodificador simulado (T-032-06b), dígito verificador da inscrição estadual por UF (T-043-02b), temporizadores do Erlang para prazos do BPM (T-062-08b).
