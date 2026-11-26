@@ -339,3 +339,35 @@ defeito.
 
 Medido de novo, com a fila vazia antes de cada rodada (o líder processa o lote anterior em segundo plano): +20% no
 pior caso; o caso realista ficou dentro do ruído.
+
+## 13. Feito: gatilho "alterado" pela API (T-068-06) e lote (T-068-05)
+
+Migração `081_change_watch_rules.sql` e módulo puro `ana_watch_match`, com eunit.
+
+**A regra "alterado":**
+- campos do catálogo;
+- filtro de/para, variação mínima com direção, campo esvaziado ou preenchido;
+- origens (tela, API, importação, regra, integração, rotina, outra); a importação fica fora por padrão;
+- registro específico;
+- modo por registro, agrupado ou automático.
+
+**Recusas na gravação:** campo sigiloso só como "alterado" (sem filtro de valor) e só com dono administrador; campo
+fora do catálogo; entidade de muito movimento.
+
+**Origem sem escrita a mais.** `automation.origin_kind` deduz a origem do que o banco já tem: o programa da execução
+(importação), um disparo de regra, o programa de um conector, a origem da execução.
+
+**Reivindicação e ação:**
+- a reivindicação é uma por regra e por unidade: a transação do documento, a execução do cadastro (que cresce
+  enquanto a importação lê) ou a linha do histórico;
+- a ação espera a execução terminar, aplica a origem e decide entre um disparo agrupado e a divisão em disparos por
+  registro, numa transação;
+- a ação de uma regra que muda o que ela mesma vigia é bloqueada pela cadeia da execução.
+
+**Ensaio.** Roda sobre as mudanças reais dos últimos 7 dias ("teria disparado N vezes") e executa a ação sobre a
+última delas.
+
+**Medido no CI** (26/11/2026, sem limite de CPU):
+- lote de 10 mil pedidos: +25% com todas as linhas mudando o campo vigiado (alvo 40%) e +3% com parte delas (alvo
+  15%);
+- o orçamento de escrita foi trazido para os valores do CI.
