@@ -2851,7 +2851,11 @@
     const r = rule || (from ? { trigger_kind: "changed", entity: from.entity, watch_key: from.key || null,
                                 watch_fields: fromField ? [fromField.ref] : [], watch_filter: {}, watch_origins: null, watch_mode: "auto",
                                 name: fromEntity ? `Avisar: ${fromField ? fromField.label : "alteração"} de ${fromEntity.label}${from.key ? " " + from.key : ""}`.slice(0, 120) : "",
-                                conditions: [], action: { kind: "notify", user: window.AnaStudio.user().username }, max_fires: 20, window_minutes: 60,
+                                conditions: [], max_fires: 20, window_minutes: 60,
+                                // A message ready to save: the field before and after, who changed it (the facts of the change).
+                                action: { kind: "notify", user: window.AnaStudio.user().username,
+                                          message: fromField ? `${fromEntity.label} {{key}}: ${fromField.label} mudou de {{${fromField.ref.split(".").pop()}_before}} para {{${fromField.ref.split(".").pop()}}} (por {{changed_by}})`
+                                                             : `${fromEntity ? fromEntity.label : "Registro"} {{key}} foi alterado por {{changed_by}}` },
                                 owner: window.AnaStudio.user().username }
       : { trigger_kind: "created", conditions: [], action: { kind: "task", task_kind: "human" }, max_fires: 20, window_minutes: 60,
           owner: window.AnaStudio.user().username });
