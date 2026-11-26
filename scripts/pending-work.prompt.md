@@ -79,6 +79,7 @@ Tarefas adiadas já concluídas (ordem acordada em out/2026): T-017-05b ✓, T-0
 21e. 073 — folha de pagamento, fase 1 (`specs/073-payroll`); casos de teste conferidos por um especialista antes da primeira instalação com empregados
 21f. 074 — eSocial, DCTFWeb e FGTS Digital (`specs/074-esocial`)
 21g. 075 — obrigações acessórias e agenda fiscal, fase 1 Simples Nacional (`specs/075-tax-obligations`)
+21h. 076 — funcionalidades por perfil (`specs/076-feature-profile`), antes da 061, que parte dos perfis
 22. 061 — implantação guiada (`specs/061-guided-onboarding`)
 23. 053 — regressão automática dos processos do cliente (`specs/053-customer-regression`)
 24. 055 — fechamento contínuo (`specs/055-continuous-close`)

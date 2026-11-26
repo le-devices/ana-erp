@@ -106,6 +106,7 @@ inglês, como no código (constituição, P2a).
 | 073 | [Folha de pagamento](073-payroll/spec.md) | CLT, pró-labore, autônomo, estágio; cadastro único do colaborador; rubricas e tabelas como dado com casos de teste; férias, 13º, rescisão; fechamento guiado com prévia e quatro olhos; lançamentos, títulos, pagamento bancário, custo real da hora nos projetos e fator R; portal do colaborador; sigilo | especificada |
 | 074 | [eSocial, DCTFWeb e FGTS Digital](074-esocial/spec.md) | Eventos gerados dos fatos pelas mudanças vigiadas, ordem e prazos, leiaute em pacote, totalizadores conciliados com a folha, DCTFWeb e guia do FGTS como títulos conferidos, retificações seguras, homologação na produção restrita | especificada |
 | 075 | [Obrigações acessórias e agenda fiscal](075-tax-obligations/spec.md) | Catálogo de obrigações como dado, agenda da empresa com preparação antecipada, livros e apurações derivados com conciliação contábil, guias como títulos, entrega por serviço ou programa oficial com recibo conferido, retificação pelo impacto, Simples sem digitação, acesso do contador | especificada |
+| 076 | [Funcionalidades por perfil](076-feature-profile/spec.md) | Catálogo de funcionalidades mais fino que os módulos, com dependências e efeitos; perfis de negócio editáveis; desligado some de menus, telas, campos, rotinas e regras sem perder dados (`FEATURE_OFF`); ligar guiado com o que falta; desligar com ensaio do impacto e recusa; por empresa, filial e ambiente; estado em memória, nada desligado roda; rastreador por perfil | especificada |
 
 ## Glossário
 
