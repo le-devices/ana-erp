@@ -92,10 +92,15 @@ load(S = #{resumed := Resumed, firing := Firing}, Node) ->
                                 "  r.window_s, r.severity, r.notify_studio, r.connector, r.recipients, c.kind AS connector_kind "
                                 "FROM ana_system.alert_rule r LEFT JOIN integration.connector c ON c.name = r.connector "
                                 "WHERE r.active ORDER BY r.id", []),
-               catch ana_db:rows("SELECT rule_id, target, node, extract(epoch FROM starts_at)::float8 AS starts, "
-                                 "  extract(epoch FROM ends_at)::float8 AS ends FROM ana_system.alert_silence "
+               catch ana_db:rows("SELECT rule_id, target, node, extract(epoch FROM starts_at - now())::float8 AS starts, "
+                                 "  extract(epoch FROM ends_at - now())::float8 AS ends FROM ana_system.alert_silence "
                                  "WHERE ends_at > now()", [])} of
-        {{ok, Rules}, {ok, Silences}} -> S#{rules := Rules, silences := Silences};
+        {{ok, Rules}, {ok, Silences}} ->
+            %% Silence times move to this node's clock (offsets from the database's now):
+            %% a silence made a moment ago is in force even if the clocks differ.
+            Here = wall(),
+            S#{rules := Rules, silences := [Si#{<<"starts">> := Here + A, <<"ends">> := Here + B}
+                                            || Si = #{<<"starts">> := A, <<"ends">> := B} <- Silences]};
         _ -> S
     end,
     case Resumed of
@@ -110,6 +115,9 @@ load(S = #{resumed := Resumed, firing := Firing}, Node) ->
                 _ -> S1
             end
     end.
+
+%% Sub-second: a whole-second clock would see a silence started this second as not yet begun.
+wall() -> erlang:system_time(millisecond) / 1000.
 
 null_id(null) -> null;
 null_id(Id) -> Id.
@@ -154,7 +162,7 @@ evaluate(S = #{rules := Rules, silences := Silences, firing := Firing}, States, 
         fun(Key = {Id, Target}, Msg, {Acc, F}) ->
             R = maps:get(Id, ById),
             Cur = maps:get(Key, F, #{since => Now, open => false, notified => false}),
-            Quiet = silenced(Silences, Id, Target, Node, Wall),
+            Quiet = silenced(Silences, Id, Target, Node, wall()),
             Window = maps:get(<<"window_s">>, R),
             {Ops, Next} = case Cur of
                 #{open := false, since := Since} when Now - Since >= Window ->
