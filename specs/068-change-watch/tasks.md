@@ -12,6 +12,7 @@ Plano com as medições feito (plan.md, 26/11/2026): verificação instalada sob
 - [x] T-068-08 Saída por conector idempotente, ordenada por registro, limitada e assinada (RF-068-07, D11, CA-068-04)
 - [x] T-068-09 Fila curta e descartável, com retenção dos disparos e ocioso sem escrita (D8, RNF-068-01)
 - [x] T-068-10 Telas: "Avisar quando mudar" no histórico, editor com classificação visível, ensaio sobre mudanças reais, central com disparos, agrupamentos e fora do alcance; verificador da spec 050 (RF-068-08, D12, CA-068-10)
-- [ ] T-068-11 Sugestão de "Avisar quando mudar" a partir de consultas repetidas ao histórico (RF-068-09)
-- [ ] T-068-12 Uso simulado (spec 067): personas alterando cadastros e documentos vigiados, com oráculo de disparos esperados
+- [x] T-068-11 Sugestão de "Avisar quando mudar" a partir de consultas repetidas ao histórico (RF-068-09)
+- [x] T-068-12 Uso simulado (spec 067): personas alterando cadastros vigiados (o cliente da rodada), com oráculo de disparos esperados
+- [ ] T-068-12b Uso simulado sobre documentos vigiados (pedido de venda: situação e data prometida), com oráculo próprio: documentos não têm histórico campo a campo, a expectativa vem dos passos da rodada
 - [x] T-068-13 Conta bancária do fornecedor no cadastro (`base.party_bank`), com histórico e colunas sigilosas mascaradas, para o CA-068-01 (D10)
