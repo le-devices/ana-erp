@@ -3113,7 +3113,7 @@
             f.detail && f.detail.out_of_reach ? pill(`${f.detail.out_of_reach} fora do alcance do dono`, "warn") : null, " ",
             f.detail && (f.detail.reason || (f.detail.error && f.detail.error.message)) || (f.execution_id ? el("a", { href: `#/ops/executions/${f.execution_id}`, text: "execução" }) : "")) },
         { label: "Por", value: (f) => f.by || "" },
-      ], r.fires, { empty: "Ainda não disparou." }));
+      ], r.fires, { empty: "Ainda não disparou.", emptyGood: true }));
   }
 
   const SECTIONS = { users, groups, settings, company, values, home, assistant, simulation, automations, commands, remote, accounts, limits, consumption, scheduler, monitor, audit, retention, health, alerts, core, disk, uiperf, sqlperf, advice, updates, integrations, checks, transports, datacopy, publicapi, license, extensions, telemetry };
