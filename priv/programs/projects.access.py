@@ -37,14 +37,10 @@ def require_manager(p):
         raise ana.Error("FORBIDDEN", f"apenas o gestor do projeto {p['code']} ou um administrador")
 
 
-# Who works the company's receivables: may run the bank statement routine (the same rule as the company's cash in the
-# projection, spec 069).
-FINANCE_ROUTINE = "finance.import_statement"
-
-
 def can_invoice(p):
-    """Spec 008 (H6): the finance team invoices the project — besides its manager and the administrators."""
-    return can_manage(p) or ana.can_run(FINANCE_ROUTINE)
+    """Spec 008 (H6): the finance team invoices the project — besides its manager and the administrators. The finance
+    team: an access group whose routines include the bank statement (migration 088); nobody else by default."""
+    return can_manage(p) or bool(ana.sql_value("SELECT projects.is_finance($1)", ana.context.user))
 
 
 def require_invoicer(p):
