@@ -70,6 +70,7 @@ Tarefas adiadas já concluídas (ordem acordada em out/2026): T-017-05b ✓, T-0
 18a. ✓ 068 — mudanças vigiadas: gatilho "alterado" em cadastros e documentos, com custo de escrita, desempenho e segurança medidos (`specs/068-change-watch`; plan.md primeiro, com as medições) — implementada em 27/11/2026; T-068-12b (uso simulado sobre documentos) adiada
 18b. ✓ 069 — cenários "e se…": projeção base e cenários em cascata (`specs/069-what-if-scenarios`) — falta T-069-01b
 18c. 077 — central técnica e modo de socorro, fase 1 (T-077-01..07: Central, ações, parâmetros, console, roteiros, modos degradados) (`specs/077-technical-center`; plan.md primeiro, com a matriz de falhas e o modelo de ameaças); fase 2 (socorro, T-077-08..13) em seguida; fase 3 (T-077-14..17) depois da 047 e da 057
+18d. 078 — formação de preço, fase 1 (venda: T-078-01..06) (`specs/078-pricing`; plan.md primeiro, reaproveitando o mecanismo da spec 049); fase 2 (compra, T-078-07) e fase 3 (campanhas e integrações, T-078-08..10) em seguida — pedido do dono do produto em 27/11/2026
 19. 062 fase 3 — revisão de todos os subsistemas já implementados com o critério P20 (T-062-10..13)
 20. 063 fase 2 — revisão de escrita desnecessária em todas as funcionalidades já implementadas (T-063-06..08)
 21. 049 fase 2 — ICMS (ST, DIFAL, FCP), IPI, PIS/COFINS, Simples (T-049-08)
