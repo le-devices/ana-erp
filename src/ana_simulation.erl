@@ -321,7 +321,7 @@ watch_on(_, St) -> St.
 watch_check(St = #{watch := #{rule := R, key := K, since := Since}}) ->
     {ok, #{<<"n">> := Expected}} = ana_db:one(
         "SELECT count(*)::int AS n FROM master.change_log WHERE entity = 'party' AND row_key = $1 "
-        "AND table_name = 'base.party' AND op = 'update' AND changes ?| $2::text[] AND at >= $3::timestamptz", [K, ?WATCHED, Since]),
+        "AND table_name = 'base.party' AND op = 'update' AND changes ?| $2::text[] AND at >= $3::text::timestamptz", [K, ?WATCHED, Since]),
     {Fired, Failed} = fires(R, Expected, erlang:monotonic_time(millisecond) + ?WATCH_WAIT_MS),
     Detail = #{rule => R, customer => K, expected => Expected, fired => Fired, failed => Failed},
     Ok = Fired =:= Expected andalso Failed =:= 0,
