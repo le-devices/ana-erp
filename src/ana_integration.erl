@@ -115,7 +115,7 @@ claim_rows(outbox, Connector, N) ->
         "  ORDER BY o.next_at, o.id LIMIT $1 FOR UPDATE SKIP LOCKED) "
         "UPDATE integration.outbox o SET status = 'processing', attempts = o.attempts + 1, "
         "  lease_until = now() + interval '" ?LEASE "' FROM c WHERE o.id = c.id "
-        "RETURNING o.id, o.connector, o.kind, o.ordering_key, o.payload, o.attempts, o.created_by", [N, Connector]));
+        "RETURNING o.id, o.connector, o.kind, o.ordering_key, o.payload, o.attempts, o.created_by, o.event_id", [N, Connector]));
 claim_rows(inbox, Connector, N) ->
     rows(ana_db:rows(
         "WITH c AS (SELECT i.id FROM integration.inbox i "
@@ -143,7 +143,7 @@ run(Kind, M = #{<<"id">> := Id, <<"connector">> := Name, <<"attempts">> := Attem
             User = #{username => maps:get(<<"username">>, C), role => maps:get(<<"role">>, C)},
             Params = case Kind of
                 outbox -> #{<<"message">> => maps:with([<<"id">>, <<"kind">>, <<"ordering_key">>, <<"payload">>,
-                                                        <<"created_by">>], M#{<<"attempt">> => Attempt})};
+                                                        <<"created_by">>, <<"event_id">>], M#{<<"attempt">> => Attempt})};
                 inbox -> #{<<"event">> => maps:with([<<"id">>, <<"event_id">>, <<"payload">>, <<"headers">>], M)}
             end,
             Conn = #{<<"name">> => Name, <<"options">> => maps:get(<<"options">>, C)},

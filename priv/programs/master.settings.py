@@ -12,9 +12,10 @@ from ana_lib.master import entities
 PARAMS = {
     "entity": {"type": "str", "label": "cadastro"},
     "approval": {"type": "bool", "label": "exigir aprovação de campos sensíveis"},
-    "field": {"type": "dict", "label": "campo próprio (name, label, type, required, choices, active)"},
+    "field": {"type": "dict", "label": "campo próprio (name, label, type, required, choices, active, classification)"},
 }
 TYPES = ("text", "int", "decimal", "bool", "date", "choice")
+CLASSIFICATIONS = {"common": "comum", "personal": "pessoal", "secret": "sigiloso"}
 
 
 def main(entity=None, approval=None, field=None):
@@ -32,9 +33,11 @@ def main(entity=None, approval=None, field=None):
                 "_actions": [{"label": "Desligar aprovação" if pol.get(n) else "Exigir aprovação", "program": "master.settings",
                               "params": {"entity": n, "approval": not pol.get(n)}}]}
                for n, e in entities.ENTITIES.items()], title="Aprovação de campos sensíveis (quatro olhos)")
-    fields = ana.sql("SELECT entity, name, label, type, required, choices, active FROM master.custom_field ORDER BY entity, position, name")
+    fields = ana.sql("SELECT entity, name, label, type, required, choices, active, classification FROM master.custom_field "
+                     "ORDER BY entity, position, name")
     ana.table([{"cadastro": entities.ENTITIES[f["entity"]]["plural"], "campo": f["name"], "rótulo": f["label"], "tipo": f["type"],
-                "obrigatório": "sim" if f["required"] else "", "ativo": "sim" if f["active"] else "não"} for f in fields],
+                "obrigatório": "sim" if f["required"] else "",
+                "classificação": CLASSIFICATIONS.get(f["classification"], f["classification"]), "ativo": "sim" if f["active"] else "não"} for f in fields],
               title="Campos próprios da empresa")
     return {"policies": pol, "custom_fields": len(fields)}
 
@@ -47,8 +50,14 @@ def save_field(entity, f):
         raise ana.Error("INVALID_PARAMETER", "nome do campo: letras minúsculas, números e _; diferente dos campos do produto")
     if f.get("type", "text") not in TYPES:
         raise ana.Error("INVALID_PARAMETER", "tipo deve ser um de: " + ", ".join(TYPES))
-    ana.sql_exec("INSERT INTO master.custom_field (entity, name, label, type, required, choices, active, created_by) "
-                 "VALUES ($1, $2, $3, $4, $5, $6, $7, $8) ON CONFLICT (entity, name) DO UPDATE SET label = EXCLUDED.label, "
-                 "type = EXCLUDED.type, required = EXCLUDED.required, choices = EXCLUDED.choices, active = EXCLUDED.active",
+    # Spec 068 (D10): where the value may go when someone watches this field (personal data, LGPD; secret: never leaves).
+    classification = f.get("classification") or "common"
+    if classification not in CLASSIFICATIONS:
+        raise ana.Error("INVALID_PARAMETER", "classificação deve ser uma de: " + ", ".join(CLASSIFICATIONS))
+    ana.sql_exec("INSERT INTO master.custom_field (entity, name, label, type, required, choices, active, classification, "
+                 "  created_by) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) ON CONFLICT (entity, name) DO UPDATE SET "
+                 "label = EXCLUDED.label, type = EXCLUDED.type, required = EXCLUDED.required, choices = EXCLUDED.choices, "
+                 "active = EXCLUDED.active, classification = EXCLUDED.classification",
                  entity, name, str(f.get("label") or name).strip(), f.get("type", "text"), bool(f.get("required")),
-                 [str(c) for c in (f.get("choices") or [])], f.get("active", True) is not False, ana.context.user)
+                 [str(c) for c in (f.get("choices") or [])], f.get("active", True) is not False, classification,
+                 ana.context.user)

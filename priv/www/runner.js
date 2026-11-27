@@ -286,7 +286,7 @@
           fill(spec.choices.map((c) => Array.isArray(c) ? { value: c[0], label: c[1] } : { value: c, label: String(c) }), start);
         } else {
           fill([], start);
-          lookups.push({ input, spec, fill, start });
+          lookups.push({ input, spec, fill });
         }
       } else if (type === "list" && spec.columns) {
         // Rows editor (spec 029): one line per item, columns typed like fields, lookups that follow
@@ -368,7 +368,9 @@
           .catch(() => lk.fill([], keep))
           .finally(() => lk.input.classList.remove("loading"));
       };
-      load(lk.start);
+      // The first load keeps whatever the field holds when the options arrive (the start value, or a choice the person
+      // or the context made meanwhile) — never resets it to the start value.
+      load();
       for (const d of deps) if (inputs[d]) inputs[d].addEventListener("change", () => load(""));
     }
     for (const f of deferred) f();

@@ -301,6 +301,8 @@
 
     const tabState = {};
     for (const t of e.tabs) {
+      // A tab may ask for more than the record (spec 068: bank data only by an administrator).
+      const tabEditable = editable && t.can_edit !== false;
       const data = rec ? rec.tabs[t.label] : (t.kind === "rows" ? [] : {});
       if (t.kind === "view") {
         if (!existing) continue;
@@ -316,7 +318,7 @@
         tabs.push({ label: t.label, node });
       } else if (t.kind === "one") {
         const grid = el("div", { class: "form-grid md-grid" });
-        const tb = t.fields.map((f) => fieldBox(f, data ? data[f.name] : f.default ?? null, { existing, readonly: !editable, entity: e.name }));
+        const tb = t.fields.map((f) => fieldBox(f, data ? data[f.name] : f.default ?? null, { existing, readonly: !tabEditable, entity: e.name }));
         tb.forEach((b) => grid.append(b.node));
         tabState[t.label] = { kind: "one", boxes: tb, original: null };
         tabs.push({ label: t.label, node: grid });
@@ -324,9 +326,9 @@
         const st = { kind: "rows", t, rows: [], original: null };
         const body = el("tbody");
         const addRow = (values) => {
-          const rb = t.fields.map((f) => fieldBox(f, values ? values[f.name] : f.default ?? null, { existing: false, readonly: !editable, entity: e.name }));
+          const rb = t.fields.map((f) => fieldBox(f, values ? values[f.name] : f.default ?? null, { existing: false, readonly: !tabEditable, entity: e.name }));
           const tr = el("tr", {}, ...rb.map((b) => el("td", {}, b.node)),
-            editable ? el("td", {}, el("button", { type: "button", class: "quiet small", text: "Remover", title: "Remover a linha",
+            tabEditable ? el("td", {}, el("button", { type: "button", class: "quiet small", text: "Remover", title: "Remover a linha",
               onclick: () => { st.rows = st.rows.filter((x) => x.tr !== tr); tr.remove(); markDirty(); } })) : null);
           for (const b of rb) if (b.ctl.input) b.ctl.input.addEventListener("input", markDirty);
           st.rows.push({ tr, boxes: rb });
@@ -336,8 +338,8 @@
         tabState[t.label] = st;
         tabs.push({ label: t.label, node: el("div", {},
           el("div", { class: "table-box" }, el("table", { class: "data-table md-rows" },
-            el("thead", {}, el("tr", {}, ...t.fields.map((f) => el("th", { text: f.label + (f.required ? " *" : "") })), editable ? el("th") : null)), body)),
-          editable ? el("button", { type: "button", class: "quiet", text: "Adicionar linha", onclick: () => { addRow(null); markDirty(); } }) : null) });
+            el("thead", {}, el("tr", {}, ...t.fields.map((f) => el("th", { text: f.label + (f.required ? " *" : "") })), tabEditable ? el("th") : null)), body)),
+          tabEditable ? el("button", { type: "button", class: "quiet", text: "Adicionar linha", onclick: () => { addRow(null); markDirty(); } }) : null) });
       }
     }
     if (existing) {
@@ -345,10 +347,21 @@
       tabs.push({ label: "Histórico", node: hist, lazy: async () => {
         try {
           const r = await call("master.history", { entity: e.name, key: rec.key });
-          hist.replaceChildren(r.changes.length ? el("div", { class: "table-box" }, el("table", { class: "data-table" },
-            el("thead", {}, el("tr", {}, ...["Quando", "Campo", "Antes", "Depois", "Por", "Origem"].map((h) => el("th", { text: h })))),
+          // Spec 068 (D12, CA-068-10): "Avisar quando mudar" opens a rule already filled with this record (and the
+          // field, from a line); rules are the administrator's (spec 051), so only they see it.
+          const admin = (window.AnaStudio.user() || {}).role === "admin";
+          const watch = (ref) => window.AnaStudio.go(`#/admin/automations/rules/new?entity=${encodeURIComponent(e.name)}` +
+            `&key=${encodeURIComponent(r.watch_key)}${ref ? `&field=${encodeURIComponent(ref)}` : ""}` +
+            `&back=${encodeURIComponent(location.hash)}`);
+          hist.replaceChildren(
+            admin ? el("div", { class: "row-buttons" }, el("button", { type: "button", class: "quiet", text: "Avisar quando mudar",
+              title: "Cria uma regra que avisa (ou chama um conector) quando este registro mudar", onclick: () => watch(null) })) : null,
+            r.changes.length ? el("div", { class: "table-box" }, el("table", { class: "data-table" },
+            el("thead", {}, el("tr", {}, ...["Quando", "Campo", "Antes", "Depois", "Por", "Origem"].map((h) => el("th", { text: h })), admin ? el("th") : null)),
             el("tbody", {}, ...r.changes.map((c) => el("tr", {}, el("td", { text: fmtDate(c.at) }), el("td", { text: c.field }),
-              el("td", { text: c.before ?? "—" }), el("td", { text: c.after ?? "—" }), el("td", { text: c.by || "" }), el("td", { text: c.origin || "" }))))))
+              el("td", { text: c.before ?? "—" }), el("td", { text: c.after ?? "—" }), el("td", { text: c.by || "" }), el("td", { text: c.origin || "" }),
+              admin ? el("td", {}, c.ref ? el("button", { type: "button", class: "quiet small", text: "Avisar quando mudar",
+                "aria-label": `Avisar quando ${c.field} mudar`, onclick: () => watch(c.ref) }) : null) : null)))))
             : el("p", { class: "muted", text: "Sem alterações registradas." }));
         } catch (err) { hist.replaceChildren(el("p", { class: "error", text: err.message })); }
       } });

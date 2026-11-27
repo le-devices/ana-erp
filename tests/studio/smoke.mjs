@@ -897,6 +897,42 @@ ok(true, "API pública: clientes, novo cliente e chamadas (spec 010)");
   await go(w, "#/admin/automations/rules");
   await until(() => text("#admin-main").includes("Nova regra"), "rules list", jsErrors);
   ok(true, "Regras: lista com situação (ligada, ensaiada, a ensaiar, bloqueada)");
+
+  // Spec 068 (CA-068-10): "Avisar quando mudar" from a customer's history opens the rule filled in, the rehearsal says
+  // how many times it would have fired over the real changes, and turning it on does not hold up who saves customers.
+  const stamp = Date.now();
+  const made = await w.AnaApi.run("master.save", { params: { entity: "party", values: { name: `Cliente Vigiado ${stamp}`, kind: "customer" },
+                                                             confirm_duplicate: true, reason: "teste automatizado" } });
+  const pid = made.result.id;
+  await w.AnaApi.run("base.save_party", { params: { id: pid, name: `Cliente Vigiado ${stamp}`, kind: "customer", city: "Campinas" } });
+  await go(w, `#/master/party/${pid}`);
+  await until(() => [...d.querySelectorAll("#master-main .sub-tabs button")].some((b) => b.textContent === "Histórico"), "watched sheet", jsErrors);
+  [...d.querySelectorAll("#master-main .sub-tabs button")].find((b) => b.textContent === "Histórico").click();
+  await until(() => d.querySelector("#master-main button[aria-label='Avisar quando Cidade mudar']"), "watch button on the city line", jsErrors);
+  d.querySelector("#master-main button[aria-label='Avisar quando Cidade mudar']").click();
+  await until(() => w.location.hash.startsWith("#/admin/automations/rules/new") && d.querySelector("#admin-main input[value='base.party.city']"), "rule filled", jsErrors);
+  const city = d.querySelector("#admin-main input[value='base.party.city']");
+  const wkey = d.querySelector("#admin-main input[aria-label='Só o registro']");
+  ok(city.checked && wkey.value === String(pid) && d.querySelector("#admin-main select[aria-label='Cadastro ou documento vigiado']").value === "party",
+     "Avisar quando mudar: a regra abre com o cadastro, o registro e o campo (CA-068-10)");
+  ok(text("#admin-main").includes("Nome 👤") && text("#admin-main").includes("🔒"), "o editor mostra a classificação: 🔒 sigiloso, 👤 dado pessoal (D12)");
+  ok(!d.querySelector("#admin-main input[value='import']").checked, "importação fica de fora por padrão (D1)");
+  ok(d.querySelector("#admin-main input[data-k='message']").value.includes("{{city_before}}"), "a regra já sugere a mensagem com o antes e o depois do campo");
+  submit(w, d.querySelector("#admin-main form.form-card"));
+  await until(() => /#\/admin\/automations\/rules\/\d+$/.test(w.location.hash) && text("#admin-main").includes("Ensaiar"), "rule saved (aviso: " + text("#toast") + ")", jsErrors);
+  const ruleId = Number(w.location.hash.split("/").pop());
+  [...d.querySelectorAll("#admin-main button")].find((b) => b.textContent === "Ensaiar").click();
+  await until(() => /Teria disparado \d+ vez/.test(text("#admin-main")), "rehearsal over the real changes", jsErrors);
+  ok(text("#admin-main").includes("Campinas") && text("#admin-main").includes(`registro ${pid}`), "ensaio: teria disparado N vezes, com as mudanças reais (CA-068-10)");
+  [...d.querySelectorAll("#admin-main button")].find((b) => b.textContent === "Ligar a regra").click();
+  await until(() => text("#toast").includes("Regra ligada"), "rule on", jsErrors);
+  const t0 = Date.now();
+  const again = await w.AnaApi.run("base.save_party", { params: { id: pid, name: `Cliente Vigiado ${stamp}`, kind: "customer", city: "Sorocaba" } });
+  ok(!again.error && Date.now() - t0 < 5000, `ligar a regra não trava quem grava clientes (${Date.now() - t0} ms) (CA-068-10)`);
+  await go(w, "#/admin/automations/rules");
+  await until(() => text("#admin-main").includes("Fora do alcance") && text("#admin-main").includes("Avisar: Cidade"), "rules list with the watch columns", jsErrors);
+  ok(text("#admin-main").includes("Alterado · Cliente ou fornecedor"), "central: a regra de alteração com disparos, agrupados e fora do alcance (D12)");
+  await w.AnaApi.admin.deleteRule(ruleId);
 }
 ok(true, "todas as seções administrativas abrem");
 ok(jsErrors.length === 0, "nenhum erro de JavaScript (admin)" + (jsErrors.length ? ": " + jsErrors.join("; ") : ""));

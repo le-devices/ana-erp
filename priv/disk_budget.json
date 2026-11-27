@@ -3,7 +3,7 @@
  "tolerance": 0.5,
  "idle_tolerance": 2.0,
  "floor_bytes": 8192,
- "note": "Orçamento de escrita (spec 063, D1): bytes de WAL por operação típica e por hora com o sistema ocioso, medidos pelo teste TestDiskEndurance. Limite = maior entre orçamento × (1 + tolerância) e orçamento + floor_bytes (o ocioso usa idle_tolerance). Baixar o orçamento é sempre bem-vindo (ANA_DISK_BUDGET=write grava o que foi medido).",
+ "note": "Orçamento de escrita (spec 063, D1): bytes de WAL por operação típica e por hora com o sistema ocioso, medidos pelo teste TestDiskEndurance. Limite = maior entre orçamento × (1 + tolerância) e orçamento + floor_bytes (o ocioso usa idle_tolerance). Baixar o orçamento é sempre bem-vindo (ANA_DISK_BUDGET=write grava o que foi medido). Spec 068: change_party, change_order_field e change_party_watched_other medidos no CI (26/11/2026); change_order_field_watched = change_order_field + a linha de evento (≈ 220 B, plan.md), porque a medição com regra ficou abaixo da sem regra (ruído).",
  "idle_wal_bytes_per_hour": 228954,
  "operations": {
   "short_run": {
@@ -29,6 +29,22 @@
   "alert_cycle": {
    "label": "Ciclo de alertas",
    "wal_bytes": 434
+  },
+  "change_party": {
+   "label": "Alterar cadastro de cliente (com o histórico)",
+   "wal_bytes": 2437
+  },
+  "change_order_field": {
+   "label": "Alterar um campo do pedido por rotina",
+   "wal_bytes": 3607
+  },
+  "change_order_field_watched": {
+   "label": "Alterar um campo do pedido vigiado por regra (um evento por comando)",
+   "wal_bytes": 3827
+  },
+  "change_party_watched_other": {
+   "label": "Alterar cadastro de cliente com regra em outro campo (lido do histórico)",
+   "wal_bytes": 2437
   }
  }
 }

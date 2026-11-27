@@ -31,6 +31,11 @@ def main(task, action, comment=None, to=None, vars=None, result=None):
     candidate = t["assignee"] is None and ((t["role"] and t["role"] == ana.context.role) or (t["group_name"] in common.groups()))
     if not (mine or candidate or admin):
         raise ana.Error("FORBIDDEN", "esta tarefa não é sua nem do seu papel ou grupo")
+    if t.get("not_by") and t["not_by"] == me and action in ("claim", "complete", "approve", "reject"):
+        # Spec 068 (CA-068-01): who made the change does not check it (the database refuses it too).
+        raise ana.Error("FORBIDDEN", "você fez a alteração que esta tarefa confere: outra pessoa precisa concluí-la")
+    if action == "delegate" and t.get("not_by") and to == t["not_by"]:
+        raise ana.Error("FORBIDDEN", f"{to} fez a alteração que esta tarefa confere: delegue para outra pessoa")
     if t["status"] != "waiting":
         raise ana.Error("INVALID_STATE", "a tarefa não está aguardando (já foi concluída ou cancelada)")
     if action == "comment":

@@ -129,9 +129,11 @@
     for (const s of list) {
       const li = el("li", { class: "suggestion" }, el("strong", { text: s.title }), el("p", { class: "small", text: s.explanation }));
       li.append(el("div", { class: "row-buttons" },
-        el("button", { type: "button", class: "primary small", text: { schedule: "Agendar", routine: "Ligar a rotina" }[s.kind] || "Salvar variante", onclick: async () => {
+        el("button", { type: "button", class: "primary small", text: { schedule: "Agendar", routine: "Ligar a rotina", watch: "Criar o aviso" }[s.kind] || "Salvar variante", onclick: async () => {
           try {
             const r = await API.suggestions.accept(s.id, {});
+            // Spec 068 (T-068-11): a rule is rehearsed before it is turned on, so accepting opens it already filled.
+            if (s.kind === "watch" && r.open) { window.AnaStudio.go(`${r.open}&back=${encodeURIComponent(location.hash || "#/home")}`); return; }
             toast(s.kind === "schedule" ? `Agendado: ${s.program} de segunda a sexta (${r.cron}). Você pode mudar em Agendamento.`
               : s.kind === "routine" ? "Rotina ligada: ela roda sozinha no horário de Agendamento, onde você pode mudar ou desligar."
               : "Variante salva: escolha pelo nome na próxima vez.");

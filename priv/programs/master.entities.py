@@ -18,7 +18,8 @@ Entity keys
                                 (writer parameter, when different), ref_param ('key' of the referenced
                                 entity instead of its id), readonly (after creation), list, sensitive,
                                 secret (only admins see it), expr (read expression), help
-  tabs                          kind 'one' (1:1 row) or 'rows' (1:N) or 'view' (read only SQL)
+  tabs                          kind 'one' (1:1 row) or 'rows' (1:N) or 'view' (read only SQL); edit = minimum role
+                                to change the tab (default: the entity's edit)
   fetch                         {"label", "program", "field", "param", "available" (SQL)}: fills the sheet from outside
                                 (e.g. a CNPJ lookup); offered only when "available" answers true
   duplicates                    [{"field", "kind": "exact" | "similar", "threshold"}]
@@ -82,6 +83,21 @@ ENTITIES = {
                  {"name": "grace_days", "label": "Tolerância de atraso (dias)", "type": "int", "help": "vazio = política"},
                  {"name": "auto_block", "label": "Bloquear automaticamente por atraso", "type": "bool"},
                  {"name": "default_term", "label": "Condição de pagamento padrão", "type": "ref", "ref": "payment_term"},
+             ]},
+            # Spec 068 (T-068-13, D10): where a supplier is paid. Secret: only an administrator changes or sees it,
+            # and the history records that it changed, never the value.
+            {"label": "Dados bancários", "kind": "rows", "table": "base.party_bank", "fk": "party_id",
+             "row_key": ["bank", "branch", "account"], "writer": "base.save_party_bank", "parent_param": "party",
+             "parent_value": "id", "remove": "delete", "edit": "admin",
+             "fields": [
+                 {"name": "bank", "label": "Banco", "type": "text", "required": True, "max": 3, "help": "código de 3 dígitos"},
+                 {"name": "branch", "label": "Agência", "type": "text", "required": True, "max": 7, "secret": True},
+                 {"name": "account", "label": "Conta", "type": "text", "required": True, "max": 22, "secret": True,
+                  "help": "com o dígito: 12345-6"},
+                 {"name": "kind", "label": "Tipo", "type": "choice", "default": "checking",
+                  "choices": [["checking", "Corrente"], ["savings", "Poupança"], ["payment", "Pagamento"]]},
+                 {"name": "pix_key", "label": "Chave PIX", "type": "text", "max": 77, "secret": True},
+                 {"name": "main", "label": "Principal", "type": "bool"},
              ]},
             {"label": "Saldos", "kind": "view", "sql":
                 "SELECT CASE b.kind WHEN 'receivable' THEN 'A receber' ELSE 'A pagar' END AS \"tipo\", count(*) AS \"títulos\", "

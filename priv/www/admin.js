@@ -2755,7 +2755,23 @@
   // D1: everything that runs by itself in one list; D2: rules "quando… então…" with the condition builder, rehearsed
   // before they are turned on; D3: suggestions from usage (analysed in the background, here on demand).
   const AUTO_KIND = { schedule: "Agendamento", flow: "Esteira", process: "Processo", rule: "Regra", alert: "Alerta", connector: "Conector" };
-  const RULE_TRIGGER = { created: "Documento criado", status: "Mudança de situação", schedule: "Horário", metric: "Limite de métrica", message: "Mensagem recebida" };
+  const RULE_TRIGGER = { created: "Documento criado", status: "Mudança de situação", changed: "Campo alterado (cadastro ou documento)",
+                         schedule: "Horário", metric: "Limite de métrica", message: "Mensagem recebida" };
+  // Spec 068 (D1, D6, D12): where a change came from, and one firing per record or grouped.
+  const ORIGIN = { screen: "Tela", api: "API", import: "Importação", rule: "Outra regra", integration: "Integração", routine: "Rotina", other: "Outra" };
+  const WATCH_MODE = { auto: "Automático (agrupa importação, rotina e lotes acima de 20)", record: "Um disparo por registro", grouped: "Um disparo agrupado" };
+  const CLASS_MARK = { secret: "🔒", personal: "👤" };
+  const CLASS_TEXT = { secret: "sigiloso", personal: "dado pessoal (LGPD)" };
+  const watchFieldLabel = (f) => `${f.label}${CLASS_MARK[f.classification] ? " " + CLASS_MARK[f.classification] : ""}`;
+  // "Quando" of a rule in words; the field labels come from the catalog when it is at hand.
+  function ruleWhen(x, cat) {
+    if (x.trigger_kind === "changed") {
+      const w = cat && cat.watchable.find((e) => e.entity === x.entity);
+      const labels = (x.watch_fields || []).map((ref) => { const f = w && w.fields.find((y) => y.ref === ref); return f ? watchFieldLabel(f) : ref.split(".").pop(); });
+      return `Alterado · ${x.entity_label || x.entity}${x.watch_key ? " " + x.watch_key : ""} · ${labels.join(", ")}`;
+    }
+    return `${RULE_TRIGGER[x.trigger_kind]}${x.entity_label ? " · " + x.entity_label : ""}${x.status_to ? " → " + x.status_to : ""}${x.cron ? " · " + x.cron : ""}${x.metric ? ` · ${x.metric} ${x.metric_op} ${x.metric_value}` : ""}${x.connector ? " · " + x.connector : ""}`;
+  }
   const RULE_ACTION = { task: "Criar tarefa", run: "Executar rotina", notify: "Avisar", email: "Enviar e-mail", connector: "Chamar conector" };
   const FIRE = { done: "feito", failed: "falhou", blocked: "bloqueada", rehearsal: "ensaio", skipped: "pulado" };
   let autoFilter = { kind: "", state: "", q: "" };
@@ -2807,26 +2823,43 @@
   }
 
   async function rulesList() {
-    const rules = await API.admin.rules();
+    const [rules, cat] = await Promise.all([API.admin.rules(), API.admin.rulesCatalog()]);
     main().replaceChildren(
-      ...header("Regras \"quando… então…\"", "Quando um documento é criado ou muda de situação, num horário, quando uma métrica passa do limite ou quando chega uma mensagem — se as condições valem, então a regra cria uma tarefa, executa uma rotina, avisa, envia e-mail ou chama um conector. Sem programar. Toda regra tem dono, é ensaiada antes de ligar e nunca entra em laço."),
+      ...header("Regras \"quando… então…\"", "Quando um documento é criado ou muda de situação, quando um campo de um cadastro ou documento é alterado, num horário, quando uma métrica passa do limite ou quando chega uma mensagem — se as condições valem, então a regra cria uma tarefa, executa uma rotina, avisa, envia e-mail ou chama um conector. Sem programar. Toda regra tem dono, é ensaiada antes de ligar e nunca entra em laço."),
       el("div", { class: "row-buttons" },
         el("button", { type: "button", class: "primary", text: "Nova regra", onclick: () => window.AnaStudio.go("#/admin/automations/rules/new") }),
         el("button", { type: "button", class: "quiet", text: "Voltar às automações", onclick: () => window.AnaStudio.go("#/admin/automations") })),
       table([
         { label: "Regra", value: (x) => el("a", { href: `#/admin/automations/rules/${x.id}`, text: x.name }) },
-        { label: "Quando", value: (x) => `${RULE_TRIGGER[x.trigger_kind]}${x.entity_label ? " · " + x.entity_label : ""}${x.status_to ? " → " + x.status_to : ""}${x.cron ? " · " + x.cron : ""}` },
+        { label: "Quando", value: (x) => ruleWhen(x, cat) },
         { label: "Então", value: (x) => RULE_ACTION[x.action.kind] || x.action.kind },
         { label: "Dono", value: (x) => x.owner },
         { label: "Situação", value: (x) => x.blocked_reason ? pill("bloqueada", "off") : pill(x.active ? "ligada" : x.rehearsed_version === x.version ? "ensaiada" : "a ensaiar", x.active ? "on" : "") },
         { label: "Disparos", value: (x) => `${x.fired}${x.failed ? ` (${x.failed} com falha)` : ""}`, class: "num" },
+        { label: "Agrupados", value: (x) => x.trigger_kind === "changed" ? String(x.grouped) : "—", class: "num" },
+        { label: "Fora do alcance", value: (x) => x.trigger_kind === "changed" ? (x.out_of_reach ? el("span", { class: "warn", title: "Mudanças que o dono da regra não pode ver: não dispararam", text: String(x.out_of_reach) }) : "0") : "—", class: "num" },
       ], rules, { empty: "Nenhuma regra ainda.", emptyAction: { label: "Nova regra", onClick: () => window.AnaStudio.go("#/admin/automations/rules/new") } }));
   }
 
   async function ruleEditor(rule) {
     const cat = await API.admin.rulesCatalog();
-    const r = rule || { trigger_kind: "created", conditions: [], action: { kind: "task", task_kind: "human" }, max_fires: 20, window_minutes: 60,
-                        owner: window.AnaStudio.user().username };
+    // Spec 068 (CA-068-10): from a record's history, "Avisar quando mudar" arrives with the entity, the record and the field.
+    const q = new URLSearchParams(location.hash.split("?")[1] || "");
+    const from = !rule && q.get("entity") ? { entity: q.get("entity"), key: q.get("key"), field: q.get("field"), back: q.get("back") } : null;
+    const fromEntity = from && cat.watchable.find((w) => w.entity === from.entity);
+    const fromField = fromEntity && from.field && fromEntity.fields.find((f) => f.ref === from.field);
+    const r = rule || (from ? { trigger_kind: "changed", entity: from.entity, watch_key: from.key || null,
+                                watch_fields: fromField ? [fromField.ref] : [], watch_filter: {}, watch_origins: null, watch_mode: "auto",
+                                name: fromEntity ? `Avisar: ${fromField ? fromField.label : "alteração"} de ${fromEntity.label}${from.key ? " " + from.key : ""}`.slice(0, 120) : "",
+                                conditions: [], max_fires: 20, window_minutes: 60,
+                                // A message ready to save: the field before and after, who changed it (the facts of the change).
+                                action: { kind: "notify", user: window.AnaStudio.user().username,
+                                          message: fromField ? `${fromEntity.label} {{key}}: ${fromField.label} mudou de {{${fromField.ref.split(".").pop()}_before}} para {{${fromField.ref.split(".").pop()}}} (por {{changed_by}})`
+                                                             : `${fromEntity ? fromEntity.label : "Registro"} {{key}} foi alterado por {{changed_by}}` },
+                                owner: window.AnaStudio.user().username }
+      : { trigger_kind: "created", conditions: [], action: { kind: "task", task_kind: "human" }, max_fires: 20, window_minutes: 60,
+          owner: window.AnaStudio.user().username });
+    const cancelTo = rule ? `#/admin/automations/rules/${rule.id}` : from && from.back ? from.back : "#/admin/automations/rules";
     const opt = (list, value, blank) => [blank ? el("option", { value: "", text: blank }) : null,
       ...list.map((x) => Array.isArray(x) ? el("option", { value: x[0], text: x[1] }) : el("option", { value: x, text: x }))]
       .filter(Boolean).map((o) => { if (o.value === String(value ?? "")) o.selected = true; return o; });
@@ -2841,12 +2874,71 @@
     const op = el("select", {}, ...opt([">", ">=", "<", "<="], r.metric_op || ">"));
     const mval = el("input", { type: "number", step: "any", value: r.metric_value ?? "" });
     const conn = el("select", {}, ...opt(cat.connectors, r.connector, "—"));
+    // Spec 068: what is watched — the catalog only, by label, with the classification shown (D12).
+    const wentity = el("select", { "aria-label": "Cadastro ou documento vigiado" },
+      ...opt(cat.watchable.map((w) => [w.entity, `${w.label}${w.source === "document" ? " (documento)" : ""}`]), r.trigger_kind === "changed" ? r.entity : "", "— escolha —"));
+    const wf = r.watch_filter || {};
+    const wkey = el("input", { value: r.watch_key || "", placeholder: "todos", "aria-label": "Só o registro", size: 12 });
+    const wfrom = el("input", { value: wf.from ?? "", placeholder: "qualquer", "aria-label": "Valor antes" });
+    const wto = el("input", { value: wf.to ?? "", placeholder: "qualquer", "aria-label": "Valor depois" });
+    const wbecame = el("select", { "aria-label": "Ficou" }, ...opt([["empty", "esvaziado"], ["filled", "preenchido"]], wf.became, "—"));
+    const wdir = el("select", { "aria-label": "Direção" }, ...opt([["up", "subiu (número ou data adiada)"], ["down", "desceu (número ou data antecipada)"]], wf.direction, "—"));
+    const wpct = el("input", { type: "number", min: 0.01, step: "any", value: wf.min_change_pct ?? "", placeholder: "qualquer", "aria-label": "Variação mínima (%)" });
+    const wmode = el("select", { "aria-label": "Disparo" }, ...opt(Object.entries(WATCH_MODE), r.watch_mode || "auto"));
+    const defaultOrigins = Object.keys(ORIGIN).filter((o) => o !== "import");
+    const chosenOrigins = r.watch_origins || defaultOrigins;
+    const worigins = Object.entries(ORIGIN).map(([v, l]) => {
+      const c = el("input", { type: "checkbox", value: v });
+      c.checked = chosenOrigins.includes(v);
+      return el("label", { class: "check" }, c, ` ${l}`);
+    });
+    let watchFields = [...(r.watch_fields || [])];
+    const fieldsBox = el("div", { class: "check-list", role: "group", "aria-label": "Campos vigiados" });
+    const filterBox = el("div");
+    const drawWatch = () => {
+      const w = cat.watchable.find((x) => x.entity === wentity.value);
+      watchFields = watchFields.filter((ref) => w && w.fields.some((f) => f.ref === ref));
+      fieldsBox.replaceChildren(...(w ? w.fields.map((f) => {
+        const c = el("input", { type: "checkbox", value: f.ref });
+        c.checked = watchFields.includes(f.ref);
+        c.addEventListener("change", () => { watchFields = c.checked ? [...watchFields, f.ref] : watchFields.filter((x) => x !== f.ref); drawFilter(); });
+        return el("label", { class: "check", title: CLASS_TEXT[f.classification] || "" }, c, ` ${watchFieldLabel(f)}`,
+          CLASS_MARK[f.classification] ? el("span", { class: "sr-only", text: ` (${CLASS_TEXT[f.classification]})` }) : null);
+      }) : [el("p", { class: "muted", text: "Escolha o cadastro ou documento." })]));
+      drawFilter();
+      drawConditions();
+    };
+    const drawFilter = () => {
+      const w = cat.watchable.find((x) => x.entity === wentity.value);
+      const chosen = w ? w.fields.filter((f) => watchFields.includes(f.ref)) : [];
+      const secret = chosen.some((f) => f.classification === "secret");
+      const personal = chosen.some((f) => f.classification === "personal");
+      for (const x of [wfrom, wto, wbecame, wdir, wpct]) x.disabled = secret;
+      filterBox.replaceChildren(
+        secret ? el("p", { class: "muted small", text: "🔒 Campo sigiloso: só \"foi alterado\" — o valor nunca é comparado nem mostrado, e só um administrador cria a regra." }) : null,
+        personal ? el("p", { class: "muted small", text: "👤 Dado pessoal (LGPD): só sai por um conector autorizado a receber dados pessoais (com quatro olhos)." }) : null,
+        el("div", { class: "form-grid" }, field("De (antes)", wfrom), field("Para (depois)", wto), field("Ficou", wbecame),
+          field("Direção", wdir), field("Variação mínima (%)", wpct)));
+    };
+    wentity.addEventListener("change", drawWatch);
+    const readWatch = () => {
+      const f = {};
+      if (wfrom.value !== "" && !wfrom.disabled) f.from = wfrom.value;
+      if (wto.value !== "" && !wto.disabled) f.to = wto.value;
+      if (wbecame.value && !wbecame.disabled) f.became = wbecame.value;
+      if (wdir.value && !wdir.disabled) f.direction = wdir.value;
+      if (wpct.value !== "" && !wpct.disabled) f.min_change_pct = Number(wpct.value);
+      const os = worigins.map((l) => l.querySelector("input")).filter((c) => c.checked).map((c) => c.value);
+      const same = os.length === defaultOrigins.length && defaultOrigins.every((o) => os.includes(o));
+      return { entity: wentity.value, watch_fields: watchFields, watch_filter: f, watch_key: wkey.value.trim() || null,
+               watch_origins: same ? null : os, watch_mode: wmode.value };
+    };
     const trigBox = el("div", { class: "form-grid" });
     let conditions = r.conditions;
     const condBox = el("div");
     const drawConditions = () => {
-      const doc = cat.documents.find((d) => d.entity === entity.value);
-      const fields = (["created", "status"].includes(trig.value) && doc ? doc.fields : []).map((f) => ({ ...f, label: f.name.replace(/_/g, " ") }));
+      const doc = cat.documents.find((d) => d.entity === (trig.value === "changed" ? wentity.value : entity.value));
+      const fields = (["created", "status", "changed"].includes(trig.value) && doc ? doc.fields : []).map((f) => ({ ...f, label: f.name.replace(/_/g, " ") }));
       condBox.replaceChildren(window.AnaConditions.builder({ fields, value: conditions, free: true, onChange: (c) => { conditions = c; } }).node,
         el("p", { class: "muted small", text: "Sem condição, a regra vale para todo evento. Os campos são os fatos do documento (os mesmos das esteiras)." }));
     };
@@ -2856,10 +2948,18 @@
       const k = trig.value;
       trigBox.replaceChildren(...(k === "created" ? [field("Documento", entity)]
         : k === "status" ? [field("Documento", entity), field("Quando passa para", status)]
+        : k === "changed" ? [field("Cadastro ou documento", wentity), field("Só o registro (código)", wkey),
+            el("fieldset", { class: "wide" }, el("legend", { text: "Campos — quando qualquer um mudar" }), fieldsBox,
+              el("p", { class: "muted small", text: "🔒 sigiloso · 👤 dado pessoal (LGPD)" })),
+            el("fieldset", { class: "wide" }, el("legend", { text: "Como mudou (vazio: qualquer mudança)" }), filterBox),
+            el("fieldset", { class: "wide" }, el("legend", { text: "Mudanças vindas de" }), el("div", { class: "check-list" }, ...worigins),
+              el("p", { class: "muted small", text: "Importação fica de fora por padrão: uma carga de milhares de linhas não vira milhares de avisos." })),
+            field("Disparo", wmode),
+            cat.high_volume.length ? el("p", { class: "muted small wide", text: `Não vigiados por campo (muito movimento): ${cat.high_volume.map((h) => `${h.label} — ${h.alternative}`).join(" ")}` }) : null]
         : k === "schedule" ? [field("Horário (cron)", cron)]
         : k === "metric" ? [field("Métrica", metric), field("Comparação", op), field("Limite", mval)]
         : [field("Conector", conn)]));
-      drawConditions();
+      if (k === "changed") drawWatch(); else drawConditions();
     };
     trig.addEventListener("change", drawTrigger);
     entity.addEventListener("change", drawTrigger);
@@ -2907,7 +3007,8 @@
         const body = { id: rule ? rule.id : null, name: name.value, description: desc.value, owner: owner.value, trigger_kind: trig.value,
                        entity: entity.value, status_to: status.value || null, cron: cron.value, metric: metric.value, metric_op: op.value,
                        metric_value: mval.value === "" ? null : Number(mval.value), connector: conn.value || null,
-                       conditions, action: readAction(), max_fires: Number(max.value), window_minutes: Number(win.value) };
+                       conditions, action: readAction(), max_fires: Number(max.value), window_minutes: Number(win.value),
+                       ...(trig.value === "changed" ? readWatch() : {}) };
         const res = await API.admin.saveRule(body);
         toast("Regra salva. Ensaie para poder ligar.");
         window.AnaStudio.go(`#/admin/automations/rules/${res.id}`);
@@ -2919,10 +3020,23 @@
         el("h3", { text: "Limites (nunca em laço)" }),
         el("div", { class: "form-grid" }, field("No máximo (disparos)", max), field("Em (minutos)", win)),
         el("div", { class: "row-buttons" }, el("button", { class: "primary", type: "submit", text: "Salvar" }),
-          el("button", { type: "button", class: "quiet", text: "Cancelar", onclick: () => window.AnaStudio.go(rule ? `#/admin/automations/rules/${rule.id}` : "#/admin/automations/rules") }))));
+          el("button", { type: "button", class: "quiet", text: "Cancelar", onclick: () => window.AnaStudio.go(cancelTo) }))));
     drawTrigger();
     drawAction();
+    if (from && !fromEntity) toast("Este cadastro não pode ser vigiado: escolha um do catálogo.");
+    else if (from && from.field && !fromField) toast("Este campo não pode ser vigiado: escolha um dos campos do catálogo.");
     name.focus();
+  }
+
+  function watchFilterText(f) {
+    f = f || {};
+    const parts = [];
+    if (f.from !== undefined) parts.push(`de ${f.from}`);
+    if (f.to !== undefined) parts.push(`para ${f.to}`);
+    if (f.became) parts.push(f.became === "empty" ? "esvaziado" : "preenchido");
+    if (f.direction) parts.push(f.direction === "up" ? "subiu" : "desceu");
+    if (f.min_change_pct !== undefined) parts.push(`variou ${f.min_change_pct}% ou mais`);
+    return parts.length ? parts.join(", ") : "qualquer mudança";
   }
 
   function effectView(e) {
@@ -2937,14 +3051,22 @@
 
   async function ruleDetail(id) {
     const r = await API.admin.rule(id);
-    const doc = el("input", { placeholder: "o último", "aria-label": "Documento para o ensaio", size: 10 });
+    const changed = r.trigger_kind === "changed";
+    const cat = changed ? await API.admin.rulesCatalog() : null;
+    const wfields = changed ? ((cat.watchable.find((w) => w.entity === r.entity) || {}).fields || []) : [];
+    const refLabel = (ref) => { const f = wfields.find((y) => y.ref === ref); return f ? watchFieldLabel(f) : ref.split(".").pop(); };
+    const doc = el("input", { placeholder: changed ? "todos" : "o último", "aria-label": changed ? "Registro para o ensaio" : "Documento para o ensaio", size: 10 });
     const out = el("div", { class: "card", hidden: true });
     const rehearsed = r.rehearsed_version === r.version;
     main().replaceChildren(
       ...header(`Regra: ${r.name}`, r.description || ""),
       r.blocked_reason ? el("p", { class: "error", text: `Bloqueada em ${fmtDate(r.blocked_at)}: ${r.blocked_reason}. Corrija e ensaie de novo para ligar.` }) : null,
       el("dl", { class: "kv" },
-        el("dt", { text: "Quando" }), el("dd", { text: `${RULE_TRIGGER[r.trigger_kind]}${r.entity_label ? " · " + r.entity_label : ""}${r.status_to ? " → " + r.status_to : ""}${r.cron ? " · " + r.cron : ""}${r.metric ? ` · ${r.metric} ${r.metric_op} ${r.metric_value}` : ""}${r.connector ? " · " + r.connector : ""}` }),
+        el("dt", { text: "Quando" }), el("dd", { text: ruleWhen(r, cat) }),
+        changed ? el("dt", { text: "Como mudou" }) : null,
+        changed ? el("dd", { text: watchFilterText(r.watch_filter) }) : null,
+        changed ? el("dt", { text: "Vindas de" }) : null,
+        changed ? el("dd", { text: `${(r.watch_origins || Object.keys(ORIGIN).filter((o) => o !== "import")).map((o) => ORIGIN[o] || o).join(", ")} · ${WATCH_MODE[r.watch_mode] || r.watch_mode}` }) : null,
         el("dt", { text: "Se" }), el("dd", { text: window.AnaConditions.describe(r.conditions, []) || "sempre" }),
         el("dt", { text: "Então" }), el("dd", { text: `${RULE_ACTION[r.action.kind]}${r.action.name ? ": " + r.action.name : ""}${r.action.program ? " · " + r.action.program : ""}${r.action.group ? " · grupo " + r.action.group : ""}` }),
         el("dt", { text: "Dono" }), el("dd", { text: r.owner }),
@@ -2956,8 +3078,18 @@
         el("button", { type: "button", class: rehearsed ? "quiet" : "primary", text: "Ensaiar", onclick: () => guard(async () => {
           const x = await API.admin.rehearseRule(id, doc.value || null);
           out.hidden = false;
-          out.replaceChildren(el("h3", { text: `Ensaio no documento ${x.document ?? "—"}` }),
-            el("p", { text: x.conditions_hold ? "As condições valem: a regra faria isto (nada foi gravado):" : "As condições não valem para este documento." }),
+          out.replaceChildren(
+            // Spec 068 (D12, CA-068-10): over the real changes of the last days — "teria disparado 7 vezes: …".
+            changed && x.history ? el("div", {},
+              el("h3", { text: x.would_have_fired ? `Teria disparado ${x.would_have_fired} ${x.would_have_fired === 1 ? "vez" : "vezes"} nos últimos ${x.days} dias`
+                                                  : `Não teria disparado nos últimos ${x.days} dias` }),
+              x.examples && x.examples.length ? el("ul", { class: "rehearsal-examples" }, ...x.examples.map((e) => el("li", { text:
+                `${fmtDate(e.at)} · registro ${e.key}${e.by ? " · por " + e.by : ""} · ` +
+                Object.entries(e.changes).map(([ref, [b, a]]) => `${refLabel(ref)}: ${b ?? "—"} → ${a ?? "—"}`).join("; ") }))) : null)
+            : changed ? el("p", { class: "muted", text: "Documentos não guardam o histórico campo a campo: o ensaio usa o documento como está agora." }) : null,
+            el("h3", { text: changed ? `Ação ensaiada ${x.document ? "no registro " + x.document : "(sem mudança para ensaiar)"}` : `Ensaio no documento ${x.document ?? "—"}` }),
+            x.document === null && changed ? null
+              : el("p", { text: x.conditions_hold ? "As condições valem: a regra faria isto (nada foi gravado):" : `As condições não valem para este ${changed ? "registro" : "documento"}.` }),
             x.conditions_hold ? effectView(x.effect) : null,
             x.error ? el("p", { class: "error", text: `A ação falharia: ${x.error.message}` }) : null,
             el("details", {}, el("summary", { text: "Fatos do documento" }), el("pre", { class: "small", text: JSON.stringify(x.facts, null, 1) })),
@@ -2974,11 +3106,14 @@
       el("h3", { text: "Histórico" }),
       table([
         { label: "Quando", value: (f) => fmtDate(f.at) },
-        { label: "Documento", value: (f) => f.doc_key || "—" },
+        { label: changed ? "Registro" : "Documento", value: (f) => f.doc_key || "—" },
         { label: "Resultado", value: (f) => pill(FIRE[f.outcome] || f.outcome, f.outcome === "done" ? "on" : f.outcome === "rehearsal" ? "" : "off") },
-        { label: "Detalhe", value: (f) => f.detail && (f.detail.reason || (f.detail.error && f.detail.error.message)) || (f.execution_id ? el("a", { href: `#/ops/executions/${f.execution_id}`, text: "execução" }) : "") },
+        { label: "Detalhe", value: (f) => el("span", {},
+            f.count > 1 && f.outcome !== "skipped" ? pill(`agrupado: ${f.count} registros`, "") : null,
+            f.detail && f.detail.out_of_reach ? pill(`${f.detail.out_of_reach} fora do alcance do dono`, "warn") : null, " ",
+            f.detail && (f.detail.reason || (f.detail.error && f.detail.error.message)) || (f.execution_id ? el("a", { href: `#/ops/executions/${f.execution_id}`, text: "execução" }) : "")) },
         { label: "Por", value: (f) => f.by || "" },
-      ], r.fires, { empty: "Ainda não disparou." }));
+      ], r.fires, { empty: "Ainda não disparou.", emptyGood: true }));
   }
 
   const SECTIONS = { users, groups, settings, company, values, home, assistant, simulation, automations, commands, remote, accounts, limits, consumption, scheduler, monitor, audit, retention, health, alerts, core, disk, uiperf, sqlperf, advice, updates, integrations, checks, transports, datacopy, publicapi, license, extensions, telemetry };

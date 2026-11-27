@@ -13,4 +13,4 @@ def main(entity, key):
     rows = core.history(entity, key)
     ana.table([{"quando": r["at"], "campo": r["field"], "antes": r["before"], "depois": r["after"], "por": r["by"],
                 "origem": r["origin"]} for r in rows], title="Histórico")
-    return {"entity": entity, "key": key, "changes": rows}
+    return {"entity": entity, "key": key, "watch_key": core.watch_key(entity, key), "changes": rows}
