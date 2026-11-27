@@ -91,10 +91,10 @@ timed(S = #{minute := Last, metrics := Prev}) ->
         true -> [];
         false -> [fun() -> schedules(Minute) end]
     end,
-    Values = metrics_now(),
     {Now, Fns} = case active_rules(<<"metric">>) of
         [] -> {#{}, []};
         Rules ->
+            Values = maps:merge(metrics_now(), business_metrics()),
             lists:foldl(fun(R = #{<<"id">> := Id, <<"metric">> := M, <<"metric_op">> := Op, <<"metric_value">> := V}, {Acc, F}) ->
                 Holds = case maps:find(M, Values) of
                     {ok, X} when is_number(X) -> cmp(Op, X, num(V));
@@ -137,6 +137,22 @@ schedules(Minute) ->
 
 metrics_now() ->
     try ana_health:metrics() catch _:_ -> #{} end.
+
+%% Spec 069 (D7, T-069-08): the business metrics — the last run of each watched scenario ("cenario_<id>_menor_caixa",
+%% "cenario_<id>_semanas_ate_negativo"). Read only when some rule watches a metric: one query a minute.
+business_metrics() ->
+    case ana_db:rows("SELECT metric, value::float8 AS value FROM scenario.metric", []) of
+        {ok, Rows} -> maps:from_list([{M, V} || #{<<"metric">> := M, <<"value">> := V} <- Rows, is_number(V)]);
+        _ -> #{}
+    end.
+
+%% The metrics a rule may watch: the node's (spec 019) and the watched scenarios'.
+metric_names() ->
+    Scenarios = case ana_db:rows("SELECT DISTINCT metric FROM scenario.metric ORDER BY 1", []) of
+        {ok, Rows} -> [M || #{<<"metric">> := M} <- Rows];
+        _ -> []
+    end,
+    ana_health:metric_names() ++ Scenarios.
 
 cmp(<<">">>, A, B) -> A > B;
 cmp(<<">=">>, A, B) -> A >= B;
@@ -723,7 +739,7 @@ catalog() ->
     #{<<"watchable">> => lists:sort(fun(#{<<"label">> := A}, #{<<"label">> := B}) -> A =< B end, maps:values(Watch)),
       <<"high_volume">> => High,
       <<"origins">> => [<<"screen">>, <<"api">>, <<"import">>, <<"rule">>, <<"integration">>, <<"routine">>, <<"other">>],
-      <<"documents">> => Docs2, <<"metrics">> => ana_health:metric_names(),
+      <<"documents">> => Docs2, <<"metrics">> => metric_names(),
       <<"connectors">> => [N || #{<<"name">> := N} <- Conns], <<"groups">> => [N || #{<<"name">> := N} <- Groups],
       <<"users">> => [N || #{<<"username">> := N} <- Users]}.
 
@@ -843,7 +859,7 @@ trigger(<<"schedule">>, In) ->
     end;
 trigger(<<"metric">>, In) ->
     M = req(<<"metric">>, In, <<"diga a métrica"/utf8>>),
-    lists:member(M, ana_health:metric_names()) orelse throw(<<"métrica desconhecida: "/utf8, M/binary>>),
+    lists:member(M, metric_names()) orelse throw(<<"métrica desconhecida: "/utf8, M/binary>>),
     Op = req(<<"metric_op">>, In, <<"diga a comparação"/utf8>>),
     lists:member(Op, [<<">">>, <<">=">>, <<"<">>, <<"<=">>]) orelse throw(<<"comparação inválida"/utf8>>),
     V = maps:get(<<"metric_value">>, In, null),

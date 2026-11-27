@@ -39,7 +39,8 @@ FIELD = {
 
 
 def visible():
-    return ana.sql("SELECT s.id, s.name, s.owner, s.shared_group, s.shocks, s.updated_at FROM scenario.scenario s "
+    return ana.sql("SELECT s.id, s.name, s.owner, s.shared_group, s.shocks, s.updated_at, s.watch_cron, s.watch_limit, "
+                   "  s.last_result ->> 'lowest' AS watched_lowest FROM scenario.scenario s "
                    "WHERE s.owner = $1 OR s.shared_group IN (SELECT g FROM bpm.user_groups($1) AS g) "
                    "ORDER BY s.updated_at DESC LIMIT 200", ana.context.user)
 
@@ -72,6 +73,7 @@ def listing(choosing):
                 title="Escolha um cenário para comparar com a base" if choosing else None)
     ana.table([{"nº": r["id"], "cenário": r["name"], "choques": len(shocks_of(r)),
                 "de": "você" if r["owner"] == ana.context.user else r["owner"], "grupo": r["shared_group"] or "—",
+                "vigiado": f"sim, aviso abaixo de R$ {r['watch_limit']}" if r["watch_cron"] else "não",
                 "_open": open_compare([r["id"]]),
                 "_actions": [open_compare([r["id"]], "Comparar")] + ([
                     {"label": "Apagar", "program": "scenario.remove", "params": {"id": r["id"]}, "style": "danger",
@@ -146,6 +148,16 @@ def compare(ids, weeks):
                for n, s in enumerate(scen["shocks"], 1)], title="Choques", empty="Sem choques: igual à base",
               empty_good=not mine,
               empty_action={"label": "Ver os choques disponíveis", "program": WB, "params": {"view": "kinds"}} if mine else None)
+    if mine and cash:
+        watched = rows[ids[0]]["watch_cron"]
+        ana.actions([{"label": "Vigiar este cenário" if not watched else "Mudar a vigia", "program": "scenario.watch_set",
+                      "params": {"id": ids[0]},
+                      "ask": {"cron": {"type": "str", "label": "quando recalcular", "default": watched or "0 7 * * *",
+                                       "choices": [["0 7 * * *", "todo dia às 7h"], ["0 7 * * 1", "toda segunda às 7h"],
+                                                   ["", "parar de vigiar"]]},
+                              "limit": {"type": "decimal", "label": "avisar quando o caixa ficar abaixo de (R$)",
+                                        "default": str(rows[ids[0]]["watch_limit"])}}}],
+                    title="Vigiar: recalcular sozinho e avisar quando o caixa piorar")
     if mine:
         ana.actions([{"label": k["name"], "program": "scenario.add_shock", "params": {"id": ids[0], "kind": k["code"]},
                       "ask": {p["name"]: {**FIELD[p["type"]](p), "label": p["label"], **({"required": True} if p.get("required") else {})}

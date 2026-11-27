@@ -9869,6 +9869,43 @@ class TestProjection(Base):
         finally:
             http("PUT", "/api/programs/finance.statement", {"restricted": was in (True, "t", "true")}, self.token)
 
+    def test_ca_069_06_a_watched_scenario_warns_once_and_is_a_metric_for_the_rules(self):
+        """Spec 069 (T-069-08, RF-069-06, D7, CA-069-06): watching a scenario schedules its recalculation (as the owner);
+        each run keeps a summary on the scenario and warns the owner when the cash goes below the limit — once, not at
+        every run while it stays there; the summary is a metric the rules (spec 051) can watch."""
+        c = self.client
+        sc = c.call("scenario.save", name=f"Vigiado {SUFFIX}", shocks=[])
+        w = c.call("scenario.watch_set", id=sc["id"], cron="0 7 * * 1", limit="999999999999")
+        self.assertIsNotNone(w["job"])
+        self.assertEqual(self.scalar(f"SELECT active FROM scheduler.job WHERE name = 'scenario.vigia_{sc['id']}'"), True)
+        def watch():
+            s, r, _ = self.run_program("scenario.watch", {"id": sc["id"]})
+            self.assertEqual(s, 200, r)
+            self.assertNotIn("error", r, r)
+            return r["result"]
+
+        first = watch()
+        self.assertIn(f"Vigiado {SUFFIX}", first["warned"])
+        self.assertEqual(self.count("bpm.notification", f"username = 'admin' AND message LIKE '%Vigiado {SUFFIX}%'"), 1)
+        again = watch()
+        self.assertIsNone(again["warned"])                                   # still below: warned already
+        self.assertEqual(self.count("bpm.notification", f"username = 'admin' AND message LIKE '%Vigiado {SUFFIX}%'"), 1)
+        metric = f"cenario_{sc['id']}_menor_caixa"
+        self.assertEqual(Decimal(str(self.scalar(f"SELECT value FROM scenario.metric WHERE metric = '{metric}'"))),
+                         Decimal(again["lowest"]))
+        body = {"name": f"Caixa do cenário {SUFFIX}", "owner": "admin", "trigger_kind": "metric", "metric": metric,
+                "metric_op": "<", "metric_value": 0, "action": {"kind": "notify", "user": "admin", "message": "caixa negativo"}}
+        s, r, _ = http("POST", "/api/admin/automations/rules", body, self.token)
+        self.assertEqual(s, 200, r)
+        s, r2, _ = http("POST", "/api/admin/automations/rules", {**body, "name": f"Métrica inexistente {SUFFIX}",
+                                                                  "metric": "cenario_0_menor_caixa"}, self.token)
+        self.assertEqual(s, 400, r2)
+        http("DELETE", f"/api/admin/automations/rules/{r['id']}", token=self.token)
+        c.call("scenario.watch_set", id=sc["id"], cron="")
+        self.assertEqual(self.scalar(f"SELECT active FROM scheduler.job WHERE name = 'scenario.vigia_{sc['id']}'"), False)
+        self.assertEqual(self.count("scenario.metric", f"id = {sc['id']}"), 0)
+        c.call("scenario.remove", id=sc["id"])
+
     MASS = """
 import time
 from ana_lib.scenario import projection

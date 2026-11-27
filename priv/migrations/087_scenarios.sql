@@ -31,6 +31,19 @@ CREATE TABLE scenario.scenario (
     updated_at  timestamptz NOT NULL DEFAULT now(),
     UNIQUE (owner, name)
 );
+-- Watched scenarios (D7, T-069-08): recalculated by the scheduler (job "scenario.vigia_<id>", as the owner) — the summary
+-- of the last run is kept (one write per run, spec 063) and becomes a metric the rules of spec 051 can use.
+ALTER TABLE scenario.scenario
+    ADD COLUMN watch_cron  text CHECK (watch_cron IS NULL OR length(watch_cron) <= 120),
+    ADD COLUMN watch_limit numeric(16,2) NOT NULL DEFAULT 0,
+    ADD COLUMN last_result jsonb CHECK (last_result IS NULL OR jsonb_typeof(last_result) = 'object'),
+    ADD COLUMN last_run_at timestamptz;
+CREATE VIEW scenario.metric AS
+    SELECT 'cenario_' || s.id || '_menor_caixa' AS metric, (s.last_result ->> 'lowest')::numeric AS value, s.id, s.name
+      FROM scenario.scenario s WHERE s.watch_cron IS NOT NULL AND s.last_result ? 'lowest'
+    UNION ALL
+    SELECT 'cenario_' || s.id || '_semanas_ate_negativo', (s.last_result ->> 'weeks_to_negative')::numeric, s.id, s.name
+      FROM scenario.scenario s WHERE s.watch_cron IS NOT NULL AND s.last_result ? 'weeks_to_negative';
 CREATE INDEX scenario_group_idx ON scenario.scenario (shared_group) WHERE shared_group IS NOT NULL;
 
 INSERT INTO scenario.shock_kind (code, name, description, params, function, sequence) VALUES
@@ -80,3 +93,4 @@ GRANT USAGE ON SCHEMA scenario TO ana_exec, ana_read;
 GRANT SELECT ON scenario.shock_kind TO ana_exec, ana_read;
 GRANT SELECT, INSERT, UPDATE, DELETE ON scenario.scenario TO ana_exec;
 GRANT USAGE ON SEQUENCE scenario.scenario_id_seq TO ana_exec;
+GRANT SELECT ON scenario.metric TO ana_exec, ana_read;
