@@ -114,6 +114,11 @@ documentos que a causaram, em ordem decrescente.
 
 ## 6. Desempenho: cache da base e recálculo parcial
 
+**Medido (bateria #88, 27/11/2026, massa de referência dentro de um ensaio):** base 0,68 s; cenário com dois
+choques 0,73 s; troca de um choque 0,69 s. Refazer a projeção inteira a partir das fontes com choques fica muito
+abaixo do alvo, então o cache no núcleo e o recálculo parcial descritos abaixo **não foram feitos**: voltam a ser
+considerados se a medição da bateria passar do alvo.
+
 **Medida-alvo (RNF-069-02):**
 - 10 mil títulos abertos, 2 mil pedidos em carteira, 500 OPs, 26 semanas: até 10 s;
 - um choque alterado: até 3 s.
