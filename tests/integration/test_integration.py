@@ -9449,6 +9449,28 @@ class TestAssistant(Base):
         s, _, _ = http("POST", f"/api/assistant/actions/{b['id']}/decline", {}, self.token)
         self.assertEqual((s, self.status(m)), (200, "OPEN"))
 
+    def test_ca_069_04_a_what_if_question_shows_the_premises_and_calculates_only_when_confirmed(self):
+        """Spec 069 (T-069-07, RF-069-05, D6, CA-069-04): "e se o maior cliente pagar 5 dias depois?" — the model turns
+        it into a shock of the catalog; the routine saves a scenario, so it is only rehearsed: the premises it understood
+        come back (nothing calculated, nothing saved). The person's "Confirmar" calculates, saves and shows the effect."""
+        q = f"E se o cliente {SUFFIX} pagar 5 dias depois?"
+        shocks = [{"kind": "customer_delay", "params": {"customer": self.customer, "days": 5}}]
+        r = self.ask("CALL scenario__ask " + json.dumps({"question": q, "shocks": shocks}))
+        self.assertEqual([a["program"] for a in r["actions"]], ["scenario.ask"], r)
+        self.assertIn(f"Cliente Assistente {SUFFIX} paga 5 dias depois", r["answer"])        # the premises, to check
+        self.assertIn("horizonte de 26 semanas", r["answer"])
+        named = f"name LIKE 'Pergunta: E se o cliente {SUFFIX}%'"
+        self.assertEqual(self.count("scenario.scenario", named), 0)                          # nothing saved yet
+        s, done, _ = http("POST", f"/api/assistant/actions/{r['actions'][0]['id']}/confirm", {}, self.token)
+        self.assertEqual(s, 200, done)
+        self.assertEqual(self.count("scenario.scenario", named), 1)
+        self.assertIn("margin", done["result"])
+        self.assertIn(f"Cliente Assistente {SUFFIX} paga 5 dias depois", done["result"]["premises"])
+        # Only the catalog: a shock outside it never becomes a scenario.
+        r = self.ask("CALL scenario__ask " + json.dumps({"question": "e se chover?", "shocks": [{"kind": "chuva", "params": {}}]}))
+        self.assertIn("tipo desconhecido", r["answer"])
+        psql(f"DELETE FROM scenario.scenario WHERE {named}")
+
     def test_ca_052_02_routines_the_user_cannot_run_are_not_offered_nor_run(self):
         secret = f"test.as_secret_{SUFFIX}"
         self.save(secret, "def main():\n    return 'segredo'\n", restricted=True)
@@ -9630,6 +9652,18 @@ class TestProgramQualityPhase2(Base):
 class TestProjection(Base):
     """Spec 069 (T-069-02, RF-069-01, D1, D4): the base projection — from what is in the ERP, by its own rules, read-only."""
 
+    @classmethod
+    def setUpClass(cls):
+        super().setUpClass()
+        _, token = new_user("user")
+        cls.req_client = Ana(URL, token=token)
+
+    def ordered(self, product, quantity, reason):
+        """Requested by a plain user (who asks never approves), approved by admin, turned into an order: its number."""
+        r = self.req_client.call("supply.request_purchase", reason=reason, product=product, quantity=quantity, warehouse="CENTRAL")
+        self.client.call("supply.approve_request", request=r["number"])
+        return self.client.call("supply.create_orders", requests=[r["number"]])["orders"][0]
+
     def test_rf_069_01_the_base_projects_deliveries_margin_and_cash_and_never_saves(self):
         c = self.client
         sfx = SUFFIX[-6:]
@@ -9639,9 +9673,7 @@ class TestProjection(Base):
         c.call("base.save_product", code=item, description="Item da projeção", price="100")
         c.call("inventory.stock_in", product=item, quantity=4, warehouse="CENTRAL", unit_cost="40")
         c.call("supply.save_supplier_item", product=item, supplier=supplier, price="40.00", lead_time_days=5, preferred=True)
-        req = c.call("supply.request_purchase", reason="projeção", product=item, quantity=6, warehouse="CENTRAL")
-        c.call("supply.approve_request", request=req["number"])
-        po = c.call("supply.create_orders", requests=[req["number"]])["orders"][0]
+        po = self.ordered(item, 6, "projeção")
         order = c.call("sales.create_order", customer=customer, items=[{"product": item, "quantity": 10}])["number"]
         before = {t: self.count(t) for t in ("production.suggestion", "finance.bill", "sales.sales_order", "supply.purchase_order")}
 
@@ -9698,9 +9730,7 @@ class TestProjection(Base):
             s, v, _ = http("POST", "/api/values/financeiro.cotacao_usd/versions", {"content": "5,40", "valid_from": "2020-01-01"},
                            self.token)
             self.assertEqual(s, 200, v)
-        req = c.call("supply.request_purchase", reason="cenário", product=item, quantity=10, warehouse="CENTRAL")
-        c.call("supply.approve_request", request=req["number"])
-        po = c.call("supply.create_orders", requests=[req["number"]])["orders"][0]
+        po = self.ordered(item, 10, "cenário")
         order = c.call("sales.create_order", customer=customer, items=[{"product": item, "quantity": 10}])["number"]
 
         # The catalog: the kinds of D2, as data.
