@@ -10576,6 +10576,14 @@ class TestChangeWatchRules(Base):
             self.assertEqual(s, 200, c)
             return [x for x in c if x["kind"] == "watch" and x["title"].endswith(f" {key} mudar")]
 
+        # The earlier tests of this class leave rules watching every party until the class ends: a whole entity
+        # already watched is (rightly) never offered, so they go first.
+        for rid in list(self.rules):
+            if psql(f"SELECT entity = 'party' AND watch_key IS NULL FROM automation.rule WHERE id = {rid}") == "t":
+                http("DELETE", f"/api/admin/automations/rules/{rid}", token=self.token)
+                self.rules.remove(rid)
+        self.assertEqual(psql("SELECT count(*) FROM automation.rule WHERE trigger_kind = 'changed' AND entity = 'party' "
+                              f"AND (watch_key IS NULL OR watch_key = '{key}')"), "0")
         opened(admin, [1, 2])
         opened(user, [1, 2, 3])
         analyze()
