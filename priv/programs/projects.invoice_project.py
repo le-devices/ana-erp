@@ -31,7 +31,7 @@ def cents(v):
 
 def main(project, through=None, payment_days=30):
     p = access.project(project, lock=True)
-    access.require_manager(p)
+    access.require_invoicer(p)
     through = through or datetime.date.today()
     # Spec 009 (D9): the customer's rules before invoicing; they may refuse or adjust the date and the term.
     adj = ana.extend("before_invoice_project", {"project": p["code"], "through": through, "payment_days": payment_days})

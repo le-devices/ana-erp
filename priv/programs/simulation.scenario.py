@@ -205,12 +205,24 @@ def projeto(state, s, r):
              run("gestor", "projects.allocate", {"project": code, "activity": "1", "employee": u["employee"]["id"], "hours": hours,
                                                  "week": today()}),
              run("gestor", "projects.approve_plan", {"project": code, "low_margin_justification": "projeto do uso simulado"}),
-             run("gestor", "projects.log_time", {"project": code, "task": "1", "hours": hours, "description": "trabalho simulado",
-                                                 "employee": u["employee"]["id"]}),
-             run("gestor", "projects.approve_time", {"project": code}),
-             run("financeiro", "projects.invoice_project", {"project": code}, "invoice"),
-             lambda: pay_bill(s["invoice"].get("bill"))]
+             lambda: log_hours(s, code, u["employee"]["id"], hours),
+             lambda: run("gestor", "projects.approve_time", {"project": code}) if s.get("logged") else None,
+             lambda: run("financeiro", "projects.invoice_project", {"project": code}, "invoice") if s.get("logged") else None,
+             lambda: pay_bill(s["invoice"].get("bill")) if s.get("logged") else None]
     return steps
+
+
+def log_hours(s, code, employee, hours):
+    """The manager logs only what still fits in the employee's day (24 h, the product's rule): several simulated projects
+    share the same employee. A day already full logs nothing — and nothing is approved or invoiced for it (issue #41)."""
+    used = ana.sql_value("SELECT COALESCE(sum(hours), 0) FROM projects.time_entry WHERE employee_id = $1 AND entry_date = $2 "
+                         "AND status <> 'rejected'", employee, datetime.date.today())
+    fits = min(hours, int(24 - used))
+    s["logged"] = fits > 0
+    if not s["logged"]:
+        return None
+    return run("gestor", "projects.log_time", {"project": code, "task": "1", "hours": fits, "description": "trabalho simulado",
+                                               "employee": employee})
 
 
 def pay_bill(bill):

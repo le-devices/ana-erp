@@ -736,6 +736,31 @@ class TestProjects(Base):
         self.assertTrue(self.run_program("finance.trial_balance")[1]["result"]["balanced"])
         self.assertEqual(self.err("projects.invoice_project", project=p), "NOTHING_TO_INVOICE")
 
+    def test_h6_the_finance_team_invoices_a_project_they_do_not_manage(self):
+        """Spec 008 (H6, issue #30): "Como financeiro, faturo o projeto" — whoever may run the bank statement routine
+        (finance) invoices and cancels a project's invoice without managing it; someone outside finance still may not."""
+        p = self.bill_project()
+        g = f"fin30{SUFFIX}".lower()
+        s, c, _ = http("PUT", f"/api/admin/groups/{g}", {"description": "financeiro (teste #30)",
+                                                       "program_patterns": ["finance.*"]}, self.token)
+        self.assertEqual(s, 200, c)
+        _, finance = new_user("user", groups=(g,))
+        _, outsider = new_user("user")
+        was = psql("SELECT restricted FROM ana_system.program WHERE name = 'finance.import_statement'") == "t"
+        http("PUT", "/api/programs/finance.import_statement", {"restricted": True}, self.token)
+        try:
+            s, r, _ = self.run_program("projects.invoice_project", {"project": p}, token=outsider)
+            self.assertEqual((r.get("error") or {}).get("code"), "FORBIDDEN", r)
+            s, r, _ = self.run_program("projects.invoice_project", {"project": p}, token=finance)
+            self.assertNotIn("error", r, r)
+            self.assertEqual(r["result"]["total"], "7120.00")
+            s, r2, _ = self.run_program("projects.cancel_invoice", {"number": r["result"]["number"], "reason": "teste do financeiro"},
+                                        token=finance)
+            self.assertNotIn("error", r2, r2)
+        finally:
+            http("PUT", "/api/programs/finance.import_statement", {"restricted": was}, self.token)
+            http("DELETE", f"/api/admin/groups/{g}", token=self.token)
+
     def test_ca_008_07_service_tax_withheld(self):
         p = self.bill_project(service_tax_rate="0.05", service_tax_withheld=True)
         inv = self.client.call("projects.invoice_project", project=p)
