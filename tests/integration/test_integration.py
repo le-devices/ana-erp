@@ -9786,6 +9786,31 @@ class TestProjection(Base):
         self.assertEqual(out["compare"]["deliveries_late"], [])
 
         self.assertEqual({t: self.count(t) for t in before}, before)          # projecting wrote nothing
+
+        # T-069-05 (RF-069-04, D5, CA-069-01): the screen — side by side, what weighs most, what to do.
+        s, r, _ = self.run_program("scenario.workbench", {"view": "compare", "scenarios": [late["id"], dollar["id"]],
+                                                          "horizon_weeks": 12})
+        self.assertEqual(s, 200, r)
+        self.assertNotIn("error", r, r)
+        cmp = r["result"]["compare"]
+        shares = {x["shock"]: x for x in cmp["weights"]["by_shock"]}
+        self.assertEqual(set(shares), {late["shocks"][0]["label"], dollar["shocks"][0]["label"]})
+        self.assertEqual(Decimal(str(shares[late["shocks"][0]["label"]]["margin"])), 0)   # a later delivery keeps the margin
+        self.assertEqual(shares[dollar["shocks"][0]["label"]]["margin_share"], 100)
+        self.assertIn(item, [x["code"] for x in cmp["weights"]["by_item"]])
+        self.assertIn({"label": f"Buscar outro fornecedor do item {item}", "program": "supply.save_supplier_item",
+                       "params": {"product": item}, "open": True}, cmp["suggestions"])
+        self.assertIn("lowest", cmp)
+        self.assertIn("working_capital", cmp)
+        # Shocks added and removed in place (one write each), checked like any other.
+        added = c.call("scenario.add_shock", id=empty["id"], kind="customer_delay", customer=customer, days=7)
+        self.assertEqual([x["label"] for x in added["shocks"]], [f"Cliente Cenário {SUFFIX} paga 7 dias depois"])
+        e = self.scenario_err("scenario.add_shock", id=empty["id"], kind="customer_delay", customer=customer)
+        self.assertIn("falta", e["message"])
+        self.assertEqual(c.call("scenario.drop_shock", id=empty["id"], index=1)["shocks"], 0)
+        s, r, _ = self.run_program("scenario.workbench", {})
+        self.assertIn(empty["id"], [x["id"] for x in r["result"]["scenarios"]])
+
         c.call("scenario.remove", id=empty["id"])
         self.assertEqual(self.scenario_err("scenario.remove", id=empty["id"])["code"], "SCENARIO_NOT_FOUND")
         self.assertEqual(self.scenario_err("scenario.project", scenarios=[empty["id"]])["code"], "SCENARIO_NOT_FOUND")
