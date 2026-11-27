@@ -63,7 +63,7 @@ for_execution(Name) ->
         [] ->
             case ana_db:one(
                    "SELECT name, version, source, kind, exposed, restricted, min_role, active, params, "
-                   "       description, docs, limits, portal, public, indicator_refresh_s "
+                   "       description, docs, limits, portal, public, indicator_refresh_s, read_only "
                    "FROM ana_system.program WHERE name = $1", [Name]) of
                 {ok, #{} = P} ->
                     ets:insert(?CACHE, {Name, P}),
@@ -211,9 +211,12 @@ set_category(C, Name, Source) ->
         {match, [Sec]} -> max(60, min(86400, binary_to_integer(Sec)));
         nomatch -> null
     end,
-    exec(C, "UPDATE ana_system.program SET category = $2, confirm = $3, indicator_refresh_s = $4 WHERE name = $1 "
-            "AND (category IS DISTINCT FROM $2 OR confirm IS DISTINCT FROM $3 OR indicator_refresh_s IS DISTINCT FROM $4)",
-         [Name, Category, Confirm, Indicator]).
+    %% Spec 069 (D4): "# ana:read_only yes" — the run is a read-only transaction: the database refuses any write.
+    ReadOnly = re:run(Source, "^#[ \t]*ana:read_only[ \t]+yes[ \t]*$", [multiline, {capture, none}]) =:= match,
+    exec(C, "UPDATE ana_system.program SET category = $2, confirm = $3, indicator_refresh_s = $4, read_only = $5 WHERE name = $1 "
+            "AND (category IS DISTINCT FROM $2 OR confirm IS DISTINCT FROM $3 OR indicator_refresh_s IS DISTINCT FROM $4 "
+            "     OR read_only IS DISTINCT FROM $5)",
+         [Name, Category, Confirm, Indicator, ReadOnly]).
 
 new_version(C, Name, V, Source, Comment, Who) ->
     exec(C, "INSERT INTO ana_system.program_version (name, version, source, comment, created_by) "

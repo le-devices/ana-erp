@@ -9627,6 +9627,66 @@ class TestProgramQualityPhase2(Base):
         self.assertEqual((s, q["in_production"]), (200, False))       # the battery runs on a development instance
 
 
+class TestProjection(Base):
+    """Spec 069 (T-069-02, RF-069-01, D1, D4): the base projection — from what is in the ERP, by its own rules, read-only."""
+
+    def test_rf_069_01_the_base_projects_deliveries_margin_and_cash_and_never_saves(self):
+        c = self.client
+        sfx = SUFFIX[-6:]
+        item = f"PJ{sfx}"
+        customer = c.call("base.save_party", name=f"Cliente Projeção {SUFFIX}", state="SP")["id"]
+        supplier = c.call("base.save_party", kind="supplier", name=f"Fornecedor Projeção {SUFFIX}")["id"]
+        c.call("base.save_product", code=item, description="Item da projeção", price="100")
+        c.call("inventory.stock_in", product=item, quantity=4, warehouse="CENTRAL", unit_cost="40")
+        c.call("supply.save_supplier_item", product=item, supplier=supplier, price="40.00", lead_time_days=5, preferred=True)
+        req = c.call("supply.request_purchase", reason="projeção", product=item, quantity=6, warehouse="CENTRAL")
+        c.call("supply.approve_request", request=req["number"])
+        po = c.call("supply.create_orders", requests=[req["number"]])["orders"][0]
+        order = c.call("sales.create_order", customer=customer, items=[{"product": item, "quantity": 10}])["number"]
+        before = {t: self.count(t) for t in ("production.suggestion", "finance.bill", "sales.sales_order", "supply.purchase_order")}
+
+        s, r, _ = self.run_program("scenario.project", {"horizon_weeks": 12})
+        self.assertEqual(s, 200, r)
+        out = r["result"]
+        # D4: nothing saved — the program runs in a read-only transaction.
+        self.assertEqual({t: self.count(t) for t in before}, before)
+        self.assertEqual(self.scalar("SELECT read_only FROM ana_system.program WHERE name = 'scenario.project'"), True)
+        # 4 from stock, 6 from the purchase: the line is delivered when the purchase arrives (promised + measured delay).
+        promised = datetime.date.fromisoformat(str(self.scalar(
+            f"SELECT COALESCE(l.promised_date, current_date) FROM supply.purchase_order_line l JOIN supply.purchase_order o "
+            f"ON o.id = l.order_id WHERE o.number = {po}"))[:10])
+        delay = next((d["days"] for d in out["delays"] if d["kind"] == "fornecedor" and d["party"] == supplier), 0)
+        today = ana_today()
+        arrives = max(today, promised + datetime.timedelta(days=delay))
+        sale_promised = datetime.date.fromisoformat(str(self.scalar(
+            f"SELECT COALESCE(i.promised_date, o.order_date) FROM sales.sales_order_item i JOIN sales.sales_order o "
+            f"ON o.id = i.order_id WHERE o.number = {order} AND i.line = 1"))[:10])
+        risk = [x for x in out["deliveries_at_risk"] if x["doc"] == f"ORD-{order}/1"]
+        if arrives > max(today, sale_promised):
+            self.assertEqual(len(risk), 1, out["deliveries_at_risk"])
+            self.assertEqual(str(risk[0]["date"])[:10], arrives.isoformat())
+        else:
+            self.assertEqual(risk, [])
+        # Result: revenue 10 × 100, cost 10 × 40 (the supplier's price), margin 600.
+        mine = [x for x in out["result"]["customers"] if x["key"] == customer]
+        self.assertEqual([(Decimal(x["revenue"]), Decimal(x["cost"]), Decimal(x["margin"])) for x in mine],
+                         [(Decimal("1000.00"), Decimal("400.00"), Decimal("600.00"))])
+        # Cash: week by week, the lowest position, and how far the projection of a week ago was.
+        self.assertEqual(len(out["weeks"]), 12)
+        self.assertIn("deviation_pct", out["backtest"])
+        self.assertLessEqual(Decimal(out["lowest"]["balance"]), Decimal(out["opening"]))
+
+    def test_d4_a_read_only_program_cannot_write(self):
+        prog = f"test.ro_{SUFFIX}"
+        self.save(prog, "# ana:read_only yes\ndef main():\n"
+                        "    return ana.sql_value(\"SELECT current_setting('transaction_read_only')\")\n")
+        s, r, _ = self.run_program(prog)
+        self.assertEqual((s, r.get("result")), (200, "on"), r)
+        self.save(prog, "# ana:read_only yes\ndef main():\n    ana.sql_exec(\"UPDATE base.product SET price = price WHERE false\")\n")
+        s, r, _ = self.run_program(prog)
+        self.assertIn("error", r, r)
+
+
 class TestUsageSimulation(Base):
     """Continuous usage simulation (spec 067, phase 1): personas as robot users run whole pipelines from a seed; findings
     with what reproduces them; never in production."""
