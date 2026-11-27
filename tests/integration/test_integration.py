@@ -9869,6 +9869,60 @@ class TestProjection(Base):
         finally:
             http("PUT", "/api/programs/finance.statement", {"restricted": was in (True, "t", "true")}, self.token)
 
+    MASS = """
+import time
+from ana_lib.scenario import projection
+from ana_lib.scenario import shocks as sh
+
+def timed(f):
+    t = time.perf_counter()
+    r = f()
+    return r, round(time.perf_counter() - t, 2)
+
+def main():
+    wh = ana.sql_value("SELECT id FROM inventory.warehouse WHERE code = 'CENTRAL'")
+    cust = ana.sql_value("INSERT INTO base.party (kind, name) VALUES ('customer', 'Massa 069') RETURNING id")
+    sup = ana.sql_value("INSERT INTO base.party (kind, name) VALUES ('supplier', 'Massa 069 F') RETURNING id")
+    items = [r["id"] for r in ana.sql("INSERT INTO base.product (code, description, price) "
+                                       "SELECT 'MS069' || g, 'massa 069', 100 FROM generate_series(1, 40) g RETURNING id")]
+    ana.sql_exec("INSERT INTO supply.supplier_item (supplier_id, product_id, price, currency, preferred) "
+                 "SELECT $1, p, 30, CASE WHEN p % 2 = 0 THEN 'USD' ELSE 'BRL' END, true FROM unnest($2::int[]) p", sup, items)
+    ana.sql_exec("INSERT INTO finance.bill (kind, party_id, document, due_date, amount) "
+                 "SELECT CASE WHEN g % 2 = 0 THEN 'receivable' ELSE 'payable' END, CASE WHEN g % 2 = 0 THEN $1 ELSE $2 END, "
+                 "  'M069-' || g, current_date + (g % 180), 100 + g % 50 FROM generate_series(1, 10000) g", cust, sup)
+    orders = [r["id"] for r in ana.sql("INSERT INTO sales.sales_order (customer_id, warehouse_id, created_by) "
+                                        "SELECT $1, $2, 'admin' FROM generate_series(1, 2000) RETURNING id", cust, wh)]
+    ana.sql_exec("INSERT INTO sales.sales_order_item (order_id, line, product_id, quantity, price) "
+                 "SELECT o, l, ($2::int[])[1 + (o + l) % 40], l, 150 FROM unnest($1::int[]) o, generate_series(1, 3) l",
+                 orders, items)
+    ana.sql_exec("INSERT INTO production.work_order (product_id, quantity, warehouse_id, start_date, due_date, created_by) "
+                 "SELECT ($1::int[])[1 + g % 40], 5, $2, current_date + g % 60, current_date + g % 60 + 5, 'admin' "
+                 "FROM generate_series(1, 500) g", items, wh)
+    g, base = timed(lambda: projection.weekly(projection.build(26)))
+    two = sh.validate([{"kind": "currency", "params": {"currency": "USD", "pct": "15"}},
+                       {"kind": "supplier_delay", "params": {"supplier": sup, "days": 10}}])
+    _, scenario = timed(lambda: projection.weekly(sh.project(two, 26)))
+    changed = sh.validate([{"kind": "currency", "params": {"currency": "USD", "pct": "20"}}, two[1]])
+    _, change = timed(lambda: projection.weekly(sh.project(changed, 26)))
+    return {"base_s": base, "scenario_s": scenario, "change_s": change}
+"""
+
+    def test_ca_069_07_the_reference_mass_projects_in_time(self):
+        """Spec 069 (T-069-09, RNF-069-02, CA-069-07): 10 thousand open bills, 2 thousand orders (3 lines), 500 production
+        orders, 26 weeks — the base, a scenario with two shocks and the change of one shock, timed. Made inside a
+        rehearsal (spec 056): the mass is undone at the end. Above the target plus 30% (the CI varies), it fails."""
+        prog = f"test.scenario_mass_{SUFFIX}"
+        self.save(prog, self.MASS, limits={"timeout_ms": 300000, "cpu_ms": 300000})
+        s, r, _ = self.run_program(prog, rehearse=True)
+        self.assertEqual(s, 200, r)
+        self.assertNotIn("error", r, r)
+        t = r["result"]
+        print(f"\n[CA-069-07] base {t['base_s']} s, cenário {t['scenario_s']} s, troca de um choque {t['change_s']} s")
+        self.assertEqual(self.count("finance.bill", "document LIKE 'M069-%'"), 0)            # undone
+        self.assertLessEqual(t["base_s"], 10 * 1.3, t)
+        self.assertLessEqual(t["scenario_s"], 10 * 1.3, t)
+        self.assertLessEqual(t["change_s"], 3 * 1.3, t)
+
     def test_d4_a_read_only_program_cannot_write(self):
         prog = f"test.ro_{SUFFIX}"
         self.save(prog, "# ana:read_only yes\ndef main():\n"
