@@ -206,18 +206,18 @@ def build(horizon_weeks=26, today=None, hooks=None, cash=True):
     catalog = {r["product_id"]: r for r in hook("catalog", ana.sql(
         "SELECT product_id, supplier_id, price, currency FROM supply.supplier_item WHERE preferred"))}
     pay_days = ana.sql_value("SELECT default_payment_days FROM supply.policy WHERE id = 1") or 30
-    for kind, item, qty, start, need, origin in mrp.compute(horizon_weeks, hooks=hooks.get("mrp"), today=today):
-        at = max(today, need)
+    for kind, item, qty, start, need, origin, lead in mrp.compute(horizon_weeks, hooks=hooks.get("mrp"), today=today):
+        # A suggestion is not made yet: it takes its lead time from today, never arriving before that.
+        at = max(today, need, today + datetime.timedelta(days=lead))
         if kind == "buy":
             c = catalog.get(item)
-            if c and hooks.get("delay"):
-                # A planned buy arrives when needed; a shock on its supplier moves it (or stops it) the same way.
-                base_d = delays.of("supplier", c["supplier_id"])[0]
-                d = hooks["delay"]("supplier", c["supplier_id"], base_d, at)
+            if c:
+                # Its supplier's measured delay too, as for the open purchases (and a shock on it, the same way).
+                d = delay("supplier", c["supplier_id"], supp_used, at)
                 if d is None:
                     g.note("há compras sugeridas pelo planejamento de um fornecedor que, neste cenário, não entrega")
                     continue
-                at = max(today, at + datetime.timedelta(days=d - base_d))
+                at = max(today, at + datetime.timedelta(days=d))
             rec = g.add("receipt", at, doc="compra sugerida pelo planejamento", item=item, qty=Decimal(qty), planned=True,
                         party=c["supplier_id"] if c else None)
             if c:

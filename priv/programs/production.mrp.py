@@ -30,7 +30,7 @@ def lot(net, lot_min, multiple):
 
 
 def compute(horizon_weeks=12, hooks=None, today=None):
-    """[[kind, product_id, quantity, start, need, origin]] — what the planning proposes. `hooks` maps a source name
+    """[[kind, product_id, quantity, start, need, origin, lead days]] — what the planning proposes. `hooks` maps a source name
     ("sales", "forecast", "purchases") to a function that receives its rows and returns them changed."""
     hooks = hooks or {}
 
@@ -139,7 +139,7 @@ def compute(horizon_weeks=12, hooks=None, today=None):
                     origin = (g[1] if g else []) + (["estoque de segurança"] if safety else []) + (["atrasada"] if late else [])
                     key = len(suggestions)
                     suggestions.append(["make" if make and item in structures else "buy", item, qty,
-                                        max(start, today), wk, origin])
+                                        max(start, today), wk, origin, lead])
                     projected += qty
                     if make and item in structures:
                         start_wk = week(max(start, today))

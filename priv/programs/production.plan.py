@@ -35,7 +35,7 @@ def main(scenario="principal", horizon_weeks=12):
     if suggestions:
         ana.sql_batch("INSERT INTO production.suggestion (run_id, scenario, kind, product_id, quantity, start_date, need_date, origin) "
                       "VALUES ($1, $2, $3, $4, $5, $6, $7, $8::text::jsonb)",
-                      [[run, scenario, k, i, q, s, n, ana_json(o)] for k, i, q, s, n, o in suggestions])
+                      [[run, scenario, k, i, q, s, n, ana_json(o)] for k, i, q, s, n, o, _lead in suggestions])
     ana.sql_exec("UPDATE production.planning_run SET status = 'done', suggestions = $2, finished_at = now() WHERE id = $1",
                  run, len(suggestions))
     codes = {r["id"]: r["code"] for r in ana.sql("SELECT id, code FROM base.product WHERE id = ANY($1)",

@@ -9663,6 +9663,14 @@ class TestProjection(Base):
         _, token = new_user("user")
         cls.req_client = Ana(URL, token=token)
 
+    def usd_rate(self):
+        """A rate for the dollar in force (company value), as an installation that buys in dollars has."""
+        if psql("SELECT count(*) FROM ana_system.company_value_version WHERE name = 'financeiro.cotacao_usd' "
+                "AND status = 'active'") == "0":
+            s, v, _ = http("POST", "/api/values/financeiro.cotacao_usd/versions", {"content": "5,40", "valid_from": "2020-01-01"},
+                           self.token)
+            self.assertEqual(s, 200, v)
+
     def ordered(self, product, quantity, reason):
         """Requested by a plain user (who asks never approves), approved by admin, turned into an order: its number."""
         r = self.req_client.call("supply.request_purchase", reason=reason, product=product, quantity=quantity, warehouse="CENTRAL")
@@ -9730,11 +9738,7 @@ class TestProjection(Base):
         c.call("base.save_product", code=item, description="Item importado do cenário", price="100")
         c.call("supply.save_supplier_item", product=item, supplier=supplier, price="10.00", currency="USD", lead_time_days=20,
                preferred=True)
-        if psql("SELECT count(*) FROM ana_system.company_value_version WHERE name = 'financeiro.cotacao_usd' "
-                "AND status = 'active'") == "0":
-            s, v, _ = http("POST", "/api/values/financeiro.cotacao_usd/versions", {"content": "5,40", "valid_from": "2020-01-01"},
-                           self.token)
-            self.assertEqual(s, 200, v)
+        self.usd_rate()
         po = self.ordered(item, 10, "cenário")
         order = c.call("sales.create_order", customer=customer, items=[{"product": item, "quantity": 10}])["number"]
 
@@ -9984,6 +9988,7 @@ def main():
         orders, 26 weeks — the base, a scenario with two shocks and the change of one shock, timed. Made inside a
         rehearsal (spec 056): the mass is undone at the end. Above the target plus 30% (the CI varies), it fails."""
         prog = f"test.scenario_mass_{SUFFIX}"
+        self.usd_rate()
         self.save(prog, self.MASS, limits={"timeout_ms": 300000, "cpu_ms": 300000})
         s, r, _ = self.run_program(prog, rehearse=True)
         self.assertEqual(s, 200, r)
