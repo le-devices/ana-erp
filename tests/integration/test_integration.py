@@ -10597,7 +10597,7 @@ class TestChangeWatchRules(Base):
         for rid in list(self.rules):
             if psql(f"SELECT entity = 'party' AND watch_key IS NULL FROM automation.rule WHERE id = {rid}") == "t":
                 http("DELETE", f"/api/admin/automations/rules/{rid}", token=self.token)
-                self.rules.remove(rid)
+                # (kept in the list: the default name of the next rule counts it — deleting again at the end is a 404)
         self.assertEqual(psql("SELECT count(*) FROM automation.rule WHERE trigger_kind = 'changed' AND entity = 'party' "
                               f"AND (watch_key IS NULL OR watch_key = '{key}')"), "0")
         opened(admin, [1, 2])
