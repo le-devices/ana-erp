@@ -22,7 +22,7 @@ def main(number, reason):
         "JOIN projects.project p ON p.id = i.project_id WHERE i.number = $1 FOR UPDATE OF i", number)
     if not inv:
         raise ana.Error("INVOICE_NOT_FOUND", f"fatura {number} não encontrada")
-    access.require_manager(access.project(inv["project_code"]))
+    access.require_invoicer(access.project(inv["project_code"]))
     if inv["status"] != "issued":
         raise ana.Error("INVOICE_CANCELLED", f"fatura {number} já está cancelada")
     if len(reason.strip()) < 3:

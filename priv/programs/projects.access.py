@@ -37,6 +37,17 @@ def require_manager(p):
         raise ana.Error("FORBIDDEN", f"apenas o gestor do projeto {p['code']} ou um administrador")
 
 
+def can_invoice(p):
+    """Spec 008 (H6): the finance team invoices the project — besides its manager and the administrators. The finance
+    team: an access group whose routines include the bank statement (migration 088); nobody else by default."""
+    return can_manage(p) or bool(ana.sql_value("SELECT projects.is_finance($1)", ana.context.user))
+
+
+def require_invoicer(p):
+    if not can_invoice(p):
+        raise ana.Error("FORBIDDEN", f"apenas o financeiro, o gestor do projeto {p['code']} ou um administrador")
+
+
 def current_employee():
     return ana.sql_one("SELECT id, name, profile FROM projects.employee WHERE username = $1 AND active",
                        ana.context.user)
