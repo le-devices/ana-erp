@@ -17,7 +17,8 @@ from ana_lib.scenario import shocks as sh
 WB = "scenario.workbench"
 VIEWS = [("list", "Cenários"), ("compare", "Comparar com a base"), ("kinds", "Choques disponíveis")]
 PARAMS = {
-    "view": {"type": "str", "default": "list", "label": "visão", "choices": [[v, label] for v, label in VIEWS]},
+    "view": {"type": "str", "default": "list", "label": "visão",
+             "choices": [["list", "Cenários"], ["compare", "Comparar com a base"], ["kinds", "Choques disponíveis"]]},
     "scenarios": {"type": "list", "label": "cenários (números) — mais de um: combinados"},
     "horizon_weeks": {"type": "int", "default": 26, "label": "semanas à frente (até 52)"},
 }

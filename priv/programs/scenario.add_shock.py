@@ -29,6 +29,9 @@ PARAMS = {
     "value": {"type": "str", "label": "novo conteúdo"},
 }
 
+NEXT = [{"label": "Abrir na tela de cenários", "program": "scenario.workbench", "params": {"view": "compare", "scenarios": ["{{result.id}}"]}, "open": True, "style": "primary"},
+        {"label": "Cenários", "program": "scenario.workbench", "params": {"view": "list"}, "open": True}]
+
 
 def main(id, kind, **fields):
     row = ana.sql_one("SELECT shocks FROM scenario.scenario WHERE id = $1 AND owner = $2 FOR UPDATE", id, ana.context.user)

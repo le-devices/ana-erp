@@ -1,8 +1,10 @@
 # ana:description Cenários: apaga um cenário guardado (só quem o criou)
 # ana:exposed yes
 # ana:category Financeiro/Cenários
+# ana:confirm O cenário é apagado de vez (só a definição e a vigia; a projeção nunca gravou nada). Não há desfazer: para voltar, crie de novo.
 """Spec 069 (T-069-03). Removing a scenario removes only its definition: a projection never wrote anything else."""
 
+NEXT = [{"label": "Cenários", "program": "scenario.workbench", "params": {"view": "list"}, "open": True}]
 PARAMS = {"id": {"type": "int", "required": True, "label": "cenário"}}
 
 

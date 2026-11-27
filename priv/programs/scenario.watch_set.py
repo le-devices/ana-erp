@@ -11,6 +11,9 @@ PARAMS = {
     "limit": {"type": "decimal", "default": 0, "label": "avisar quando o caixa ficar abaixo de (R$)"},
 }
 
+NEXT = [{"label": "Abrir na tela de cenários", "program": "scenario.workbench", "params": {"view": "compare", "scenarios": ["{{result.id}}"]}, "open": True, "style": "primary"},
+        {"label": "Cenários", "program": "scenario.workbench", "params": {"view": "list"}, "open": True}]
+
 
 def main(id, cron="0 7 * * *", limit=0):
     cron = (cron or "").strip() or None

@@ -1,5 +1,6 @@
 # ana:description Cenários: recalcula um cenário vigiado, guarda o resumo e avisa quando o caixa piora além do limite
 # ana:category Financeiro/Cenários
+# ana:menu no
 """Spec 069 (T-069-08, RF-069-06, D7, CA-069-06). Run by the scheduler as the scenario's owner (their data scope).
 The summary of the run is kept on the scenario (one write: spec 063) and is the metric of the rules of spec 051
 ("cenario_<id>_menor_caixa", "cenario_<id>_semanas_ate_negativo"). A warning goes to the owner and the group when

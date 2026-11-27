@@ -18,6 +18,9 @@ PARAMS = {
     "group": {"type": "str", "label": "compartilhar com o grupo (vazio = só você)"},
 }
 
+NEXT = [{"label": "Abrir na tela de cenários", "program": "scenario.workbench", "params": {"view": "compare", "scenarios": ["{{result.id}}"]}, "open": True, "style": "primary"},
+        {"label": "Cenários", "program": "scenario.workbench", "params": {"view": "list"}, "open": True}]
+
 
 def main(name, id=None, description=None, shocks=None, group=None):
     name = (name or "").strip()

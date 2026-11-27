@@ -8,6 +8,9 @@ import json
 PARAMS = {"id": {"type": "int", "required": True, "label": "cenário"},
           "index": {"type": "int", "required": True, "label": "choque (nº)"}}
 
+NEXT = [{"label": "Abrir na tela de cenários", "program": "scenario.workbench", "params": {"view": "compare", "scenarios": ["{{result.id}}"]}, "open": True, "style": "primary"},
+        {"label": "Cenários", "program": "scenario.workbench", "params": {"view": "list"}, "open": True}]
+
 
 def main(id, index):
     row = ana.sql_one("SELECT shocks FROM scenario.scenario WHERE id = $1 AND owner = $2 FOR UPDATE", id, ana.context.user)
