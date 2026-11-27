@@ -2226,6 +2226,42 @@ class TestSupplyChain(Base):
             self.client.call("supply.settings", limit_kind="group", limit_target=group, remove_limit=True)
             http("DELETE", f"/api/admin/groups/{group}", token=self.token)
 
+    def test_t_069_01_an_order_in_dollars_is_received_in_reais_at_the_rate_of_the_day(self):
+        """Spec 069 (T-069-01, RF-069-07): a catalog price in dollars makes an order in dollars (no longer copied as
+        reais); receiving converts at the company value "financeiro.cotacao_usd" in force — stock, journal and bill in
+        reais — and keeps the rate. A currency without a rate is refused with what to do."""
+        usd, eur = f"USD{SUFFIX}", f"EUR{SUFFIX}"
+        self.client.call("base.save_product", code=usd, description="Componente importado (dólar)", price="100")
+        self.client.call("base.save_product", code=eur, description="Componente importado (euro)", price="100")
+        self.client.call("supply.save_supplier_item", product=usd, supplier=self.supplier, price="10.00", currency="USD",
+                         lead_time_days=30, preferred=True)
+        self.client.call("supply.save_supplier_item", product=eur, supplier=self.supplier, price="8.00", currency="EUR",
+                         lead_time_days=30, preferred=True)
+        if psql("SELECT count(*) FROM ana_system.company_value_version WHERE name = 'financeiro.cotacao_usd' "
+                "AND status = 'active'") == "0":
+            s, c, _ = http("POST", "/api/values/financeiro.cotacao_usd/versions", {"content": "5,40", "valid_from": "2020-01-01"},
+                           self.token)
+            self.assertEqual(s, 200, c)
+        number = self.ordered(usd, 3, warehouse="CENTRAL")
+        self.assertEqual(self.scalar(f"SELECT currency || ' ' || total FROM supply.purchase_order WHERE number = {number}"), "USD 30.00")
+        r = self.client.call("supply.receive", order=number)
+        rate = Decimal(r["exchange_rate"])
+        self.assertEqual(r["currency"], "USD")
+        self.assertGreater(rate, 1)
+        unit = (Decimal("10.00") * rate).quantize(Decimal("0.0001"))
+        total = (3 * unit).quantize(Decimal("0.01"))
+        self.assertEqual(Decimal(r["total"]), total)
+        self.assertEqual(Decimal(self.scalar(f"SELECT amount FROM finance.bill WHERE id = {r['bill']}")), total)
+        self.assertEqual(self.scalar(f"SELECT currency || ' ' || exchange_rate::numeric(18,4) FROM supply.receipt "
+                                     f"WHERE id = {r['receipt']}"), f"USD {rate.quantize(Decimal('0.0001'))}")
+        self.assertEqual(Decimal(self.scalar("SELECT m.unit_cost FROM inventory.stock_movement m JOIN supply.receipt_line rl "
+                                             f"ON rl.stock_movement_id = m.id WHERE rl.receipt_id = {r['receipt']}")), unit)
+        if psql("SELECT count(*) FROM ana_system.company_value_version WHERE name = 'financeiro.cotacao_eur' "
+                "AND status = 'active'") == "0":
+            e = self.err("supply.receive", order=self.ordered(eur, 1, warehouse="CENTRAL"))
+            self.assertEqual(e.code, "CURRENCY_RATE_MISSING")
+            self.assertIn("financeiro.cotacao_eur", e.message)
+
     def test_ca_013_03_06_partial_receipt_and_tolerance(self):
         number = self.ordered(self.mcu, 10, warehouse="CENTRAL")
         before = Decimal(self.scalar(f"SELECT COALESCE(sum(m.quantity), 0) FROM inventory.stock_movement m JOIN base.product p "

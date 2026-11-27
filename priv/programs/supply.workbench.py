@@ -5,7 +5,9 @@
 action on the row itself."""
 
 import datetime
+from decimal import Decimal
 
+from ana_lib.finance import currency
 from ana_lib.supply import common
 from ana_lib.docs.common import link as doc_link
 
@@ -25,14 +27,22 @@ def main(view="approve"):
         "  (SELECT count(*) FROM supply.purchase_order WHERE status IN ('sent', 'partially_received')) AS to_receive, "
         "  (SELECT count(DISTINCT o.id) FROM supply.purchase_order o JOIN supply.purchase_order_line l ON l.order_id = o.id "
         "   WHERE o.status IN ('sent', 'partially_received') AND l.received_qty < l.quantity AND l.promised_date < $1) AS late, "
-        "  (SELECT COALESCE(sum(l.quantity * l.price - LEAST(l.received_qty, l.quantity) * l.price), 0) "
+        "  (SELECT COALESCE(jsonb_object_agg(currency, amount), '{}') FROM (SELECT o.currency, "
+        "     sum(l.quantity * l.price - LEAST(l.received_qty, l.quantity) * l.price) AS amount "
         "   FROM supply.purchase_order o JOIN supply.purchase_order_line l ON l.order_id = o.id "
-        "   WHERE o.status IN ('sent', 'partially_received')) AS open_amount", today)
+        "   WHERE o.status IN ('sent', 'partially_received') GROUP BY o.currency) x) AS open_amount", today)
+    # Spec 069 (T-069-01): orders in dollars or euros count in reais at today's rate; without a rate, shown apart.
+    open_brl, apart = Decimal(0), []
+    for cur, amount in sorted((c["open_amount"] or {}).items()):
+        try:
+            open_brl += currency.to_brl(amount, cur)
+        except ana.Error:
+            apart.append(f"{cur} {Decimal(str(amount)):.2f} sem cotação")
     ana.metrics([{"label": "A aprovar", "value": c["to_approve"], "status": "warn" if c["to_approve"] else "ok"},
                  {"label": "A comprar", "value": c["to_buy"], "status": "warn" if c["to_buy"] else "ok"},
                  {"label": "Ordens a receber", "value": c["to_receive"]},
                  {"label": "Ordens atrasadas", "value": c["late"], "status": "bad" if c["late"] else "ok"},
-                 {"label": "Em aberto com fornecedores", "value": f"R$ {c['open_amount']:.2f}"}])
+                 {"label": "Em aberto com fornecedores", "value": f"R$ {open_brl:.2f}" + (f" + {', '.join(apart)}" if apart else "")}])
     ana.tabs([{"label": label, "program": WB, "params": {"view": v}, "open": True} for v, label in VIEWS], current=view)
 
     if view == "approve":

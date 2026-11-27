@@ -22,6 +22,9 @@ Este plano define:
 **O que falta e entra na T-069-01:**
 - não há moeda nos pedidos de compra e de venda: só o fornecimento (`supply.supplier_item.currency`) tem moeda;
 - não há cotações.
+- defeito encontrado: o pedido de compra copiava o preço do fornecimento em dólar ou euro como se fosse em real,
+  e o recebimento lançava esse número em estoque, contabilidade e título a pagar. A T-069-01 corrige: o pedido
+  guarda a moeda, o recebimento converte pela cotação do dia e guarda a cotação usada.
 
 **Refatoração necessária:** o planejamento (`production.plan`) hoje calcula e grava as sugestões no mesmo
 `main`. Ele é dividido em `compute()` (puro: lê e devolve as sugestões) e a gravação. O `main` continua igual
@@ -164,7 +167,7 @@ documentos que a causaram, em ordem decrescente.
 ## 9. Ordem das tarefas
 
 1. **T-069-01** Moeda nos pedidos de compra e de venda (padrão: BRL) e cotações como valores da empresa com
-   vigência (`cotacao.USD` etc.). Nada muda para quem só usa real.
+   vigência (`financeiro.cotacao_usd`, `financeiro.cotacao_eur`: reais por unidade, na data). Nada muda para quem só usa real.
 2. **T-069-02** Grafo da base, atrasos medidos, `production.plan` dividido em `compute()` e gravação; retroteste.
 3. **T-069-03** Catálogo de choques, cenários guardados e combinados.
 4. **T-069-04** Propagação e caminho do efeito; cache no núcleo e recálculo parcial.
