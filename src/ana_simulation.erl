@@ -9,6 +9,9 @@
 %%   human mistake accepted, a pipeline that did not go on by itself (probes), and at the end the accounts and queues
 %%   (simulation.oracles). Each finding has a fingerprint: the same furo in the next run is "persistent", not new.
 %% - Never in production (D5); one run at a time; the flows the run turns on are restored at the end.
+%% - Spec 068 (T-068-12): the run watches its own customer's city and e-mail with a "changed" rule, people edit that
+%%   customer (scenario "cadastro"), and at the end the firings must match the watched changes in the history — one per
+%%   change, none for the rest. The rule is the run's: removed at the end, whatever happens.
 -module(ana_simulation).
 
 -export([start/2, runs/0, report/1, stop/1]).
@@ -18,7 +21,10 @@
 -define(PROBE_EVERY_MS, 2000).
 -define(TECHNICAL, [<<"EXCEPTION">>, <<"INTERNAL">>, <<"SQL">>, <<"SQL_PARAMETER">>, <<"PROCESS_EXITED">>, <<"PROTOCOL">>,
                     <<"TIMEOUT">>, <<"CPU_LIMIT">>, <<"MEMORY">>, <<"INVALID_RESULT">>, <<"SYNTAX">>, <<"NO_MAIN">>]).
--define(MIX, [{<<"venda">>, 4}, {<<"compra">>, 2}, {<<"campo">>, 1}, {<<"producao">>, 1}, {<<"projeto">>, 1}, {<<"estoque">>, 1}]).
+-define(MIX, [{<<"venda">>, 4}, {<<"compra">>, 2}, {<<"campo">>, 1}, {<<"producao">>, 1}, {<<"projeto">>, 1}, {<<"estoque">>, 1},
+              {<<"cadastro">>, 1}]).
+-define(WATCHED, [<<"city">>, <<"email">>]).             % of base.party, watched by the run's rule
+-define(WATCH_WAIT_MS, 60000).                          % the firings are taken in the background (spec 068, D4)
 -define(FLOWS, [{<<"purchase">>, [{1, <<"auto">>}, {2, <<"auto">>}]}, {<<"field">>, [{3, <<"auto">>}]},
                 {<<"production">>, [{1, <<"auto">>}, {2, <<"auto">>}, {4, <<"auto">>}]}]).
 
@@ -114,13 +120,14 @@ run(Id, Opts = #{seed := Seed, days := Days, per_day := PerDay, flows := Flows},
     try
         {SetupCtx, St1} = scenario(<<"setup">>, 0, #{}, Base),
         St2 = case maps:size(maps:get(findings, St1)) of
-            0 -> days(1, Days, PerDay, SetupCtx, St1, Opts);
+            0 -> days(1, Days, PerDay, SetupCtx, watch_on(SetupCtx, St1), Opts);
             _ -> St1                                                % the setup failed: no scenario can run
         end,
-        St3 = oracles(Started, Recon, LastEntry, St2),
+        St3 = watch_check(oracles(Started, Recon, LastEntry, St2)),
         finish(Id, St3)
     after
-        flows_restore(Saved, User)
+        flows_restore(Saved, User),
+        watch_off(User)
     end.
 
 tag(Id) -> integer_to_binary(Id rem 100000).
@@ -280,6 +287,85 @@ queues(Since, St) ->
                         #{error => E}, null, null, Acc)
                 end, St1, Jobs).
 
+%% ------------------------------------------------------------------ the run's change watch (spec 068, T-068-12)
+
+watch_on(#{<<"customer">> := #{<<"id">> := C}}, St = #{user := #{username := Who}, tag := Tag}) when is_integer(C) ->
+    Key = integer_to_binary(C),
+    Body = #{<<"name">> => <<"Uso simulado "/utf8, Tag/binary, ": cliente vigiado"/utf8>>, <<"owner">> => Who,
+             <<"trigger_kind">> => <<"changed">>, <<"entity">> => <<"party">>, <<"watch_key">> => Key,
+             <<"watch_fields">> => [<<"base.party.", F/binary>> || F <- ?WATCHED], <<"watch_mode">> => <<"record">>,
+             <<"max_fires">> => 10000, <<"window_minutes">> => 1,
+             <<"action">> => #{<<"kind">> => <<"notify">>, <<"user">> => Who,
+                               <<"message">> => <<"Uso simulado: o cliente {{key}} mudou (por {{changed_by}})"/utf8>>}},
+    Res = case ana_rules:save(Body, Who) of
+        {ok, R} ->
+            erlang:put(sim_watch_rule, R),
+            case ana_rules:rehearse(R, null, Who) of
+                {ok, _} -> case ana_rules:activate(R, true, Who) of ok -> {ok, R}; E -> E end;
+                E -> E
+            end;
+        E -> E
+    end,
+    case Res of
+        {ok, Rule} ->
+            {ok, #{<<"now">> := Since}} = ana_db:one("SELECT now()::text AS now", []),
+            St#{watch => #{rule => Rule, key => Key, since => Since}};
+        {error, Code, Msg} ->
+            add(automation, <<"serious">>, <<"watch:on">>,
+                <<"A regra de mudança vigiada do uso simulado não pôde ser ligada: "/utf8, Msg/binary>>,
+                #{code => Code}, null, null, St)
+    end;
+watch_on(_, St) -> St.
+
+%% One firing per change of a watched field of the customer, none for the rest (an address, a save with no change).
+watch_check(St = #{watch := #{rule := R, key := K, since := Since}}) ->
+    {ok, #{<<"n">> := Expected}} = ana_db:one(
+        "SELECT count(*)::int AS n FROM master.change_log WHERE entity = 'party' AND row_key = $1 "
+        "AND table_name = 'base.party' AND op = 'update' AND changes ?| $2::text[] AND at >= $3::timestamptz", [K, ?WATCHED, Since]),
+    {Fired, Failed} = fires(R, Expected, erlang:monotonic_time(millisecond) + ?WATCH_WAIT_MS),
+    Detail = #{rule => R, customer => K, expected => Expected, fired => Fired, failed => Failed},
+    Ok = Fired =:= Expected andalso Failed =:= 0,
+    St0 = log(#{scenario => <<"cadastro">>, instance => 0, step => 0, persona => <<"oráculo"/utf8>>,
+                program => <<"automation.change_watch">>, params => Detail, ok => Ok, mistake => false, execution => null,
+                code => case Ok of true -> null; false -> <<"WATCH_MISMATCH">> end,
+                message => iolist_to_binary([integer_to_binary(Expected), <<" mudança(s) vigiada(s), "/utf8>>,
+                                             integer_to_binary(Fired), <<" disparo(s)"/utf8>>])}, St),
+    St1 = case Fired of
+        Expected -> St0;
+        N when N < Expected ->
+            add(automation, <<"serious">>, <<"watch:missing">>,
+                iolist_to_binary([<<"Mudança vigiada deixou de disparar: "/utf8>>, integer_to_binary(Expected),
+                                  <<" mudança(s) da cidade ou do e-mail do cliente, "/utf8>>, integer_to_binary(N),
+                                  <<" disparo(s)"/utf8>>]), Detail, <<"cadastro">>, <<"vendedor">>, St0);
+        N ->
+            add(automation, <<"serious">>, <<"watch:extra">>,
+                iolist_to_binary([<<"Mudança vigiada disparou a mais: "/utf8>>, integer_to_binary(N), <<" disparo(s) para "/utf8>>,
+                                  integer_to_binary(Expected), <<" mudança(s) vigiada(s)"/utf8>>]), Detail, <<"cadastro">>,
+                <<"vendedor">>, St0)
+    end,
+    case Failed of
+        0 -> St1;
+        _ -> add(automation, <<"serious">>, <<"watch:failed">>,
+                 iolist_to_binary([integer_to_binary(Failed), <<" disparo(s) da mudança vigiada falharam"/utf8>>]),
+                 Detail, <<"cadastro">>, null, St1)
+    end;
+watch_check(St) -> St.
+
+fires(R, Expected, Until) ->
+    {ok, #{<<"n">> := N, <<"failed">> := F}} = ana_db:one(
+        "SELECT count(*) FILTER (WHERE outcome <> 'rehearsal')::int AS n, count(*) FILTER (WHERE outcome = 'failed')::int AS failed "
+        "FROM automation.fire WHERE rule_id = $1", [R]),
+    case N >= Expected orelse erlang:monotonic_time(millisecond) >= Until of
+        true -> {N, F};
+        false -> timer:sleep(?PROBE_EVERY_MS), fires(R, Expected, Until)
+    end.
+
+watch_off(#{username := Who}) ->
+    case erlang:erase(sim_watch_rule) of
+        undefined -> ok;
+        R -> _ = ana_rules:delete(R, Who), ok
+    end.
+
 add(Category, Severity, Key, Title, Detail, Scenario, Persona, St) ->
     add(Category, Severity, Key, Title, Detail, Scenario, Persona, St, []).
 add(Category, Severity, Key, Title, Detail, Scenario, Persona, St = #{findings := Fs, seed := Seed}, Steps) ->
@@ -307,7 +393,8 @@ finish(Id, St = #{findings := Fs, log := Log}) ->
     Entries = lists:reverse(Log),
     Stats = #{steps => length(Entries), failed => length([x || #{ok := false} <- Entries]),
               mistakes => length([x || #{mistake := true} <- Entries]),
-              scenarios => length(lists:usort([{S, I} || #{scenario := S, instance := I} <- Entries])) - 1,   % minus the setup
+              scenarios => length(lists:usort([{S, I} || #{scenario := S, instance := I} = E <- Entries,
+                                                         maps:get(persona, E, null) =/= <<"oráculo"/utf8>>])) - 1,   % minus the setup
               findings => maps:size(Fs), new => length(New), resolved => length(Known -- maps:keys(Fs))},
     _ = ana_db:exec("UPDATE ana_system.sim_run SET status = CASE WHEN status = 'running' THEN 'done' ELSE status END, "
                     "finished_at = COALESCE(finished_at, now()), stats = $2::text::jsonb, steps = $3::text::jsonb WHERE id = $1",

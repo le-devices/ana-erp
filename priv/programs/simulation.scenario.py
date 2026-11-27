@@ -18,7 +18,7 @@ import random
 PARAMS = {"state": {"type": "dict", "required": True, "label": "estado do cenário"}}
 
 # D1: how often each scenario happens in a working day (the mix of a small company that sells, buys, serves and makes).
-MIX = {"venda": 4, "compra": 2, "campo": 1, "producao": 1, "projeto": 1, "estoque": 1}
+MIX = {"venda": 4, "compra": 2, "campo": 1, "producao": 1, "projeto": 1, "estoque": 1, "cadastro": 1}
 # Flow steps the pipelines automate when the run turns the flows on (the same as the business-process trails, spec 042).
 FLOWS = {"purchase": {1: "auto", 2: "auto"}, "field": {3: "auto"}, "production": {1: "auto", 2: "auto", 4: "auto"}}
 
@@ -230,8 +230,29 @@ def estoque(state, s, r):
     return steps
 
 
+def cadastro(state, s, r):
+    """Spec 068 (T-068-12): someone edits the run's customer — the city or the e-mail (watched by the run's rule), the
+    address (not watched), or saves it as it is. The oracle at the end expects one firing per change of a watched field,
+    and none for the rest."""
+    u = state["setup"]
+    cur = ana.sql_one("SELECT name, kind, email, city, state, address FROM base.party WHERE id = $1", u["customer"])
+    if not cur:
+        return []
+    inst = state.get("instance", 0)
+    p = {"id": u["customer"], "name": cur["name"], "kind": cur["kind"], "state": cur["state"], "email": cur["email"],
+         "city": cur["city"], "address": cur["address"]}
+    what = r.choice(["city", "email", "address", "same"])
+    if what == "city":
+        p["city"] = f"{r.choice(['Campinas', 'Sorocaba', 'Santos', 'Jundiaí'])} {inst}"
+    elif what == "email":
+        p["email"] = f"compras{inst}.sim{u['tag']}@exemplo.com.br"
+    elif what == "address":
+        p["address"] = f"Rua Simulada, {inst}"
+    return [run("vendedor", "base.save_party", p)]
+
+
 BUILDERS = {"setup": setup, "venda": venda, "compra": compra, "campo": campo, "producao": producao, "projeto": projeto,
-            "estoque": estoque}
+            "estoque": estoque, "cadastro": cadastro}
 
 
 # ------------------------------------------------------------------ human mistakes (D1)

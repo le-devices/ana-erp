@@ -9645,6 +9645,22 @@ class TestUsageSimulation(Base):
         self.assertEqual(shape(a), shape(b))
         self.assertNotEqual(shape(a), shape(self.simulate(seed=67005)))
 
+    def test_t_068_12_the_run_watches_its_customer_one_firing_per_watched_change(self):
+        """Spec 068 (T-068-12): the run watches its customer's city and e-mail; people edit the customer and the oracle
+        compares the firings with the watched changes of the history. Seed 68009 edits it twice: the address (not
+        watched: no firing) and the e-mail (one firing). The rule is the run's and is gone at the end."""
+        rep = self.simulate(seed=68009, per_day=4)
+        self.assertEqual(rep["status"], "done", rep.get("reason"))
+        edits = [s for s in rep["steps"] if s["scenario"] == "cadastro" and s["program"] == "base.save_party"]
+        self.assertEqual([s["persona"] for s in edits], ["vendedor", "vendedor"], edits)
+        self.assertTrue(all(s["ok"] for s in edits), edits)
+        check = [s for s in rep["steps"] if s["program"] == "automation.change_watch"]
+        self.assertEqual(len(check), 1, [s["program"] for s in rep["steps"]])
+        self.assertTrue(check[0]["ok"], check[0])
+        self.assertEqual((check[0]["params"]["expected"], check[0]["params"]["fired"]), (1, 1), check[0])
+        self.assertEqual([f["title"] for f in rep["findings"] if "vigiada" in f["title"]], [])
+        self.assertEqual(psql("SELECT count(*) FROM automation.rule WHERE name LIKE 'Uso simulado %: cliente vigiado'"), "0")
+
     def test_ca_067_02_a_pipeline_stopped_on_an_automatic_step_is_found(self):
         saved = self.must("flows.configure", flow="production")
         sfx = SUFFIX[-6:]

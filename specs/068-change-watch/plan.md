@@ -492,3 +492,25 @@ não volta (a impressão digital é `watch:{entidade}:{registro}`).
 - usuário comum não recebe a sugestão;
 - aceitar devolve o endereço do editor e a sugestão não volta;
 - uma regra que já vigia o registro impede a sugestão.
+
+## 18. T-068-12: uso simulado (spec 067)
+
+**Regra da rodada.** Depois da preparação, a rodada liga uma regra "alterado" própria: ela vigia a cidade e o
+e-mail do cliente da rodada, um disparo por registro, e avisa quem iniciou a simulação. A regra é ensaiada
+antes de ligar, como qualquer outra. No fim, ela é apagada, mesmo se a rodada falhar.
+
+**Cenário "cadastro".** Entra na mistura com peso 1. O vendedor edita o cliente da rodada e, pela semente,
+faz uma destas quatro coisas:
+- muda a cidade (vigiada);
+- muda o e-mail (vigiado);
+- muda o endereço (não vigiado);
+- grava sem mudar nada.
+
+**Oráculo.**
+- Conta as mudanças da cidade ou do e-mail no histórico (`master.change_log`) desde que a regra foi ligada.
+- Espera os disparos por até 60 s, porque são tomados em segundo plano.
+- Compara os dois números. Disparo a menos, a mais ou com falha vira achado de automação.
+- A conferência fica no registro da rodada como um passo do "oráculo", com o esperado e o disparado.
+
+**Teste.** A semente 68009, com 4 cenários por dia, edita o cliente duas vezes: o endereço e depois o e-mail.
+Esperado: 1 mudança vigiada e 1 disparo, nenhum achado de mudança vigiada e nenhuma regra da rodada sobrando.
