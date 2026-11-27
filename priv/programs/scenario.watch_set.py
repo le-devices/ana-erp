@@ -17,7 +17,7 @@ NEXT = [{"label": "Abrir na tela de cenários", "program": "scenario.workbench",
 
 def main(id, cron="0 7 * * *", limit=0):
     cron = (cron or "").strip() or None
-    if cron and not ana.can_run("finance.statement"):
+    if cron and not ana.can_run("finance.import_statement"):
         raise ana.Error("SCENARIO_WATCH_CASH", "vigiar um cenário pede acesso ao extrato bancário (o caixa da empresa)")
     name = ana.sql_value("UPDATE scenario.scenario SET watch_cron = $2, watch_limit = $3, "
                          "  last_result = CASE WHEN $2::text IS NULL THEN NULL ELSE last_result END "

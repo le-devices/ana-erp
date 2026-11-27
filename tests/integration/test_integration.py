@@ -1233,6 +1233,11 @@ def psql(sql):
     return r.stdout.strip()
 
 
+def pcount(table, where="true"):
+    """Rows of a table the API's read user may not see (ana_system, scenario, scheduler): counted as the owner."""
+    return int(psql(f"SELECT count(*) FROM {table} WHERE {where}"))
+
+
 def psql_available():
     try:
         return psql("SELECT 1") == "1"
@@ -9460,10 +9465,10 @@ class TestAssistant(Base):
         self.assertIn(f"Cliente Assistente {SUFFIX} paga 5 dias depois", r["answer"])        # the premises, to check
         self.assertIn("horizonte de 26 semanas", r["answer"])
         named = f"name LIKE 'Pergunta: E se o cliente {SUFFIX}%'"
-        self.assertEqual(self.count("scenario.scenario", named), 0)                          # nothing saved yet
+        self.assertEqual(pcount("scenario.scenario", named), 0)                          # nothing saved yet
         s, done, _ = http("POST", f"/api/assistant/actions/{r['actions'][0]['id']}/confirm", {}, self.token)
         self.assertEqual(s, 200, done)
-        self.assertEqual(self.count("scenario.scenario", named), 1)
+        self.assertEqual(pcount("scenario.scenario", named), 1)
         self.assertIn("margin", done["result"])
         self.assertIn(f"Cliente Assistente {SUFFIX} paga 5 dias depois", done["result"]["premises"])
         # Only the catalog: a shock outside it never becomes a scenario.
@@ -9682,7 +9687,7 @@ class TestProjection(Base):
         out = r["result"]
         # D4: nothing saved — the program runs in a read-only transaction.
         self.assertEqual({t: self.count(t) for t in before}, before)
-        self.assertEqual(self.scalar("SELECT read_only FROM ana_system.program WHERE name = 'scenario.project'"), True)
+        self.assertEqual(psql("SELECT read_only FROM ana_system.program WHERE name = 'scenario.project'"), "t")
         # 4 from stock, 6 from the purchase: the line is delivered when the purchase arrives (promised + measured delay).
         promised = datetime.date.fromisoformat(str(self.scalar(
             f"SELECT COALESCE(l.promised_date, current_date) FROM supply.purchase_order_line l JOIN supply.purchase_order o "
@@ -9750,7 +9755,7 @@ class TestProjection(Base):
         e = self.scenario_err("scenario.save", name=f"Ruim {SUFFIX}", shocks=[
             {"kind": "supplier_delay", "params": {"supplier": customer, "days": 3}}])
         self.assertIn("não é fornecedor", e["message"])
-        self.assertEqual(self.count("scenario.scenario", f"name = 'Ruim {SUFFIX}'"), 0)
+        self.assertEqual(pcount("scenario.scenario", f"name = 'Ruim {SUFFIX}'"), 0)
 
         late = c.call("scenario.save", name=f"Atraso {SUFFIX}", shocks=[
             {"kind": "supplier_delay", "params": {"supplier": supplier, "days": 10}}])
@@ -9761,8 +9766,8 @@ class TestProjection(Base):
         self.assertEqual(dollar["shocks"][0]["params"]["currency"], "USD")
         self.assertEqual(self.scenario_err("scenario.save", name=f"Atraso {SUFFIX}")["code"], "SCENARIO_NAME")
 
-        before = {t: self.count(t) for t in ("production.suggestion", "finance.bill", "sales.sales_order", "supply.purchase_order",
-                                             "scenario.scenario")}
+        before = {t: pcount(t) for t in ("production.suggestion", "finance.bill", "sales.sales_order", "supply.purchase_order",
+                                         "scenario.scenario")}
 
         def project(ids):
             s, r, _ = self.run_program("scenario.project", {"horizon_weeks": 12, "scenarios": ids})
@@ -9815,7 +9820,7 @@ class TestProjection(Base):
             self.assertEqual(out["scenario"][key], out[key], key)
         self.assertEqual(out["compare"]["deliveries_late"], [])
 
-        self.assertEqual({t: self.count(t) for t in before}, before)          # projecting wrote nothing
+        self.assertEqual({t: pcount(t) for t in before}, before)              # projecting wrote nothing
 
         # T-069-05 (RF-069-04, D5, CA-069-01): the screen — side by side, what weighs most, what to do.
         s, r, _ = self.run_program("scenario.workbench", {"view": "compare", "scenarios": [late["id"], dollar["id"]],
@@ -9862,8 +9867,8 @@ class TestProjection(Base):
         theirs = c.call("base.save_party", name=f"Cliente De Outro 069 {SUFFIX}", state="SP", salesperson="admin")["id"]
         for customer in (mine, theirs):
             c.call("sales.create_order", customer=customer, items=[{"product": service, "quantity": 2}])
-        was = self.scalar("SELECT restricted FROM ana_system.program WHERE name = 'finance.statement'")
-        s, r, _ = http("PUT", "/api/programs/finance.statement", {"restricted": True}, self.token)
+        was = psql("SELECT restricted FROM ana_system.program WHERE name = 'finance.import_statement'") == "t"
+        s, r, _ = http("PUT", "/api/programs/finance.import_statement", {"restricted": True}, self.token)
         self.assertEqual(s, 200, r)
         try:
             s, r, _ = self.run_program("scenario.project", {"horizon_weeks": 8}, token=token)
@@ -9897,7 +9902,7 @@ class TestProjection(Base):
             s, r, _ = self.run_program("scenario.save", {"name": f"Meu {SUFFIX}", "group": "outro-grupo"}, token=token)
             self.assertEqual((r.get("error") or {}).get("code"), "SCENARIO_GROUP", r)
         finally:
-            http("PUT", "/api/programs/finance.statement", {"restricted": was in (True, "t", "true")}, self.token)
+            http("PUT", "/api/programs/finance.import_statement", {"restricted": was}, self.token)
 
     def test_ca_069_06_a_watched_scenario_warns_once_and_is_a_metric_for_the_rules(self):
         """Spec 069 (T-069-08, RF-069-06, D7, CA-069-06): watching a scenario schedules its recalculation (as the owner);
@@ -9907,7 +9912,7 @@ class TestProjection(Base):
         sc = c.call("scenario.save", name=f"Vigiado {SUFFIX}", shocks=[])
         w = c.call("scenario.watch_set", id=sc["id"], cron="0 7 * * 1", limit="999999999999")
         self.assertIsNotNone(w["job"])
-        self.assertEqual(self.scalar(f"SELECT active FROM scheduler.job WHERE name = 'scenario.vigia_{sc['id']}'"), True)
+        self.assertEqual(psql(f"SELECT active FROM scheduler.job WHERE name = 'scenario.vigia_{sc['id']}'"), "t")
         def watch():
             s, r, _ = self.run_program("scenario.watch", {"id": sc["id"]})
             self.assertEqual(s, 200, r)
@@ -9921,7 +9926,7 @@ class TestProjection(Base):
         self.assertIsNone(again["warned"])                                   # still below: warned already
         self.assertEqual(self.count("bpm.notification", f"username = 'admin' AND message LIKE '%Vigiado {SUFFIX}%'"), 1)
         metric = f"cenario_{sc['id']}_menor_caixa"
-        self.assertEqual(Decimal(str(self.scalar(f"SELECT value FROM scenario.metric WHERE metric = '{metric}'"))),
+        self.assertEqual(Decimal(psql(f"SELECT value FROM scenario.metric WHERE metric = '{metric}'")),
                          Decimal(again["lowest"]))
         body = {"name": f"Caixa do cenário {SUFFIX}", "owner": "admin", "trigger_kind": "metric", "metric": metric,
                 "metric_op": "<", "metric_value": 0, "action": {"kind": "notify", "user": "admin", "message": "caixa negativo"}}
@@ -9932,8 +9937,8 @@ class TestProjection(Base):
         self.assertEqual(s, 400, r2)
         http("DELETE", f"/api/admin/automations/rules/{r['id']}", token=self.token)
         c.call("scenario.watch_set", id=sc["id"], cron="")
-        self.assertEqual(self.scalar(f"SELECT active FROM scheduler.job WHERE name = 'scenario.vigia_{sc['id']}'"), False)
-        self.assertEqual(self.count("scenario.metric", f"id = {sc['id']}"), 0)
+        self.assertEqual(psql(f"SELECT active FROM scheduler.job WHERE name = 'scenario.vigia_{sc['id']}'"), "f")
+        self.assertEqual(pcount("scenario.metric", f"id = {sc['id']}"), 0)
         c.call("scenario.remove", id=sc["id"])
 
     MASS = """
@@ -9953,17 +9958,17 @@ def main():
     items = [r["id"] for r in ana.sql("INSERT INTO base.product (code, description, price) "
                                        "SELECT 'MS069' || g, 'massa 069', 100 FROM generate_series(1, 40) g RETURNING id")]
     ana.sql_exec("INSERT INTO supply.supplier_item (supplier_id, product_id, price, currency, preferred) "
-                 "SELECT $1, p, 30, CASE WHEN p % 2 = 0 THEN 'USD' ELSE 'BRL' END, true FROM unnest($2::int[]) p", sup, items)
+                 "SELECT $1::int, p, 30, CASE WHEN p % 2 = 0 THEN 'USD' ELSE 'BRL' END, true FROM unnest($2::int[]) p", sup, items)
     ana.sql_exec("INSERT INTO finance.bill (kind, party_id, document, due_date, amount) "
-                 "SELECT CASE WHEN g % 2 = 0 THEN 'receivable' ELSE 'payable' END, CASE WHEN g % 2 = 0 THEN $1 ELSE $2 END, "
+                 "SELECT CASE WHEN g % 2 = 0 THEN 'receivable' ELSE 'payable' END, CASE WHEN g % 2 = 0 THEN $1::int ELSE $2::int END, "
                  "  'M069-' || g, current_date + (g % 180), 100 + g % 50 FROM generate_series(1, 10000) g", cust, sup)
     orders = [r["id"] for r in ana.sql("INSERT INTO sales.sales_order (customer_id, warehouse_id, created_by) "
-                                        "SELECT $1, $2, 'admin' FROM generate_series(1, 2000) RETURNING id", cust, wh)]
+                                        "SELECT $1::int, $2::int, 'admin' FROM generate_series(1, 2000) RETURNING id", cust, wh)]
     ana.sql_exec("INSERT INTO sales.sales_order_item (order_id, line, product_id, quantity, price) "
                  "SELECT o, l, ($2::int[])[1 + (o + l) % 40], l, 150 FROM unnest($1::int[]) o, generate_series(1, 3) l",
                  orders, items)
     ana.sql_exec("INSERT INTO production.work_order (product_id, quantity, warehouse_id, start_date, due_date, created_by) "
-                 "SELECT ($1::int[])[1 + g % 40], 5, $2, current_date + g % 60, current_date + g % 60 + 5, 'admin' "
+                 "SELECT ($1::int[])[1 + g % 40], 5, $2::int, current_date + g % 60, current_date + g % 60 + 5, 'admin' "
                  "FROM generate_series(1, 500) g", items, wh)
     g, base = timed(lambda: projection.weekly(projection.build(26)))
     two = sh.validate([{"kind": "currency", "params": {"currency": "USD", "pct": "15"}},

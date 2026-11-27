@@ -21,7 +21,7 @@ PARAMS = {"horizon_weeks": {"type": "int", "default": 26, "label": "semanas à f
 
 def main(horizon_weeks=26, scenarios=None, shocks=None):
     weeks = max(1, min(int(horizon_weeks), 52))
-    cash = ana.can_run("finance.statement")
+    cash = ana.can_run("finance.import_statement")
     run = cmp_lib.run(weeks, scenarios, shocks, cash=cash)
     g, out = run["graph"], run["base"]
     if "scenario" in run:

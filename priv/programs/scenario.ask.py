@@ -59,7 +59,7 @@ def main(question, shocks):
     if ana.context.rehearsal:
         return {"premises": [a["premissa"] for a in assumed],
                 "next": "confirme na tela para calcular e guardar o cenário; nada foi calculado nem guardado ainda"}
-    cash = ana.can_run("finance.statement")
+    cash = ana.can_run("finance.import_statement")
     run = cmp_lib.run(WEEKS, [sid], None, cash=cash)
     c = run["compare"]
     items = [{"label": "Margem", "value": f"R$ {c['margin']['change']:,.2f}", "hint": "diferença para a base",

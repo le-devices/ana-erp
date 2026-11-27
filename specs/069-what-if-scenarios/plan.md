@@ -150,7 +150,7 @@ documentos que a causaram, em ordem decrescente.
 - A projeção roda como a pessoa, então o banco filtra títulos, pedidos e projetos pelo escopo dela (009, D10). Um
   vendedor com carteira vê só os clientes dele (CA-069-05).
 - **Caixa da empresa** (saldos bancários e títulos de todos) só aparece para quem pode executar
-  `finance.statement`. Para os outros, a seção de caixa não é calculada, e a tela explica por quê.
+  `finance.import_statement` (a rotina do extrato bancário). Para os outros, a seção de caixa não é calculada, e a tela explica por quê.
 - Valores sigilosos (custo por hora, salários) entram no cálculo do total, mas não aparecem no caminho do efeito
   nem no detalhe para quem não pode vê-los: aparecem como "valor sigiloso", como na spec 068 (D10).
 - O cenário tem dono e pode ser compartilhado com um grupo. Quem abre um cenário compartilhado recalcula com o

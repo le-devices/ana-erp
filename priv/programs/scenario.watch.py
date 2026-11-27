@@ -50,7 +50,7 @@ def main(id):
                     "WHERE id = $1 AND owner = $2", id, ana.context.user)
     if not s:
         raise ana.Error("SCENARIO_NOT_FOUND", "cenário não encontrado entre os seus")
-    if not ana.can_run("finance.statement"):
+    if not ana.can_run("finance.import_statement"):
         raise ana.Error("SCENARIO_WATCH_CASH", "vigiar um cenário pede acesso ao extrato bancário (o caixa da empresa)")
     run = cmp_lib.run(WEEKS, [id], None, cash=True)
     now = summary(run["base"], run["scenario"], run["compare"])

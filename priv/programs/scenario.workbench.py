@@ -96,7 +96,7 @@ def kinds():
 
 
 def compare(ids, weeks):
-    cash = ana.can_run("finance.statement")
+    cash = ana.can_run("finance.import_statement")
     run = cmp_lib.run(weeks, ids, None, cash=cash)
     base, scen, c = run["base"], run["scenario"], run["compare"]
     names = " + ".join(scen["names"])
