@@ -455,7 +455,7 @@ prepare_run(P, L, St) ->
     case ana_db:checkout(?POOL, 15000) of
         {ok, C} ->
             St2 = St1#st{conn = C, read_only = ana_license:restricted() orelse simulating(P, St1#st.params)
-                                                orelse indicator(P) orelse St1#st.force_read_only},
+                                                orelse indicator(P) orelse declared_read_only(P) orelse St1#st.force_read_only},
             %% RF-022-05: a part may read the snapshot exported by its main execution.
             Snap = case St1#st.snapshot_in of
                 undefined -> "BEGIN; ";
@@ -467,8 +467,9 @@ prepare_run(P, L, St) ->
             %% Spec 009 (RF-009-05): restricted license → the database itself refuses every write.
             %% Spec 020 (RF-020-13): so does a simulation ("Simular" never saves, whatever the program does).
             %% Spec 048 (D1): so does an indicator — it only reads, whatever its code does.
+            %% Spec 069 (D4): and a program that declares "# ana:read_only yes" (a projection never saves).
             ReadOnly = case ana_license:restricted() orelse simulating(P, St1#st.params) orelse indicator(P)
-                            orelse St1#st.force_read_only of
+                            orelse declared_read_only(P) orelse St1#st.force_read_only of
                 true -> "SET TRANSACTION READ ONLY; ";
                 false -> ""
             end,
@@ -548,6 +549,9 @@ with_version(Other, _, _) -> Other.
 
 indicator(#{<<"indicator_refresh_s">> := S}) when is_integer(S) -> true;
 indicator(_) -> false.
+
+declared_read_only(#{<<"read_only">> := true}) -> true;
+declared_read_only(_) -> false.
 
 first_missing(Modules) ->
     case [M || M <- Modules, not ana_license:allowed(M)] of

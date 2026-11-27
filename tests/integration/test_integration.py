@@ -1233,6 +1233,11 @@ def psql(sql):
     return r.stdout.strip()
 
 
+def pcount(table, where="true"):
+    """Rows of a table the API's read user may not see (ana_system, scenario, scheduler): counted as the owner."""
+    return int(psql(f"SELECT count(*) FROM {table} WHERE {where}"))
+
+
 def psql_available():
     try:
         return psql("SELECT 1") == "1"
@@ -2225,6 +2230,42 @@ class TestSupplyChain(Base):
         finally:
             self.client.call("supply.settings", limit_kind="group", limit_target=group, remove_limit=True)
             http("DELETE", f"/api/admin/groups/{group}", token=self.token)
+
+    def test_t_069_01_an_order_in_dollars_is_received_in_reais_at_the_rate_of_the_day(self):
+        """Spec 069 (T-069-01, RF-069-07): a catalog price in dollars makes an order in dollars (no longer copied as
+        reais); receiving converts at the company value "financeiro.cotacao_usd" in force — stock, journal and bill in
+        reais — and keeps the rate. A currency without a rate is refused with what to do."""
+        usd, eur = f"USD{SUFFIX}", f"EUR{SUFFIX}"
+        self.client.call("base.save_product", code=usd, description="Componente importado (dólar)", price="100")
+        self.client.call("base.save_product", code=eur, description="Componente importado (euro)", price="100")
+        self.client.call("supply.save_supplier_item", product=usd, supplier=self.supplier, price="10.00", currency="USD",
+                         lead_time_days=30, preferred=True)
+        self.client.call("supply.save_supplier_item", product=eur, supplier=self.supplier, price="8.00", currency="EUR",
+                         lead_time_days=30, preferred=True)
+        if psql("SELECT count(*) FROM ana_system.company_value_version WHERE name = 'financeiro.cotacao_usd' "
+                "AND status = 'active'") == "0":
+            s, c, _ = http("POST", "/api/values/financeiro.cotacao_usd/versions", {"content": "5,40", "valid_from": "2020-01-01"},
+                           self.token)
+            self.assertEqual(s, 200, c)
+        number = self.ordered(usd, 3, warehouse="CENTRAL")
+        self.assertEqual(self.scalar(f"SELECT currency || ' ' || total FROM supply.purchase_order WHERE number = {number}"), "USD 30.00")
+        r = self.client.call("supply.receive", order=number)
+        rate = Decimal(r["exchange_rate"])
+        self.assertEqual(r["currency"], "USD")
+        self.assertGreater(rate, 1)
+        unit = (Decimal("10.00") * rate).quantize(Decimal("0.0001"))
+        total = (3 * unit).quantize(Decimal("0.01"))
+        self.assertEqual(Decimal(r["total"]), total)
+        self.assertEqual(Decimal(self.scalar(f"SELECT amount FROM finance.bill WHERE id = {r['bill']}")), total)
+        self.assertEqual(self.scalar(f"SELECT currency || ' ' || exchange_rate::numeric(18,4) FROM supply.receipt "
+                                     f"WHERE id = {r['receipt']}"), f"USD {rate.quantize(Decimal('0.0001'))}")
+        self.assertEqual(Decimal(self.scalar("SELECT m.unit_cost FROM inventory.stock_movement m JOIN supply.receipt_line rl "
+                                             f"ON rl.stock_movement_id = m.id WHERE rl.receipt_id = {r['receipt']}")), unit)
+        if psql("SELECT count(*) FROM ana_system.company_value_version WHERE name = 'financeiro.cotacao_eur' "
+                "AND status = 'active'") == "0":
+            e = self.err("supply.receive", order=self.ordered(eur, 1, warehouse="CENTRAL"))
+            self.assertEqual(e.code, "CURRENCY_RATE_MISSING")
+            self.assertIn("financeiro.cotacao_eur", e.message)
 
     def test_ca_013_03_06_partial_receipt_and_tolerance(self):
         number = self.ordered(self.mcu, 10, warehouse="CENTRAL")
@@ -9413,6 +9454,28 @@ class TestAssistant(Base):
         s, _, _ = http("POST", f"/api/assistant/actions/{b['id']}/decline", {}, self.token)
         self.assertEqual((s, self.status(m)), (200, "OPEN"))
 
+    def test_ca_069_04_a_what_if_question_shows_the_premises_and_calculates_only_when_confirmed(self):
+        """Spec 069 (T-069-07, RF-069-05, D6, CA-069-04): "e se o maior cliente pagar 5 dias depois?" — the model turns
+        it into a shock of the catalog; the routine saves a scenario, so it is only rehearsed: the premises it understood
+        come back (nothing calculated, nothing saved). The person's "Confirmar" calculates, saves and shows the effect."""
+        q = f"E se o cliente {SUFFIX} pagar 5 dias depois?"
+        shocks = [{"kind": "customer_delay", "params": {"customer": self.customer, "days": 5}}]
+        r = self.ask("CALL scenario__ask " + json.dumps({"question": q, "shocks": shocks}))
+        self.assertEqual([a["program"] for a in r["actions"]], ["scenario.ask"], r)
+        self.assertIn(f"Cliente Assistente {SUFFIX} paga 5 dias depois", r["answer"])        # the premises, to check
+        self.assertIn("horizonte de 26 semanas", r["answer"])
+        named = f"name LIKE 'Pergunta: E se o cliente {SUFFIX}%'"
+        self.assertEqual(pcount("scenario.scenario", named), 0)                          # nothing saved yet
+        s, done, _ = http("POST", f"/api/assistant/actions/{r['actions'][0]['id']}/confirm", {}, self.token)
+        self.assertEqual(s, 200, done)
+        self.assertEqual(pcount("scenario.scenario", named), 1)
+        self.assertIn("margin", done["result"])
+        self.assertIn(f"Cliente Assistente {SUFFIX} paga 5 dias depois", done["result"]["premises"])
+        # Only the catalog: a shock outside it never becomes a scenario.
+        r = self.ask("CALL scenario__ask " + json.dumps({"question": "e se chover?", "shocks": [{"kind": "chuva", "params": {}}]}))
+        self.assertIn("tipo desconhecido", r["answer"])
+        psql(f"DELETE FROM scenario.scenario WHERE {named}")
+
     def test_ca_052_02_routines_the_user_cannot_run_are_not_offered_nor_run(self):
         secret = f"test.as_secret_{SUFFIX}"
         self.save(secret, "def main():\n    return 'segredo'\n", restricted=True)
@@ -9589,6 +9652,363 @@ class TestProgramQualityPhase2(Base):
         self.save(prog, "TESTS = [{'name': 'a', 'params': {}}]\ndef main():\n    return 1\n")
         s, q, _ = http("GET", f"/api/programs/{prog}/quality", token=self.token)
         self.assertEqual((s, q["in_production"]), (200, False))       # the battery runs on a development instance
+
+
+class TestProjection(Base):
+    """Spec 069 (T-069-02, RF-069-01, D1, D4): the base projection — from what is in the ERP, by its own rules, read-only."""
+
+    @classmethod
+    def setUpClass(cls):
+        super().setUpClass()
+        _, token = new_user("user")
+        cls.req_client = Ana(URL, token=token)
+
+    def usd_rate(self):
+        """A rate for the dollar in force (company value), as an installation that buys in dollars has."""
+        if psql("SELECT count(*) FROM ana_system.company_value_version WHERE name = 'financeiro.cotacao_usd' "
+                "AND status = 'active'") == "0":
+            s, v, _ = http("POST", "/api/values/financeiro.cotacao_usd/versions", {"content": "5,40", "valid_from": "2020-01-01"},
+                           self.token)
+            self.assertEqual(s, 200, v)
+
+    def ordered(self, product, quantity, reason):
+        """Requested by a plain user (who asks never approves), approved by admin, turned into an order: its number."""
+        r = self.req_client.call("supply.request_purchase", reason=reason, product=product, quantity=quantity, warehouse="CENTRAL")
+        self.client.call("supply.approve_request", request=r["number"])
+        return self.client.call("supply.create_orders", requests=[r["number"]])["orders"][0]
+
+    def test_rf_069_01_the_base_projects_deliveries_margin_and_cash_and_never_saves(self):
+        c = self.client
+        sfx = SUFFIX[-6:]
+        item = f"PJ{sfx}"
+        customer = c.call("base.save_party", name=f"Cliente Projeção {SUFFIX}", state="SP")["id"]
+        supplier = c.call("base.save_party", kind="supplier", name=f"Fornecedor Projeção {SUFFIX}")["id"]
+        c.call("base.save_product", code=item, description="Item da projeção", price="100")
+        c.call("inventory.stock_in", product=item, quantity=4, warehouse="CENTRAL", unit_cost="40")
+        c.call("supply.save_supplier_item", product=item, supplier=supplier, price="40.00", lead_time_days=5, preferred=True)
+        po = self.ordered(item, 6, "projeção")
+        order = c.call("sales.create_order", customer=customer, items=[{"product": item, "quantity": 10}])["number"]
+        before = {t: self.count(t) for t in ("production.suggestion", "finance.bill", "sales.sales_order", "supply.purchase_order")}
+
+        s, r, _ = self.run_program("scenario.project", {"horizon_weeks": 12})
+        self.assertEqual(s, 200, r)
+        out = r["result"]
+        # D4: nothing saved — the program runs in a read-only transaction.
+        self.assertEqual({t: self.count(t) for t in before}, before)
+        self.assertEqual(psql("SELECT read_only FROM ana_system.program WHERE name = 'scenario.project'"), "t")
+        # 4 from stock, 6 from the purchase: the line is delivered when the purchase arrives (promised + measured delay).
+        promised = datetime.date.fromisoformat(str(self.scalar(
+            f"SELECT COALESCE(l.promised_date, current_date) FROM supply.purchase_order_line l JOIN supply.purchase_order o "
+            f"ON o.id = l.order_id WHERE o.number = {po}"))[:10])
+        delay = next((d["days"] for d in out["delays"] if d["kind"] == "fornecedor" and d["party"] == supplier), 0)
+        today = ana_today()
+        arrives = max(today, promised + datetime.timedelta(days=delay))
+        sale_promised = datetime.date.fromisoformat(str(self.scalar(
+            f"SELECT COALESCE(i.promised_date, o.order_date) FROM sales.sales_order_item i JOIN sales.sales_order o "
+            f"ON o.id = i.order_id WHERE o.number = {order} AND i.line = 1"))[:10])
+        risk = [x for x in out["deliveries_at_risk"] if x["doc"] == f"ORD-{order}/1"]
+        if arrives > max(today, sale_promised):
+            self.assertEqual(len(risk), 1, out["deliveries_at_risk"])
+            self.assertEqual(str(risk[0]["date"])[:10], arrives.isoformat())
+        else:
+            self.assertEqual(risk, [])
+        # Result: revenue 10 × 100, cost 10 × 40 (the supplier's price), margin 600.
+        mine = [x for x in out["result"]["customers"] if x["key"] == customer]
+        self.assertEqual([(Decimal(x["revenue"]), Decimal(x["cost"]), Decimal(x["margin"])) for x in mine],
+                         [(Decimal("1000.00"), Decimal("400.00"), Decimal("600.00"))])
+        # Cash: week by week, the lowest position, and how far the projection of a week ago was.
+        self.assertEqual(len(out["weeks"]), 12)
+        self.assertIn("deviation_pct", out["backtest"])
+        self.assertLessEqual(Decimal(out["lowest"]["balance"]), Decimal(out["opening"]))
+
+    def scenario_err(self, program, **params):
+        s, r, _ = self.run_program(program, params)
+        self.assertIn("error", r, r)
+        return r["error"]
+
+    def test_rf_069_02_shocks_are_data_combined_in_any_order_and_saved(self):
+        """Spec 069 (T-069-03, RF-069-02, D2, CA-069-02): the kinds of shock are a catalog; a scenario keeps its shocks
+        (checked, with a sentence each); combining scenarios gives the same result in any order; a scenario without
+        shocks is the base; projecting never writes."""
+        c = self.client
+        sfx = SUFFIX[-6:]
+        item = f"PS{sfx}"
+        customer = c.call("base.save_party", name=f"Cliente Cenário {SUFFIX}", state="SP")["id"]
+        supplier = c.call("base.save_party", kind="supplier", name=f"Fornecedor Cenário {SUFFIX}")["id"]
+        c.call("base.save_product", code=item, description="Item importado do cenário", price="100")
+        c.call("supply.save_supplier_item", product=item, supplier=supplier, price="10.00", currency="USD", lead_time_days=20,
+               preferred=True)
+        self.usd_rate()
+        po = self.ordered(item, 10, "cenário")
+        order = c.call("sales.create_order", customer=customer, items=[{"product": item, "quantity": 10}])["number"]
+
+        # The catalog: the kinds of D2, as data.
+        kinds = {r[0] for r in http("POST", "/api/sql", {"sql": "SELECT code FROM scenario.shock_kind WHERE active"},
+                                    self.token)[1]["rows"]}
+        self.assertTrue({"currency", "purchase_price", "supplier_delay", "supplier_stops", "customer_delay", "customer_stops",
+                         "payment_terms", "sales_volume", "capacity", "tax_rule", "company_value"} <= kinds, kinds)
+        # Checked before saving: what is wrong, and in which shock.
+        e = self.scenario_err("scenario.save", name=f"Ruim {SUFFIX}", shocks=[{"kind": "meteoro", "params": {}}])
+        self.assertEqual(e["code"], "SCENARIO_SHOCK")
+        self.assertIn("choque 1", e["message"])
+        e = self.scenario_err("scenario.save", name=f"Ruim {SUFFIX}", shocks=[
+            {"kind": "currency", "params": {"currency": "USD", "pct": "10"}},
+            {"kind": "supplier_delay", "params": {"supplier": supplier}}])
+        self.assertIn("choque 2", e["message"])
+        self.assertIn("falta", e["message"])
+        e = self.scenario_err("scenario.save", name=f"Ruim {SUFFIX}", shocks=[
+            {"kind": "supplier_delay", "params": {"supplier": customer, "days": 3}}])
+        self.assertIn("não é fornecedor", e["message"])
+        self.assertEqual(pcount("scenario.scenario", f"name = 'Ruim {SUFFIX}'"), 0)
+
+        late = c.call("scenario.save", name=f"Atraso {SUFFIX}", shocks=[
+            {"kind": "supplier_delay", "params": {"supplier": supplier, "days": 10}}])
+        dollar = c.call("scenario.save", name=f"Dólar {SUFFIX}", shocks=[
+            {"kind": "currency", "params": {"currency": "usd", "pct": "15"}}])
+        empty = c.call("scenario.save", name=f"Vazio {SUFFIX}", shocks=[])
+        self.assertEqual(late["shocks"][0]["label"], f"Fornecedor Cenário {SUFFIX} entrega 10 dias depois")
+        self.assertEqual(dollar["shocks"][0]["params"]["currency"], "USD")
+        self.assertEqual(self.scenario_err("scenario.save", name=f"Atraso {SUFFIX}")["code"], "SCENARIO_NAME")
+
+        before = {t: pcount(t) for t in ("production.suggestion", "finance.bill", "sales.sales_order", "supply.purchase_order",
+                                         "scenario.scenario")}
+
+        def project(ids):
+            s, r, _ = self.run_program("scenario.project", {"horizon_weeks": 12, "scenarios": ids})
+            self.assertEqual(s, 200, r)
+            self.assertNotIn("error", r, r)
+            return r["result"]
+
+        # The supplier 10 days later: the purchase arrives 10 days later, and so does the delivery.
+        out = project([late["id"]])
+        promised = datetime.date.fromisoformat(str(self.scalar(
+            f"SELECT COALESCE(l.promised_date, current_date) FROM supply.purchase_order_line l JOIN supply.purchase_order o "
+            f"ON o.id = l.order_id WHERE o.number = {po}"))[:10])
+        delay = next((d["days"] for d in out["delays"] if d["kind"] == "fornecedor" and d["party"] == supplier), 0)
+        today = ana_today()
+        doc = f"ORD-{order}/1"
+        when = lambda o: next((str(x["date"])[:10] for x in o["deliveries_at_risk"] if x["doc"] == doc), None)  # noqa: E731
+        self.assertEqual(when(out["scenario"]), max(today, promised + datetime.timedelta(days=delay + 10)).isoformat(),
+                         out["scenario"]["deliveries_at_risk"])
+        self.assertIn(doc, [x["doc"] for x in out["compare"]["deliveries_late"]])
+        # T-069-04 (RF-069-03): the path of each effect down to the shock — the order's money comes 10 days later
+        # because the delivery waits for the purchase, which arrives 10 days later.
+        arrival = f"chegada da compra OC-{po}/1 adiado 10 dias"
+        paths = [e for e in out["compare"]["effects"] if arrival in e["path"]]
+        self.assertTrue(paths, out["compare"]["effects"])
+        self.assertTrue(all(e["shocks"] == [late["shocks"][0]["label"]] for e in paths), paths)
+        received = next((e for e in paths if e["doc"].startswith(f"ORD-{order} parcela")), None)
+        self.assertIsNotNone(received, paths)
+        self.assertEqual(received["path"][-1], arrival)
+        self.assertIn(f"entrega ORD-{order}/1 adiado 10 dias", received["path"])
+
+        # The dollar +15%: the cost of the line (bought in dollars) 15% higher, so the margin falls by that much.
+        out = project([dollar["id"]])
+        base = next(x for x in out["result"]["customers"] if x["key"] == customer)
+        scen = next(x for x in out["scenario"]["result"]["customers"] if x["key"] == customer)
+        self.assertEqual(Decimal(scen["revenue"]), Decimal(base["revenue"]))
+        self.assertAlmostEqual(Decimal(scen["cost"]), Decimal(base["cost"]) * Decimal("1.15"), delta=Decimal("0.05"))
+        paid = lambda o: sum(Decimal(w["out"]) for w in o["weeks"])  # noqa: E731
+        self.assertLess(paid(out["scenario"]), paid(out))                    # the purchase paid in dollars costs more
+
+        # Combined, in any order, the same; without shocks, the base (CA-069-02).
+        ab, ba = project([late["id"], dollar["id"]]), project([dollar["id"], late["id"]])
+        strip = lambda o: {k: v for k, v in o["scenario"].items() if k not in ("names", "shocks")}  # noqa: E731
+        self.assertEqual(strip(ab), strip(ba))
+        self.assertEqual(when(ab["scenario"]), when(project([late["id"]])["scenario"]))
+        # Two shocks on the same invoice (later and dearer): both named as its cause.
+        inv = next(e for e in ab["compare"]["effects"] if e["doc"] == f"ORD-{order}" and e["kind"] == "invoice")
+        self.assertEqual(sorted(inv["shocks"]), sorted([late["shocks"][0]["label"], dollar["shocks"][0]["label"]]), inv)
+        out = project([empty["id"]])
+        for key in ("weeks", "lowest", "result", "deliveries_at_risk"):
+            self.assertEqual(out["scenario"][key], out[key], key)
+        self.assertEqual(out["compare"]["deliveries_late"], [])
+
+        self.assertEqual({t: pcount(t) for t in before}, before)              # projecting wrote nothing
+
+        # T-069-05 (RF-069-04, D5, CA-069-01): the screen — side by side, what weighs most, what to do.
+        s, r, _ = self.run_program("scenario.workbench", {"view": "compare", "scenarios": [late["id"], dollar["id"]],
+                                                          "horizon_weeks": 12})
+        self.assertEqual(s, 200, r)
+        self.assertNotIn("error", r, r)
+        cmp = r["result"]["compare"]
+        shares = {x["shock"]: x for x in cmp["weights"]["by_shock"]}
+        self.assertEqual(set(shares), {late["shocks"][0]["label"], dollar["shocks"][0]["label"]})
+        self.assertEqual(Decimal(str(shares[late["shocks"][0]["label"]]["margin"])), 0)   # a later delivery keeps the margin
+        self.assertEqual(shares[dollar["shocks"][0]["label"]]["margin_share"], 100)
+        self.assertIn(item, [x["code"] for x in cmp["weights"]["by_item"]])
+        self.assertIn({"label": f"Buscar outro fornecedor do item {item}", "program": "supply.save_supplier_item",
+                       "params": {"product": item}, "open": True}, cmp["suggestions"])
+        self.assertIn("lowest", cmp)
+        self.assertIn("working_capital", cmp)
+        # Shocks added and removed in place (one write each), checked like any other.
+        added = c.call("scenario.add_shock", id=empty["id"], kind="customer_delay", customer=customer, days=7)
+        self.assertEqual([x["label"] for x in added["shocks"]], [f"Cliente Cenário {SUFFIX} paga 7 dias depois"])
+        e = self.scenario_err("scenario.add_shock", id=empty["id"], kind="customer_delay", customer=customer)
+        self.assertIn("falta", e["message"])
+        self.assertEqual(c.call("scenario.drop_shock", id=empty["id"], index=1)["shocks"], 0)
+        s, r, _ = self.run_program("scenario.workbench", {})
+        self.assertIn(empty["id"], [x["id"] for x in r["result"]["scenarios"]])
+
+        c.call("scenario.remove", id=empty["id"])
+        self.assertEqual(self.scenario_err("scenario.remove", id=empty["id"])["code"], "SCENARIO_NOT_FOUND")
+        self.assertEqual(self.scenario_err("scenario.project", scenarios=[empty["id"]])["code"], "SCENARIO_NOT_FOUND")
+
+    def test_ca_069_05_a_salesperson_simulates_only_their_portfolio_and_never_the_company_cash(self):
+        """Spec 069 (T-069-06, D8, RNF-069-04): the projection runs with the person's data scope — a salesperson limited
+        to the portfolio sees their customers only, and the company's cash is not even calculated for whoever may not
+        see the bank statement. A scenario shared with a group is recalculated with each member's own scope; a shock on
+        what they cannot see is refused, never computed."""
+        c = self.client
+        g = f"cen{SUFFIX}".lower()
+        s, r, _ = http("PUT", f"/api/admin/groups/{g}", {"description": "carteira (teste 069)", "program_patterns": [],
+                                                       "data_portfolio": True}, self.token)
+        self.assertEqual(s, 200, r)
+        seller, token = new_user("user", groups=(g,))
+        service = f"SC{SUFFIX[-6:]}"
+        c.call("base.save_product", code=service, description="Serviço do cenário", price="300", kind="service")
+        mine = c.call("base.save_party", name=f"Cliente Da Carteira 069 {SUFFIX}", state="SP", salesperson=seller)["id"]
+        theirs = c.call("base.save_party", name=f"Cliente De Outro 069 {SUFFIX}", state="SP", salesperson="admin")["id"]
+        for customer in (mine, theirs):
+            c.call("sales.create_order", customer=customer, items=[{"product": service, "quantity": 2}])
+        was = psql("SELECT restricted FROM ana_system.program WHERE name = 'finance.import_statement'") == "t"
+        s, r, _ = http("PUT", "/api/programs/finance.import_statement", {"restricted": True}, self.token)
+        self.assertEqual(s, 200, r)
+        try:
+            s, r, _ = self.run_program("scenario.project", {"horizon_weeks": 8}, token=token)
+            self.assertEqual(s, 200, r)
+            out = r["result"]
+            keys = {x["key"] for x in out["result"]["customers"]}
+            self.assertIn(mine, keys)
+            self.assertNotIn(theirs, keys)
+            for hidden in ("weeks", "opening", "lowest", "backtest"):
+                self.assertNotIn(hidden, out)
+            self.assertIn("extrato bancário", out["cash_hidden"])
+            self.assertEqual([d for d in out["delays"] if d["kind"] == "cliente"], [])   # measured on the bank: not read
+
+            # Shared with the group: the member combines the admin's scenario, with their own scope.
+            ok = c.call("scenario.save", name=f"Carteira {SUFFIX}", group=g, shocks=[
+                {"kind": "sales_volume", "params": {"customer": mine, "pct": "50"}}])
+            other = c.call("scenario.save", name=f"Fora da carteira {SUFFIX}", group=g, shocks=[
+                {"kind": "sales_volume", "params": {"customer": theirs, "pct": "50"}}])
+            private = c.call("scenario.save", name=f"Só do admin {SUFFIX}", shocks=[])
+            s, r, _ = self.run_program("scenario.project", {"horizon_weeks": 8, "scenarios": [ok["id"]]}, token=token)
+            self.assertEqual(s, 200, r)
+            scen = r["result"]["scenario"]
+            self.assertEqual({x["key"] for x in scen["result"]["customers"]}, keys)
+            rev = lambda o: next(Decimal(x["revenue"]) for x in o["result"]["customers"] if x["key"] == mine)  # noqa: E731
+            self.assertEqual(rev(scen), rev(r["result"]) * Decimal("1.5"))
+            self.assertTrue(all(e["kind"] == "invoice" for e in r["result"]["compare"]["effects"]), r["result"]["compare"])
+            s, r, _ = self.run_program("scenario.project", {"scenarios": [other["id"]]}, token=token)
+            self.assertEqual((r.get("error") or {}).get("code"), "SCENARIO_SHOCK", r)
+            s, r, _ = self.run_program("scenario.project", {"scenarios": [private["id"]]}, token=token)
+            self.assertEqual((r.get("error") or {}).get("code"), "SCENARIO_NOT_FOUND", r)
+            s, r, _ = self.run_program("scenario.save", {"name": f"Meu {SUFFIX}", "group": "outro-grupo"}, token=token)
+            self.assertEqual((r.get("error") or {}).get("code"), "SCENARIO_GROUP", r)
+        finally:
+            http("PUT", "/api/programs/finance.import_statement", {"restricted": was}, self.token)
+
+    def test_ca_069_06_a_watched_scenario_warns_once_and_is_a_metric_for_the_rules(self):
+        """Spec 069 (T-069-08, RF-069-06, D7, CA-069-06): watching a scenario schedules its recalculation (as the owner);
+        each run keeps a summary on the scenario and warns the owner when the cash goes below the limit — once, not at
+        every run while it stays there; the summary is a metric the rules (spec 051) can watch."""
+        c = self.client
+        sc = c.call("scenario.save", name=f"Vigiado {SUFFIX}", shocks=[])
+        w = c.call("scenario.watch_set", id=sc["id"], cron="0 7 * * 1", limit="999999999999")
+        self.assertIsNotNone(w["job"])
+        self.assertEqual(psql(f"SELECT active FROM scheduler.job WHERE name = 'scenario.vigia_{sc['id']}'"), "t")
+        def watch():
+            s, r, _ = self.run_program("scenario.watch", {"id": sc["id"]})
+            self.assertEqual(s, 200, r)
+            self.assertNotIn("error", r, r)
+            return r["result"]
+
+        first = watch()
+        self.assertIn(f"Vigiado {SUFFIX}", first["warned"])
+        self.assertEqual(self.count("bpm.notification", f"username = 'admin' AND message LIKE '%Vigiado {SUFFIX}%'"), 1)
+        again = watch()
+        self.assertIsNone(again["warned"])                                   # still below: warned already
+        self.assertEqual(self.count("bpm.notification", f"username = 'admin' AND message LIKE '%Vigiado {SUFFIX}%'"), 1)
+        metric = f"cenario_{sc['id']}_menor_caixa"
+        self.assertEqual(Decimal(psql(f"SELECT value FROM scenario.metric WHERE metric = '{metric}'")),
+                         Decimal(again["lowest"]))
+        body = {"name": f"Caixa do cenário {SUFFIX}", "owner": "admin", "trigger_kind": "metric", "metric": metric,
+                "metric_op": "<", "metric_value": 0, "action": {"kind": "notify", "user": "admin", "message": "caixa negativo"}}
+        s, r, _ = http("POST", "/api/admin/automations/rules", body, self.token)
+        self.assertEqual(s, 200, r)
+        s, r2, _ = http("POST", "/api/admin/automations/rules", {**body, "name": f"Métrica inexistente {SUFFIX}",
+                                                                  "metric": "cenario_0_menor_caixa"}, self.token)
+        self.assertEqual(s, 400, r2)
+        http("DELETE", f"/api/admin/automations/rules/{r['id']}", token=self.token)
+        c.call("scenario.watch_set", id=sc["id"], cron="")
+        self.assertEqual(psql(f"SELECT active FROM scheduler.job WHERE name = 'scenario.vigia_{sc['id']}'"), "f")
+        self.assertEqual(pcount("scenario.metric", f"id = {sc['id']}"), 0)
+        c.call("scenario.remove", id=sc["id"])
+
+    MASS = """
+import time
+from ana_lib.scenario import projection
+from ana_lib.scenario import shocks as sh
+
+def timed(f):
+    t = time.perf_counter()
+    r = f()
+    return r, round(time.perf_counter() - t, 2)
+
+def main():
+    wh = ana.sql_value("SELECT id FROM inventory.warehouse WHERE code = 'CENTRAL'")
+    cust = ana.sql_value("INSERT INTO base.party (kind, name) VALUES ('customer', 'Massa 069') RETURNING id")
+    sup = ana.sql_value("INSERT INTO base.party (kind, name) VALUES ('supplier', 'Massa 069 F') RETURNING id")
+    items = [r["id"] for r in ana.sql("INSERT INTO base.product (code, description, price) "
+                                       "SELECT 'MS069' || g, 'massa 069', 100 FROM generate_series(1, 40) g RETURNING id")]
+    ana.sql_exec("INSERT INTO supply.supplier_item (supplier_id, product_id, price, currency, preferred) "
+                 "SELECT $1::int, p, 30, CASE WHEN p % 2 = 0 THEN 'USD' ELSE 'BRL' END, true FROM unnest($2::int[]) p", sup, items)
+    ana.sql_exec("INSERT INTO finance.bill (kind, party_id, document, due_date, amount) "
+                 "SELECT CASE WHEN g % 2 = 0 THEN 'receivable' ELSE 'payable' END, CASE WHEN g % 2 = 0 THEN $1::int ELSE $2::int END, "
+                 "  'M069-' || g, current_date + (g % 180), 100 + g % 50 FROM generate_series(1, 10000) g", cust, sup)
+    orders = [r["id"] for r in ana.sql("INSERT INTO sales.sales_order (customer_id, warehouse_id, created_by) "
+                                        "SELECT $1::int, $2::int, 'admin' FROM generate_series(1, 2000) RETURNING id", cust, wh)]
+    ana.sql_exec("INSERT INTO sales.sales_order_item (order_id, line, product_id, quantity, price) "
+                 "SELECT o, l, ($2::int[])[1 + (o + l) % 40], l, 150 FROM unnest($1::int[]) o, generate_series(1, 3) l",
+                 orders, items)
+    ana.sql_exec("INSERT INTO production.work_order (product_id, quantity, warehouse_id, start_date, due_date, created_by) "
+                 "SELECT ($1::int[])[1 + g % 40], 5, $2::int, current_date + g % 60, current_date + g % 60 + 5, 'admin' "
+                 "FROM generate_series(1, 500) g", items, wh)
+    g, base = timed(lambda: projection.weekly(projection.build(26)))
+    two = sh.validate([{"kind": "currency", "params": {"currency": "USD", "pct": "15"}},
+                       {"kind": "supplier_delay", "params": {"supplier": sup, "days": 10}}])
+    _, scenario = timed(lambda: projection.weekly(sh.project(two, 26)))
+    changed = sh.validate([{"kind": "currency", "params": {"currency": "USD", "pct": "20"}}, two[1]])
+    _, change = timed(lambda: projection.weekly(sh.project(changed, 26)))
+    return {"base_s": base, "scenario_s": scenario, "change_s": change}
+"""
+
+    def test_ca_069_07_the_reference_mass_projects_in_time(self):
+        """Spec 069 (T-069-09, RNF-069-02, CA-069-07): 10 thousand open bills, 2 thousand orders (3 lines), 500 production
+        orders, 26 weeks — the base, a scenario with two shocks and the change of one shock, timed. Made inside a
+        rehearsal (spec 056): the mass is undone at the end. Above the target plus 30% (the CI varies), it fails."""
+        prog = f"test.scenario_mass_{SUFFIX}"
+        self.usd_rate()
+        self.save(prog, self.MASS, limits={"timeout_ms": 300000, "cpu_ms": 300000})
+        s, r, _ = self.run_program(prog, rehearse=True)
+        self.assertEqual(s, 200, r)
+        self.assertNotIn("error", r, r)
+        t = r["result"]
+        print(f"\n[CA-069-07] base {t['base_s']} s, cenário {t['scenario_s']} s, troca de um choque {t['change_s']} s")
+        self.assertEqual(self.count("finance.bill", "document LIKE 'M069-%'"), 0)            # undone
+        self.assertLessEqual(t["base_s"], 10 * 1.3, t)
+        self.assertLessEqual(t["scenario_s"], 10 * 1.3, t)
+        self.assertLessEqual(t["change_s"], 3 * 1.3, t)
+
+    def test_d4_a_read_only_program_cannot_write(self):
+        prog = f"test.ro_{SUFFIX}"
+        self.save(prog, "# ana:read_only yes\ndef main():\n"
+                        "    return ana.sql_value(\"SELECT current_setting('transaction_read_only')\")\n")
+        s, r, _ = self.run_program(prog)
+        self.assertEqual((s, r.get("result")), (200, "on"), r)
+        self.save(prog, "# ana:read_only yes\ndef main():\n    ana.sql_exec(\"UPDATE base.product SET price = price WHERE false\")\n")
+        s, r, _ = self.run_program(prog)
+        self.assertIn("error", r, r)
 
 
 class TestUsageSimulation(Base):

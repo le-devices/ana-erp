@@ -40,11 +40,15 @@ def unit_costs(product_ids):
     """{product_id: cost}: standard cost, else the preferred supplier's price (spec 013), else 0."""
     if not product_ids:
         return {}
-    rows = ana.sql("SELECT p.id, COALESCE(ip.standard_cost, si.price, 0) AS cost FROM base.product p "
+    rows = ana.sql("SELECT p.id, ip.standard_cost, si.price, si.currency FROM base.product p "
                    "LEFT JOIN production.item_plan ip ON ip.product_id = p.id "
                    "LEFT JOIN supply.supplier_item si ON si.product_id = p.id AND si.preferred "
                    "WHERE p.id = ANY($1)", sorted(set(product_ids)))
-    return {r["id"]: Decimal(r["cost"]) for r in rows}
+    # Spec 069 (T-069-01): a supplier's price in dollars or euros is in reais at today's rate (never read as reais).
+    from ana_lib.finance import currency
+    return {r["id"]: (Decimal(r["standard_cost"]) if r["standard_cost"] is not None
+                      else currency.to_brl(r["price"], r["currency"], places=currency.UNIT) if r["price"] is not None
+                      else Decimal(0)) for r in rows}
 
 
 def active_structures(product_ids):

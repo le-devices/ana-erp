@@ -30,7 +30,7 @@ def main(requests=None, send=True, notes=None):
     lines = ana.sql(
         "SELECT r.id AS request_id, r.number, r.warehouse_id, r.project_id, r.cost_center, r.need_date, "
         "  l.line, l.product_id, pr.code, l.quantity, l.est_price, l.rebillable, "
-        "  COALESCE(l.supplier_id, pref.supplier_id) AS supplier_id, si.price AS catalog_price, si.lead_time_days "
+        "  COALESCE(l.supplier_id, pref.supplier_id) AS supplier_id, si.price AS catalog_price, si.currency, si.lead_time_days "
         "FROM supply.purchase_request r JOIN supply.purchase_request_line l ON l.request_id = r.id "
         "JOIN base.product pr ON pr.id = l.product_id "
         "LEFT JOIN supply.supplier_item pref ON pref.product_id = l.product_id AND pref.preferred "
@@ -41,9 +41,12 @@ def main(requests=None, send=True, notes=None):
     if orphan:
         raise ana.Error("NO_SUPPLIER", "sem fornecedor (defina um preferencial no catálogo): " + ", ".join(orphan))
 
+    # Spec 069 (T-069-01): an order keeps the currency of its prices — the catalog's (dollar, euro…), else the
+    # request's estimate in reais; one order per supplier, warehouse and currency.
     groups = {}
     for l in lines:
-        groups.setdefault((l["supplier_id"], l["warehouse_id"]), []).append(l)
+        cur = (l["currency"] or "BRL") if l["catalog_price"] is not None else "BRL"
+        groups.setdefault((l["supplier_id"], l["warehouse_id"], cur), []).append(l)
     keys = sorted(groups)
     suppliers = {r["id"]: r["name"] for r in ana.sql(
         "SELECT id, name FROM base.party WHERE id = ANY($1) AND active AND kind IN ('supplier', 'both')",
@@ -65,17 +68,19 @@ def main(requests=None, send=True, notes=None):
     totals = [sum((b[2] * b[3] for b in rows[k]), Decimal(0)).quantize(Decimal("0.01"), ROUND_HALF_UP) for k in keys]
     # All orders in one statement, then all lines in one batch (no round trip per supplier).
     orders = ana.sql(
-        "INSERT INTO supply.purchase_order (supplier_id, warehouse_id, payment_days, notes, created_by, total, status, sent_at) "
-        "SELECT s, w, $3, $4, $5, t::numeric, CASE WHEN $6 THEN 'sent' ELSE 'draft' END, CASE WHEN $6 THEN now() END "
-        "FROM unnest($1::int[], $2::int[], $7::text[]) WITH ORDINALITY AS x(s, w, t, n) ORDER BY n "
-        "RETURNING id, number, supplier_id, warehouse_id",
-        [k[0] for k in keys], [k[1] for k in keys], payment_days, notes, ana.context.user, send, [str(t) for t in totals])
-    ids = {(o["supplier_id"], o["warehouse_id"]): o for o in orders}
+        "INSERT INTO supply.purchase_order (supplier_id, warehouse_id, payment_days, notes, created_by, total, status, sent_at, "
+        "  currency) "
+        "SELECT s, w, $3, $4, $5, t::numeric, CASE WHEN $6 THEN 'sent' ELSE 'draft' END, CASE WHEN $6 THEN now() END, c "
+        "FROM unnest($1::int[], $2::int[], $7::text[], $8::text[]) WITH ORDINALITY AS x(s, w, t, c, n) ORDER BY n "
+        "RETURNING id, number, supplier_id, warehouse_id, currency",
+        [k[0] for k in keys], [k[1] for k in keys], payment_days, notes, ana.context.user, send, [str(t) for t in totals],
+        [k[2] for k in keys])
+    ids = {(o["supplier_id"], o["warehouse_id"], o["currency"]): o for o in orders}
     ana.sql_batch("INSERT INTO supply.purchase_order_line (order_id, line, product_id, quantity, price, promised_date, "
                   "  request_id, request_line, project_id, cost_center, rebillable) "
                   "VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)",
                   [[ids[k]["id"], *b] for k in keys for b in rows[k]])
-    created = [{"ordem": ids[k]["number"], "_open": doc_link("purchase_order", ids[k]["number"]), "fornecedor": suppliers[k[0]], "linhas": len(rows[k]), "total": t,
+    created = [{"ordem": ids[k]["number"], "_open": doc_link("purchase_order", ids[k]["number"]), "fornecedor": suppliers[k[0]], "linhas": len(rows[k]), "total": t, "moeda": k[2],
                 "situação": "enviada" if send else "rascunho",
                 "_actions": [{"label": "Receber", "program": "supply.receive", "params": {"order": ids[k]["number"]},
                               "confirm": f"Receber tudo o que está pendente na ordem {ids[k]['number']}?"}] if send else []}

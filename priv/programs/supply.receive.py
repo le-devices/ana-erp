@@ -14,6 +14,7 @@ The database refuses quantities above the ordered quantity plus tolerance (RNF-0
 import datetime
 from decimal import Decimal, ROUND_HALF_UP
 
+from ana_lib.finance import currency
 from ana_lib.sales import fulfillment
 
 PARAMS = {
@@ -22,14 +23,14 @@ PARAMS = {
     "line": {"type": "int", "label": "linha (vazio = todas as pendentes)", "order": 2,
              "lookup": {"program": "supply.lookup", "params": {"kind": "order_lines"}, "depends": ["order"]}},
     "quantity": {"type": "decimal", "label": "quantidade recebida", "order": 3},
-    "price": {"type": "decimal", "label": "preço na nota (vazio = o da ordem)", "order": 4},
+    "price": {"type": "decimal", "label": "preço na nota, na moeda da ordem (vazio = o da ordem)", "order": 4},
     "document": {"type": "str", "label": "nota fiscal / documento", "order": 5, "scan": True},
     "note": {"type": "str", "label": "observação (aceite de serviço)", "order": 6},
     "lines": {"type": "list", "label": "várias linhas de uma vez", "order": 7, "columns": {
         "line": {"type": "int", "required": True, "label": "linha",
                  "lookup": {"program": "supply.lookup", "params": {"kind": "order_lines"}, "depends": ["order"]}},
         "quantity": {"type": "decimal", "label": "quantidade (vazio = o pendente)"},
-        "price": {"type": "decimal", "label": "preço na nota (vazio = o da ordem)"},
+        "price": {"type": "decimal", "label": "preço na nota, na moeda da ordem (vazio = o da ordem)"},
         "note": {"type": "str", "label": "observação"}}},
 }
 CENT = Decimal("0.01")
@@ -37,7 +38,7 @@ KIND_OF_EXPENSE = {"goods": "component", "service": "subcontract"}
 
 
 def main(order, line=None, quantity=None, price=None, document=None, note=None, lines=None):
-    o = ana.sql_one("SELECT o.id, o.number, o.status, o.supplier_id, o.warehouse_id, o.payment_days, p.name AS supplier "
+    o = ana.sql_one("SELECT o.id, o.number, o.status, o.supplier_id, o.warehouse_id, o.payment_days, o.currency, p.name AS supplier "
                     "FROM supply.purchase_order o JOIN base.party p ON p.id = o.supplier_id WHERE o.number = $1 "
                     "FOR UPDATE OF o", order)
     if not o:
@@ -61,8 +62,11 @@ def main(order, line=None, quantity=None, price=None, document=None, note=None, 
     if not lines:
         raise ana.Error("NOTHING_TO_RECEIVE", f"nada pendente na ordem {o['number']}")
 
-    receipt = ana.sql_value("INSERT INTO supply.receipt (order_id, document, received_by) VALUES ($1, $2, $3) RETURNING id",
-                            o["id"], document, ana.context.user)
+    # Spec 069 (T-069-01): an order in dollars or euros is received at the rate of the day — stock, project costs,
+    # journal and bill in reais; the receipt keeps the currency and the rate it used. Without a rate: refused.
+    rate = currency.rate(o["currency"])
+    receipt = ana.sql_value("INSERT INTO supply.receipt (order_id, document, received_by, currency, exchange_rate) "
+                            "VALUES ($1, $2, $3, $4, $5) RETURNING id", o["id"], document, ana.context.user, o["currency"], rate)
     doc = f"OC-{o['number']}/{receipt}"
     rows, journal, total, todo = [], {}, Decimal(0), []
     for item in lines:
@@ -73,7 +77,8 @@ def main(order, line=None, quantity=None, price=None, document=None, note=None, 
         qty = Decimal(str(item.get("quantity") if item.get("quantity") is not None else l["quantity"] - l["received_qty"]))
         if qty <= 0:
             raise ana.Error("INVALID_VALUE", f"quantidade da linha {n} deve ser positiva")
-        unit = Decimal(str(item["price"])) if item.get("price") is not None else l["price"]
+        given = Decimal(str(item["price"])) if item.get("price") is not None else l["price"]   # in the order's currency
+        unit = (Decimal(str(given)) * rate).quantize(currency.UNIT, rounding=ROUND_HALF_UP) if rate != 1 else given
         amount = (qty * unit).quantize(CENT, rounding=ROUND_HALF_UP)
         dest = "project" if l["project_id"] else ("stock" if l["kind"] == "goods" else "service")
         # Spec 038: goods are valued and posted by the database (D inventory / C goods_received);
@@ -150,6 +155,8 @@ def main(order, line=None, quantity=None, price=None, document=None, note=None, 
     ana.sql_exec("UPDATE supply.purchase_order SET status = $2 WHERE id = $1", o["id"], status)
     ana.table(rows, title=f"Recebimento {doc} — {o['supplier']}")
     result = {"receipt": receipt, "document": doc, "order_status": status, "total": total, "entry": entry, "bill": bill}
+    if o["currency"] != "BRL":
+        result.update({"currency": o["currency"], "exchange_rate": rate})
     # Spec 041: what was bought for a sales order (or for the work order that serves it) frees it to move on.
     links = ana.sql("SELECT DISTINCT rl.sales_order_id, rl.work_order_id FROM supply.purchase_order_line pl "
                     "JOIN supply.purchase_request_line rl ON rl.request_id = pl.request_id AND rl.line = pl.request_line "

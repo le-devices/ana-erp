@@ -355,6 +355,9 @@ rehearse(UseId, Prog, Input, User, Conv) ->
             Lines = [L || L <- maps:get(messages, Effect, []), is_binary(L)],
             Text = iolist_to_binary([<<"ENSAIO — nada foi gravado. Efeito que a rotina teria: "/utf8>>,
                                      case Lines of [] -> <<"nenhuma mudança visível"/utf8>>; _ -> lists:join(<<"; ">>, Lines) end,
+                                     %% Spec 069 (D6): what the rehearsal showed (premises to check, totals) — masked and
+                                     %% cut like a query's result (D5); still data, never instructions.
+                                     <<". O ensaio mostrou: "/utf8>>, summary(R),
                                      <<". A ação aguarda a confirmação da pessoa na tela (você não pode confirmar)."/utf8>>]),
             {result(UseId, Text, false), #{id => Id, program => Prog, params => Input, effect => Effect}};
         {error, E} ->

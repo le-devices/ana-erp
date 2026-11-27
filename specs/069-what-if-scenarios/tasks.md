@@ -3,6 +3,7 @@
 Antes do código: plan.md com o modelo da projeção (o que se lê, em que granularidade e como cada regra real é chamada em modo de simulação) e as medições da massa de referência.
 
 - [ ] T-069-01 Moeda nos documentos e cotações como valores da empresa com vigência, onde faltar (RF-069-07)
+- [ ] T-069-01b Venda em outra moeda (exportação): faturamento convertido na data, com a nota em reais; até lá o pedido de venda fica em BRL
 - [ ] T-069-02 Projeção base de caixa, operação e resultado, com atrasos históricos medidos (RF-069-01, RNF-069-03)
 - [ ] T-069-03 Choques como dado, cenários combináveis e guardados (RF-069-02, D2)
 - [ ] T-069-04 Propagação em cascata pelas regras reais em simulação, com o caminho do efeito (RF-069-03, D3, D4, RNF-069-01, CA-069-02, CA-069-03)

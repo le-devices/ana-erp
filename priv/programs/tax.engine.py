@@ -571,10 +571,11 @@ def indicator_value(data, code, day, doc_total=Decimal(0), depth=0):
     return value
 
 
-def calculate(document, record=None):
-    """Calculates a document. record = (doc_kind, doc_ref) stores the calculation (RF-049-11)."""
+def calculate(document, record=None, data=None):
+    """Calculates a document. record = (doc_kind, doc_ref) stores the calculation (RF-049-11). `data`: the rules of a
+    scenario (spec 069, `with_drafts`) instead of the ones in force."""
     started = time.perf_counter()
-    data = load()
+    data = data or load()
     doc = normalize(document, data)
     total = sum((i["amount"] for i in doc["items"]), Decimal(0))
     day = as_date(doc["date"])
@@ -602,13 +603,44 @@ def save(result, kind, ref):
     return result["calculation"]
 
 
-def burden_rate(document, sample=Decimal("10000.00")):
+def burden_rate(document, sample=Decimal("10000.00"), data=None):
     """Share of the revenue that the emitter pays in taxes for a document like this one (projections and margins):
     calculated by the rules on a sample amount, never by a rate typed in a program."""
     doc = dict(document)
     doc["items"] = [{"description": "amostra", "quantity": 1, "unit_price": sample}]
-    r = calculate(doc)
+    r = calculate(doc, data=data)
     return (r["totals"]["amount"] / sample).quantize(Decimal("0.000001"))
+
+
+def with_drafts(drafts):
+    """The rules in force plus draft rules as if active from a date — only in memory, for a scenario (spec 069, D2).
+    `drafts`: [(rule id, from date)]. A draft takes the place of the active rules of the same tax and the same
+    criteria from that date on; with other criteria it sits beside them (the most specific wins, as always)."""
+    base = load()
+    if not drafts:
+        return base
+    ids = [int(i) for i, _ in drafts]
+    rows = {r["id"]: r for r in ana.sql("SELECT id, tax, name, valid_from, valid_to, criteria, formulas, status, version "
+                                        "FROM tax.rule WHERE id = ANY($1) AND status = 'draft'", ids)}
+    missing = [i for i in ids if i not in rows]
+    if missing:
+        raise TaxError("TAX_DRAFT_NOT_FOUND", f"regra em rascunho não encontrada: {', '.join(map(str, missing))}")
+    rules = [dict(r) for r in base.rules]
+    for rid, start in drafts:
+        d = dict(rows[int(rid)])
+        d["criteria"] = _json(d["criteria"])
+        d["formulas"] = _json(d["formulas"]) if not isinstance(d["formulas"], list) else d["formulas"]
+        start = as_date(start) if start else as_date(d["valid_from"])
+        d["valid_from"] = max(as_date(d["valid_from"]), start)
+        d["status"] = "active"
+        until = d["valid_from"] - datetime.timedelta(days=1)
+        for r in rules:
+            if r["tax"] == d["tax"] and canonical(r["criteria"]) == canonical(d["criteria"]) \
+                    and (r.get("valid_to") is None or as_date(r["valid_to"]) > until):
+                r["valid_to"] = until
+        rules.append(d)
+    return Data(taxes=base.taxes, rules=rules, tables=base.tables, attributes=base.attributes, values=base.values,
+                indicators=list(base.indicators.values()), version=("scenario", base.version, tuple(sorted(drafts, key=str))))
 
 
 def account(role_target):
