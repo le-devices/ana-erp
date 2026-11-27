@@ -47,13 +47,13 @@ def main(scenario="principal", horizon_weeks=12):
                   "status": "bad" if any("atrasada" in s[5] for s in suggestions) else "ok"}])
     ana.table([{"ação": "fabricar" if k == "make" else "comprar", "item": codes[i], "quantidade": q, "início": s,
                 "necessário em": n, "origem": "; ".join(o).replace("#", "")}
-               for k, i, q, s, n, o in suggestions[:500]], title=f"Sugestões — cenário {scenario}")
+               for k, i, q, s, n, o, _lead in suggestions[:500]], title=f"Sugestões — cenário {scenario}")
     if suggestions:
         ana.actions([{"label": "Aprovar todas", "program": "production.approve_suggestions", "params": {"scenario": scenario},
                       "style": "primary", "confirm": f"Gerar {len(suggestions)} ordem(ns) e solicitação(ões)?"}],
                     title="Próximo passo")
     return {"run": run, "suggestions": [{"kind": k, "product": codes[i], "quantity": q, "start": s, "need": n}
-                                        for k, i, q, s, n, _ in suggestions]}
+                                        for k, i, q, s, n, *_ in suggestions]}
 
 
 def ana_json(v):

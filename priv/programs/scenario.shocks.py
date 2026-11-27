@@ -279,6 +279,7 @@ class Effects:
         self.volume = []                    # [(item code, group, customer, factor)]
         self.capacity = []                  # [(resource, pct, from, until)]
         self.drafts = []                    # [(rule id, from)]
+        self.original = None                # ana.value without the scenario, while applied
 
     def since(self, p):
         return as_date(p.get("from")) or self.today
@@ -351,7 +352,7 @@ def applied(e):
     if not e.values and not e.rate:
         yield
         return
-    original = ana.value
+    original = e.original = ana.value
 
     def value(name, at=None, company=None):
         day = as_date(at) or e.today
@@ -470,6 +471,17 @@ def hooks(e):
 
     if e.price or e.rate:
         h["line_cost"] = line_cost(e, factor_price)
+
+        def unit_costs(ids):
+            """The ERP's cost, read with the company values as they are (the scenario's rates come in line_cost)."""
+            from ana_lib.production import common
+            current = ana.value
+            ana.value = e.original or current
+            try:
+                return common.unit_costs(ids)
+            finally:
+                ana.value = current
+        h["unit_costs"] = unit_costs
 
     if e.capacity:
         h["work_orders"] = work_orders(e)

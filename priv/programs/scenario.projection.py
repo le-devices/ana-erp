@@ -118,6 +118,7 @@ def build(horizon_weeks=26, today=None, hooks=None, cash=True):
     - "term_days": {"receive": n, "pay": n} added to the payment terms of the orders;
     - "price"(item, price, at) → the purchase price (in the order's currency) of what arrives at `at`;
     - "line_cost"(item, qty, at, cost) → the cost of an order line invoiced at `at`;
+    - "unit_costs"(item ids) → the cost of each item without the scenario (line_cost adds the shocks);
     - "tax_data": the tax rules to use (tax.engine.with_drafts).
     Without `cash` (plan §7), no cash event is calculated: no bank balance, bill or bank history is read."""
     hooks = hooks or {}
@@ -267,7 +268,8 @@ def build(horizon_weeks=26, today=None, hooks=None, cash=True):
         give(supplies.get(item, []), demands.get(item, []), ready, g.end)
 
     # Deliveries, invoices (whole order), receivables by the payment term plus the customer's delay, taxes.
-    costs = common.unit_costs(sorted({s["product_id"] for s in sales})) if sales else {}
+    # The cost of each item as the ERP keeps it (without the scenario: its shocks enter by "line_cost", at each date).
+    costs = (hooks.get("unit_costs") or common.unit_costs)(sorted({s["product_id"] for s in sales})) if sales else {}
     tax_day = int(value_or("financeiro.dia_impostos", TAX_DAY))
     tax_data = hooks.get("tax_data")
     line_cost = hooks.get("line_cost") or (lambda item, qty, at, cost: cost)
