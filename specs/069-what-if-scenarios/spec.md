@@ -1,6 +1,6 @@
 # 069 — Cenários "e se…": gêmeo financeiro e operacional da empresa
 
-Situação: especificada (nov/2026).
+Situação: especificada (nov/2026); plano em plan.md (27/11/2026).
 
 ## Problema
 O ERP mostra o passado (relatórios) e o presente (painéis), mas não deixa
