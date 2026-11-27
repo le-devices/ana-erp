@@ -139,5 +139,8 @@ fazer. O monitor atual (spec 011) mostra só o estado instantâneo.
   esperam em memória, na ordem. O comportamento anterior (componente vermelho
   abre incidente crítico) virou a regra inicial "Componente em falha".
 - Silêncio: por regra, alvo e nó (vazio = todos), de 1 minuto a 30 dias, com
-  motivo; é encerrado, nunca apagado. Regras e silêncios ficam no registro de
-  administração.
+  motivo; é encerrado, nunca apagado. Vale desde o instante em que é criado:
+  a avaliação usa o relógio do nó com frações de segundo e conta o início e o
+  fim a partir do relógio do banco, então um silêncio criado logo antes de
+  ativar a regra já segura o primeiro aviso. Regras e silêncios ficam no
+  registro de administração.

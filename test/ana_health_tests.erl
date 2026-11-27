@@ -27,6 +27,8 @@ t_019_08b_silences_match_by_filters_and_time_test() ->
     ?assert(ana_health:silenced([All], 7, <<"memory_mb">>, <<"n1">>, 150)),
     ?assertNot(ana_health:silenced([All], 7, <<"memory_mb">>, <<"n1">>, 200)),   % ended
     ?assertNot(ana_health:silenced([All], 7, <<"memory_mb">>, <<"n1">>, 99)),    % not yet
+    Fresh = silence(null, null, null, 100.7, 200),                              % made 0.2 s ago
+    ?assert(ana_health:silenced([Fresh], 7, <<"memory_mb">>, <<"n1">>, 100.9)),
     Rule = silence(7, null, null, 100, 200),
     ?assert(ana_health:silenced([Rule], 7, <<"database">>, <<"n2">>, 150)),
     ?assertNot(ana_health:silenced([Rule], 8, <<"database">>, <<"n2">>, 150)),
