@@ -13,8 +13,10 @@ sources (T-069-03, RF-069-02) and set beside the base."""
 
 import json
 
-from ana_lib.scenario import projection
+from ana_lib.scenario import effect, projection
 from ana_lib.scenario import shocks as sh
+
+SINGLES_MAX = 5         # up to this many shocks, each one is projected alone to name the cause of each effect
 
 PARAMS = {"horizon_weeks": {"type": "int", "default": 26, "label": "semanas à frente (até 52)"},
           "scenarios": {"type": "list", "label": "cenários guardados a combinar (ids)"},
@@ -65,6 +67,9 @@ def main(horizon_weeks=26, scenarios=None, shocks=None):
         gs = sh.project(checked, weeks)
         out["scenario"] = {"names": names, "shocks": checked, **projection.weekly(gs, cash=cash)}
         out["compare"] = compare(out, out["scenario"], cash)
+        singles = ({i: sh.project([s], weeks) for i, s in enumerate(checked)}
+                   if 1 < len(checked) <= SINGLES_MAX else None)
+        out["compare"].update(effect.explain(g, gs, checked, singles, cash=cash))
         ana.table([{"choque": s["label"]} for s in checked], title="Choques do cenário", empty="Sem choques: igual à base",
                   empty_good=True)
         c = out["compare"]
@@ -76,6 +81,8 @@ def main(horizon_weeks=26, scenarios=None, shocks=None):
         ana.table([{"linha": r["group"], "base": r["base"], "cenário": r["scenario"], "diferença": r["change"]}
                    for r in c["margin_by_group"]], title="Margem por linha: base × cenário", empty="Nenhum pedido em carteira",
                   empty_good=True)
+        ana.table([{"efeito": e["text"]} for e in out["compare"]["effects"]], title="Caminho do efeito (o que mais pesa)",
+                  empty="Nada mudou em relação à base", empty_good=True)
         for n in gs.notes:
             ana.log(f"cenário: {n}")
     names = {r["id"]: r["name"] for r in ana.sql(

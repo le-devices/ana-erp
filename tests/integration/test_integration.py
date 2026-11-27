@@ -9752,6 +9752,16 @@ class TestProjection(Base):
         self.assertEqual(when(out["scenario"]), max(today, promised + datetime.timedelta(days=delay + 10)).isoformat(),
                          out["scenario"]["deliveries_at_risk"])
         self.assertIn(doc, [x["doc"] for x in out["compare"]["deliveries_late"]])
+        # T-069-04 (RF-069-03): the path of each effect down to the shock — the order's money comes 10 days later
+        # because the delivery waits for the purchase, which arrives 10 days later.
+        arrival = f"chegada da compra OC-{po}/1 adiado 10 dias"
+        paths = [e for e in out["compare"]["effects"] if arrival in e["path"]]
+        self.assertTrue(paths, out["compare"]["effects"])
+        self.assertTrue(all(e["shocks"] == [late["shocks"][0]["label"]] for e in paths), paths)
+        received = next((e for e in paths if e["doc"].startswith(f"ORD-{order} parcela")), None)
+        self.assertIsNotNone(received, paths)
+        self.assertEqual(received["path"][-1], arrival)
+        self.assertIn(f"entrega ORD-{order}/1 adiado 10 dias", received["path"])
 
         # The dollar +15%: the cost of the line (bought in dollars) 15% higher, so the margin falls by that much.
         out = project([dollar["id"]])
@@ -9767,6 +9777,9 @@ class TestProjection(Base):
         strip = lambda o: {k: v for k, v in o["scenario"].items() if k not in ("names", "shocks")}  # noqa: E731
         self.assertEqual(strip(ab), strip(ba))
         self.assertEqual(when(ab["scenario"]), when(project([late["id"]])["scenario"]))
+        # Two shocks on the same invoice (later and dearer): both named as its cause.
+        inv = next(e for e in ab["compare"]["effects"] if e["doc"] == f"ORD-{order}" and e["kind"] == "invoice")
+        self.assertEqual(sorted(inv["shocks"]), sorted([late["shocks"][0]["label"], dollar["shocks"][0]["label"]]), inv)
         out = project([empty["id"]])
         for key in ("weeks", "lowest", "result", "deliveries_at_risk"):
             self.assertEqual(out["scenario"][key], out[key], key)
