@@ -9676,6 +9676,107 @@ class TestProjection(Base):
         self.assertIn("deviation_pct", out["backtest"])
         self.assertLessEqual(Decimal(out["lowest"]["balance"]), Decimal(out["opening"]))
 
+    def scenario_err(self, program, **params):
+        s, r, _ = self.run_program(program, params)
+        self.assertIn("error", r, r)
+        return r["error"]
+
+    def test_rf_069_02_shocks_are_data_combined_in_any_order_and_saved(self):
+        """Spec 069 (T-069-03, RF-069-02, D2, CA-069-02): the kinds of shock are a catalog; a scenario keeps its shocks
+        (checked, with a sentence each); combining scenarios gives the same result in any order; a scenario without
+        shocks is the base; projecting never writes."""
+        c = self.client
+        sfx = SUFFIX[-6:]
+        item = f"PS{sfx}"
+        customer = c.call("base.save_party", name=f"Cliente Cenário {SUFFIX}", state="SP")["id"]
+        supplier = c.call("base.save_party", kind="supplier", name=f"Fornecedor Cenário {SUFFIX}")["id"]
+        c.call("base.save_product", code=item, description="Item importado do cenário", price="100")
+        c.call("supply.save_supplier_item", product=item, supplier=supplier, price="10.00", currency="USD", lead_time_days=20,
+               preferred=True)
+        if psql("SELECT count(*) FROM ana_system.company_value_version WHERE name = 'financeiro.cotacao_usd' "
+                "AND status = 'active'") == "0":
+            s, v, _ = http("POST", "/api/values/financeiro.cotacao_usd/versions", {"content": "5,40", "valid_from": "2020-01-01"},
+                           self.token)
+            self.assertEqual(s, 200, v)
+        req = c.call("supply.request_purchase", reason="cenário", product=item, quantity=10, warehouse="CENTRAL")
+        c.call("supply.approve_request", request=req["number"])
+        po = c.call("supply.create_orders", requests=[req["number"]])["orders"][0]
+        order = c.call("sales.create_order", customer=customer, items=[{"product": item, "quantity": 10}])["number"]
+
+        # The catalog: the kinds of D2, as data.
+        kinds = {r[0] for r in http("POST", "/api/sql", {"sql": "SELECT code FROM scenario.shock_kind WHERE active"},
+                                    self.token)[1]["rows"]}
+        self.assertTrue({"currency", "purchase_price", "supplier_delay", "supplier_stops", "customer_delay", "customer_stops",
+                         "payment_terms", "sales_volume", "capacity", "tax_rule", "company_value"} <= kinds, kinds)
+        # Checked before saving: what is wrong, and in which shock.
+        e = self.scenario_err("scenario.save", name=f"Ruim {SUFFIX}", shocks=[{"kind": "meteoro", "params": {}}])
+        self.assertEqual(e["code"], "SCENARIO_SHOCK")
+        self.assertIn("choque 1", e["message"])
+        e = self.scenario_err("scenario.save", name=f"Ruim {SUFFIX}", shocks=[
+            {"kind": "currency", "params": {"currency": "USD", "pct": "10"}},
+            {"kind": "supplier_delay", "params": {"supplier": supplier}}])
+        self.assertIn("choque 2", e["message"])
+        self.assertIn("falta", e["message"])
+        e = self.scenario_err("scenario.save", name=f"Ruim {SUFFIX}", shocks=[
+            {"kind": "supplier_delay", "params": {"supplier": customer, "days": 3}}])
+        self.assertIn("não é fornecedor", e["message"])
+        self.assertEqual(self.count("scenario.scenario", f"name = 'Ruim {SUFFIX}'"), 0)
+
+        late = c.call("scenario.save", name=f"Atraso {SUFFIX}", shocks=[
+            {"kind": "supplier_delay", "params": {"supplier": supplier, "days": 10}}])
+        dollar = c.call("scenario.save", name=f"Dólar {SUFFIX}", shocks=[
+            {"kind": "currency", "params": {"currency": "usd", "pct": "15"}}])
+        empty = c.call("scenario.save", name=f"Vazio {SUFFIX}", shocks=[])
+        self.assertEqual(late["shocks"][0]["label"], f"Fornecedor Cenário {SUFFIX} entrega 10 dias depois")
+        self.assertEqual(dollar["shocks"][0]["params"]["currency"], "USD")
+        self.assertEqual(self.scenario_err("scenario.save", name=f"Atraso {SUFFIX}")["code"], "SCENARIO_NAME")
+
+        before = {t: self.count(t) for t in ("production.suggestion", "finance.bill", "sales.sales_order", "supply.purchase_order",
+                                             "scenario.scenario")}
+
+        def project(ids):
+            s, r, _ = self.run_program("scenario.project", {"horizon_weeks": 12, "scenarios": ids})
+            self.assertEqual(s, 200, r)
+            self.assertNotIn("error", r, r)
+            return r["result"]
+
+        # The supplier 10 days later: the purchase arrives 10 days later, and so does the delivery.
+        out = project([late["id"]])
+        promised = datetime.date.fromisoformat(str(self.scalar(
+            f"SELECT COALESCE(l.promised_date, current_date) FROM supply.purchase_order_line l JOIN supply.purchase_order o "
+            f"ON o.id = l.order_id WHERE o.number = {po}"))[:10])
+        delay = next((d["days"] for d in out["delays"] if d["kind"] == "fornecedor" and d["party"] == supplier), 0)
+        today = ana_today()
+        doc = f"ORD-{order}/1"
+        when = lambda o: next((str(x["date"])[:10] for x in o["deliveries_at_risk"] if x["doc"] == doc), None)  # noqa: E731
+        self.assertEqual(when(out["scenario"]), max(today, promised + datetime.timedelta(days=delay + 10)).isoformat(),
+                         out["scenario"]["deliveries_at_risk"])
+        self.assertIn(doc, [x["doc"] for x in out["compare"]["deliveries_late"]])
+
+        # The dollar +15%: the cost of the line (bought in dollars) 15% higher, so the margin falls by that much.
+        out = project([dollar["id"]])
+        base = next(x for x in out["result"]["customers"] if x["key"] == customer)
+        scen = next(x for x in out["scenario"]["result"]["customers"] if x["key"] == customer)
+        self.assertEqual(Decimal(scen["revenue"]), Decimal(base["revenue"]))
+        self.assertAlmostEqual(Decimal(scen["cost"]), Decimal(base["cost"]) * Decimal("1.15"), delta=Decimal("0.05"))
+        paid = lambda o: sum(Decimal(w["out"]) for w in o["weeks"])  # noqa: E731
+        self.assertLess(paid(out["scenario"]), paid(out))                    # the purchase paid in dollars costs more
+
+        # Combined, in any order, the same; without shocks, the base (CA-069-02).
+        ab, ba = project([late["id"], dollar["id"]]), project([dollar["id"], late["id"]])
+        strip = lambda o: {k: v for k, v in o["scenario"].items() if k not in ("names", "shocks")}  # noqa: E731
+        self.assertEqual(strip(ab), strip(ba))
+        self.assertEqual(when(ab["scenario"]), when(project([late["id"]])["scenario"]))
+        out = project([empty["id"]])
+        for key in ("weeks", "lowest", "result", "deliveries_at_risk"):
+            self.assertEqual(out["scenario"][key], out[key], key)
+        self.assertEqual(out["compare"]["deliveries_late"], [])
+
+        self.assertEqual({t: self.count(t) for t in before}, before)          # projecting wrote nothing
+        c.call("scenario.remove", id=empty["id"])
+        self.assertEqual(self.scenario_err("scenario.remove", id=empty["id"])["code"], "SCENARIO_NOT_FOUND")
+        self.assertEqual(self.scenario_err("scenario.project", scenarios=[empty["id"]])["code"], "SCENARIO_NOT_FOUND")
+
     def test_d4_a_read_only_program_cannot_write(self):
         prog = f"test.ro_{SUFFIX}"
         self.save(prog, "# ana:read_only yes\ndef main():\n"

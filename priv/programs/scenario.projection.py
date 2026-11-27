@@ -103,9 +103,15 @@ class Delays:
 
 # ------------------------------------------------------------------ the base
 def build(horizon_weeks=26, today=None, hooks=None):
-    """The base projection (no shock). `hooks` (spec 069, scenarios) changes a source's rows before it is used:
-    "bills", "purchase_lines", "sale_lines"; under "mrp", the hooks of production.mrp ("sales", "forecast",
-    "purchases": its own rows)."""
+    """The base projection (no shock). `hooks` (spec 069, scenarios: scenario.shocks) changes the sources before they
+    are used, so a shock goes through the same rules as the base:
+    - "bills", "purchase_lines", "sale_lines", "work_orders", "catalog": a source's rows, returned changed;
+    - under "mrp", the hooks of production.mrp ("sales", "forecast", "purchases": its own rows);
+    - "delay"(kind, party, days, at) → the days to use, or None when it never happens (kind "receivable"/"supplier");
+    - "term_days": {"receive": n, "pay": n} added to the payment terms of the orders;
+    - "price"(item, price, at) → the purchase price (in the order's currency) of what arrives at `at`;
+    - "line_cost"(item, qty, at, cost) → the cost of an order line invoiced at `at`;
+    - "tax_data": the tax rules to use (tax.engine.with_drafts)."""
     hooks = hooks or {}
 
     def hook(name, rows):
@@ -129,11 +135,15 @@ def build(horizon_weeks=26, today=None, hooks=None):
         r = rates[(cur, at)]
         return money(Decimal(str(amount)) * r) if r is not None else ZERO
 
-    def delay(kind, party, used):
+    def delay(kind, party, used, at):
         d, why = delays.of(kind, party)
         if party not in used:
             used[party] = (d, why)
-        return d
+        f = hooks.get("delay")
+        return f(kind, party, d, at) if f else d
+
+    term_days = {"receive": 0, "pay": 0, **(hooks.get("term_days") or {})}
+    price = hooks.get("price") or (lambda item, p, at: p)
 
     cust_used, supp_used = {}, {}
 
@@ -147,7 +157,10 @@ def build(horizon_weeks=26, today=None, hooks=None):
     for r in hook("bills", ana.sql("SELECT id, kind, party_id, document, due_date, amount FROM finance.bill "
                                    "WHERE status = 'open' ORDER BY id")):
         inflow = r["kind"] == "receivable"
-        d = delay("receivable", r["party_id"], cust_used) if inflow else 0
+        d = delay("receivable", r["party_id"], cust_used, r["due_date"]) if inflow else 0
+        if d is None:
+            g.note("há títulos a receber que, neste cenário, não entram")
+            continue
         g.add("cash_in" if inflow else "cash_out", max(today, r["due_date"] + datetime.timedelta(days=d)),
               r["amount"] if inflow else -Decimal(r["amount"]), doc=f"título {r['document']}", party=r["party_id"],
               bill=r["id"], due=r["due_date"])
@@ -169,27 +182,38 @@ def build(horizon_weeks=26, today=None, hooks=None):
             "  COALESCE(l.promised_date, current_date) AS d, l.quantity - l.received_qty AS q "
             "FROM supply.purchase_order_line l JOIN supply.purchase_order o ON o.id = l.order_id "
             "WHERE o.status IN ('draft', 'sent', 'partially_received') AND l.received_qty < l.quantity ORDER BY o.number, l.line")):
-        d = delay("supplier", r["supplier_id"], supp_used)
+        d = delay("supplier", r["supplier_id"], supp_used, r["d"])
+        if d is None:
+            g.note("há compras em aberto que, neste cenário, não chegam")
+            continue
         at = max(today, r["d"] + datetime.timedelta(days=d))
         rec = g.add("receipt", at, doc=f"OC-{r['number']}/{r['line']}", party=r["supplier_id"], item=r["product_id"],
                     qty=Decimal(r["q"]), currency=r["currency"], promised=r["d"])
         supplies.setdefault(r["product_id"], []).append([at, Decimal(r["q"]), rec])
-        pay = at + datetime.timedelta(days=r["payment_days"])
-        g.add("cash_out", pay, -brl(Decimal(r["q"]) * Decimal(r["price"]), r["currency"], at), doc=f"OC-{r['number']}/{r['line']}",
+        pay = at + datetime.timedelta(days=r["payment_days"] + term_days["pay"])
+        g.add("cash_out", pay, -brl(Decimal(r["q"]) * price(r["product_id"], Decimal(r["price"]), at), r["currency"], at), doc=f"OC-{r['number']}/{r['line']}",
               party=r["supplier_id"], item=r["product_id"], after=[rec])
 
     # What the planning would still propose (production.mrp, the MRP's own calculation).
-    catalog = {r["product_id"]: r for r in ana.sql(
-        "SELECT product_id, supplier_id, price, currency FROM supply.supplier_item WHERE preferred")}
+    catalog = {r["product_id"]: r for r in hook("catalog", ana.sql(
+        "SELECT product_id, supplier_id, price, currency FROM supply.supplier_item WHERE preferred"))}
     pay_days = ana.sql_value("SELECT default_payment_days FROM supply.policy WHERE id = 1") or 30
     for kind, item, qty, start, need, origin in mrp.compute(horizon_weeks, hooks=hooks.get("mrp"), today=today):
         at = max(today, need)
         if kind == "buy":
             c = catalog.get(item)
+            if c and hooks.get("delay"):
+                # A planned buy arrives when needed; a shock on its supplier moves it (or stops it) the same way.
+                base_d = delays.of("supplier", c["supplier_id"])[0]
+                d = hooks["delay"]("supplier", c["supplier_id"], base_d, at)
+                if d is None:
+                    g.note("há compras sugeridas pelo planejamento de um fornecedor que, neste cenário, não entrega")
+                    continue
+                at = max(today, at + datetime.timedelta(days=d - base_d))
             rec = g.add("receipt", at, doc="compra sugerida pelo planejamento", item=item, qty=Decimal(qty), planned=True,
                         party=c["supplier_id"] if c else None)
             if c:
-                g.add("cash_out", at + datetime.timedelta(days=pay_days), -brl(Decimal(qty) * Decimal(c["price"]), c["currency"], at),
+                g.add("cash_out", at + datetime.timedelta(days=pay_days + term_days["pay"]), -brl(Decimal(qty) * price(item, Decimal(c["price"]), at), c["currency"], at),
                       doc="compra sugerida pelo planejamento", party=c["supplier_id"], item=item, after=[rec])
             else:
                 g.note("há compras sugeridas pelo planejamento sem fornecedor preferencial: entram sem valor")
@@ -199,9 +223,9 @@ def build(horizon_weeks=26, today=None, hooks=None):
 
     # Production orders: wait for their components; end their duration after the last one arrives.
     comps_of = {}
-    orders = {r["id"]: r for r in ana.sql(
+    orders = {r["id"]: r for r in hook("work_orders", ana.sql(
         "SELECT id, number, product_id, quantity - good_qty - scrap_qty AS q, start_date, due_date FROM production.work_order "
-        "WHERE status IN ('planned', 'released', 'in_progress') AND quantity > good_qty + scrap_qty")}
+        "WHERE status IN ('planned', 'released', 'in_progress') AND quantity > good_qty + scrap_qty"))}
     for r in ana.sql("SELECT c.order_id, c.product_id, c.qty_required - c.issued_qty AS q FROM production.order_component c "
                      "WHERE c.order_id = ANY($1) AND c.qty_required > c.issued_qty", sorted(orders)):
         demands.setdefault(r["product_id"], []).append([max(today, orders[r["order_id"]]["start_date"]), Decimal(r["q"]),
@@ -237,6 +261,8 @@ def build(horizon_weeks=26, today=None, hooks=None):
     # Deliveries, invoices (whole order), receivables by the payment term plus the customer's delay, taxes.
     costs = common.unit_costs(sorted({s["product_id"] for s in sales})) if sales else {}
     tax_day = int(value_or("financeiro.dia_impostos", TAX_DAY))
+    tax_data = hooks.get("tax_data")
+    line_cost = hooks.get("line_cost") or (lambda item, qty, at, cost: cost)
     burden = {}
     by_order = {}
     for s in sales:
@@ -256,12 +282,13 @@ def build(horizon_weeks=26, today=None, hooks=None):
                            at_risk=False)
             deliveries.append(ev)
         total = sum((Decimal(s["amount"]) for s in lines), ZERO)
-        cost = sum((Decimal(s["quantity"]) * costs.get(s["product_id"], ZERO) for s in lines), ZERO)
         inv_at = max(e["date"] for e in deliveries)
+        line_costs = [money(line_cost(s["product_id"], Decimal(s["quantity"]), inv_at,
+                                      Decimal(s["quantity"]) * costs.get(s["product_id"], ZERO))) for s in lines]
         inv = g.add("invoice", inv_at, total, doc=f"ORD-{head['number']}", party=head["customer_id"], after=deliveries,
-                    cost=money(cost), lines=[{"item": s["product_id"], "group": s["item_group"], "revenue": money(s["amount"]),
-                                              "cost": money(Decimal(s["quantity"]) * costs.get(s["product_id"], ZERO))}
-                                             for s in lines])
+                    cost=sum(line_costs, ZERO),
+                    lines=[{"item": s["product_id"], "group": s["item_group"], "revenue": money(s["amount"]), "cost": c}
+                           for s, c in zip(lines, line_costs)])
         try:
             term = terms.term_for(head["customer_id"], head["payment_term"])
         except ana.Error as e:
@@ -269,11 +296,16 @@ def build(horizon_weeks=26, today=None, hooks=None):
             g.note(f"pedido {head['number']}: {e.message}")
         gross = terms.adjusted(total, term) if term else total
         sched = terms.schedule(gross, term, inv_at) if term else [(1, inv_at + datetime.timedelta(days=30), gross)]
-        d = delay("receivable", head["customer_id"], cust_used)
         for n, due, amount in sched:
+            due = due + datetime.timedelta(days=term_days["receive"])
+            d = delay("receivable", head["customer_id"], cust_used, due)
+            if d is None:
+                g.note("há parcelas de pedidos que, neste cenário, não entram")
+                continue
             g.add("cash_in", max(today, due + datetime.timedelta(days=d)), amount, doc=f"ORD-{head['number']} parcela {n}",
                   party=head["customer_id"], after=[inv], due=due)
-        share = tax_share(burden, head["customer_id"], any(s["kind"] != "goods" for s in lines), g)
+        share = tax_share(burden, head["customer_id"], any(s["kind"] != "goods" for s in lines), g, inv_at.replace(day=1),
+                          tax_data)
         if share:
             month = (inv_at.replace(day=1) + datetime.timedelta(days=32)).replace(day=1)
             g.add("cash_out", month.replace(day=min(tax_day, 28)), -(total * share), doc=f"impostos de ORD-{head['number']}",
@@ -319,17 +351,19 @@ def give(supplies, demands, ready, never):
         ready[key] = ((never if need > 0 else (at or date)), used)
 
 
-def tax_share(cache, customer, service, g):
-    """The share of the revenue paid in taxes for this customer (spec 049, the engine's rules; never a typed rate)."""
+def tax_share(cache, customer, service, g, month, data=None):
+    """The share of the revenue paid in taxes for this customer in the month of the invoice (spec 049, the engine's
+    rules in force on that date — or a scenario's, `data`; never a typed rate)."""
     op = "service_sale" if service else "goods_sale"
-    if (op, customer) not in cache:
+    key = (op, customer, month)
+    if key not in cache:
         from ana_lib.tax import engine
         try:
-            cache[(op, customer)] = engine.burden_rate({"operation": op, "recipient": customer})
+            cache[key] = engine.burden_rate({"operation": op, "recipient": customer, "date": month}, data=data)
         except engine.TaxError as e:
-            cache[(op, customer)] = ZERO
+            cache[key] = ZERO
             g.note(f"impostos não estimados ({'serviços' if service else 'mercadorias'}): {e.message}")
-    return cache[(op, customer)]
+    return cache[key]
 
 
 def value_or(name, default):
