@@ -24,12 +24,14 @@ CREATE TABLE scenario.scenario (
     owner       text NOT NULL REFERENCES ana_system.app_user(username) ON UPDATE CASCADE,
     -- [{kind, params}] validated by scenario.shocks.validate before every save.
     shocks      jsonb NOT NULL DEFAULT '[]' CHECK (jsonb_typeof(shocks) = 'array' AND jsonb_array_length(shocks) <= 30),
-    shared      boolean NOT NULL DEFAULT false,
+    -- Shared with a group (D8): its members see and combine it, each one with their own data scope.
+    shared_group text REFERENCES ana_system.access_group(name) ON UPDATE CASCADE ON DELETE SET NULL,
     version     integer NOT NULL DEFAULT 1,
     created_at  timestamptz NOT NULL DEFAULT now(),
     updated_at  timestamptz NOT NULL DEFAULT now(),
     UNIQUE (owner, name)
 );
+CREATE INDEX scenario_group_idx ON scenario.scenario (shared_group) WHERE shared_group IS NOT NULL;
 
 INSERT INTO scenario.shock_kind (code, name, description, params, function, sequence) VALUES
 ('currency', 'Câmbio', 'Uma moeda varia um percentual a partir de uma data: compras, pagamentos e custo dos itens que usam o que vem de fora',

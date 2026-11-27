@@ -38,8 +38,11 @@ class Graph:
     """The events of the projection. An event: id, kind, date (and base_date), amount (signed, reais, for cash),
     doc (its document), party, item, qty, after [(event id, slack days)], and what the kind needs."""
 
-    def __init__(self, today, horizon_weeks):
+    CASH = ("cash_in", "cash_out", "bank_balance")
+
+    def __init__(self, today, horizon_weeks, cash=True):
         self.today = today
+        self.cash = cash
         self.horizon_weeks = horizon_weeks
         self.end = today + datetime.timedelta(weeks=horizon_weeks)
         self.events = []
@@ -47,6 +50,8 @@ class Graph:
         self.delays = []
 
     def add(self, kind, date, amount=ZERO, *, doc, after=(), **extra):
+        if not self.cash and kind in self.CASH:
+            return None                 # plan §7: without access to the company's cash, it is not even calculated
         e = {"id": len(self.events), "kind": kind, "date": date, "base_date": date, "amount": money(amount), "doc": doc,
              "after": [(p["id"], max(0, (date - p["date"]).days)) for p in after if p is not None], **extra}
         self.events.append(e)
@@ -78,11 +83,13 @@ DELAY_SQL = {
 
 
 class Delays:
-    def __init__(self, today):
+    def __init__(self, today, kinds=("receivable", "supplier")):
         since = today - datetime.timedelta(days=HISTORY_DAYS)
         self.by = {"receivable": {}, "supplier": {}}
-        self.company = {}
+        self.company = {"receivable": (0, 0), "supplier": (0, 0)}
         for kind, (per_party, overall) in DELAY_SQL.items():
+            if kind not in kinds:
+                continue
             # ana:lint-ok sql_in_loop — two sources only (customers, suppliers)
             for r in ana.sql(per_party, since, today):
                 self.by[kind][r["party"]] = (int(r["d"]), r["n"])
@@ -102,7 +109,7 @@ class Delays:
 
 
 # ------------------------------------------------------------------ the base
-def build(horizon_weeks=26, today=None, hooks=None):
+def build(horizon_weeks=26, today=None, hooks=None, cash=True):
     """The base projection (no shock). `hooks` (spec 069, scenarios: scenario.shocks) changes the sources before they
     are used, so a shock goes through the same rules as the base:
     - "bills", "purchase_lines", "sale_lines", "work_orders", "catalog": a source's rows, returned changed;
@@ -111,7 +118,8 @@ def build(horizon_weeks=26, today=None, hooks=None):
     - "term_days": {"receive": n, "pay": n} added to the payment terms of the orders;
     - "price"(item, price, at) → the purchase price (in the order's currency) of what arrives at `at`;
     - "line_cost"(item, qty, at, cost) → the cost of an order line invoiced at `at`;
-    - "tax_data": the tax rules to use (tax.engine.with_drafts)."""
+    - "tax_data": the tax rules to use (tax.engine.with_drafts).
+    Without `cash` (plan §7), no cash event is calculated: no bank balance, bill or bank history is read."""
     hooks = hooks or {}
 
     def hook(name, rows):
@@ -119,8 +127,8 @@ def build(horizon_weeks=26, today=None, hooks=None):
         return f(rows) if f else rows
 
     today = today or datetime.date.today()
-    g = Graph(today, horizon_weeks)
-    delays = Delays(today)
+    g = Graph(today, horizon_weeks, cash)
+    delays = Delays(today, ("receivable", "supplier") if cash else ("supplier",))
     rates = {}
 
     def brl(amount, cur, at):
@@ -148,14 +156,14 @@ def build(horizon_weeks=26, today=None, hooks=None):
     cust_used, supp_used = {}, {}
 
     # 1. Bank balances: the ledger account of each bank account (one per account, even if two banks share it).
-    for r in ana.sql("SELECT b.account, string_agg(b.code, ', ' ORDER BY b.code) AS banks, "
+    for r in ([] if not cash else ana.sql("SELECT b.account, string_agg(b.code, ', ' ORDER BY b.code) AS banks, "
                      "  (SELECT COALESCE(sum(l.debit - l.credit), 0) FROM finance.journal_line l WHERE l.account = b.account) AS balance "
-                     "FROM finance.bank_account b WHERE b.active GROUP BY b.account ORDER BY b.account"):
+                     "FROM finance.bank_account b WHERE b.active GROUP BY b.account ORDER BY b.account")):
         g.add("bank_balance", today, r["balance"], doc=f"saldo {r['banks']}")
 
     # 2. Open bills, at the due date plus the party's measured delay (never before today).
-    for r in hook("bills", ana.sql("SELECT id, kind, party_id, document, due_date, amount FROM finance.bill "
-                                   "WHERE status = 'open' ORDER BY id")):
+    for r in ([] if not cash else hook("bills", ana.sql("SELECT id, kind, party_id, document, due_date, amount FROM finance.bill "
+                                                        "WHERE status = 'open' ORDER BY id"))):
         inflow = r["kind"] == "receivable"
         d = delay("receivable", r["party_id"], cust_used, r["due_date"]) if inflow else 0
         if d is None:
@@ -296,7 +304,7 @@ def build(horizon_weeks=26, today=None, hooks=None):
             g.note(f"pedido {head['number']}: {e.message}")
         gross = terms.adjusted(total, term) if term else total
         sched = terms.schedule(gross, term, inv_at) if term else [(1, inv_at + datetime.timedelta(days=30), gross)]
-        for n, due, amount in sched:
+        for n, due, amount in (sched if g.cash else []):
             due = due + datetime.timedelta(days=term_days["receive"])
             d = delay("receivable", head["customer_id"], cust_used, due)
             if d is None:
@@ -312,7 +320,7 @@ def build(horizon_weeks=26, today=None, hooks=None):
                   party=None, after=[inv], tax=True)
 
     # 4. What leaves the bank every month without a bill (rent, payroll, fees), measured over the last months.
-    rec = ana.sql_one(
+    rec = None if not cash else ana.sql_one(
         "SELECT COALESCE(sum(-s.amount), 0) AS out FROM finance.bank_statement_line s "
         "WHERE s.amount < 0 AND s.posted_on >= date_trunc('month', $1::date) - make_interval(months => $2) "
         "  AND s.posted_on < date_trunc('month', $1::date) "

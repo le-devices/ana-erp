@@ -573,9 +573,9 @@ def work_orders(e):
 
 
 # ------------------------------------------------------------------ one call: a scenario's projection
-def project(shocks, horizon_weeks=26, today=None):
+def project(shocks, horizon_weeks=26, today=None, cash=True):
     """The projection with these (validated) shocks: the same build as the base, fed by the shocked sources."""
     from ana_lib.scenario import projection
     e = effects(shocks, today)
     with applied(e):
-        return projection.build(horizon_weeks, today=today, hooks=hooks(e))
+        return projection.build(horizon_weeks, today=today, hooks=hooks(e), cash=cash)

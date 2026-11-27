@@ -24,10 +24,11 @@ PARAMS = {"horizon_weeks": {"type": "int", "default": 26, "label": "semanas à f
 
 
 def combined(ids, extra):
-    """The shocks of the scenarios (one's own or shared) and the loose ones, checked again (what they point to may have
-    changed since they were saved)."""
+    """The shocks of the scenarios (one's own or shared with a group of theirs) and the loose ones, checked again with
+    this person's scope (what they point to may have changed, or be out of their reach: D8)."""
     ids = [int(i) for i in (ids or [])]
-    rows = ana.sql("SELECT id, name, shocks FROM scenario.scenario WHERE id = ANY($1) AND (owner = $2 OR shared) ORDER BY id",
+    rows = ana.sql("SELECT id, name, shocks FROM scenario.scenario WHERE id = ANY($1) "
+                   "AND (owner = $2 OR shared_group IN (SELECT g FROM bpm.user_groups($2) AS g)) ORDER BY id",
                    ids, ana.context.user) if ids else []
     missing = sorted(set(ids) - {r["id"] for r in rows})
     if missing:
@@ -60,14 +61,14 @@ def compare(base, scen, cash):
 def main(horizon_weeks=26, scenarios=None, shocks=None):
     weeks = max(1, min(int(horizon_weeks), 52))
     names, checked = combined(scenarios, shocks) if (scenarios or shocks) else ([], None)
-    g = projection.build(weeks)
     cash = ana.can_run("finance.statement")
+    g = projection.build(weeks, cash=cash)
     out = projection.weekly(g, cash=cash)
     if checked is not None:
-        gs = sh.project(checked, weeks)
+        gs = sh.project(checked, weeks, cash=cash)
         out["scenario"] = {"names": names, "shocks": checked, **projection.weekly(gs, cash=cash)}
         out["compare"] = compare(out, out["scenario"], cash)
-        singles = ({i: sh.project([s], weeks) for i, s in enumerate(checked)}
+        singles = ({i: sh.project([s], weeks, cash=cash) for i, s in enumerate(checked)}
                    if 1 < len(checked) <= SINGLES_MAX else None)
         out["compare"].update(effect.explain(g, gs, checked, singles, cash=cash))
         ana.table([{"choque": s["label"]} for s in checked], title="Choques do cenário", empty="Sem choques: igual à base",

@@ -9790,6 +9790,60 @@ class TestProjection(Base):
         self.assertEqual(self.scenario_err("scenario.remove", id=empty["id"])["code"], "SCENARIO_NOT_FOUND")
         self.assertEqual(self.scenario_err("scenario.project", scenarios=[empty["id"]])["code"], "SCENARIO_NOT_FOUND")
 
+    def test_ca_069_05_a_salesperson_simulates_only_their_portfolio_and_never_the_company_cash(self):
+        """Spec 069 (T-069-06, D8, RNF-069-04): the projection runs with the person's data scope — a salesperson limited
+        to the portfolio sees their customers only, and the company's cash is not even calculated for whoever may not
+        see the bank statement. A scenario shared with a group is recalculated with each member's own scope; a shock on
+        what they cannot see is refused, never computed."""
+        c = self.client
+        g = f"cen{SUFFIX}".lower()
+        s, r, _ = http("PUT", f"/api/admin/groups/{g}", {"description": "carteira (teste 069)", "program_patterns": [],
+                                                       "data_portfolio": True}, self.token)
+        self.assertEqual(s, 200, r)
+        seller, token = new_user("user", groups=(g,))
+        service = f"SC{SUFFIX[-6:]}"
+        c.call("base.save_product", code=service, description="Serviço do cenário", price="300", kind="service")
+        mine = c.call("base.save_party", name=f"Cliente Da Carteira 069 {SUFFIX}", state="SP", salesperson=seller)["id"]
+        theirs = c.call("base.save_party", name=f"Cliente De Outro 069 {SUFFIX}", state="SP", salesperson="admin")["id"]
+        for customer in (mine, theirs):
+            c.call("sales.create_order", customer=customer, items=[{"product": service, "quantity": 2}])
+        was = self.scalar("SELECT restricted FROM ana_system.program WHERE name = 'finance.statement'")
+        s, r, _ = http("PUT", "/api/programs/finance.statement", {"restricted": True}, self.token)
+        self.assertEqual(s, 200, r)
+        try:
+            s, r, _ = self.run_program("scenario.project", {"horizon_weeks": 8}, token=token)
+            self.assertEqual(s, 200, r)
+            out = r["result"]
+            keys = {x["key"] for x in out["result"]["customers"]}
+            self.assertIn(mine, keys)
+            self.assertNotIn(theirs, keys)
+            for hidden in ("weeks", "opening", "lowest", "backtest"):
+                self.assertNotIn(hidden, out)
+            self.assertIn("extrato bancário", out["cash_hidden"])
+            self.assertEqual([d for d in out["delays"] if d["kind"] == "cliente"], [])   # measured on the bank: not read
+
+            # Shared with the group: the member combines the admin's scenario, with their own scope.
+            ok = c.call("scenario.save", name=f"Carteira {SUFFIX}", group=g, shocks=[
+                {"kind": "sales_volume", "params": {"customer": mine, "pct": "50"}}])
+            other = c.call("scenario.save", name=f"Fora da carteira {SUFFIX}", group=g, shocks=[
+                {"kind": "sales_volume", "params": {"customer": theirs, "pct": "50"}}])
+            private = c.call("scenario.save", name=f"Só do admin {SUFFIX}", shocks=[])
+            s, r, _ = self.run_program("scenario.project", {"horizon_weeks": 8, "scenarios": [ok["id"]]}, token=token)
+            self.assertEqual(s, 200, r)
+            scen = r["result"]["scenario"]
+            self.assertEqual({x["key"] for x in scen["result"]["customers"]}, keys)
+            rev = lambda o: next(Decimal(x["revenue"]) for x in o["result"]["customers"] if x["key"] == mine)  # noqa: E731
+            self.assertEqual(rev(scen), rev(r["result"]) * Decimal("1.5"))
+            self.assertTrue(all(e["kind"] == "invoice" for e in r["result"]["compare"]["effects"]), r["result"]["compare"])
+            s, r, _ = self.run_program("scenario.project", {"scenarios": [other["id"]]}, token=token)
+            self.assertEqual((r.get("error") or {}).get("code"), "SCENARIO_SHOCK", r)
+            s, r, _ = self.run_program("scenario.project", {"scenarios": [private["id"]]}, token=token)
+            self.assertEqual((r.get("error") or {}).get("code"), "SCENARIO_NOT_FOUND", r)
+            s, r, _ = self.run_program("scenario.save", {"name": f"Meu {SUFFIX}", "group": "outro-grupo"}, token=token)
+            self.assertEqual((r.get("error") or {}).get("code"), "SCENARIO_GROUP", r)
+        finally:
+            http("PUT", "/api/programs/finance.statement", {"restricted": was in (True, "t", "true")}, self.token)
+
     def test_d4_a_read_only_program_cannot_write(self):
         prog = f"test.ro_{SUFFIX}"
         self.save(prog, "# ana:read_only yes\ndef main():\n"
