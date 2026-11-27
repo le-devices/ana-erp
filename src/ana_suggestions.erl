@@ -6,7 +6,10 @@
 %%   - schedule: the same routine with the same values on 4 business days in a row, about the same time (±1 h);
 %%   - variant: the same values 3 times in 30 days, typed again each time (no variant used);
 %%   - routine (T-051-06): a routine of the product (created off) whose program people still run by hand — the
-%%     administrators are offered to turn it on.
+%%     administrators are offered to turn it on;
+%%   - watch (spec 068, T-068-11, RF-068-09): an administrator who opened the history of the same record on 3 different
+%%     days is offered "Avisar quando mudar" — read straight from the executions of master.history (indexed by program),
+%%     since that screen is not a routine of the menu.
 %% Each suggestion explains itself in Portuguese and has a fingerprint per person: declined, it never comes back.
 -module(ana_suggestions).
 -behaviour(gen_server).
@@ -19,6 +22,8 @@
 -define(SCHEDULE_DAYS, 4).
 -define(VARIANT_RUNS, 3).
 -define(ROUTINE_RUNS, 2).
+-define(WATCH_DAYS, 3).
+-define(HISTORY, <<"master.history">>).
 -define(WEEKDAY, [<<"segunda"/utf8>>, <<"terça"/utf8>>, <<"quarta"/utf8>>, <<"quinta"/utf8>>, <<"sexta"/utf8>>,
                   <<"sábado"/utf8>>, <<"domingo"/utf8>>]).
 
@@ -62,8 +67,9 @@ analyze() ->
     S = schedules(),
     V = variants(),
     PR = product_routines(),
+    W = watches(Tz),
     {ok, _} = ana_db:exec("DELETE FROM automation.usage_day WHERE day < current_date - 60", []),
-    #{<<"aggregated">> => Added, <<"schedule">> => S, <<"variant">> => V, <<"routine">> => PR}.
+    #{<<"aggregated">> => Added, <<"schedule">> => S, <<"variant">> => V, <<"routine">> => PR, <<"watch">> => W}.
 
 %% Executions of people (no robots, rehearsals, debugging, simulations, nested calls), of routines of the menu.
 aggregate(Tz) ->
@@ -201,6 +207,38 @@ product_routines() ->
                    <<"Ligar a rotina do produto "/utf8, Name/binary>>, Explain, #{<<"job">> => J})
     end, 0, Rows).
 
+%% T-068-11: the history of one record opened on 3 different days in 30 by an administrator (rules are theirs, spec
+%% 051), with no rule already watching that record (or its whole entity). The record is keyed as the change watch keys
+%% it (the history returns it); an entity out of the catalogue is never offered.
+watches(Tz) ->
+    {ok, Rows} = ana_db:rows(
+        "SELECT e.username, e.params->>'entity' AS entity, e.result->>'watch_key' AS watch_key, "
+        "  (array_agg(e.params->>'key' ORDER BY e.started_at DESC))[1] AS key, w.label, "
+        "  count(DISTINCT (e.started_at AT TIME ZONE $3)::date)::int AS days, count(*)::int AS opened "
+        "FROM ana_system.execution e "
+        "JOIN ana_system.app_user a ON a.username = e.username AND a.kind = 'human' AND a.role = 'admin' AND a.active "
+        "JOIN automation.watch_entity w ON w.entity = e.params->>'entity' AND w.volume = 'normal' "
+        "WHERE e.program = $1 AND e.started_at > now() - make_interval(days => $2::int) AND e.status = 'success' "
+        "  AND NOT e.debug AND e.origin IN ('studio', 'api') AND e.result->>'watch_key' IS NOT NULL "
+        "  AND NOT EXISTS (SELECT 1 FROM automation.suggestion s WHERE s.username = e.username "
+        "                  AND s.fingerprint = 'watch:' || (e.params->>'entity') || ':' || (e.result->>'watch_key')) "
+        "  AND NOT EXISTS (SELECT 1 FROM automation.rule r WHERE r.trigger_kind = 'changed' "
+        "                  AND r.entity = e.params->>'entity' AND (r.watch_key IS NULL OR r.watch_key = e.result->>'watch_key')) "
+        "GROUP BY 1, 2, 3, 5 HAVING count(DISTINCT (e.started_at AT TIME ZONE $3)::date) >= $4::int",
+        [?HISTORY, ?DAYS, list_to_binary(Tz), ?WATCH_DAYS]),
+    lists:foldl(fun(#{<<"username">> := U, <<"entity">> := E, <<"watch_key">> := WK, <<"key">> := K, <<"label">> := L,
+                      <<"days">> := Days, <<"opened">> := Opened}, N) ->
+        Explain = iolist_to_binary([<<"Você abriu o histórico de "/utf8>>, L, <<" "/utf8>>, K, <<" "/utf8>>,
+                                    integer_to_binary(Opened), <<" vezes em "/utf8>>, integer_to_binary(Days),
+                                    <<" dias diferentes nos últimos 30 dias. O ERP pode avisar você quando ele mudar "
+                                      "(e dizer o que mudou), sem precisar abrir."/utf8>>]),
+        Href = iolist_to_binary([<<"#/admin/automations/rules/new?entity=">>, uri_string:quote(E), <<"&key=">>,
+                                 uri_string:quote(WK)]),
+        N + insert(U, <<"watch">>, <<"watch:", E/binary, ":", WK/binary>>, ?HISTORY,
+                   <<"Avisar quando "/utf8, L/binary, " "/utf8, K/binary, " mudar"/utf8>>, Explain,
+                   #{<<"entity">> => E, <<"key">> => K, <<"watch_key">> => WK, <<"open">> => Href})
+    end, 0, Rows).
+
 insert(U, Kind, Fp, P, Title, Explain, Payload) ->
     {ok, N} = ana_db:exec("INSERT INTO automation.suggestion (username, kind, fingerprint, program, title, explanation, payload) "
                           "VALUES ($1, $2, $3, $4, $5, $6, $7) ON CONFLICT (username, fingerprint) DO NOTHING",
@@ -254,6 +292,13 @@ accept(Id, B, User = #{username := Who}) ->
     case ana_db:one("SELECT * FROM automation.suggestion WHERE id = $1 AND username = $2", [Id, Who]) of
         {ok, #{<<"status">> := <<"new">>, <<"kind">> := <<"routine">>, <<"payload">> := #{<<"job">> := J}}} ->
             turn_on(Id, J, User);
+        %% T-068-11: a rule is rehearsed before it is turned on (spec 051), so accepting opens the editor already
+        %% filled with the record; the screen goes there.
+        {ok, #{<<"status">> := <<"new">>, <<"kind">> := <<"watch">>, <<"payload">> := #{<<"open">> := Open}}} ->
+            Res = #{<<"open">> => Open},
+            {ok, _} = ana_db:exec("UPDATE automation.suggestion SET status = 'accepted', decided_at = now(), "
+                                  "result = $2 WHERE id = $1", [Id, Res]),
+            {ok, Res};
         {ok, #{<<"status">> := <<"new">>, <<"kind">> := Kind, <<"program">> := P, <<"payload">> := Pay}} ->
             Name = case maps:get(<<"name">>, B, null) of
                 N when is_binary(N), N =/= <<>> -> N;

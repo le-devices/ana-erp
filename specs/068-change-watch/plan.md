@@ -466,3 +466,29 @@ Documentos não guardam histórico campo a campo, e a tela diz isso.
 - Integração: exemplos do ensaio, `ref` e `watch_key` do histórico, contagem de agrupados e de fora do alcance.
 - Estúdio (CA-068-10): do histórico de um cliente até a regra preenchida, depois o ensaio com a mudança real, a
   regra ligada e a gravação seguinte sem espera. Cada tela passa pelo verificador da spec 050.
+
+## 17. T-068-11: sugestão de "Avisar quando mudar" (RF-068-09)
+
+**De onde vem.** Do motor de sugestões da spec 051 (D3), como um quarto tipo, `watch`. A leitura é feita
+nas execuções de `master.history` que já ficam registradas, pelo índice `(program, started_at)`. Nada é
+gravado a cada abertura do histórico (P15). O histórico não é rotina do menu, por isso não passa pelo
+agregado diário.
+
+**Quando sugere.**
+- O mesmo registro teve o histórico aberto em 3 dias diferentes nos últimos 30 dias.
+- Quem abriu é administrador, porque as regras são dele (spec 051).
+- A entidade está no catálogo com volume normal.
+- Ainda não existe regra "alterado" vigiando esse registro ou a entidade inteira.
+
+O histórico é sempre de um registro inteiro, então a sugestão é por registro. Os campos são escolhidos no
+editor.
+
+**Aceitar.** Uma regra só é ligada depois de ensaiada (spec 051). Por isso, aceitar abre o editor já
+preenchido com o cadastro e o registro, e não cria a regra direto. A sugestão fica como aceita. Recusada,
+não volta (a impressão digital é `watch:{entidade}:{registro}`).
+
+**Testes.** Na integração:
+- 2 dias ainda não geram sugestão; 3 dias geram, com a explicação;
+- usuário comum não recebe a sugestão;
+- aceitar devolve o endereço do editor e a sugestão não volta;
+- uma regra que já vigia o registro impede a sugestão.

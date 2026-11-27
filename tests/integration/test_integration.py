@@ -10545,6 +10545,59 @@ class TestChangeWatchRules(Base):
         self.assertEqual(h["watch_key"], str(p["id"]))
         self.assertIn("base.party.email", [c["ref"] for c in h["changes"]])
 
+    def test_rf_068_09_the_history_opened_again_and_again_suggests_a_watch(self):
+        """T-068-11 (spec 051, D3): an administrator who opens the history of the same record on 3 different days is
+        offered "Avisar quando mudar"; accepting opens the rule already filled (rehearsed before it is on). A plain user
+        is not offered a rule, nor is one already watching that record."""
+        p = self.ok("master.save", entity="party", values={"name": f"Sugestão Vigia {SUFFIX}", "kind": "customer"},
+                    confirm_duplicate=True, reason="teste automatizado")
+        key = str(p["id"])
+        # The history logs what the suggestion reads: the record as the watch keys it.
+        self.ok("master.history", entity="party", key=key)
+        self.assertEqual(psql("SELECT result->>'watch_key' FROM ana_system.execution WHERE program = 'master.history' "
+                              "AND username = 'admin' ORDER BY started_at DESC LIMIT 1"), key)
+        admin, admin_token = new_user("admin")
+        covered, covered_token = new_user("admin")
+        user, token = new_user("user")
+
+        def opened(who, days):
+            for d in days:
+                psql("INSERT INTO ana_system.execution (id, program, username, origin, status, params, result, started_at, "
+                     f"finished_at) VALUES (gen_random_uuid(), 'master.history', '{who}', 'studio', 'success', "
+                     f"'{json.dumps({'entity': 'party', 'key': key})}'::jsonb, '{json.dumps({'watch_key': key})}'::jsonb, "
+                     f"now() - interval '{d} days', now() - interval '{d} days' + interval '1 second')")
+
+        def analyze():
+            s, c, _ = http("POST", "/api/admin/automations/suggestions/analyze", {}, self.token)
+            self.assertEqual(s, 200, c)
+
+        def mine(tok):
+            s, c, _ = http("GET", "/api/suggestions", token=tok)
+            self.assertEqual(s, 200, c)
+            return [x for x in c if x["kind"] == "watch" and x["title"].endswith(f" {key} mudar")]
+
+        opened(admin, [1, 2])
+        opened(user, [1, 2, 3])
+        analyze()
+        self.assertEqual(mine(admin_token), [], "2 dias ainda não é repetição")
+        opened(admin, [5])
+        analyze()
+        w = mine(admin_token)
+        self.assertEqual(len(w), 1, w)
+        self.assertIn("3 dias diferentes", w[0]["explanation"])
+        self.assertEqual(mine(token), [], "regras são do administrador (spec 051)")
+        s, r, _ = http("POST", f"/api/suggestions/{w[0]['id']}/accept", {}, admin_token)
+        self.assertEqual(s, 200, r)
+        self.assertEqual(r["open"], f"#/admin/automations/rules/new?entity=party&key={key}")
+        analyze()
+        self.assertEqual(mine(admin_token), [], "aceita, não volta")
+        # A rule already watching this record: nothing to offer.
+        s, c = self.save_rule(entity="party", watch_fields=["base.party.email"], watch_key=key)
+        self.assertEqual(s, 200, c)
+        opened(covered, [1, 2, 3])
+        analyze()
+        self.assertEqual(mine(covered_token), [], "já existe regra vigiando este registro")
+
     def test_rnf_051_01_a_rule_whose_action_changes_what_it_watches_is_blocked(self):
         p = self.ok("master.save", entity="party", values={"name": f"Laço Vigia {SUFFIX}", "kind": "customer"},
                     confirm_duplicate=True, reason="teste automatizado")
