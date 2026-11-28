@@ -11505,3 +11505,73 @@ class TestTechnicalParameters(Base):
         for req in (r["request"]["id"], r2["request"]["id"]):
             http("POST", f"/api/tech/requests/{req}/reject", {"reason": "teste"}, other)
         self.assertNotEqual(self.param("exec_timeout_ms")["value"], 61000)
+
+
+class TestDiagnosticConsole(Base):
+    """Spec 077 (T-077-05, RF-077-06, D7, CA-077-09): the console investigates without changing anything — ready-made
+    queries, read-only SQL with limits and masking, saved queries, the node's last log lines and the core."""
+
+    def sql(self, text, **extra):
+        return http("POST", "/api/tech/console/sql", {"sql": text, **extra}, self.token)[:2]
+
+    def test_ca_077_09_the_console_only_reads_within_limits_and_masks(self):
+        for write in ("UPDATE base.party SET name = name", "  -- só um comentário\nDELETE FROM base.party WHERE false",
+                      "EXPLAIN ANALYZE SELECT 1", "CREATE TABLE x (a int)"):
+            s, e = self.sql(write)
+            self.assertEqual((s, e["error"]["code"]), (400, "CONSOLE"), (write, e))
+            self.assertIn("só lê", e["error"]["message"])
+        s, r = self.sql("SELECT g FROM generate_series(1, 600) g")
+        self.assertEqual((s, len(r["rows"]), r["truncated"]), (200, 500, True), r.get("error"))
+        s, e = self.sql("SELECT pg_sleep(6)")
+        self.assertEqual(s, 400, e)
+        self.assertIn("5 s", e["error"]["message"])
+        s, r = self.sql("SELECT id, email, city FROM base.party WHERE email IS NOT NULL LIMIT 3")
+        self.assertEqual(s, 200, r)
+        cols = {c["name"]: c["masked"] for c in r["columns"]}
+        self.assertEqual((cols["email"], cols["city"], cols["id"]), (True, False, False))
+        self.assertTrue(all(row[1] == "***" for row in r["rows"]), r["rows"])
+        s, plan = self.sql("SELECT * FROM base.party WHERE id = 1", explain=True)
+        self.assertEqual(s, 200, plan)
+        self.assertIn("QUERY PLAN", [c["name"] for c in plan["columns"]])
+        self.assertGreaterEqual(int(psql("SELECT count(*) FROM ana_system.admin_log WHERE action = 'console.sql' "
+                                         "AND at > now() - interval '5 minutes'")), 1)
+        _, user = new_user("user")
+        self.assertEqual(http("POST", "/api/tech/console/sql", {"sql": "SELECT 1"}, user)[0], 403)
+
+    def test_d7_ready_made_and_saved_queries(self):
+        s, qs = http("GET", "/api/tech/console/queries", token=self.token)[:2]
+        self.assertEqual(s, 200, qs)
+        codes = {q["code"] for q in qs if q["product"]}
+        self.assertTrue({"locks", "long_transactions", "bloat", "replicas", "connections", "largest_tables"} <= codes, codes)
+        s, r = http("POST", "/api/tech/console/queries/largest_tables/run", {"params": {"limit": 3}}, self.token)[:2]
+        self.assertEqual(s, 200, r)
+        self.assertLessEqual(len(r["rows"]), 3)
+        s, r = http("POST", "/api/tech/console/queries/long_transactions/run", {"params": {"minutes": 0}}, self.token)[:2]
+        self.assertEqual(s, 200, r)
+        code = f"teste_{SUFFIX}".lower()
+        s, e = http("POST", "/api/tech/console/queries", {"code": code, "name": "grava", "sql": "DELETE FROM base.party"},
+                    self.token)[:2]
+        self.assertEqual(s, 400, e)
+        s, e = http("POST", "/api/tech/console/queries", {"code": "locks", "name": "troca", "sql": "SELECT 1"}, self.token)[:2]
+        self.assertEqual(s, 400, e)                                                    # the product's stay as they are
+        s, r = http("POST", "/api/tech/console/queries", {"code": code, "name": "Clientes por cidade",
+                                                          "sql": "SELECT city, count(*) AS n FROM base.party GROUP BY 1"},
+                    self.token)[:2]
+        self.assertEqual(s, 200, r)
+        s, r = http("POST", f"/api/tech/console/queries/{code}/run", {}, self.token)[:2]
+        self.assertEqual((s, [c["name"] for c in r["columns"]]), (200, ["city", "n"]), r)
+        self.assertEqual(http("DELETE", f"/api/tech/console/queries/{code}", token=self.token)[0], 200)
+        self.assertEqual(http("DELETE", "/api/tech/console/queries/locks", token=self.token)[0], 400)
+
+    def test_d7_the_nodes_last_log_lines_and_the_core(self):
+        s, r = http("GET", "/api/tech/console/logs?level=info&limit=50", token=self.token)[:2]
+        self.assertEqual(s, 200, r)
+        self.assertTrue(r["lines"], r)
+        self.assertLessEqual(len(r["lines"]), 50)
+        seqs = [line["seq"] for line in r["lines"]]
+        self.assertEqual(seqs, sorted(seqs, reverse=True))                              # the newest first
+        s, r = http("GET", "/api/tech/console/logs?level=error&text=__nada_assim__", token=self.token)[:2]
+        self.assertEqual((s, r["lines"]), (200, []))
+        s, core = http("GET", "/api/tech/console/core", token=self.token)[:2]
+        self.assertEqual(s, 200, core)
+        self.assertIn("processes", core)

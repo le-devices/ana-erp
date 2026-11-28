@@ -13,6 +13,7 @@ init([]) ->
     ok = ana_execution:init_tables(),
     ok = ana_remote_system:init_tables(),
     ok = ana_settings:init_cache(),
+    ok = ana_log_ring:install(),                       % spec 077: the last log lines, in memory only
     ok = ana_program:init_cache(),
     ok = ana_access:init_cache(),
     ok = ana_limits:init_cache(),

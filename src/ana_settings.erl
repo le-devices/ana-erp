@@ -251,7 +251,7 @@ set(KeyBin, Value, #{username := Who}, Opts) ->
                 {ok, false} -> {error, scope_not_allowed};
                 {ok, true} ->
                     Before = stored(KeyBin, Scope, Node),
-                    write(KeyBin, Value, Scope, Node, Who),
+                    _ = write(KeyBin, Value, Scope, Node, Who),
                     Until = case maps:get(minutes, Opts, null) of
                         M when is_integer(M), M > 0, Value =/= null -> M;
                         _ -> null

@@ -134,8 +134,53 @@ route(<<"POST">>, [<<"parameters">>, <<"import">>], U, Req) ->
             end
         end)
     end);
+%% Diagnostic console (T-077-05, administrators).
+route(<<"GET">>, [<<"console">>, <<"queries">>], U, Req) ->
+    admin(U, Req, fun() -> {ok, Q} = ana_console:queries(), ana_http:json(200, Q, Req) end);
+route(<<"POST">>, [<<"console">>, <<"queries">>], U, Req) ->
+    admin(U, Req, fun() -> body(Req, fun(B, R) -> console_reply(ana_console:save_query(B, U), R) end) end);
+route(<<"DELETE">>, [<<"console">>, <<"queries">>, Code], U, Req) ->
+    admin(U, Req, fun() ->
+        case ana_console:delete_query(Code, U) of
+            ok -> ana_http:json(200, #{ok => true}, Req);
+            {error, M} -> ana_http:reply_error(400, <<"INVALID">>, M, Req)
+        end
+    end);
+route(<<"POST">>, [<<"console">>, <<"queries">>, Code, <<"run">>], U, Req) ->
+    admin(U, Req, fun() ->
+        body(Req, fun(B, R) ->
+            P = case maps:get(<<"params">>, B, #{}) of M when is_map(M) -> M; _ -> #{} end,
+            console_reply(ana_console:run_query(Code, P, U), R)
+        end)
+    end);
+route(<<"POST">>, [<<"console">>, <<"sql">>], U, Req) ->
+    admin(U, Req, fun() ->
+        body(Req, fun(B, R) ->
+            case maps:get(<<"sql">>, B, null) of
+                Sql when is_binary(Sql), byte_size(Sql) > 0, byte_size(Sql) < 100000 ->
+                    console_reply(ana_console:run_sql(Sql, U, #{explain => maps:get(<<"explain">>, B, false) =:= true}), R);
+                _ -> ana_http:reply_error(400, <<"INVALID">>, <<"informe o SQL"/utf8>>, R)
+            end
+        end)
+    end);
+route(<<"GET">>, [<<"console">>, <<"core">>], U, Req) ->
+    admin(U, Req, fun() ->
+        {ok, S} = ana_core_view:snapshot(),
+        ana_http:json(200, S, Req)
+    end);
+route(<<"GET">>, [<<"console">>, <<"logs">>], U, Req) ->
+    admin(U, Req, fun() ->
+        Q = ana_http:qs_map(Req),
+        F = #{level => maps:get(<<"level">>, Q, <<"info">>), text => maps:get(<<"text">>, Q, <<>>),
+              subsystem => maps:get(<<"subsystem">>, Q, <<>>), limit => ana_http:qs_int(<<"limit">>, Req, 200),
+              since => ana_http:qs_int(<<"since">>, Req, 0)},
+        ana_http:json(200, #{node => ana_config:node_id(), lines => ana_log_ring:list(F)}, Req)
+    end);
 route(_, _, _, Req) ->
     ana_http:reply_error(404, <<"NOT_FOUND">>, <<"rota inexistente"/utf8>>, Req).
+
+console_reply({ok, R}, Req) -> ana_http:json(200, R, Req);
+console_reply({error, M}, Req) -> ana_http:reply_error(400, <<"CONSOLE">>, M, Req).
 
 reply({ok, Run}, Req) -> ana_http:json(200, Run, Req);
 reply({pending, Run}, Req) ->

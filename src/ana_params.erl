@@ -45,7 +45,7 @@ expire() ->
     {ok, Due} = ana_db:rows("UPDATE technical.parameter_version SET reverted_at = now() "
                             "WHERE until IS NOT NULL AND reverted_at IS NULL AND until <= now() "
                             "RETURNING id, key, scope, node, before, set_by", []),
-    [ana_settings:set(K, decode(B), #{username => <<"system">>},
+    _ = [ana_settings:set(K, decode(B), #{username => <<"system">>},
                       #{scope => binary_to_atom(Sc), node => N, kind => expired,
                         reason => <<"volta automática da mudança temporária "/utf8, (integer_to_binary(Id))/binary,
                                     " (de "/utf8, By/binary, ")">>})
