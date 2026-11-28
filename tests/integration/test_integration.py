@@ -10739,7 +10739,9 @@ class TestChangeWatchDocuments(Base):
             # (all of them after the ones without) would pay for the bloat of the earlier ones and look dearer.
             psql("VACUUM sales.sales_order")
 
-        def timings(mode, k=9):
+        runs = 9                         # per series; the batches with the rule (1 + 2 × runs) stay under its limit of 20
+
+        def timings(mode, k=runs):
             out = []
             for _ in range(k):
                 quiet()
@@ -10758,8 +10760,8 @@ class TestChangeWatchDocuments(Base):
             print(f"\n  lote de 10 mil pedidos (ms): sem regra {base}, com regra {watched}", file=sys.stderr)
             self.assertLessEqual(watched["all"], base["all"] * 1.40, (base, watched))
             self.assertLessEqual(watched["part"], base["part"] * 1.15, (base, watched))
-            # D6: one grouped firing per batch, with the count (15 batches, under the rule's limit of 20).
-            f = wait_fires(rid, 15, timeout=120)
+            # D6: one grouped firing per batch, with the count (1 + 2 × runs batches, under the rule's limit of 20).
+            f = wait_fires(rid, 1 + 2 * runs, timeout=120)
             self.assertEqual({(x["doc_key"], x["outcome"]) for x in f}, {(None, "done")}, f[:2])
             counts = sorted(x["detail"]["event"]["count"] for x in f)
             self.assertEqual(counts[-1], 10000)
