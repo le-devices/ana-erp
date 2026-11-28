@@ -23,3 +23,13 @@ t_077_01_catalog_and_functions_match_test() ->
     Funs = lists:sort(maps:keys(ana_tech:handlers())),
     ?assertEqual([], Codes -- Funs),        % an action of the catalog without a function
     ?assertEqual([], Funs -- Codes).        % a function outside the catalog
+
+%% Spec 077 (T-077-04): every runtime parameter has what a person needs to change it (migration 090), and the
+%% catalog lists no parameter the core does not know.
+t_077_04_every_parameter_has_its_metadata_test() ->
+    {ok, Bin} = file:read_file("priv/migrations/090_technical_parameters.sql"),
+    {match, [[Block]]} = re:run(Bin, "INSERT INTO technical\\.parameter \\(key[^;]*?;", [dotall, global, {capture, first, binary}]),
+    {match, Rows} = re:run(Block, "^\\('([a-z_]+)'", [multiline, global, {capture, all_but_first, binary}]),
+    Meta = lists:sort([K || [K] <- Rows]),
+    Known = lists:sort([atom_to_binary(K) || {K, _, _, _, _, _, _} <- ana_settings:definitions()]),
+    ?assertEqual(Known, Meta).

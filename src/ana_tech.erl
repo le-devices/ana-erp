@@ -20,7 +20,7 @@
 
 %% ------------------------------------------------------------------ the fixed map: code → function
 %% fun(Params, User) -> {ok, Result :: map()} | {error, Message :: binary()}.
--spec handlers() -> #{binary() => fun((map(), map()) -> {ok, map()} | {error, binary()})}.
+-spec handlers() -> #{binary() => fun((map(), map()) -> {ok, map()} | {error, not_found | binary()})}.
 handlers() ->
     #{<<"execution.stop">> => fun(#{<<"id">> := Id}, U) ->
           case ana_execution:command(Id, U, #{<<"action">> => <<"stop">>}) of
@@ -55,17 +55,27 @@ handlers() ->
       end,
       <<"advice.run">> => fun(_, _) -> ok = ana_sql_stats:flush(), plain(ana_advisor:run()) end,
       <<"node.drain">> => fun(_, _) -> ana_ha:drain_soft(), {ok, #{node => ana_config:node_id(), draining => true}} end,
-      <<"node.resume">> => fun(_, _) -> ana_ha:resume(), {ok, #{node => ana_config:node_id(), draining => false}} end}.
+      <<"node.resume">> => fun(_, _) -> ana_ha:resume(), {ok, #{node => ana_config:node_id(), draining => false}} end,
+      <<"parameter.set">> => fun set_parameter/2}.
 
+%% Spec 077 (T-077-04): a parameter changes with its reason, at a scope, possibly for a while.
+set_parameter(P = #{<<"key">> := Key, <<"reason">> := Reason}, U) when byte_size(Reason) >= 3 ->
+    Scope = case maps:get(<<"scope">>, P, <<"installation">>) of <<"node">> -> node; _ -> installation end,
+    Opts = maps:merge(#{scope => Scope, reason => Reason, minutes => maps:get(<<"minutes">>, P, null)},
+                      case maps:find(<<"node">>, P) of {ok, N} -> #{node => N}; error -> #{} end),
+    case ana_settings:set(Key, maps:get(<<"value">>, P, null), U, Opts) of
+        ok -> {ok, #{key => Key, value => maps:get(<<"value">>, P, null), scope => Scope}};
+        {error, unknown_setting} -> {error, not_found};
+        {error, {range, Min, Max}} ->
+            {error, iolist_to_binary(io_lib:format("valor deve ser inteiro entre ~b e ~b", [Min, Max]))};
+        {error, scope_not_allowed} -> {error, <<"este parâmetro não pode ser diferente por nó"/utf8>>}
+    end;
+set_parameter(_, _) -> {error, <<"diga o motivo da mudança (ao menos 3 letras)"/utf8>>}.
+
+%% The answers of the functions the actions call, as an action's result.
 plain({ok, V}) when is_map(V) -> {ok, V};
-plain({ok, V}) -> {ok, #{result => V}};
-plain(ok) -> {ok, #{}};
 plain({error, not_found}) -> {error, not_found};
-plain({error, M}) when is_binary(M) -> {error, M};
-plain({error, #{} = E}) -> {error, maps:get(<<"message">>, E, maps:get(message, E, <<"falhou">>))};
-plain({error, E}) -> {error, text(E)};
-plain(Other) when is_map(Other) -> {ok, Other};
-plain(Other) -> {ok, #{result => text(Other)}}.
+plain({error, M}) when is_binary(M) -> {error, M}.
 
 text(B) when is_binary(B) -> B;
 text(T) -> unicode:characters_to_binary(io_lib:format("~0tp", [T])).
@@ -122,7 +132,7 @@ action(Code) ->
     end.
 
 %% A company makes an action stricter, never less strict than the product (RF-077-05).
--spec save_policy(binary(), map(), map()) -> {ok, map()} | {error, binary()}.
+-spec save_policy(binary(), map(), map()) -> {ok, map()} | {error, not_found | binary()}.
 save_policy(Code, In, #{username := Who}) ->
     case action(Code) of
         {error, not_found} -> {error, not_found};
@@ -163,7 +173,11 @@ run(Code, Params0, User, Opts) ->
     end.
 
 ceremony(A = #{<<"code">> := Code}, Params, User, Opts) ->
-    Risk = effective(A),
+    %% Changing a parameter takes the parameter's own risk when it is the higher (D9).
+    Risk = case {Code, Params} of
+        {<<"parameter.set">>, #{<<"key">> := Key}} -> max_risk(effective(A), ana_settings:risk_of(Key));
+        _ -> effective(A)
+    end,
     case Risk of
         <<"low">> -> execute(Code, Risk, Params, User, Opts, null, <<"done">>, new);
         <<"medium">> ->

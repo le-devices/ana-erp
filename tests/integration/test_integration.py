@@ -11410,3 +11410,98 @@ class TestTechnicalActions(Base):
         finally:
             self.policy("user.unlock", risk="low", groups=[])
             http("DELETE", f"/api/admin/groups/{g}", token=self.token)
+
+
+class TestTechnicalParameters(Base):
+    """Spec 077 (T-077-04, RF-077-08, D9, CA-077-05, CA-077-06): every technical parameter in a catalog with what it
+    is, where the value in use came from, a reason for each change, versions, temporary changes that go back by
+    themselves, node scope, comparison between environments and a stricter risk chosen by the company."""
+
+    KEY = "slow_sql_ms"                     # low risk, may differ per node, harmless to change in the battery
+
+    def put(self, key, **body):
+        return http("PUT", f"/api/tech/parameters/{key}", body, self.token)[:2]
+
+    def listing(self):
+        s, l = http("GET", "/api/tech/parameters", token=self.token)[:2]
+        self.assertEqual(s, 200, l)
+        return l
+
+    def param(self, key):
+        return next(p for p in self.listing()["parameters"] if p["key"] == key)
+
+    def tearDown(self):
+        for scope in ("node", "installation"):
+            self.put(self.KEY, value=None, scope=scope, reason="limpeza do teste", confirmed=True)
+        http("PUT", "/api/tech/parameters/exec_timeout_ms/risk", {"risk": "medium"}, self.token)
+
+    def test_d9_the_catalog_says_what_each_parameter_is_and_where_its_value_came_from(self):
+        l = self.listing()
+        p = next(x for x in l["parameters"] if x["key"] == "exec_timeout_ms")
+        for k in ("label", "when_to_change", "applies", "risk", "scopes", "default", "value", "origin", "env"):
+            self.assertIsNotNone(p[k], k)
+        self.assertIn(p["origin"], ("product", "server", "installation", "node"))
+        server = {s["env"]: s for s in l["server"]}
+        self.assertTrue(server["ANA_DB_PASSWORD"]["secret"])
+        self.assertIn(server["ANA_DB_PASSWORD"]["value"], (None, "(definido)"))     # never the secret itself
+        self.assertIn("ana-ctl", server["ANA_DB_HOST"]["how"])
+        changed = [x["changed"] for x in l["parameters"]]
+        self.assertEqual(changed, sorted(changed, reverse=True))                      # changed ones first
+
+    def test_ca_077_05_a_temporary_change_goes_back_by_itself_with_both_in_the_history(self):
+        before = self.param(self.KEY)["value"]
+        s, e = self.put(self.KEY, value=before + 7)
+        self.assertEqual(s, 400, e)                                                    # the reason is required
+        s, r = self.put(self.KEY, value=before + 7, minutes=60, reason="investigar lentidão das 14h")
+        self.assertEqual(s, 200, r)
+        p = self.param(self.KEY)
+        self.assertEqual((p["value"], p["origin"], p["temporary"]), (before + 7, "installation", True))
+        # The hour passes (brought forward in the database; any node re-arms its timer on the notice).
+        psql(f"UPDATE technical.parameter_version SET until = now() + interval '1 second' "
+             f"WHERE key = '{self.KEY}' AND until IS NOT NULL AND reverted_at IS NULL; SELECT pg_notify('ana_setting', '{self.KEY}')")
+        end = time.time() + 20
+        while time.time() < end and self.param(self.KEY)["value"] != before:
+            time.sleep(0.5)
+        self.assertEqual(self.param(self.KEY)["value"], before)
+        s, versions = http("GET", f"/api/tech/parameters/{self.KEY}/versions", token=self.token)[:2]
+        kinds = [(v["kind"], v["after"]) for v in versions[:2]]
+        self.assertEqual(kinds[0][0], "expired", versions[:2])
+        self.assertIn("volta automática", versions[0]["reason"])
+        self.assertEqual((versions[1]["kind"], versions[1]["after"], versions[1]["reason"]),
+                         ("set", before + 7, "investigar lentidão das 14h"))
+        # Any version can be restored — as a new change, with its own reason.
+        s, r = http("POST", f"/api/tech/parameters/versions/{versions[1]['id']}/restore", {"reason": "voltar ao ajuste"}, self.token)[:2]
+        self.assertEqual(s, 200, r)
+        self.assertEqual(self.param(self.KEY)["value"], before + 7)
+
+    def test_d9_a_value_for_one_node_wins_where_allowed(self):
+        s, r = self.put(self.KEY, value=321, scope="node", reason="este nó serve os relatórios")
+        self.assertEqual(s, 200, r)
+        p = self.param(self.KEY)
+        self.assertEqual((p["value"], p["origin"]), (321, "node"))
+        s, e = self.put("exec_timeout_ms", value=61000, scope="node", reason="não pode", confirmed=True)
+        self.assertEqual(s, 422, e)
+        self.assertIn("por nó", e["error"]["message"])
+
+    def test_ca_077_06_the_comparison_shows_only_what_differs_and_a_stricter_parameter_waits_for_two(self):
+        s, mine = http("GET", "/api/tech/parameters/export", token=self.token)[:2]
+        self.assertEqual(s, 200, mine)
+        theirs = json.loads(json.dumps(mine))
+        for p in theirs["parameters"]:
+            if p["key"] == self.KEY:
+                p["value"] += 11
+        s, diff = http("POST", "/api/tech/parameters/compare", {"file": theirs}, self.token)[:2]
+        self.assertEqual((s, [d["key"] for d in diff]), (200, [self.KEY]), diff)
+        # The company makes a parameter high risk: never below the product, and then a second person approves.
+        s, e = http("PUT", "/api/tech/parameters/exec_timeout_ms/risk", {"risk": "low"}, self.token)[:2]
+        self.assertEqual(s, 400, e)
+        s, r = http("PUT", "/api/tech/parameters/exec_timeout_ms/risk", {"risk": "high"}, self.token)[:2]
+        self.assertEqual((s, r["risk"]), (200, "high"), r)
+        s, r = self.put("exec_timeout_ms", value=61000, reason="rotinas longas do fechamento", confirmed=True)
+        self.assertEqual((s, r.get("pending_approval")), (202, True), r)
+        s, r2 = http("PUT", "/api/admin/settings/exec_timeout_ms", {"value": 61000}, self.token)[:2]   # the old screen too
+        self.assertEqual((s, r2.get("pending_approval")), (202, True), r2)
+        _, other = new_user("admin")
+        for req in (r["request"]["id"], r2["request"]["id"]):
+            http("POST", f"/api/tech/requests/{req}/reject", {"reason": "teste"}, other)
+        self.assertNotEqual(self.param("exec_timeout_ms")["value"], 61000)

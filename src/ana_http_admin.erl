@@ -154,14 +154,14 @@ route(<<"DELETE">>, [<<"groups">>, Name], U, Req) ->
 route(<<"GET">>, [<<"settings">>], _U, Req) ->
     ana_http:json(200, ana_settings:list(), Req);
 route(<<"PUT">>, [<<"settings">>, Key], U, Req) ->
-    with_body(Req, fun(#{<<"value">> := V}, R) ->
-        case ana_settings:set(Key, V, U) of
-            ok -> ana_http:json(200, #{ok => true}, R);
-            {error, unknown_setting} ->
-                ana_http:reply_error(404, <<"NOT_FOUND">>, <<"parâmetro inexistente"/utf8>>, R);
-            {error, {range, Min, Max}} ->
-                ana_http:reply_error(400, <<"OUT_OF_RANGE">>,
-                    io_lib:format("valor deve ser inteiro entre ~b e ~b", [Min, Max]), R)
+    with_body(Req, fun(#{<<"value">> := V} = B, R) ->
+        %% Spec 077 (D9): the screen confirms; a parameter the company made high risk waits for a second person.
+        case ana_settings:risk_of(Key) of
+            <<"high">> ->
+                tech_reply(ana_tech:run(<<"parameter.set">>, #{<<"key">> => Key, <<"value">> => V,
+                                                               <<"reason">> => maps:get(<<"reason">>, B, <<"tela Parâmetros"/utf8>>)},
+                                        U, #{confirmed => true, origin => <<"admin">>}), fun(X) -> X end, R);
+            _ -> settings_reply(ana_settings:set(Key, V, U, #{reason => maps:get(<<"reason">>, B, null)}), R)
         end;
         (_, R) -> invalid(R)
     end);
@@ -497,6 +497,14 @@ reply({error, last_admin}, Req) ->
         <<"não é possível remover ou rebaixar o último administrador ativo"/utf8>>, Req);
 reply({error, Msg}, Req) when is_binary(Msg) -> ana_http:reply_error(400, <<"INVALID">>, Msg, Req);
 reply({error, #{} = E}, Req) -> ana_http:json(400, #{error => E}, Req).
+
+settings_reply(ok, R) -> ana_http:json(200, #{ok => true}, R);
+settings_reply({error, unknown_setting}, R) ->
+    ana_http:reply_error(404, <<"NOT_FOUND">>, <<"parâmetro inexistente"/utf8>>, R);
+settings_reply({error, {range, Min, Max}}, R) ->
+    ana_http:reply_error(400, <<"OUT_OF_RANGE">>, io_lib:format("valor deve ser inteiro entre ~b e ~b", [Min, Max]), R);
+settings_reply({error, scope_not_allowed}, R) ->
+    ana_http:reply_error(400, <<"INVALID">>, <<"este parâmetro não pode ser diferente por nó"/utf8>>, R).
 
 %% Spec 077 (T-077-02): the technical actions of these screens go through the catalog — permission by group and
 %% action, the risk's ceremony (the screen already confirmed with the consequence) and the record — via the API too.

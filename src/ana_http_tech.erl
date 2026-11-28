@@ -10,6 +10,9 @@
 %%   POST /api/tech/requests/:id/approve|reject   a second person decides ({reason} to reject)
 %%   GET  /api/tech/runs                          the record (administrators)
 %%   PUT  /api/tech/policies/:code                {risk, groups, act_now} — stricter only (administrators)
+%%   Parameters (T-077-04, administrators): GET parameters · GET parameters/:key/versions ·
+%%   PUT parameters/:key {value|null, scope, node, minutes, reason, confirmed} · POST parameters/versions/:id/restore
+%%   {reason} · GET parameters/export · POST parameters/compare {file} · POST parameters/import {file, reason}
 -module(ana_http_tech).
 -export([init/2, status/1]).
 
@@ -64,6 +67,70 @@ route(<<"PUT">>, [<<"policies">>, Code], U, Req) ->
                 {ok, P} -> ana_http:json(200, P, R);
                 {error, not_found} -> ana_http:reply_error(404, <<"NOT_FOUND">>, <<"ação técnica inexistente"/utf8>>, R);
                 {error, M} -> ana_http:reply_error(400, <<"INVALID">>, M, R)
+            end
+        end)
+    end);
+route(<<"GET">>, [<<"parameters">>], U, Req) ->
+    admin(U, Req, fun() -> {ok, L} = ana_params:list(U), ana_http:json(200, L, Req) end);
+route(<<"GET">>, [<<"parameters">>, <<"export">>], U, Req) ->
+    admin(U, Req, fun() -> {ok, E} = ana_params:export(), ana_http:json(200, E, Req) end);
+route(<<"GET">>, [<<"parameters">>, Key, <<"versions">>], U, Req) ->
+    admin(U, Req, fun() -> {ok, V} = ana_params:versions(Key), ana_http:json(200, V, Req) end);
+route(<<"PUT">>, [<<"parameters">>, Key], U, Req) ->
+    admin(U, Req, fun() ->
+        body(Req, fun(B, R) ->
+            Params = maps:merge(maps:with([<<"value">>, <<"scope">>, <<"node">>, <<"minutes">>, <<"reason">>], B),
+                                #{<<"key">> => Key}),
+            reply(ana_tech:run(<<"parameter.set">>, Params, U,
+                               #{confirmed => maps:get(<<"confirmed">>, B, false) =:= true, origin => origin(R),
+                                 reason => maps:get(<<"reason">>, B, null)}), R)
+        end)
+    end);
+route(<<"PUT">>, [<<"parameters">>, Key, <<"risk">>], U, Req) ->
+    admin(U, Req, fun() ->
+        body(Req, fun(B, R) ->
+            case ana_params:set_risk(Key, maps:get(<<"risk">>, B, null), U) of
+                ok -> ana_http:json(200, #{key => Key, risk => ana_settings:risk_of(Key)}, R);
+                {error, not_found} -> ana_http:reply_error(404, <<"NOT_FOUND">>, <<"parâmetro inexistente"/utf8>>, R);
+                {error, M} -> ana_http:reply_error(400, <<"INVALID">>, M, R)
+            end
+        end)
+    end);
+route(<<"POST">>, [<<"parameters">>, <<"versions">>, Id, <<"restore">>], U, Req) ->
+    admin(U, Req, fun() ->
+        with_int(Id, Req, fun(N) ->
+            body(Req, fun(B, R) ->
+                case maps:get(<<"reason">>, B, null) of
+                    Reason when is_binary(Reason), byte_size(Reason) >= 3 ->
+                        case ana_params:restore(N, U, Reason) of
+                            ok -> ana_http:json(200, #{ok => true}, R);
+                            {error, not_found} -> ana_http:reply_error(404, <<"NOT_FOUND">>, <<"versão não encontrada"/utf8>>, R);
+                            {error, E} -> ana_http:reply_error(400, <<"INVALID">>, iolist_to_binary(io_lib:format("~0tp", [E])), R)
+                        end;
+                    _ -> ana_http:reply_error(400, <<"INVALID">>, <<"diga o motivo"/utf8>>, R)
+                end
+            end)
+        end)
+    end);
+route(<<"POST">>, [<<"parameters">>, <<"compare">>], U, Req) ->
+    admin(U, Req, fun() ->
+        body(Req, fun(B, R) ->
+            case ana_params:compare(maps:get(<<"file">>, B, #{})) of
+                {ok, Diff} -> ana_http:json(200, Diff, R);
+                {error, M} -> ana_http:reply_error(400, <<"INVALID">>, M, R)
+            end
+        end)
+    end);
+route(<<"POST">>, [<<"parameters">>, <<"import">>], U, Req) ->
+    admin(U, Req, fun() ->
+        body(Req, fun(B, R) ->
+            case maps:get(<<"reason">>, B, null) of
+                Reason when is_binary(Reason), byte_size(Reason) >= 3 ->
+                    case ana_params:import(maps:get(<<"file">>, B, #{}), U, Reason) of
+                        {ok, Res} -> ana_http:json(200, Res, R);
+                        {error, M} -> ana_http:reply_error(400, <<"INVALID">>, M, R)
+                    end;
+                _ -> ana_http:reply_error(400, <<"INVALID">>, <<"diga o motivo"/utf8>>, R)
             end
         end)
     end);
