@@ -115,7 +115,7 @@ minute_now() ->
     {D, {H, Mi, 0}}.
 
 local_now() ->
-    case ana_db:one("SELECT to_char(now() AT TIME ZONE $1, 'YYYY-MM-DD HH24:MI:SS') AS t", [ana_config:timezone()]) of
+    case ana_db:one("SELECT to_char(now() AT TIME ZONE $1, 'YYYY-MM-DD HH24:MI:SS') AS t", [list_to_binary(ana_config:timezone())]) of
         {ok, #{<<"t">> := T}} ->
             [Y, Mo, D, H, Mi, Se] = [binary_to_integer(X) || X <- binary:split(T, [<<"-">>, <<" ">>, <<":">>], [global])],
             {{Y, Mo, D}, {H, Mi, Se}};

@@ -21,6 +21,7 @@ start(_Type, _Args) ->
     ok = configure_roles(),
     {ok, Sup} = ana_sup:start_link(),
     ok = ana_settings:load(),                          % RF-011-05
+    ok = ana_mode:load(),                              % spec 077: operation modes
     ok = ana_security:ensure_admin(),                  % RF-001-04
     ok = ana_seeds:apply(),                            % RF-006-08
     _ = ana_parallel:recover(startup),                 % RF-022-04: orphan prepared transactions

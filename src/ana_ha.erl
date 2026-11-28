@@ -3,7 +3,7 @@
 %% High availability (spec 023): readiness and liveness, graceful drain,
 %% schema compatibility and executions interrupted by a node going down.
 -module(ana_ha).
--export([draining/0, refusing/0, live/0, ready/0, drain/0, schema/0, interrupted/1]).
+-export([draining/0, refusing/0, live/0, ready/0, drain/0, drain_soft/0, resume/0, schema/0, interrupted/1]).
 
 -define(DRAINING, {?MODULE, draining}).
 -define(REFUSING, {?MODULE, refusing}).
@@ -86,6 +86,22 @@ drain() ->
     Deadline = erlang:monotonic_time(millisecond) + ana_config:integer("ANA_DRAIN_TIMEOUT_MS", 25000),
     wait_executions(Deadline),
     _ = (catch ranch:suspend_listener(ana_http)),
+    ok.
+
+%% Spec 077 (node.drain): out of the balancer while other nodes take the traffic; this node keeps answering what
+%% still reaches it (nothing is suspended), so it can be resumed from the same screen.
+-spec drain_soft() -> ok.
+drain_soft() ->
+    persistent_term:put(?DRAINING, true),
+    logger:notice("drained by a technical action: not ready (the balancer sends the traffic to the other nodes)"),
+    ok.
+
+-spec resume() -> ok.
+resume() ->
+    persistent_term:put(?DRAINING, false),
+    persistent_term:put(?REFUSING, false),
+    _ = (catch ranch:resume_listener(ana_http)),
+    logger:notice("resumed by a technical action: ready again"),
     ok.
 
 wait_executions(Deadline) ->

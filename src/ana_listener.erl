@@ -17,6 +17,7 @@
                    {<<"ana_api">>, ana_api}, {<<"ana_license">>, ana_license},
                    {<<"ana_extension">>, ana_extensions},
                    {<<"ana_value">>, ana_values},                  % spec 065: company values
+                   {<<"ana_mode">>, ana_mode},                     % spec 077: operation modes
                    {<<"ana_wake">>, ana_events}]).                % spec 062: events instead of polling
 
 start_link() ->

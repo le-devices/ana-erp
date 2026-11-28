@@ -10,7 +10,7 @@
 
   const ROLE_LEVEL = { user: 1, developer: 2, admin: 3 };
   const ADMIN_SECTIONS = {
-    users: "Usuários", groups: "Grupos de acesso", limits: "Limites e cotas", company: "Empresa",
+    central: "Central técnica", users: "Usuários", groups: "Grupos de acesso", limits: "Limites e cotas", company: "Empresa",
     settings: "Parâmetros", home: "Painel inicial", assistant: "Assistente", simulation: "Uso simulado", automations: "Automações", accounts: "Contas padrão", commands: "Comandos", remote: "Sistemas remotos",
     scheduler: "Agendamento", monitor: "Monitor", consumption: "Consumo", audit: "Auditoria", retention: "Retenção",
     health: "Saúde", alerts: "Alertas", core: "Núcleo", uiperf: "Desempenho das telas", sqlperf: "Desempenho do SQL", advice: "Dicas de otimização", updates: "Atualizações do produto",
@@ -49,6 +49,8 @@
   }
 
   const canSee = (minRole) => (ROLE_LEVEL[state.user.role] || 0) >= (ROLE_LEVEL[minRole] || 1);
+  // Spec 077 (D6): the technical team (on call) reaches the technical center without being an administrator.
+  const canAdmin = () => canSee("admin") || state.user.technical === true;
   const isExternal = () => state.user && state.user.role === "external";
 
   // ------------------------------------------------------------------ screens
@@ -69,6 +71,26 @@
     $("#password-form").reset();
     showScreen("#password-screen");
     $("#password-form").elements.namedItem("current").focus();
+  }
+
+  // Spec 077 (D14): the installation's operation mode (read-only, maintenance, paused) on every screen, read from the
+  // node's memory every minute; whoever maintenance keeps out reads why on the sign-in screen.
+  const MODE_SHORT = { read_only: "Somente leitura", maintenance: "Manutenção" };
+  let modeTimer = null;
+  async function refreshMode(signedOut) {
+    let m;
+    try { m = await (await fetch("/api/mode")).json(); } catch (_) { return; }
+    const band = $("#mode-band");
+    const text = MODE_SHORT[m.mode] || (m.inbound_paused || m.routines_suspended ? "Pausas ativas" : "");
+    if (band) {
+      band.hidden = !text;
+      band.textContent = text ? "⏸ " + text : "";
+      band.title = m.message || "";
+      band.setAttribute("aria-label", m.message || "");
+      band.className = "license-band " + (m.mode === "normal" ? "warn" : "bad");
+    }
+    if (signedOut && m.message) toast(m.message, true);
+    if (!modeTimer) modeTimer = setInterval(() => refreshMode(false), 60000);
   }
 
   // Spec 009 (RF-009-08): evaluation, expiring, grace, restricted and test licenses are shown on every screen.
@@ -102,13 +124,13 @@
   }
 
   async function start() {
-    try { state.user = await API.me(); } catch (_) { showLogin(); return; }
+    try { state.user = await API.me(); } catch (_) { showLogin(); refreshMode(true); return; }
     if (state.user.must_change_password) { showPassword(true); return; }
     document.body.classList.toggle("is-admin", state.user.role === "admin");
     // Spec 016: an external portal account sees only Files and Portal.
     for (const b of $$(".area")) {
       b.hidden = isExternal() ? !["files", "portal"].includes(b.dataset.area)
-                              : b.dataset.only === "external" || !canSee(b.dataset.minRole || "user");
+                              : b.dataset.only === "external" || (b.dataset.area === "admin" ? !canAdmin() : !canSee(b.dataset.minRole || "user"));
     }
     $("#command-form").hidden = isExternal();
     const display = state.user.name || state.user.username;
@@ -132,6 +154,7 @@
     band.title = inst.name ? `Instância ${inst.name} — não é a produção` : "";
     document.body.dataset.instance = inst.role || "production";
     refreshLicense();
+    refreshMode(false);
     await window.AnaPrefs.load();
     showScreen("#app-screen");
     if (!isExternal()) await buildTargets();
@@ -227,7 +250,8 @@
     const parts = path.split("/").filter(Boolean).map(decodeURIComponent);
     let [area, ...rest] = parts;
     const allowed = { home: "user", ops: "user", bpm: "user", master: "user", files: "user", dev: "developer", admin: "admin" };
-    const ok = isExternal() ? ["files", "portal"].includes(area) : (allowed[area] && canSee(allowed[area]));
+    const ok = isExternal() ? ["files", "portal"].includes(area)
+                            : (area === "admin" ? canAdmin() : (allowed[area] && canSee(allowed[area])));
     if (!ok) {
       area = isExternal() ? "portal" : "home";
       rest = [];
@@ -245,7 +269,7 @@
       else if (area === "master") await window.AnaMaster.show(rest, query);
       else if (area === "bpm") await window.AnaBpm.show(rest, query);
       else if (area === "dev") await window.AnaDev.show(rest);
-      else if (area === "admin") await window.AnaAdmin.show(rest[0] || "users");
+      else if (area === "admin") await window.AnaAdmin.show(rest[0] || (canSee("admin") ? "users" : "central"));
       if (window.AnaPerf) window.AnaPerf.opened();
       if (back) restoreScroll(state.here);
     } catch (e) { toast(window.AnaUI.errorText(e), true); }
@@ -271,6 +295,7 @@
       for (const t of tables) add(`${t.schema}.${t.name}`, `#/dev/data/${t.schema}/${t.name}`);
     }
     if (canSee("admin")) for (const [k, label] of Object.entries(ADMIN_SECTIONS)) add(`Administração: ${label}`, `#/admin/${k}`);
+    else if (canAdmin()) add("Central técnica", "#/admin/central");
     $("#command-list").replaceChildren(...[...state.targets.keys()].map((label) => el("option", { value: label })));
   }
 

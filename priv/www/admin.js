@@ -3116,14 +3116,20 @@
       ], r.fires, { empty: "Ainda não disparou.", emptyGood: true }));
   }
 
-  const SECTIONS = { users, groups, settings, company, values, home, assistant, simulation, automations, commands, remote, accounts, limits, consumption, scheduler, monitor, audit, retention, health, alerts, core, disk, uiperf, sqlperf, advice, updates, integrations, checks, transports, datacopy, publicapi, license, extensions, telemetry };
+  // Spec 077 (T-077-03): the technical center — the work of keeping the ERP up, organized by the work.
+  const central = () => window.AnaTech.render(main(), { header, guard });
+  const SECTIONS = { central, users, groups, settings, company, values, home, assistant, simulation, automations, commands, remote, accounts, limits, consumption, scheduler, monitor, audit, retention, health, alerts, core, disk, uiperf, sqlperf, advice, updates, integrations, checks, transports, datacopy, publicapi, license, extensions, telemetry };
 
   function show(section) {
-    refreshUpdatesCount();
+    // Spec 077 (D6): the technical team that is not administrator sees only the technical center.
+    const onlyCentral = (window.AnaStudio.user() || {}).role !== "admin";
+    if (!onlyCentral) refreshUpdatesCount();
+    if (!SECTIONS[section] || onlyCentral) section = onlyCentral ? "central" : "users";
     current = section;
-    if (!SECTIONS[section]) section = "users";
-    current = section;
-    for (const b of $$("#area-admin .nav-link")) b.classList.toggle("active", b.dataset.section === section);
+    for (const b of $$("#area-admin .nav-link")) {
+      b.classList.toggle("active", b.dataset.section === section);
+      b.hidden = onlyCentral && b.dataset.section !== "central";
+    }
     main().replaceChildren(el("p", { class: "muted", text: "Carregando…" }));
     return guard(() => SECTIONS[section]());
   }

@@ -100,6 +100,14 @@ safe(F, Default) ->
 %% Claimed for one connector (the worker of that connector calls it).
 -spec claim(outbox | inbox, binary(), non_neg_integer()) -> [map()].
 claim(_, _, N) when N =< 0 -> [];
+claim(inbox, Connector, N) ->
+    %% Spec 077 (D14): the entry paused — what arrives waits in the queue (nothing is lost).
+    case ana_mode:inbound_paused() of
+        true -> [];
+        false -> try claim_rows(inbox, Connector, N)
+                 catch C:R -> logger:warning("integration claim inbox failed: ~0p:~0p", [C, R]), []
+                 end
+    end;
 claim(Table, Connector, N) ->
     try claim_rows(Table, Connector, N)
     catch C:R -> logger:warning("integration claim ~p failed: ~0p:~0p", [Table, C, R]), []

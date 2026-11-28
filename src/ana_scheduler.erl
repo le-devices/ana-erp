@@ -113,10 +113,14 @@ node_name() -> ana_config:node_id().
 %% ==========================================================================
 
 work(S) ->
-    materialize(),
-    S2 = launch(S),
-    late_warnings(),
-    S2.
+    case ana_mode:routines_suspended() of
+        true -> S;                                % spec 077 (D14): suspended — what is due waits for the resume
+        false ->
+            materialize(),
+            S2 = launch(S),
+            late_warnings(),
+            S2
+    end.
 
 %% 1. Due triggers → pending occurrences (RF-018-04).
 materialize() ->

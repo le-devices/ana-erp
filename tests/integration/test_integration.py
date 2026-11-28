@@ -11316,3 +11316,446 @@ class TestChangeWatchOutbound(Base):
         self.assertEqual((r["status"], r["json"].get("duplicate")), (200, True), r)
         self.assertEqual(psql(f"SELECT count(*) FROM integration.inbox WHERE connector = '{inn}'"), "1")
         self.assertEqual(psql(f"SELECT count(*) FROM integration.outbox WHERE connector = '{out}'"), "1")
+
+
+class TestTechnicalActions(Base):
+    """Spec 077 (T-077-01, T-077-02, RF-077-04, RF-077-05, RNF-077-02, CA-077-04): technical actions are a catalog run
+    by the core; the risk decides the ceremony — through the API too —, a company only makes an action stricter, and
+    who may run each action is chosen by group."""
+
+    def act(self, code, params=None, token=None, **body):
+        return http("POST", f"/api/tech/actions/{code}", {"params": params or {}, **body}, token or self.token)[:2]
+
+    def policy(self, code, **body):
+        return http("PUT", f"/api/tech/policies/{code}", body, self.token)[:2]
+
+    def test_t_077_01_the_catalog_says_effect_risk_and_who_may(self):
+        s, rows = http("GET", "/api/tech/actions", token=self.token)[:2]
+        self.assertEqual(s, 200, rows)
+        by = {r["code"]: r for r in rows}
+        for code in ("execution.stop", "retention.purge", "health.check", "node.drain", "node.resume"):
+            self.assertIn(code, by)
+        stop = by["execution.stop"]
+        self.assertEqual((stop["risk"], stop["allowed"]), ("medium", True))
+        for key in ("effect", "impact", "success", "params", "preconditions"):
+            self.assertTrue(stop[key] is not None, key)
+        self.assertEqual(by["node.drain"]["undo"], "node.resume")
+        _, user = new_user("user")
+        s, rows = http("GET", "/api/tech/actions", token=user)[:2]
+        self.assertFalse(any(r["allowed"] for r in rows))                 # nobody but administrators, by default
+        self.assertEqual(self.act("health.check", token=user)[0], 403)
+
+    def test_rf_077_05_risk_decides_the_ceremony(self):
+        # Low: just done, and recorded.
+        s, r = self.act("health.check")
+        self.assertEqual((s, r["status"]), (200, "done"), r)
+        s, runs = http("GET", "/api/tech/runs?limit=5", token=self.token)[:2]
+        self.assertEqual(runs[0]["id"], r["id"])
+        # Medium: only when confirmed (the screen showed the consequence).
+        s, e = self.act("retention.purge")
+        self.assertEqual((s, e["error"]["code"]), (409, "CONFIRMATION_REQUIRED"), e)
+        self.assertIn("prazo", e["error"]["message"])
+        s, r = self.act("retention.purge", confirmed=True, reason="teste da central técnica")
+        self.assertEqual((s, r["status"]), (200, "done"), r)
+        self.assertIn("counts", r["result"])
+        # What the action does not take is refused; a precondition that fails says why.
+        self.assertEqual(self.act("health.check", {"x": 1})[0], 400)
+        s, e = self.act("node.drain")
+        self.assertEqual((s, e["error"]["code"]), (409, "PRECONDITION"), e)       # a single node: drained = down
+        self.assertIn("outro nó", e["error"]["message"])
+
+    def test_ca_077_04_high_risk_waits_for_a_second_person_also_through_the_api(self):
+        target, _ = new_user("user")
+        _, other_admin = new_user("admin")
+        s, e = self.policy("user.unlock", risk="medium")
+        self.assertEqual(s, 200, e)
+        s, e = self.policy("user.revoke_sessions", risk="low")        # never below the product's minimum
+        self.assertEqual(s, 400, e)
+        try:
+            s, p = self.policy("user.unlock", risk="high")
+            self.assertEqual(s, 200, p)
+            s, r = self.act("user.unlock", {"username": target})
+            self.assertEqual((s, r["pending_approval"]), (202, True), r)
+            req = r["request"]["id"]
+            # The old admin route follows the same rule: no second person, no action.
+            s, r2 = http("POST", f"/api/admin/users/{target}/unlock", {}, self.token)[:2]
+            self.assertEqual((s, r2.get("pending_approval")), (202, True), r2)
+            s, e = http("POST", f"/api/tech/requests/{req}/approve", {}, self.token)[:2]
+            self.assertEqual((s, e["error"]["code"]), (409, "FOUR_EYES"), e)
+            s, done = http("POST", f"/api/tech/requests/{req}/approve", {}, other_admin)[:2]
+            self.assertEqual((s, done["status"], done["approved_by"]), (200, "done", done["approved_by"]), done)
+            self.assertNotEqual(done["approved_by"], "admin")
+            s, e = http("POST", f"/api/tech/requests/{req}/approve", {}, other_admin)[:2]
+            self.assertEqual((s, e["error"]["code"]), (409, "ACTION_DECIDED"), e)
+            s, e = http("POST", f"/api/tech/requests/{r2['request']['id']}/reject", {"reason": "pedido repetido"}, other_admin)[:2]
+            self.assertEqual((s, e["status"]), (200, "rejected"), e)
+        finally:
+            self.policy("user.unlock", risk="low", groups=[])
+
+    def test_rf_077_05_who_may_is_chosen_by_group(self):
+        g = f"plantao{SUFFIX}".lower()
+        s, c, _ = http("PUT", f"/api/admin/groups/{g}", {"description": "plantão (teste 077)", "program_patterns": []}, self.token)
+        self.assertEqual(s, 200, c)
+        _, on_call = new_user("user", groups=(g,))
+        _, other = new_user("user")
+        try:
+            s, p = self.policy("user.unlock", groups=[g])
+            self.assertEqual(s, 200, p)
+            target, _ = new_user("user")
+            s, r = self.act("user.unlock", {"username": target}, token=on_call)
+            self.assertEqual((s, r["status"]), (200, "done"), r)
+            self.assertEqual(self.act("user.unlock", {"username": target}, token=other)[0], 403)
+            s, r = self.act("user.unlock", {"username": target})                # administrators still may
+            self.assertEqual(s, 200, r)
+            # The on-call team sees the technical center in the Studio (D6); the others do not.
+            self.assertTrue(http("GET", "/api/me", token=on_call)[1]["technical"])
+            self.assertFalse(http("GET", "/api/me", token=other)[1]["technical"])
+            self.assertEqual(http("GET", "/api/tech/central/now", token=on_call)[0], 200)
+            self.assertEqual(http("GET", "/api/tech/parameters", token=on_call)[0], 403)     # parameters: administrators
+        finally:
+            self.policy("user.unlock", risk="low", groups=[])
+            http("DELETE", f"/api/admin/groups/{g}", token=self.token)
+
+
+class TestTechnicalParameters(Base):
+    """Spec 077 (T-077-04, RF-077-08, D9, CA-077-05, CA-077-06): every technical parameter in a catalog with what it
+    is, where the value in use came from, a reason for each change, versions, temporary changes that go back by
+    themselves, node scope, comparison between environments and a stricter risk chosen by the company."""
+
+    KEY = "slow_sql_ms"                     # low risk, may differ per node, harmless to change in the battery
+
+    def put(self, key, **body):
+        return http("PUT", f"/api/tech/parameters/{key}", body, self.token)[:2]
+
+    def listing(self):
+        s, l = http("GET", "/api/tech/parameters", token=self.token)[:2]
+        self.assertEqual(s, 200, l)
+        return l
+
+    def param(self, key):
+        return next(p for p in self.listing()["parameters"] if p["key"] == key)
+
+    def tearDown(self):
+        for scope in ("node", "installation"):
+            self.put(self.KEY, value=None, scope=scope, reason="limpeza do teste", confirmed=True)
+        http("PUT", "/api/tech/parameters/exec_timeout_ms/risk", {"risk": "medium"}, self.token)
+
+    def test_d9_the_catalog_says_what_each_parameter_is_and_where_its_value_came_from(self):
+        l = self.listing()
+        p = next(x for x in l["parameters"] if x["key"] == "exec_timeout_ms")
+        for k in ("label", "when_to_change", "applies", "risk", "scopes", "default", "value", "origin", "env"):
+            self.assertIsNotNone(p[k], k)
+        self.assertIn(p["origin"], ("product", "server", "installation", "node"))
+        server = {s["env"]: s for s in l["server"]}
+        self.assertTrue(server["ANA_DB_PASSWORD"]["secret"])
+        self.assertIn(server["ANA_DB_PASSWORD"]["value"], (None, "(definido)"))     # never the secret itself
+        self.assertIn("ana-ctl", server["ANA_DB_HOST"]["how"])
+        changed = [x["changed"] for x in l["parameters"]]
+        self.assertEqual(changed, sorted(changed, reverse=True))                      # changed ones first
+
+    def test_ca_077_05_a_temporary_change_goes_back_by_itself_with_both_in_the_history(self):
+        before = self.param(self.KEY)["value"]
+        s, e = self.put(self.KEY, value=before + 7)
+        self.assertEqual(s, 400, e)                                                    # the reason is required
+        s, r = self.put(self.KEY, value=before + 7, minutes=60, reason="investigar lentidão das 14h")
+        self.assertEqual(s, 200, r)
+        p = self.param(self.KEY)
+        self.assertEqual((p["value"], p["origin"], p["temporary"]), (before + 7, "installation", True))
+        # The hour passes (brought forward in the database; any node re-arms its timer on the notice).
+        psql(f"UPDATE technical.parameter_version SET until = now() + interval '1 second' "
+             f"WHERE key = '{self.KEY}' AND until IS NOT NULL AND reverted_at IS NULL; SELECT pg_notify('ana_setting', '{self.KEY}')")
+        end = time.time() + 20
+        while time.time() < end and self.param(self.KEY)["value"] != before:
+            time.sleep(0.5)
+        self.assertEqual(self.param(self.KEY)["value"], before)
+        s, versions = http("GET", f"/api/tech/parameters/{self.KEY}/versions", token=self.token)[:2]
+        kinds = [(v["kind"], v["after"]) for v in versions[:2]]
+        self.assertEqual(kinds[0][0], "expired", versions[:2])
+        self.assertIn("volta automática", versions[0]["reason"])
+        self.assertEqual((versions[1]["kind"], versions[1]["after"], versions[1]["reason"]),
+                         ("set", before + 7, "investigar lentidão das 14h"))
+        # Any version can be restored — as a new change, with its own reason.
+        s, r = http("POST", f"/api/tech/parameters/versions/{versions[1]['id']}/restore", {"reason": "voltar ao ajuste"}, self.token)[:2]
+        self.assertEqual(s, 200, r)
+        self.assertEqual(self.param(self.KEY)["value"], before + 7)
+
+    def test_d9_a_value_for_one_node_wins_where_allowed(self):
+        s, r = self.put(self.KEY, value=321, scope="node", reason="este nó serve os relatórios")
+        self.assertEqual(s, 200, r)
+        p = self.param(self.KEY)
+        self.assertEqual((p["value"], p["origin"]), (321, "node"))
+        s, e = self.put("exec_timeout_ms", value=61000, scope="node", reason="não pode", confirmed=True)
+        self.assertEqual(s, 422, e)
+        self.assertIn("por nó", e["error"]["message"])
+
+    def test_ca_077_06_the_comparison_shows_only_what_differs_and_a_stricter_parameter_waits_for_two(self):
+        s, mine = http("GET", "/api/tech/parameters/export", token=self.token)[:2]
+        self.assertEqual(s, 200, mine)
+        theirs = json.loads(json.dumps(mine))
+        for p in theirs["parameters"]:
+            if p["key"] == self.KEY:
+                p["value"] += 11
+        s, diff = http("POST", "/api/tech/parameters/compare", {"file": theirs}, self.token)[:2]
+        self.assertEqual((s, [d["key"] for d in diff]), (200, [self.KEY]), diff)
+        # The company makes a parameter high risk: never below the product, and then a second person approves.
+        s, e = http("PUT", "/api/tech/parameters/exec_timeout_ms/risk", {"risk": "low"}, self.token)[:2]
+        self.assertEqual(s, 400, e)
+        s, r = http("PUT", "/api/tech/parameters/exec_timeout_ms/risk", {"risk": "high"}, self.token)[:2]
+        self.assertEqual((s, r["risk"]), (200, "high"), r)
+        s, r = self.put("exec_timeout_ms", value=61000, reason="rotinas longas do fechamento", confirmed=True)
+        self.assertEqual((s, r.get("pending_approval")), (202, True), r)
+        s, r2 = http("PUT", "/api/admin/settings/exec_timeout_ms", {"value": 61000}, self.token)[:2]   # the old screen too
+        self.assertEqual((s, r2.get("pending_approval")), (202, True), r2)
+        _, other = new_user("admin")
+        for req in (r["request"]["id"], r2["request"]["id"]):
+            http("POST", f"/api/tech/requests/{req}/reject", {"reason": "teste"}, other)
+        self.assertNotEqual(self.param("exec_timeout_ms")["value"], 61000)
+
+
+class TestDiagnosticConsole(Base):
+    """Spec 077 (T-077-05, RF-077-06, D7, CA-077-09): the console investigates without changing anything — ready-made
+    queries, read-only SQL with limits and masking, saved queries, the node's last log lines and the core."""
+
+    def sql(self, text, **extra):
+        return http("POST", "/api/tech/console/sql", {"sql": text, **extra}, self.token)[:2]
+
+    def test_ca_077_09_the_console_only_reads_within_limits_and_masks(self):
+        for write in ("UPDATE base.party SET name = name", "  -- só um comentário\nDELETE FROM base.party WHERE false",
+                      "EXPLAIN ANALYZE SELECT 1", "CREATE TABLE x (a int)"):
+            s, e = self.sql(write)
+            self.assertEqual((s, e["error"]["code"]), (400, "CONSOLE"), (write, e))
+            self.assertIn("só lê", e["error"]["message"])
+        s, r = self.sql("SELECT g FROM generate_series(1, 600) g")
+        self.assertEqual((s, len(r["rows"]), r["truncated"]), (200, 500, True), r.get("error"))
+        s, e = self.sql("SELECT pg_sleep(6)")
+        self.assertEqual(s, 400, e)
+        self.assertIn("5 s", e["error"]["message"])
+        s, r = self.sql("SELECT id, email, city FROM base.party WHERE email IS NOT NULL LIMIT 3")
+        self.assertEqual(s, 200, r)
+        cols = {c["name"]: c["masked"] for c in r["columns"]}
+        self.assertEqual((cols["email"], cols["city"], cols["id"]), (True, False, False))
+        self.assertTrue(all(row[1] == "***" for row in r["rows"]), r["rows"])
+        s, plan = self.sql("SELECT * FROM base.party WHERE id = 1", explain=True)
+        self.assertEqual(s, 200, plan)
+        self.assertIn("QUERY PLAN", [c["name"] for c in plan["columns"]])
+        self.assertGreaterEqual(int(psql("SELECT count(*) FROM ana_system.admin_log WHERE action = 'console.sql' "
+                                         "AND at > now() - interval '5 minutes'")), 1)
+        _, user = new_user("user")
+        self.assertEqual(http("POST", "/api/tech/console/sql", {"sql": "SELECT 1"}, user)[0], 403)
+
+    def test_d7_ready_made_and_saved_queries(self):
+        s, qs = http("GET", "/api/tech/console/queries", token=self.token)[:2]
+        self.assertEqual(s, 200, qs)
+        codes = {q["code"] for q in qs if q["product"]}
+        self.assertTrue({"locks", "long_transactions", "bloat", "replicas", "connections", "largest_tables"} <= codes, codes)
+        s, r = http("POST", "/api/tech/console/queries/largest_tables/run", {"params": {"limit": 3}}, self.token)[:2]
+        self.assertEqual(s, 200, r)
+        self.assertLessEqual(len(r["rows"]), 3)
+        s, r = http("POST", "/api/tech/console/queries/long_transactions/run", {"params": {"minutes": 0}}, self.token)[:2]
+        self.assertEqual(s, 200, r)
+        code = f"teste_{SUFFIX}".lower()
+        s, e = http("POST", "/api/tech/console/queries", {"code": code, "name": "grava", "sql": "DELETE FROM base.party"},
+                    self.token)[:2]
+        self.assertEqual(s, 400, e)
+        s, e = http("POST", "/api/tech/console/queries", {"code": "locks", "name": "troca", "sql": "SELECT 1"}, self.token)[:2]
+        self.assertEqual(s, 400, e)                                                    # the product's stay as they are
+        s, r = http("POST", "/api/tech/console/queries", {"code": code, "name": "Clientes por cidade",
+                                                          "sql": "SELECT city, count(*) AS n FROM base.party GROUP BY 1"},
+                    self.token)[:2]
+        self.assertEqual(s, 200, r)
+        s, r = http("POST", f"/api/tech/console/queries/{code}/run", {}, self.token)[:2]
+        self.assertEqual((s, [c["name"] for c in r["columns"]]), (200, ["city", "n"]), r)
+        self.assertEqual(http("DELETE", f"/api/tech/console/queries/{code}", token=self.token)[0], 200)
+        self.assertEqual(http("DELETE", "/api/tech/console/queries/locks", token=self.token)[0], 400)
+
+    def test_d7_the_nodes_last_log_lines_and_the_core(self):
+        s, r = http("GET", "/api/tech/console/logs?level=info&limit=50", token=self.token)[:2]
+        self.assertEqual(s, 200, r)
+        self.assertTrue(r["lines"], r)
+        self.assertLessEqual(len(r["lines"]), 50)
+        seqs = [line["seq"] for line in r["lines"]]
+        self.assertEqual(seqs, sorted(seqs, reverse=True))                              # the newest first
+        s, r = http("GET", "/api/tech/console/logs?level=error&text=__nada_assim__", token=self.token)[:2]
+        self.assertEqual((s, r["lines"]), (200, []))
+        s, core = http("GET", "/api/tech/console/core", token=self.token)[:2]
+        self.assertEqual(s, 200, core)
+        self.assertIn("processes", core)
+
+
+class TestOperationModes(Base):
+    """Spec 077 (T-077-07, RF-077-13, D14, CA-077-08): modes to get through a crisis — read-only (the database refuses
+    every write, with the mode's message), maintenance (only administrators and the technical team), the entry of
+    integrations paused and the routines suspended; announced everywhere; and back to normal in order."""
+
+    def act(self, code, params=None, token=None):
+        return http("POST", f"/api/tech/actions/{code}", {"params": params or {}, "confirmed": True}, token or self.token)[:2]
+
+    def tearDown(self):
+        self.act("mode.normal")                                          # never leave the battery in a crisis mode
+
+    def mode(self):
+        s, m, _ = http("GET", "/api/mode")
+        self.assertEqual(s, 200, m)
+        return m
+
+    def test_ca_077_08_read_only_refuses_writes_everywhere_and_queries_work(self):
+        reader = f"test.mode_read_{SUFFIX}"
+        writer = f"test.mode_write_{SUFFIX}"
+        self.save(reader, "def main():\n    return ana.sql_value(\"SELECT count(*) FROM base.party\")\n")
+        self.save(writer, "def main():\n    return ana.sql_exec(\"UPDATE base.party SET name = name WHERE id = 1\")\n")
+        s, r = self.act("mode.read_only", {"message": "virada do banco", "minutes": 30})
+        self.assertEqual(s, 200, r)
+        m = self.mode()
+        self.assertEqual(m["mode"], "read_only")
+        self.assertIn("somente leitura", m["message"])
+        self.assertIn("virada do banco", m["message"])
+        s, _, headers = http("GET", "/api/me", token=self.token)
+        self.assertIn("x-ana-mode", {k.lower() for k in headers})           # the API says it on every answer
+        s, c, _ = self.run_program(reader)
+        self.assertEqual(s, 200, c)                                          # queries work
+        s, c, _ = self.run_program(writer)
+        self.assertIn("error", c, c)
+        self.assertIn("somente leitura", json.dumps(c["error"], ensure_ascii=False))
+        s, c, _ = self.run_program("sales.create_order", {"customer": 1, "items": [{"product": "ACUCAR-1", "quantity": 1}]})
+        self.assertIn("error", c, c)                                         # a product routine too
+        s, r = self.act("mode.normal")
+        self.assertEqual((s, self.mode()["mode"]), (200, "normal"), r)
+        s, c, _ = self.run_program(writer)
+        self.assertNotIn("error", c, c)
+
+    def test_d14_paused_and_suspended_come_back_in_order(self):
+        for code in ("integrations.pause_inbound", "scheduler.suspend"):
+            s, r = self.act(code)
+            self.assertEqual(s, 200, r)
+        m = self.mode()
+        self.assertEqual((m["inbound_paused"], m["routines_suspended"]), (True, True))
+        self.assertIn("pausada", m["message"])
+        s, r = self.act("mode.normal")
+        self.assertEqual(s, 200, r)
+        m = self.mode()
+        self.assertEqual((m["mode"], m["inbound_paused"], m["routines_suspended"], m["message"]), ("normal", False, False, None))
+
+    def test_d14_maintenance_lets_in_only_the_technical_team(self):
+        g = f"tec{SUFFIX}".lower()
+        s, c, _ = http("PUT", f"/api/admin/groups/{g}", {"description": "equipe técnica (teste 077)", "program_patterns": []},
+                       self.token)
+        self.assertEqual(s, 200, c)
+        _, tech = new_user("user", groups=(g,))
+        _, other = new_user("user")
+        try:
+            s, r = self.act("mode.maintenance", {"message": "troca do servidor", "technical_group": g})
+            self.assertEqual(s, 200, r)
+            s, e, _ = http("GET", "/api/me", token=other)
+            self.assertEqual((s, e["error"]["code"]), (503, "MAINTENANCE"), e)
+            self.assertIn("troca do servidor", e["error"]["message"])
+            self.assertEqual(http("GET", "/api/me", token=tech)[0], 200)
+            self.assertEqual(http("GET", "/api/me", token=self.token)[0], 200)
+        finally:
+            self.act("mode.normal")
+            http("DELETE", f"/api/admin/groups/{g}", token=self.token)
+        self.assertEqual(http("GET", "/api/me", token=other)[0], 200)
+
+
+class TestRunbooks(Base):
+    """Spec 077 (T-077-06, RF-077-07, D8): runbooks as data — the checks run by themselves, the person decides the
+    actions and instructions; step by step or until the next decision; paused, resumed and handed over."""
+
+    def post(self, path, body=None, token=None):
+        return http("POST", f"/api/tech/runbooks/{path}", body or {}, token or self.token)[:2]
+
+    def test_rf_077_07_a_runbook_runs_until_each_decision_and_can_change_hands(self):
+        s, books = http("GET", "/api/tech/runbooks", token=self.token)[:2]
+        self.assertEqual(s, 200, books)
+        self.assertTrue({"disk_full", "database_down", "replica_lagging", "node_down", "crash_loop", "expiring_credentials",
+                         "stuck_queue"} <= {b["code"] for b in books})
+        # The license check runs by itself; the next step is an action: it stops there for the person.
+        s, r = self.post("expiring_credentials/start")
+        self.assertEqual(s, 200, r)
+        run = r["id"]
+        self.assertEqual((r["status"], r["step"], r["waiting_for"]), ("running", 2, "action"), r)
+        self.assertEqual((len(r["log"]), r["log"][0]["kind"], r["log"][0]["ok"]), (1, "check", True), r["log"])
+        self.assertIn("ms", r["log"][0])
+        s, e = self.post(f"runs/{run}/pause")
+        self.assertEqual((s, e["status"]), (200, "paused"), e)
+        s, e = self.post(f"runs/{run}/advance", {"confirm": True})
+        self.assertEqual(s, 409, e)                                                     # paused: resume first
+        self.assertEqual(self.post(f"runs/{run}/resume")[0], 200)
+        s, r = self.post(f"runs/{run}/advance", {"confirm": True})                    # runs the action, then waits
+        self.assertEqual((s, r["step"], r["waiting_for"]), (200, 3, "instruction"), r)
+        self.assertEqual(r["log"][1]["result"], "ação executada")
+        # Handed over: only the new owner goes on.
+        other, other_token = new_user("admin")
+        s, r = self.post(f"runs/{run}/hand-over", {"to": other})
+        self.assertEqual((s, r["owner"]), (200, other), r)
+        s, e = self.post(f"runs/{run}/advance", {"confirm": True})
+        self.assertEqual(s, 409, e)
+        s, r = self.post(f"runs/{run}/advance", {"confirm": True}, token=other_token)
+        self.assertEqual((s, r["status"], len(r["log"])), (200, "done", 3), r)
+        s, opened = http("GET", "/api/tech/runbooks/runs", token=self.token)[:2]
+        self.assertNotIn(run, [x["id"] for x in opened])
+
+    def test_d8_a_failing_check_follows_if_it_fails(self):
+        # "Laço de quedas" starts by counting the falls of the last hour: none here, so it stops (nothing to do).
+        s, r = self.post("crash_loop/start")
+        self.assertEqual(s, 200, r)
+        self.assertEqual((r["status"], r["log"][0]["ok"]), ("stopped", False), r)
+        _, user = new_user("user")
+        self.assertEqual(self.post("crash_loop/start", token=user)[0], 403)            # only the technical team
+
+
+class TestTechnicalCenter(Base):
+    """Spec 077 (T-077-03, RF-077-01, RF-077-02, D1–D3, RNF-077-03, CA-077-01): the technical work in tabs, from the
+    sources that exist; every item says what, why, what effect and what to do; "is everything fine?" first."""
+
+    def tab(self, name, token=None):
+        return http("GET", f"/api/tech/central/{name}", token=token or self.token)[:2]
+
+    def test_rf_077_01_six_tabs_and_items_that_say_what_to_do(self):
+        for name in ("now", "routine", "capacity", "changes", "security", "log"):
+            s, r = self.tab(name)
+            self.assertEqual(s, 200, (name, r))
+            for it in r["items"]:
+                for k in ("severity", "what", "why", "effect", "action", "runbook", "detail"):
+                    self.assertIn(k, it, (name, it))
+        s, r = self.tab("now")
+        self.assertIsInstance(r["ok"], bool)
+        self.assertTrue(r["headline"])
+        order = {"critical": 0, "serious": 1, "warning": 2, "info": 3, "ok": 4}
+        sev = [order[i["severity"]] for i in r["items"]]
+        self.assertEqual(sev, sorted(sev))                                             # the most serious first
+        self.assertEqual(self.tab("nada")[0], 404)
+        _, user = new_user("user")
+        self.assertEqual(self.tab("now", token=user)[0], 403)
+
+    def test_d2_a_crisis_mode_is_the_first_item_with_its_way_back(self):
+        s, r = http("POST", "/api/tech/actions/mode.read_only", {"params": {"message": "teste da central"}, "confirmed": True},
+                    self.token)[:2]
+        self.assertEqual(s, 200, r)
+        try:
+            s, r = self.tab("now")
+            self.assertFalse(r["ok"])
+            item = next(i for i in r["items"] if i["action"] and i["action"]["code"] == "mode.normal")
+            self.assertEqual(item["severity"], "serious", item)
+            self.assertIn("somente leitura", item["what"])
+            self.assertLessEqual(r["items"].index(item), len([i for i in r["items"] if i["severity"] == "critical"]))
+        finally:
+            http("POST", "/api/tech/actions/mode.normal", {"params": {}, "confirmed": True}, self.token)
+        s, r = self.tab("log")
+        self.assertIn("Voltar ao funcionamento normal", [i["what"] for i in r["items"]])
+
+    def test_rnf_077_03_now_opens_within_a_second_with_ten_thousand_events(self):
+        psql("INSERT INTO ana_system.health_event (component, state, message, node, at) "
+             "SELECT 'teste_077', CASE WHEN g % 3 = 0 THEN 'red' ELSE 'yellow' END, 'massa da central', 'teste', "
+             "now() - make_interval(secs => g) FROM generate_series(1, 10000) g")
+        try:
+            times = []
+            for _ in range(10):
+                t0 = time.time()
+                s, r = self.tab("now")
+                times.append(time.time() - t0)
+                self.assertEqual(s, 200, r)
+            p95 = sorted(times)[int(len(times) * 0.95) - 1]
+            print(f"\n[RNF-077-03] aba Agora: p95 {p95 * 1000:.0f} ms", file=sys.stderr)
+            self.assertLessEqual(p95, 1.0)
+        finally:
+            psql("DELETE FROM ana_system.health_event WHERE component = 'teste_077'")

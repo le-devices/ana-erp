@@ -1244,3 +1244,14 @@ input.narrow { width: 6em; }
 .bpm-task-context, dl.kv { display: grid; grid-template-columns: max-content 1fr; gap: 2px 12px; margin: 6px 0; }
 .bpm-task-context dt, dl.kv dt { color: var(--text-2); }
 .bpm-task-context dd, dl.kv dd { margin: 0; overflow-wrap: anywhere; }
+
+/* Spec 077 (T-077-03): technical center — items say what, why, effect and the next step. */
+.tech-headline { display: flex; align-items: center; gap: 8px; padding: 10px 12px; border-radius: 8px; margin: 10px 0;
+  border: 1px solid var(--border); }
+.tech-headline.bad { border-color: var(--d, #b3261e); }
+.tech-item { border: 1px solid var(--border); border-radius: 8px; padding: 10px 12px; margin: 8px 0; display: grid; gap: 4px; }
+.tech-item.critical, .tech-item.serious { border-left: 4px solid var(--d, #b3261e); }
+.tech-item.warning { border-left: 4px solid #b25e00; }
+.tech-item-head { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.tech-steps { display: grid; gap: 6px; padding-left: 20px; }
+.tech-step.current { font-weight: 600; }

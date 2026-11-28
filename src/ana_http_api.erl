@@ -96,6 +96,13 @@ route(<<"GET">>, [<<"license">>], Req) ->
         L = ana_license:current(),
         ana_http:json(200, maps:with([state, reason, days_left, environment, valid_until], L), Req)
     end);
+%% Spec 077 (D14): the installation's mode for the banner of the Studio and the portal — no sign-in needed (the
+%% people kept out by maintenance read why), and nothing but the mode, its message and the expected end.
+route(<<"GET">>, [<<"mode">>], Req) ->
+    S = ana_mode:current(),
+    ana_http:json(200, #{mode => maps:get(mode, S), inbound_paused => maps:get(inbound_paused, S),
+                         routines_suspended => maps:get(routines_suspended, S), until => maps:get(until, S),
+                         message => ana_mode:message()}, Req);
 route(<<"GET">>, [<<"me">>], Req) ->
     ana_http:require_any(Req, fun(U) ->
         {Company, Logo} = case ana_admin:get_company() of
@@ -104,8 +111,10 @@ route(<<"GET">>, [<<"me">>], Req) ->
             _ -> {null, false}
         end,
         %% Spec 034: the screen marks development/test instances. Spec 009 (D11): the customer's brand.
+        %% Spec 077 (D6): the on-call team (a group of the technical policies) sees the technical center.
         ana_http:json(200, (maps:without([trace, key_id], U))#{company => Company, company_logo => Logo,
-                                                               instance => ana_instance:info()}, Req)
+                                                               instance => ana_instance:info(),
+                                                               technical => ana_tech:technical(U)}, Req)
     end);
 route(<<"POST">>, [<<"me">>, <<"password">>], Req) ->
     ana_http:require_any(Req, fun(U) ->

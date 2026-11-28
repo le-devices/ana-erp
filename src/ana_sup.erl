@@ -13,6 +13,7 @@ init([]) ->
     ok = ana_execution:init_tables(),
     ok = ana_remote_system:init_tables(),
     ok = ana_settings:init_cache(),
+    ok = ana_log_ring:install(),                       % spec 077: the last log lines, in memory only
     ok = ana_program:init_cache(),
     ok = ana_access:init_cache(),
     ok = ana_limits:init_cache(),
@@ -45,7 +46,8 @@ init([]) ->
             #{id => ana_connector_sup, start => {ana_connector_sup, start_link, []}, type => supervisor},
             worker(ana_integration, []),
             worker(ana_analytics, []),
-            worker(ana_retention, [])],
+            worker(ana_retention, []),
+            worker(ana_params, [])],      % spec 077: temporary parameter changes go back by themselves
     Observe = [worker(ana_health, []),
                worker(ana_sql_stats, []),
                worker(ana_advisor, []),

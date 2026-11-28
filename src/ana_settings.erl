@@ -8,7 +8,7 @@
 %% NOTIFY "ana_setting" (handled by ana_listener).
 -module(ana_settings).
 -compile({no_auto_import, [get/1]}).
--export([init_cache/0, load/0, get/1, list/0, set/3, on_notify/2, definitions/0, valid/2]).
+-export([init_cache/0, load/0, get/1, list/0, set/3, set/4, on_notify/2, definitions/0, valid/2, risk_of/1, origin/1]).
 
 -define(TAB, ana_settings_cache).
 
@@ -161,24 +161,49 @@ init_cache() ->
 
 default(Env, D) -> ana_config:integer(Env, D).
 
-%% Loads saved values over the defaults (startup and after reconnecting).
+%% Loads saved values over the defaults (startup and after reconnecting): the defaults, then the installation's values,
+%% then this node's (spec 077, D9: the most specific wins). A value removed goes back to the default.
 load() ->
     case ana_db:rows("SELECT key, value FROM ana_system.setting", []) of
         {ok, Rows} ->
-            [store(K, V) || #{<<"key">> := K, <<"value">> := V} <- Rows],
+            Node = case catch ana_db:rows("SELECT key, value FROM technical.parameter_node WHERE node = $1",
+                                          [ana_config:node_id()]) of
+                {ok, N} -> N;
+                _ -> []
+            end,
+            %% One atomic insert: a reader never sees a value back at its default for an instant.
+            Defaults = maps:from_list([{K, default(Env, D)} || {K, _, _, _, Env, D, _} <- definitions()]),
+            Values = lists:foldl(fun(#{<<"key">> := K, <<"value">> := V}, Acc) -> stored_value(K, V, Acc) end,
+                                 Defaults, Rows ++ Node),
+            ets:insert(?TAB, [{{?MODULE, origins}, origins(Rows, Node)} | maps:to_list(Values)]),
             ok;
         {error, E} ->
             logger:warning("could not load settings: ~0p", [E])
     end.
 
-store(KeyBin, Value) ->
+origins(Rows, Node) ->
+    maps:merge(maps:from_list([{K, installation} || #{<<"key">> := K} <- Rows]),
+               maps:from_list([{K, node} || #{<<"key">> := K} <- Node])).
+
+%% Where the value in use came from on this node: node, installation, server (environment variable) or product.
+-spec origin(atom()) -> node | installation | server | product.
+origin(Key) ->
+    Origins = case ets:lookup(?TAB, {?MODULE, origins}) of [{_, O}] -> O; [] -> #{} end,
+    case maps:get(atom_to_binary(Key), Origins, none) of
+        none ->
+            {_, _, _, _, Env, _, _} = lists:keyfind(Key, 1, definitions()),
+            case os:getenv(Env) of false -> product; _ -> server end;
+        O2 -> O2
+    end.
+
+stored_value(KeyBin, Value, Acc) ->
     case find(KeyBin) of
         {ok, {K, Type, Min, Max, _, _, _}} ->
             case validate(Type, Min, Max, Value) of
-                ok -> ets:insert(?TAB, {K, Value});
-                _ -> logger:warning("ignoring invalid saved setting ~s", [KeyBin])
+                ok -> Acc#{K => Value};
+                _ -> logger:warning("ignoring invalid saved setting ~s", [KeyBin]), Acc
             end;
-        error -> ok
+        error -> Acc
     end.
 
 -spec get(atom()) -> term().
@@ -190,30 +215,104 @@ get(Key) ->
 
 list() ->
     [#{key => K, type => T, min => Min, max => Max, value => get(K),
-       default => default(Env, D), description => Desc}
+       default => default(Env, D), description => Desc, env => list_to_binary(Env), origin => origin(K)}
      || {K, T, Min, Max, Env, D, Desc} <- definitions()].
+
+%% The risk of changing a parameter: the product's minimum, or the company's, stricter (spec 077, D9).
+-spec risk_of(binary()) -> binary().
+risk_of(KeyBin) ->
+    case catch ana_db:one("SELECT risk, company_risk FROM technical.parameter WHERE key = $1", [KeyBin]) of
+        {ok, #{<<"risk">> := R, <<"company_risk">> := C}} when is_binary(C) -> stricter(R, C);
+        {ok, #{<<"risk">> := R}} -> R;
+        _ -> <<"medium">>
+    end.
+
+stricter(A, B) ->
+    Order = [<<"low">>, <<"medium">>, <<"high">>],
+    I = fun(X) -> length(lists:takewhile(fun(Y) -> Y =/= X end, Order)) end,
+    case I(A) >= I(B) of true -> A; false -> B end.
 
 %% RNF-011-03: validated on the server; invalid values are refused.
 -spec set(binary(), term(), map()) -> ok | {error, term()}.
-set(KeyBin, Value, #{username := Who}) ->
+set(KeyBin, Value, User) -> set(KeyBin, Value, User, #{}).
+
+%% Spec 077 (D9): Opts — scope (installation | node), node (default: this one), reason, minutes (a temporary change
+%% that goes back by itself), kind (set | restore | expired | import). A null value goes back to the default. Every
+%% change is a version with the value before it, at that scope.
+-spec set(binary(), term(), map(), map()) -> ok | {error, term()}.
+set(KeyBin, Value, #{username := Who}, Opts) ->
+    Scope = maps:get(scope, Opts, installation),
+    Node = case Scope of node -> maps:get(node, Opts, ana_config:node_id()); installation -> null end,
     case find(KeyBin) of
         {ok, {K, Type, Min, Max, _, _, _}} ->
-            case validate(Type, Min, Max, Value) of
-                ok ->
-                    Before = get(K),
+            Valid = case Value of null -> ok; _ -> validate(Type, Min, Max, Value) end,
+            case {Valid, scope_allowed(KeyBin, Scope)} of
+                {{error, _} = E, _} -> E;
+                {ok, false} -> {error, scope_not_allowed};
+                {ok, true} ->
+                    Before = stored(KeyBin, Scope, Node),
+                    _ = write(KeyBin, Value, Scope, Node, Who),
+                    Until = case maps:get(minutes, Opts, null) of
+                        M when is_integer(M), M > 0, Value =/= null -> M;
+                        _ -> null
+                    end,
                     {ok, _} = ana_db:exec(
-                        "INSERT INTO ana_system.setting (key, value, updated_by) "
-                        "VALUES ($1, $2::text::jsonb, $3) ON CONFLICT (key) DO UPDATE SET "
-                        "value = EXCLUDED.value, updated_at = now(), updated_by = EXCLUDED.updated_by",
-                        [KeyBin, iolist_to_binary(json:encode(Value)), Who]),
-                    ets:insert(?TAB, {K, Value}),
+                        "INSERT INTO technical.parameter_version (key, scope, node, before, after, reason, kind, set_by, until) "
+                        "VALUES ($1, $2, $3, $4::text::jsonb, $5::text::jsonb, $6, $7, $8, "
+                        "  CASE WHEN $9::int IS NULL THEN NULL ELSE now() + make_interval(mins => $9::int) END)",
+                        [KeyBin, atom_to_binary(Scope), Node, json_or_null(Before), json_or_null(Value),
+                         maps:get(reason, Opts, null), atom_to_binary(maps:get(kind, Opts, case Value of null -> reset; _ -> set end)),
+                         Who, Until]),
+                    load(),
                     _ = ana_db:exec("SELECT pg_notify('ana_setting', $1)", [KeyBin]),
-                    ana_admin:log(Who, <<"setting.set">>, KeyBin, Before, Value),
-                    ok;
-                {error, _} = E -> E
+                    _ = (catch ana_params:changed()),
+                    ana_admin:log(Who, <<"setting.set">>, KeyBin, Before, #{value => Value, scope => Scope, node => Node,
+                                                                           until_minutes => Until}),
+                    _ = K,
+                    ok
             end;
         error -> {error, unknown_setting}
     end.
+
+scope_allowed(_KeyBin, installation) -> true;
+scope_allowed(KeyBin, node) ->
+    case catch ana_db:one("SELECT 'node' = ANY (scopes) AS ok FROM technical.parameter WHERE key = $1", [KeyBin]) of
+        {ok, #{<<"ok">> := true}} -> true;
+        _ -> false
+    end.
+
+stored(KeyBin, installation, _) ->
+    case ana_db:one("SELECT value FROM ana_system.setting WHERE key = $1", [KeyBin]) of
+        {ok, #{<<"value">> := V}} -> decode(V);
+        _ -> null
+    end;
+stored(KeyBin, node, Node) ->
+    case ana_db:one("SELECT value FROM technical.parameter_node WHERE key = $1 AND node = $2", [KeyBin, Node]) of
+        {ok, #{<<"value">> := V}} -> decode(V);
+        _ -> null
+    end.
+
+write(KeyBin, null, installation, _, _) ->
+    {ok, _} = ana_db:exec("DELETE FROM ana_system.setting WHERE key = $1", [KeyBin]);
+write(KeyBin, Value, installation, _, Who) ->
+    {ok, _} = ana_db:exec(
+        "INSERT INTO ana_system.setting (key, value, updated_by) "
+        "VALUES ($1, $2::text::jsonb, $3) ON CONFLICT (key) DO UPDATE SET "
+        "value = EXCLUDED.value, updated_at = now(), updated_by = EXCLUDED.updated_by",
+        [KeyBin, iolist_to_binary(json:encode(Value)), Who]);
+write(KeyBin, null, node, Node, _) ->
+    {ok, _} = ana_db:exec("DELETE FROM technical.parameter_node WHERE key = $1 AND node = $2", [KeyBin, Node]);
+write(KeyBin, Value, node, Node, Who) ->
+    {ok, _} = ana_db:exec(
+        "INSERT INTO technical.parameter_node (key, node, value, updated_by) VALUES ($1, $2, $3::text::jsonb, $4) "
+        "ON CONFLICT (key, node) DO UPDATE SET value = EXCLUDED.value, updated_by = EXCLUDED.updated_by, updated_at = now()",
+        [KeyBin, Node, iolist_to_binary(json:encode(Value)), Who]).
+
+decode(V) when is_binary(V) -> json:decode(V);
+decode(V) -> V.
+
+json_or_null(null) -> null;
+json_or_null(V) -> iolist_to_binary(json:encode(V)).
 
 %% Spec 034: a transported parameter must exist here and be inside its range.
 -spec valid(binary(), term()) -> boolean().
@@ -223,8 +322,10 @@ valid(KeyBin, Value) ->
         error -> false
     end.
 
-on_notify(_Channel, all) -> load();
-on_notify(_Channel, _Key) -> load().
+on_notify(_Channel, _Key) ->
+    load(),
+    _ = (catch ana_params:changed()),            % a temporary change made on another node is timed here too
+    ok.
 
 find(KeyBin) when is_binary(KeyBin) ->
     case [D || D = {K, _, _, _, _, _, _} <- definitions(), atom_to_binary(K) =:= KeyBin] of

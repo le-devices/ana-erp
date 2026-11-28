@@ -122,14 +122,14 @@ route(<<"PUT">>, [<<"users">>, Name], U, Req) ->
 route(<<"POST">>, [<<"users">>, Name, <<"password">>], U, Req) ->
     reply(ana_admin:reset_password(Name, U), Req);
 route(<<"POST">>, [<<"users">>, Name, <<"sessions">>, <<"revoke">>], U, Req) ->
-    reply(ana_admin:revoke_sessions(Name, U), Req);
+    tech(<<"user.revoke_sessions">>, #{<<"username">> => Name}, U, Req);
 route(<<"POST">>, [<<"security">>, <<"unlock-ip">>], U, Req) ->
     with_body(Req, fun(B, R) ->
         Ip = case maps:get(<<"ip">>, B, <<"self">>) of <<"self">> -> ana_http:ip(R); V -> V end,
-        reply(ana_admin:unlock_ip(Ip, U), R)
+        tech(<<"ip.unlock">>, #{<<"ip">> => Ip}, U, R)
     end);
 route(<<"POST">>, [<<"users">>, Name, <<"unlock">>], U, Req) ->
-    reply(ana_admin:unlock_user(Name, U), Req);
+    tech(<<"user.unlock">>, #{<<"username">> => Name}, U, Req);
 
 route(<<"GET">>, [<<"users">>, Name, <<"keys">>], _U, Req) ->
     reply(ana_admin:list_keys(Name), Req);
@@ -154,14 +154,14 @@ route(<<"DELETE">>, [<<"groups">>, Name], U, Req) ->
 route(<<"GET">>, [<<"settings">>], _U, Req) ->
     ana_http:json(200, ana_settings:list(), Req);
 route(<<"PUT">>, [<<"settings">>, Key], U, Req) ->
-    with_body(Req, fun(#{<<"value">> := V}, R) ->
-        case ana_settings:set(Key, V, U) of
-            ok -> ana_http:json(200, #{ok => true}, R);
-            {error, unknown_setting} ->
-                ana_http:reply_error(404, <<"NOT_FOUND">>, <<"parâmetro inexistente"/utf8>>, R);
-            {error, {range, Min, Max}} ->
-                ana_http:reply_error(400, <<"OUT_OF_RANGE">>,
-                    io_lib:format("valor deve ser inteiro entre ~b e ~b", [Min, Max]), R)
+    with_body(Req, fun(#{<<"value">> := V} = B, R) ->
+        %% Spec 077 (D9): the screen confirms; a parameter the company made high risk waits for a second person.
+        case ana_settings:risk_of(Key) of
+            <<"high">> ->
+                tech_reply(ana_tech:run(<<"parameter.set">>, #{<<"key">> => Key, <<"value">> => V,
+                                                               <<"reason">> => maps:get(<<"reason">>, B, <<"tela Parâmetros"/utf8>>)},
+                                        U, #{confirmed => true, origin => <<"admin">>}), fun(X) -> X end, R);
+            _ -> settings_reply(ana_settings:set(Key, V, U, #{reason => maps:get(<<"reason">>, B, null)}), R)
         end;
         (_, R) -> invalid(R)
     end);
@@ -217,9 +217,9 @@ route(<<"GET">>, [<<"integrations">>, <<"stats">>], _U, Req) ->
 route(<<"GET">>, [<<"integrations">>, <<"messages">>], _U, Req) ->
     reply(ana_integration:messages(ana_http:qs_map(Req)), Req);
 route(<<"POST">>, [<<"integrations">>, Kind, Id, <<"reprocess">>], U, Req) ->
-    with_id(Id, Req, fun(N) -> reply(ana_integration:reprocess(Kind, N, U), Req) end);
+    with_id(Id, Req, fun(N) -> tech(<<"integration.reprocess">>, #{<<"kind">> => Kind, <<"id">> => N}, U, Req) end);
 route(<<"POST">>, [<<"integrations">>, Kind, Id, <<"discard">>], U, Req) ->
-    with_id(Id, Req, fun(N) -> reply(ana_integration:discard(Kind, N, U), Req) end);
+    with_id(Id, Req, fun(N) -> tech(<<"integration.discard">>, #{<<"kind">> => Kind, <<"id">> => N}, U, Req) end);
 
 %% --- Product updates (spec 028) -------------------------------------------
 route(<<"GET">>, [<<"product-updates">>], _U, Req) ->
@@ -272,13 +272,12 @@ route(<<"GET">>, [<<"monitor">>], _U, Req) ->
                          processes => erlang:system_info(process_count),
                          uptime_s => element(1, erlang:statistics(wall_clock)) div 1000,
                          analytics => try ana_analytics:status() catch _:_ -> #{} end}, Req);
-route(<<"POST">>, [<<"executions">>, Id, <<"stop">>], U = #{username := Who}, Req) ->
-    case ana_execution:command(Id, U, #{<<"action">> => <<"stop">>}) of
-        ok ->
-            ana_admin:log(Who, <<"execution.stop">>, Id, null, null),
-            ana_http:json(200, #{ok => true}, Req);
-        {error, not_found} -> ana_http:reply_error(404, <<"NOT_FOUND">>, <<"execução não encontrada"/utf8>>, Req);
-        {error, _} -> ana_http:reply_error(409, <<"NOT_STOPPABLE">>, <<"não foi possível parar"/utf8>>, Req)
+route(<<"POST">>, [<<"executions">>, Id, <<"stop">>], U, Req) ->
+    case ana_tech:run(<<"execution.stop">>, #{<<"id">> => Id}, U, #{confirmed => true, origin => <<"admin">>}) of
+        {ok, _} -> ana_http:json(200, #{ok => true}, Req);
+        {error, <<"NOT_FOUND">>, _} -> ana_http:reply_error(404, <<"NOT_FOUND">>, <<"execução não encontrada"/utf8>>, Req);
+        {error, <<"ACTION_FAILED">>, _} -> ana_http:reply_error(409, <<"NOT_STOPPABLE">>, <<"não foi possível parar"/utf8>>, Req);
+        Other -> tech_reply(Other, fun(R) -> R end, Req)
     end;
 
 %% --- Audit (RF-011-09) ----------------------------------------------------
@@ -296,14 +295,12 @@ route(<<"GET">>, [<<"audit">>, <<"trail">>], _U, Req) ->
 %% --- Observability (spec 019) ---------------------------------------------
 route(<<"GET">>, [<<"observability">>, <<"health">>], _U, Req) ->
     reply(ana_observability:health(), Req);
-route(<<"POST">>, [<<"observability">>, <<"health">>, <<"check">>], _U, Req) ->
-    _ = ana_health:check_now(),
-    reply(ana_observability:health(), Req);
+route(<<"POST">>, [<<"observability">>, <<"health">>, <<"check">>], U, Req) ->
+    tech(<<"health.check">>, #{}, U, Req);
 route(<<"GET">>, [<<"observability">>, <<"disk">>], _U, Req) ->
     reply(ana_disk:overview(), Req);
-route(<<"POST">>, [<<"observability">>, <<"disk">>, <<"sample">>], _U, Req) ->
-    ok = ana_disk:sample_now(),
-    reply({ok, #{rates => ana_disk:rates()}}, Req);
+route(<<"POST">>, [<<"observability">>, <<"disk">>, <<"sample">>], U, Req) ->
+    tech(<<"disk.sample">>, #{}, U, Req);
 route(<<"GET">>, [<<"observability">>, <<"core">>], _U, Req) ->
     reply(ana_core_view:snapshot(), Req);
 route(<<"GET">>, [<<"observability">>, <<"ui">>], _U, Req) ->
@@ -330,12 +327,8 @@ route(<<"GET">>, [<<"observability">>, <<"samples">>], _U, Req) ->
 route(<<"GET">>, [<<"observability">>, <<"advice">>], _U, Req) ->
     Status = case ana_http:qs_map(Req) of #{<<"status">> := S} when S =/= <<>> -> S; _ -> null end,
     reply(ana_advisor:list(#{status => Status}), Req);
-route(<<"POST">>, [<<"observability">>, <<"advice">>, <<"run">>], U = #{username := Who}, Req) ->
-    _ = U,
-    ok = ana_sql_stats:flush(),
-    R = ana_advisor:run(),
-    ana_admin:log(Who, <<"advice.run">>, <<"manual">>, null, null),
-    reply(R, Req);
+route(<<"POST">>, [<<"observability">>, <<"advice">>, <<"run">>], U, Req) ->
+    tech(<<"advice.run">>, #{}, U, Req);
 route(<<"POST">>, [<<"observability">>, <<"advice">>, Id, <<"dismiss">>], U, Req) ->
     with_body(Req, fun(B, R) ->
         Days = case maps:get(<<"days">>, B, 30) of D when is_integer(D), D >= 0 -> D; _ -> 30 end,
@@ -349,14 +342,14 @@ route(<<"GET">>, [<<"checks">>], _U, Req) ->
     {ok, Summary} = ana_checks:summary(),
     {ok, Findings} = ana_advisor:list(#{status => Pick(<<"status">>), category => Pick(<<"category">>)}),
     reply({ok, Summary#{findings => Findings}}, Req);
-route(<<"POST">>, [<<"checks">>, <<"run">>], U = #{username := Who}, Req) ->
+route(<<"POST">>, [<<"checks">>, <<"run">>], U, Req) ->
     with_body(Req, fun(B, R) ->
         Cat = case maps:get(<<"category">>, B, <<"all">>) of C when is_binary(C) -> C; _ -> <<"all">> end,
-        ana_admin:log(Who, <<"checks.run">>, Cat, null, null),
-        case ana_checks:run(Cat, U) of
-            {error, unknown_category} -> ana_http:reply_error(400, <<"INVALID">>, <<"categoria inexistente">>, R);
-            {error, E} -> ana_http:reply_error(500, <<"CHECK_FAILED">>, unicode:characters_to_binary(io_lib:format("~0tp", [E])), R);
-            Ok -> reply(Ok, R)
+        case ana_tech:run(<<"checks.run">>, #{<<"category">> => Cat}, U, #{confirmed => true, origin => <<"admin">>}) of
+            {error, <<"ACTION_FAILED">>, <<"categoria inexistente">>} ->
+                ana_http:reply_error(400, <<"INVALID">>, <<"categoria inexistente">>, R);
+            {error, <<"ACTION_FAILED">>, M} -> ana_http:reply_error(500, <<"CHECK_FAILED">>, M, R);
+            Other -> tech_reply(Other, fun(X) -> X end, R)
         end
     end);
 route(<<"GET">>, [<<"checks">>, <<"config">>], _U, Req) ->
@@ -464,28 +457,26 @@ route(<<"POST">>, [<<"api-clients">>], U, Req) ->
 route(<<"PUT">>, [<<"api-clients">>, Id], U, Req) ->
     with_body(Req, fun(B, R) -> reply(ana_api:update_client(Id, B, U), R) end);
 route(<<"POST">>, [<<"api-clients">>, Id, <<"rotate-secret">>], U, Req) ->
-    reply(ana_api:rotate_secret(Id, U), Req);
+    tech(<<"api_client.rotate_secret">>, #{<<"client">> => Id}, U, Req);
 route(<<"POST">>, [<<"api-clients">>, Id, <<"drop-old-secret">>], U, Req) ->
     reply(ana_api:drop_secret(Id, true, U), Req);
 route(<<"POST">>, [<<"api-clients">>, Id, <<"release-breaker">>], U, Req) ->
-    reply(ana_api:release_breaker(Id, U), Req);
+    tech(<<"api_client.release_breaker">>, #{<<"client">> => Id}, U, Req);
 route(<<"POST">>, [<<"api-clients">>, Id, <<"signing-secret">>], U, Req) ->
     reply(ana_api:new_signing_secret(Id, U), Req);
 route(<<"GET">>, [<<"api-calls">>], _U, Req) ->
     Q = ana_http:qs_map(Req),
     reply(ana_api:calls(#{client => case Q of #{<<"client">> := C} when C =/= <<>> -> C; _ -> null end}), Req);
 route(<<"POST">>, [<<"api-keys">>, <<"rotate">>], U, Req) ->
-    reply(ana_api:rotate_keys(U), Req);
+    tech(<<"api.rotate_keys">>, #{}, U, Req);
 
 %% --- Retention (spec 024, RF-024-08..10) ----------------------------------
 route(<<"GET">>, [<<"retention">>], _U, Req) ->
     reply(ana_retention:overview(), Req);
-route(<<"POST">>, [<<"retention">>, <<"purge">>], U = #{username := Who}, Req) ->
-    ana_admin:log(Who, <<"retention.purge">>, <<"manual">>, null, null),
-    case ana_retention:purge_now(U) of
-        {ok, Detail} -> ana_http:json(200, #{counts => json:decode(Detail)}, Req);
-        {error, E} -> ana_http:reply_error(500, <<"PURGE_FAILED">>,
-                                           unicode:characters_to_binary(io_lib:format("~0tp", [E])), Req)
+route(<<"POST">>, [<<"retention">>, <<"purge">>], U, Req) ->
+    case ana_tech:run(<<"retention.purge">>, #{}, U, #{confirmed => true, origin => <<"admin">>}) of
+        {error, <<"ACTION_FAILED">>, M} -> ana_http:reply_error(500, <<"PURGE_FAILED">>, M, Req);
+        Other -> tech_reply(Other, fun(R) -> R end, Req)
     end;
 route(<<"GET">>, [<<"audit">>, <<"tasks">>], _U, Req) ->
     reply(ana_admin:audit_tasks(ana_http:qs_map(Req)), Req);
@@ -506,6 +497,25 @@ reply({error, last_admin}, Req) ->
         <<"não é possível remover ou rebaixar o último administrador ativo"/utf8>>, Req);
 reply({error, Msg}, Req) when is_binary(Msg) -> ana_http:reply_error(400, <<"INVALID">>, Msg, Req);
 reply({error, #{} = E}, Req) -> ana_http:json(400, #{error => E}, Req).
+
+settings_reply(ok, R) -> ana_http:json(200, #{ok => true}, R);
+settings_reply({error, unknown_setting}, R) ->
+    ana_http:reply_error(404, <<"NOT_FOUND">>, <<"parâmetro inexistente"/utf8>>, R);
+settings_reply({error, {range, Min, Max}}, R) ->
+    ana_http:reply_error(400, <<"OUT_OF_RANGE">>, io_lib:format("valor deve ser inteiro entre ~b e ~b", [Min, Max]), R);
+settings_reply({error, scope_not_allowed}, R) ->
+    ana_http:reply_error(400, <<"INVALID">>, <<"este parâmetro não pode ser diferente por nó"/utf8>>, R).
+
+%% Spec 077 (T-077-02): the technical actions of these screens go through the catalog — permission by group and
+%% action, the risk's ceremony (the screen already confirmed with the consequence) and the record — via the API too.
+tech(Code, Params, U, Req) ->
+    tech_reply(ana_tech:run(Code, Params, U, #{confirmed => true, origin => <<"admin">>}), fun(R) -> R end, Req).
+
+tech_reply({ok, #{<<"result">> := R}}, Fmt, Req) -> ana_http:json(200, Fmt(R), Req);
+tech_reply({pending, Run}, _Fmt, Req) ->
+    ana_http:json(202, #{pending_approval => true, request => Run,
+                         message => <<"ação de risco alto: aguarda a aprovação de outra pessoa"/utf8>>}, Req);
+tech_reply({error, Code, Msg}, _Fmt, Req) -> ana_http:reply_error(ana_http_tech:status(Code), Code, Msg, Req).
 
 with_int(Id, Req, Fun) ->
     case catch binary_to_integer(Id) of
