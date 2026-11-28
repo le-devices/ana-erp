@@ -181,13 +181,18 @@ manutenção** e **sair do modo**; **analisar uma tabela**.
 6. **T-077-03** Central técnica (junta tudo), medições.
 
 ## 7. Medições de referência (na bateria)
-- **Aba Agora:** com 10 mil eventos de saúde e alertas no período, até 1 s (p95). Medido em T-077-03; o número
-  entra aqui.
+- **Aba Agora:** com 10 mil eventos de saúde e alertas no período, até 1 s (p95). **Medido na bateria (#99,
+  28/11/2026): p95 de 2 ms** — a aba lê o estado da memória e só os incidentes abertos, nunca o histórico.
 - **Ociosa:** a Central e os modos não fazem consultas nem gravações além das medições que já existem — o teste de
   escrita ociosa da spec 063 continua passando sem novo orçamento.
 - **Modo somente leitura:** custo zero por requisição (termo persistente), medido no teste do CA-077-08.
 
 ## 8. Decisões tomadas aqui
+- Nenhum parâmetro tem risco alto como mínimo do produto (o mais alto é médio): baixar uma retenção só apaga na
+  próxima limpeza e pode ser desfeito antes. A empresa torna alto o que quiser, e aí vale a segunda pessoa também
+  pela tela antiga de Parâmetros.
+- O plantão (um grupo das políticas técnicas ou do modo manutenção) vê a Central técnica no Estúdio sem ser
+  administrador; Parâmetros e Console seguem só para administradores.
 - O catálogo de ações é dado, mas cada código aponta para uma função de um mapa fixo do núcleo: extensão de ação
   por pacote (D5) fica para quando o portão da 064 revisar código do núcleo — na fase 1, só ações do produto.
 - Escopos de parâmetro na fase 1: produto (padrão), instalação e nó. "Empresa" entra quando houver parâmetro técnico

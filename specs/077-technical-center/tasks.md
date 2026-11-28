@@ -13,13 +13,13 @@ Antes do código: plan.md com:
   (RNF-077-03, RNF-077-04).
 
 ## Fase 1 — Central técnica, ações e configuração
-- [ ] T-077-01 Catálogo de ações técnicas como dado (parâmetros, pré-condições, efeito, impacto, risco, ensaio, desfazer, sucesso), com as ações atuais da Administração migradas para ele; teste que recusa ação sem esses campos (RF-077-04, D5)
-- [ ] T-077-02 Risco e permissão: cerimônia por classe, endurecimento por empresa, permissão por grupo e por ação, "agir agora e revisar depois"; recusa também pela API (RF-077-05, RNF-077-02, CA-077-04)
-- [ ] T-077-03 Central técnica: abas Agora, Rotina, Capacidade, Mudanças, Segurança técnica e Registro, a partir das fontes existentes; item com o quê, por quê, efeito e ação; três camadas; paleta de comandos; verificador da spec 050 (RF-077-01..03, RNF-077-03, RNF-077-05, CA-077-01)
-- [ ] T-077-04 Catálogo de parâmetros técnicos com escopo e origem do valor; alterados primeiro, motivo, ensaio, mudança temporária, versões, comparação entre ambientes, transporte e exportação (RF-077-08, CA-077-05, CA-077-06)
-- [ ] T-077-05 Console de diagnóstico: consultas prontas, SQL somente leitura com limites e mascaramento, introspecção do núcleo, registros filtráveis, consultas salvas (RF-077-06, CA-077-09)
-- [ ] T-077-06 Roteiros como dado e o executor (passo a passo, até a próxima decisão, pausa, retomada, entrega a outra pessoa); roteiros do produto: disco cheio, banco fora, réplica atrasada, nó que não sobe, laço de quedas, certificado vencido, fila parada; ligação com os alertas (RF-077-07, CA-077-01)
-- [ ] T-077-07 Modos somente leitura e manutenção, entrada de integrações pausada, rotinas suspensas, faixa nas telas, no portal e na API, e volta ordenada (RF-077-13, CA-077-08)
+- [x] T-077-01 Catálogo de ações técnicas como dado (parâmetros, pré-condições, efeito, impacto, risco, ensaio, desfazer, sucesso), com as ações atuais da Administração migradas para ele; teste que recusa ação sem esses campos (RF-077-04, D5)
+- [x] T-077-02 Risco e permissão: cerimônia por classe, endurecimento por empresa, permissão por grupo e por ação, "agir agora e revisar depois"; recusa também pela API (RF-077-05, RNF-077-02, CA-077-04)
+- [x] T-077-03 Central técnica: abas Agora, Rotina, Capacidade, Mudanças, Segurança técnica e Registro, a partir das fontes existentes; item com o quê, por quê, efeito e ação; três camadas; paleta de comandos; verificador da spec 050 (RF-077-01..03, RNF-077-03, RNF-077-05, CA-077-01)
+- [x] T-077-04 Catálogo de parâmetros técnicos com escopo e origem do valor; alterados primeiro, motivo, ensaio, mudança temporária, versões, comparação entre ambientes, transporte e exportação (RF-077-08, CA-077-05, CA-077-06)
+- [x] T-077-05 Console de diagnóstico: consultas prontas, SQL somente leitura com limites e mascaramento, introspecção do núcleo, registros filtráveis, consultas salvas (RF-077-06, CA-077-09)
+- [x] T-077-06 Roteiros como dado e o executor (passo a passo, até a próxima decisão, pausa, retomada, entrega a outra pessoa); roteiros do produto: disco cheio, banco fora, réplica atrasada, nó que não sobe, laço de quedas, certificado vencido, fila parada; ligação com os alertas (RF-077-07, CA-077-01)
+- [x] T-077-07 Modos somente leitura e manutenção, entrada de integrações pausada, rotinas suspensas, faixa nas telas, no portal e na API, e volta ordenada (RF-077-13, CA-077-08)
 
 ## Fase 2 — Modo de socorro
 - [ ] T-077-08 Aplicação `ana_rescue`: árvore própria, porta própria com HTTPS no endereço configurado, medições locais, última fotografia da saúde gravada só quando muda, anel de registros em memória; página mínima (RF-077-09, RNF-077-01, RNF-077-03, RNF-077-04)

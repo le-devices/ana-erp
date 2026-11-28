@@ -1,6 +1,6 @@
 # 077 — Central técnica e modo de socorro
 
-Situação: especificada (nov/2026); plano em plan.md (28/11/2026). Reúne e completa o que já existe na Administração (specs 011, 019, 023, 024,
+Situação: fase 1 implementada (28/11/2026): central técnica, ações, parâmetros, console, roteiros e modos; fases 2 (socorro) e 3 (servidor, treino, parceiros) a fazer; plano em plan.md. Reúne e completa o que já existe na Administração (specs 011, 019, 023, 024,
 028, 033, 036, 062, 063) e se apoia nas specs 046 (diagnósticos), 047 (acesso emergencial), 056 (ensaio) e 057
 (suporte).
 
