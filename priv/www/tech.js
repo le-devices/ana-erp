@@ -30,8 +30,11 @@
     await show(state.tab);
   }
 
+  const ADMIN_ONLY = new Set(["parameters", "console"]);
+  const isAdmin = () => ((window.AnaStudio && window.AnaStudio.user()) || {}).role === "admin";
+
   function tabs() {
-    return el("div", { class: "tabs", role: "tablist" }, TABS.map(([k, label]) =>
+    return el("div", { class: "tabs", role: "tablist" }, TABS.filter(([k]) => isAdmin() || !ADMIN_ONLY.has(k)).map(([k, label]) =>
       el("button", { type: "button", role: "tab", "aria-selected": String(k === state.tab), class: k === state.tab ? "active" : "",
                      text: label, onclick: () => state.guard(() => show(k)) })));
   }

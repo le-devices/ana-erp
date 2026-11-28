@@ -83,7 +83,7 @@ set_parameter(P = #{<<"key">> := Key, <<"reason">> := Reason}, U) when byte_size
         ok -> {ok, #{key => Key, value => maps:get(<<"value">>, P, null), scope => Scope}};
         {error, unknown_setting} -> {error, not_found};
         {error, {range, Min, Max}} ->
-            {error, iolist_to_binary(io_lib:format("valor deve ser inteiro entre ~b e ~b", [Min, Max]))};
+            {error, unicode:characters_to_binary(io_lib:format("valor deve ser inteiro entre ~b e ~b", [Min, Max]))};
         {error, scope_not_allowed} -> {error, <<"este parâmetro não pode ser diferente por nó"/utf8>>}
     end;
 set_parameter(_, _) -> {error, <<"diga o motivo da mudança (ao menos 3 letras)"/utf8>>}.

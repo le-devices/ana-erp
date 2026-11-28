@@ -105,7 +105,7 @@ route(<<"POST">>, [<<"parameters">>, <<"versions">>, Id, <<"restore">>], U, Req)
                         case ana_params:restore(N, U, Reason) of
                             ok -> ana_http:json(200, #{ok => true}, R);
                             {error, not_found} -> ana_http:reply_error(404, <<"NOT_FOUND">>, <<"versão não encontrada"/utf8>>, R);
-                            {error, E} -> ana_http:reply_error(400, <<"INVALID">>, iolist_to_binary(io_lib:format("~0tp", [E])), R)
+                            {error, E} -> ana_http:reply_error(400, <<"INVALID">>, unicode:characters_to_binary(io_lib:format("~0tp", [E])), R)
                         end;
                     _ -> ana_http:reply_error(400, <<"INVALID">>, <<"diga o motivo"/utf8>>, R)
                 end

@@ -111,8 +111,10 @@ route(<<"GET">>, [<<"me">>], Req) ->
             _ -> {null, false}
         end,
         %% Spec 034: the screen marks development/test instances. Spec 009 (D11): the customer's brand.
+        %% Spec 077 (D6): the on-call team (a group of the technical policies) sees the technical center.
         ana_http:json(200, (maps:without([trace, key_id], U))#{company => Company, company_logo => Logo,
-                                                               instance => ana_instance:info()}, Req)
+                                                               instance => ana_instance:info(),
+                                                               technical => ana_tech:technical(U)}, Req)
     end);
 route(<<"POST">>, [<<"me">>, <<"password">>], Req) ->
     ana_http:require_any(Req, fun(U) ->

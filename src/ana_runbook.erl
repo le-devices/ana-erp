@@ -27,17 +27,17 @@ checks() ->
                                 "FROM pg_stat_replication", []) of
               {ok, #{<<"s">> := S, <<"n">> := 0}} -> {ok, S, <<"nenhuma réplica ligada a este primário"/utf8>>};
               {ok, #{<<"s">> := S, <<"n">> := N}} ->
-                  {ok, S, iolist_to_binary(io_lib:format("~b réplica(s); maior atraso ~b s", [N, S]))};
+                  {ok, S, unicode:characters_to_binary(io_lib:format("~b réplica(s); maior atraso ~b s", [N, S]))};
               _ -> {unknown, <<"o banco não respondeu"/utf8>>}
           end
       end,
       <<"nodes_ready">> => fun() ->
           N = 1 + length([X || X <- nodes(), case catch erpc:call(X, ana_ha, ready, [], 2000) of {true, _} -> true; _ -> false end]),
-          {ok, N, iolist_to_binary(io_lib:format("~b nó(s) pronto(s)", [N]))}
+          {ok, N, unicode:characters_to_binary(io_lib:format("~b nó(s) pronto(s)", [N]))}
       end,
       <<"python_ready">> => fun() ->
           case catch ana_py_pool:status() of
-              #{ready := R} -> {ok, R, iolist_to_binary(io_lib:format("~b processo(s) Python prontos", [R]))};
+              #{ready := R} -> {ok, R, unicode:characters_to_binary(io_lib:format("~b processo(s) Python prontos", [R]))};
               _ -> {unknown, <<"o pool de Python não respondeu"/utf8>>}
           end
       end,
@@ -54,12 +54,12 @@ checks() ->
       end,
       <<"restarts_last_hour">> => fun() ->
           N = case catch gen_server:call(ana_core_view, restarts, 2000) of L when is_list(L) -> length(L); _ -> 0 end,
-          {ok, N, iolist_to_binary(io_lib:format("~b queda(s) de subsistema na última hora", [N]))}
+          {ok, N, unicode:characters_to_binary(io_lib:format("~b queda(s) de subsistema na última hora", [N]))}
       end,
       <<"license_days_left">> => fun() ->
           case catch ana_license:current() of
-              #{days_left := D} when is_integer(D) -> {ok, D, iolist_to_binary(io_lib:format("~b dia(s) até a licença vencer", [D]))};
-              #{} -> {ok, 99999, <<"licença sem vencimento">>};
+              #{days_left := D} when is_integer(D) -> {ok, D, unicode:characters_to_binary(io_lib:format("~b dia(s) até a licença vencer", [D]))};
+              #{} -> {ok, 99999, <<"licença sem vencimento"/utf8>>};
               _ -> {unknown, <<"a licença não respondeu"/utf8>>}
           end
       end,
@@ -68,7 +68,7 @@ checks() ->
                                 "  AND created_at < now() - interval '15 minutes') + "
                                 "(SELECT count(*) FROM integration.inbox WHERE status IN ('pending', 'processing') "
                                 "  AND created_at < now() - interval '15 minutes') AS n", []) of
-              {ok, #{<<"n">> := N}} -> {ok, N, iolist_to_binary(io_lib:format("~b mensagem(ns) parada(s) há mais de 15 min", [N]))};
+              {ok, #{<<"n">> := N}} -> {ok, N, unicode:characters_to_binary(io_lib:format("~b mensagem(ns) parada(s) há mais de 15 min", [N]))};
               _ -> {unknown, <<"o banco não respondeu"/utf8>>}
           end
       end}.
@@ -90,14 +90,14 @@ disk_free() ->
                 {"", _, _} -> {unknown, <<"não foi possível ler o disco deste nó (use ana-ctl disk)"/utf8>>};
                 {M, _Kb, UsedPct} ->
                     Free = 100 - UsedPct,
-                    {ok, Free, iolist_to_binary(io_lib:format("~b% livre em ~ts", [Free, M]))}
+                    {ok, Free, unicode:characters_to_binary(io_lib:format("~b% livre em ~ts", [Free, M]))}
             end;
         _ -> {unknown, <<"a medição do disco não está ligada neste nó: confira com ana-ctl disk"/utf8>>}
     end.
 
 to_bin(A) when is_atom(A) -> atom_to_binary(A);
 to_bin(B) when is_binary(B) -> B;
-to_bin(X) -> iolist_to_binary(io_lib:format("~0p", [X])).
+to_bin(X) -> unicode:characters_to_binary(io_lib:format("~0p", [X])).
 
 %% ------------------------------------------------------------------ catalog
 -spec list() -> {ok, [map()]}.

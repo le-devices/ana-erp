@@ -49,6 +49,8 @@
   }
 
   const canSee = (minRole) => (ROLE_LEVEL[state.user.role] || 0) >= (ROLE_LEVEL[minRole] || 1);
+  // Spec 077 (D6): the technical team (on call) reaches the technical center without being an administrator.
+  const canAdmin = () => canSee("admin") || state.user.technical === true;
   const isExternal = () => state.user && state.user.role === "external";
 
   // ------------------------------------------------------------------ screens
@@ -128,7 +130,7 @@
     // Spec 016: an external portal account sees only Files and Portal.
     for (const b of $$(".area")) {
       b.hidden = isExternal() ? !["files", "portal"].includes(b.dataset.area)
-                              : b.dataset.only === "external" || !canSee(b.dataset.minRole || "user");
+                              : b.dataset.only === "external" || (b.dataset.area === "admin" ? !canAdmin() : !canSee(b.dataset.minRole || "user"));
     }
     $("#command-form").hidden = isExternal();
     const display = state.user.name || state.user.username;
@@ -248,7 +250,8 @@
     const parts = path.split("/").filter(Boolean).map(decodeURIComponent);
     let [area, ...rest] = parts;
     const allowed = { home: "user", ops: "user", bpm: "user", master: "user", files: "user", dev: "developer", admin: "admin" };
-    const ok = isExternal() ? ["files", "portal"].includes(area) : (allowed[area] && canSee(allowed[area]));
+    const ok = isExternal() ? ["files", "portal"].includes(area)
+                            : (area === "admin" ? canAdmin() : (allowed[area] && canSee(allowed[area])));
     if (!ok) {
       area = isExternal() ? "portal" : "home";
       rest = [];
@@ -266,7 +269,7 @@
       else if (area === "master") await window.AnaMaster.show(rest, query);
       else if (area === "bpm") await window.AnaBpm.show(rest, query);
       else if (area === "dev") await window.AnaDev.show(rest);
-      else if (area === "admin") await window.AnaAdmin.show(rest[0] || "users");
+      else if (area === "admin") await window.AnaAdmin.show(rest[0] || (canSee("admin") ? "users" : "central"));
       if (window.AnaPerf) window.AnaPerf.opened();
       if (back) restoreScroll(state.here);
     } catch (e) { toast(window.AnaUI.errorText(e), true); }
@@ -292,6 +295,7 @@
       for (const t of tables) add(`${t.schema}.${t.name}`, `#/dev/data/${t.schema}/${t.name}`);
     }
     if (canSee("admin")) for (const [k, label] of Object.entries(ADMIN_SECTIONS)) add(`Administração: ${label}`, `#/admin/${k}`);
+    else if (canAdmin()) add("Central técnica", "#/admin/central");
     $("#command-list").replaceChildren(...[...state.targets.keys()].map((label) => el("option", { value: label })));
   }
 

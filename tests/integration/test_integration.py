@@ -11407,6 +11407,11 @@ class TestTechnicalActions(Base):
             self.assertEqual(self.act("user.unlock", {"username": target}, token=other)[0], 403)
             s, r = self.act("user.unlock", {"username": target})                # administrators still may
             self.assertEqual(s, 200, r)
+            # The on-call team sees the technical center in the Studio (D6); the others do not.
+            self.assertTrue(http("GET", "/api/me", token=on_call)[1]["technical"])
+            self.assertFalse(http("GET", "/api/me", token=other)[1]["technical"])
+            self.assertEqual(http("GET", "/api/tech/central/now", token=on_call)[0], 200)
+            self.assertEqual(http("GET", "/api/tech/parameters", token=on_call)[0], 403)     # parameters: administrators
         finally:
             self.policy("user.unlock", risk="low", groups=[])
             http("DELETE", f"/api/admin/groups/{g}", token=self.token)

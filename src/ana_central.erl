@@ -23,7 +23,7 @@ tab(_, _) -> {error, <<"aba inexistente"/utf8>>}.
 
 sources(Fs, U) ->
     lists:append([try F(U) catch C:R -> [item(<<"warning">>, <<"Uma fonte da Central não respondeu"/utf8>>,
-                                              iolist_to_binary(io_lib:format("~0p", [{C, R}])), <<>>, #{}, null)] end
+                                              unicode:characters_to_binary(io_lib:format("~0p", [{C, R}])), <<>>, #{}, null)] end
                    || F <- Fs]).
 
 answer(Tab, Items) ->
@@ -34,7 +34,7 @@ answer(Tab, Items) ->
         {<<"now">>, true} -> <<"Está tudo bem: nada pede atenção agora."/utf8>>;
         {<<"now">>, false} ->
             N = length([I || I <- Sorted, maps:get(maps:get(severity, I), ?ORDER) < 3]),
-            iolist_to_binary(io_lib:format("~b ponto(s) pede(m) atenção — o primeiro: ~ts",
+            unicode:characters_to_binary(io_lib:format("~b ponto(s) pede(m) atenção — o primeiro: ~ts",
                                            [N, maps:get(what, hd(Sorted))]));
         _ -> null
     end,
@@ -116,7 +116,7 @@ license(_) ->
             [item(<<"critical">>, <<"Licença: o ERP está somente para consulta"/utf8>>, <<"licença vencida ou inválida"/utf8>>,
                   <<"ninguém grava até instalar a licença"/utf8>>, #{runbook => <<"expiring_credentials">>}, <<"#/admin/license">>)];
         #{state := S, days_left := D} when S =:= <<"grace">>; S =:= <<"expiring">> ->
-            [item(<<"warning">>, <<"A licença vence em breve"/utf8>>, iolist_to_binary(io_lib:format("~p dia(s)", [D])),
+            [item(<<"warning">>, <<"A licença vence em breve"/utf8>>, unicode:characters_to_binary(io_lib:format("~p dia(s)", [D])),
                   <<"depois do prazo o ERP fica somente para consulta"/utf8>>, #{runbook => <<"expiring_credentials">>},
                   <<"#/admin/license">>)];
         _ -> []
@@ -158,7 +158,7 @@ check_runs(_) ->
 updates(_) ->
     case ana_product_updates:pending_count() of
         0 -> [item(<<"ok">>, <<"Atualizações do produto em dia"/utf8>>, <<>>, <<>>, #{}, <<"#/admin/updates">>)];
-        N -> [item(<<"info">>, iolist_to_binary(io_lib:format("~b atualização(ões) do produto disponível(is)", [N])),
+        N -> [item(<<"info">>, unicode:characters_to_binary(io_lib:format("~b atualização(ões) do produto disponível(is)", [N])),
                    <<"programas do produto com versão nova"/utf8>>, <<"aceitar traz as correções e melhorias"/utf8>>, #{},
                    <<"#/admin/updates">>)]
     end.
@@ -184,14 +184,14 @@ disk(_) ->
                             <<"sem espaço o banco para de gravar"/utf8>>, #{runbook => <<"disk_full">>}, <<"#/admin/disk">>)];
         {unknown, T} -> [item(<<"info">>, <<"Espaço livre no disco"/utf8>>, T, <<>>, #{runbook => <<"disk_full">>}, <<"#/admin/disk">>)]
     end,
-    [item(<<"ok">>, <<"Tamanho do banco"/utf8>>, iolist_to_binary(io_lib:format("~p MiB", [Mb])), <<>>, #{}, <<"#/admin/disk">>) | Free].
+    [item(<<"ok">>, <<"Tamanho do banco"/utf8>>, unicode:characters_to_binary(io_lib:format("~p MiB", [Mb])), <<>>, #{}, <<"#/admin/disk">>) | Free].
 
 license_capacity(_) ->
     L = ana_license:current(),
     case maps:get(days_left, L, null) of
         D when is_integer(D) ->
             [item(case D < 30 of true -> <<"warning">>; false -> <<"ok">> end,
-                  iolist_to_binary(io_lib:format("A licença vence em ~b dia(s)", [D])), <<>>,
+                  unicode:characters_to_binary(io_lib:format("A licença vence em ~b dia(s)", [D])), <<>>,
                   <<"depois do prazo o ERP fica somente para consulta"/utf8>>, #{}, <<"#/admin/license">>)];
         _ -> []
     end.
@@ -199,7 +199,7 @@ license_capacity(_) ->
 core(_) ->
     {ok, S} = ana_core_view:snapshot(),
     #{memory_mb := #{total := Total}, processes := P} = S,
-    [item(<<"ok">>, <<"Núcleo deste nó"/utf8>>, iolist_to_binary(io_lib:format("~b MiB em uso, ~b processos", [Total, P])),
+    [item(<<"ok">>, <<"Núcleo deste nó"/utf8>>, unicode:characters_to_binary(io_lib:format("~b MiB em uso, ~b processos", [Total, P])),
           <<>>, #{}, <<"#/admin/core">>)].
 
 %% ------------------------------------------------------------------ Mudanças
@@ -208,7 +208,7 @@ parameter_changes(_) ->
                              "FROM technical.parameter_version v LEFT JOIN technical.parameter p ON p.key = v.key "
                              "WHERE v.set_at > now() - interval '30 days' ORDER BY v.id DESC LIMIT 50", []),
     [item(<<"info">>, <<"Parâmetro: "/utf8, (null_text(maps:get(<<"label">>, R)))/binary>>,
-          <<(to_bin(maps:get(<<"set_by">>, R)))/binary, " — ", (null_text(maps:get(<<"reason">>, R)))/binary>>,
+          <<(to_bin(maps:get(<<"set_by">>, R)))/binary, " — "/utf8, (null_text(maps:get(<<"reason">>, R)))/binary>>,
           case maps:get(<<"until">>, R) of null -> <<>>; T -> <<"temporária até "/utf8, (to_bin(T))/binary>> end,
           #{key => maps:get(<<"key">>, R), at => maps:get(<<"set_at">>, R)}, <<"#/admin/central">>)
      || R <- Rows].
@@ -260,7 +260,7 @@ record(_) ->
     {ok, Runs} = ana_tech:runs(#{limit => 100}),
     [item(case maps:get(<<"status">>, R) of <<"failed">> -> <<"warning">>; _ -> <<"info">> end,
           maps:get(<<"name">>, R),
-          <<(maps:get(<<"requested_by">>, R))/binary, " — ", (maps:get(<<"status">>, R))/binary,
+          <<(maps:get(<<"requested_by">>, R))/binary, " — "/utf8, (maps:get(<<"status">>, R))/binary,
             (case maps:get(<<"approved_by">>, R) of null -> <<>>; A -> <<", aprovado por "/utf8, A/binary>> end)/binary>>,
           null_text(maps:get(<<"reason">>, R)), #{at => maps:get(<<"requested_at">>, R), run => maps:get(<<"id">>, R)},
           <<"#/admin/central">>)
@@ -268,7 +268,7 @@ record(_) ->
 
 to_bin(B) when is_binary(B) -> B;
 to_bin(A) when is_atom(A) -> atom_to_binary(A);
-to_bin(X) -> iolist_to_binary(io_lib:format("~0p", [X])).
+to_bin(X) -> unicode:characters_to_binary(io_lib:format("~0p", [X])).
 
 null_text(null) -> <<>>;
 null_text(B) -> to_bin(B).
