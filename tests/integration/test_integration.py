@@ -10735,8 +10735,11 @@ class TestChangeWatchDocuments(Base):
             while time.time() < end and psql("SELECT (SELECT count(*) FROM automation.pending WHERE kind = 'changed') + "
                                              "(SELECT count(*) FROM automation.fire WHERE outcome = 'running')") != "0":
                 time.sleep(0.3)
+            # Each batch leaves 10 thousand dead rows: every run starts from the same table, or the runs with the rule
+            # (all of them after the ones without) would pay for the bloat of the earlier ones and look dearer.
+            psql("VACUUM sales.sales_order")
 
-        def timings(mode, k=7):
+        def timings(mode, k=9):
             out = []
             for _ in range(k):
                 quiet()
