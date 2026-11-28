@@ -71,6 +71,26 @@
     $("#password-form").elements.namedItem("current").focus();
   }
 
+  // Spec 077 (D14): the installation's operation mode (read-only, maintenance, paused) on every screen, read from the
+  // node's memory every minute; whoever maintenance keeps out reads why on the sign-in screen.
+  const MODE_SHORT = { read_only: "Somente leitura", maintenance: "Manutenção" };
+  let modeTimer = null;
+  async function refreshMode(signedOut) {
+    let m;
+    try { m = await (await fetch("/api/mode")).json(); } catch (_) { return; }
+    const band = $("#mode-band");
+    const text = MODE_SHORT[m.mode] || (m.inbound_paused || m.routines_suspended ? "Pausas ativas" : "");
+    if (band) {
+      band.hidden = !text;
+      band.textContent = text ? "⏸ " + text : "";
+      band.title = m.message || "";
+      band.setAttribute("aria-label", m.message || "");
+      band.className = "license-band " + (m.mode === "normal" ? "warn" : "bad");
+    }
+    if (signedOut && m.message) toast(m.message, true);
+    if (!modeTimer) modeTimer = setInterval(() => refreshMode(false), 60000);
+  }
+
   // Spec 009 (RF-009-08): evaluation, expiring, grace, restricted and test licenses are shown on every screen.
   const LICENSE_REASON = { expired: "licença vencida", trial_over: "avaliação encerrada", clock: "relógio do servidor atrasado",
                            version: "licença não cobre esta versão", not_yet: "licença ainda não começou a valer" };
@@ -102,7 +122,7 @@
   }
 
   async function start() {
-    try { state.user = await API.me(); } catch (_) { showLogin(); return; }
+    try { state.user = await API.me(); } catch (_) { showLogin(); refreshMode(true); return; }
     if (state.user.must_change_password) { showPassword(true); return; }
     document.body.classList.toggle("is-admin", state.user.role === "admin");
     // Spec 016: an external portal account sees only Files and Portal.
@@ -132,6 +152,7 @@
     band.title = inst.name ? `Instância ${inst.name} — não é a produção` : "";
     document.body.dataset.instance = inst.role || "production";
     refreshLicense();
+    refreshMode(false);
     await window.AnaPrefs.load();
     showScreen("#app-screen");
     if (!isExternal()) await buildTargets();

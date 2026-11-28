@@ -9,7 +9,7 @@ catalog_codes() ->
     Dir = filename:join([filename:dirname(code:which(?MODULE)), "..", "..", "..", "..", "priv", "migrations"]),
     Files = filelib:wildcard(filename:join(Dir, "*.sql")) ++ filelib:wildcard("priv/migrations/*.sql"),
     lists:usort(lists:append(
-        [case re:run(Bin, "INSERT INTO technical\\.action \\(code[^;]*?;", [dotall, global, {capture, first, binary}]) of
+        [case re:run(Bin, "INSERT INTO technical\\.action \\(code.*?\\);[ \\t]*$", [dotall, multiline, global, {capture, first, binary}]) of
              {match, Blocks} ->
                  [C || [Block] <- Blocks,
                        {match, Cs} <- [re:run(Block, "^\\('([a-z_]+\\.[a-z_]+)'", [multiline, global, {capture, all_but_first, binary}])],
@@ -28,7 +28,7 @@ t_077_01_catalog_and_functions_match_test() ->
 %% catalog lists no parameter the core does not know.
 t_077_04_every_parameter_has_its_metadata_test() ->
     {ok, Bin} = file:read_file("priv/migrations/090_technical_parameters.sql"),
-    {match, [[Block]]} = re:run(Bin, "INSERT INTO technical\\.parameter \\(key[^;]*?;", [dotall, global, {capture, first, binary}]),
+    {match, [[Block]]} = re:run(Bin, "INSERT INTO technical\\.parameter \\(key.*?\\);[ \\t]*$", [dotall, multiline, global, {capture, first, binary}]),
     {match, Rows} = re:run(Block, "^\\('([a-z_]+)'", [multiline, global, {capture, all_but_first, binary}]),
     Meta = lists:sort([K || [K] <- Rows]),
     Known = lists:sort([atom_to_binary(K) || {K, _, _, _, _, _, _} <- ana_settings:definitions()]),

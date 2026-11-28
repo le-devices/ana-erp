@@ -9,7 +9,12 @@
                "connect-src 'self'; font-src 'self'; object-src 'none'; base-uri 'none'; "
                "form-action 'self'; frame-ancestors 'none'">>).
 
-execute(Req, Env) ->
+execute(Req0, Env) ->
+    %% Spec 077 (D14): every answer says when the installation is not in its normal mode (screens, portal, API).
+    Req = case ana_mode:message() of
+        null -> Req0;
+        M -> cowboy_req:set_resp_header(<<"x-ana-mode">>, uri_string:quote(M), Req0)
+    end,
     Req2 = cowboy_req:set_resp_headers(#{
         <<"content-security-policy">> => ?CSP,
         <<"x-content-type-options">> => <<"nosniff">>,

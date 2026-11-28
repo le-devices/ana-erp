@@ -176,7 +176,13 @@ require(Req, Role, Fun) ->
 %% Any valid session, even one that must change the password (me, password, logout).
 require_any(Req, Fun) ->
     case authenticate(Req) of
-        {ok, U} -> Fun(U);
+        {ok, U} ->
+            %% Spec 077 (D14): in maintenance only administrators and the technical team get in.
+            case ana_mode:admits(U) of
+                true -> Fun(U);
+                false -> reply_error(503, <<"MAINTENANCE">>, ana_mode:message(),
+                                     cowboy_req:set_resp_header(<<"retry-after">>, <<"300">>, Req))
+            end;
         {error, tls} -> reply_error(403, <<"HTTPS_REQUIRED">>, <<"chamadas públicas só por HTTPS"/utf8>>, Req);
         {error, unavailable} ->
             %% Spec 023: the credential could not be checked (database switching over): try again, stay signed in.

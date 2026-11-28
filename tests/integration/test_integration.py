@@ -11575,3 +11575,77 @@ class TestDiagnosticConsole(Base):
         s, core = http("GET", "/api/tech/console/core", token=self.token)[:2]
         self.assertEqual(s, 200, core)
         self.assertIn("processes", core)
+
+
+class TestOperationModes(Base):
+    """Spec 077 (T-077-07, RF-077-13, D14, CA-077-08): modes to get through a crisis — read-only (the database refuses
+    every write, with the mode's message), maintenance (only administrators and the technical team), the entry of
+    integrations paused and the routines suspended; announced everywhere; and back to normal in order."""
+
+    def act(self, code, params=None, token=None):
+        return http("POST", f"/api/tech/actions/{code}", {"params": params or {}, "confirmed": True}, token or self.token)[:2]
+
+    def tearDown(self):
+        self.act("mode.normal")                                          # never leave the battery in a crisis mode
+
+    def mode(self):
+        s, m, _ = http("GET", "/api/mode")
+        self.assertEqual(s, 200, m)
+        return m
+
+    def test_ca_077_08_read_only_refuses_writes_everywhere_and_queries_work(self):
+        reader = f"test.mode_read_{SUFFIX}"
+        writer = f"test.mode_write_{SUFFIX}"
+        self.save(reader, "def main():\n    return ana.sql_value(\"SELECT count(*) FROM base.party\")\n")
+        self.save(writer, "def main():\n    return ana.sql_exec(\"UPDATE base.party SET name = name WHERE id = 1\")\n")
+        s, r = self.act("mode.read_only", {"message": "virada do banco", "minutes": 30})
+        self.assertEqual(s, 200, r)
+        m = self.mode()
+        self.assertEqual(m["mode"], "read_only")
+        self.assertIn("somente leitura", m["message"])
+        self.assertIn("virada do banco", m["message"])
+        s, _, headers = http("GET", "/api/me", token=self.token)
+        self.assertIn("x-ana-mode", {k.lower() for k in headers})           # the API says it on every answer
+        s, c, _ = self.run_program(reader)
+        self.assertEqual(s, 200, c)                                          # queries work
+        s, c, _ = self.run_program(writer)
+        self.assertIn("error", c, c)
+        self.assertIn("somente leitura", json.dumps(c["error"], ensure_ascii=False))
+        s, c, _ = self.run_program("sales.create_order", {"customer": 1, "items": [{"product": "ACUCAR-1", "quantity": 1}]})
+        self.assertIn("error", c, c)                                         # a product routine too
+        s, r = self.act("mode.normal")
+        self.assertEqual((s, self.mode()["mode"]), (200, "normal"), r)
+        s, c, _ = self.run_program(writer)
+        self.assertNotIn("error", c, c)
+
+    def test_d14_paused_and_suspended_come_back_in_order(self):
+        for code in ("integrations.pause_inbound", "scheduler.suspend"):
+            s, r = self.act(code)
+            self.assertEqual(s, 200, r)
+        m = self.mode()
+        self.assertEqual((m["inbound_paused"], m["routines_suspended"]), (True, True))
+        self.assertIn("pausada", m["message"])
+        s, r = self.act("mode.normal")
+        self.assertEqual(s, 200, r)
+        m = self.mode()
+        self.assertEqual((m["mode"], m["inbound_paused"], m["routines_suspended"], m["message"]), ("normal", False, False, None))
+
+    def test_d14_maintenance_lets_in_only_the_technical_team(self):
+        g = f"tec{SUFFIX}".lower()
+        s, c, _ = http("PUT", f"/api/admin/groups/{g}", {"description": "equipe técnica (teste 077)", "program_patterns": []},
+                       self.token)
+        self.assertEqual(s, 200, c)
+        _, tech = new_user("user", groups=(g,))
+        _, other = new_user("user")
+        try:
+            s, r = self.act("mode.maintenance", {"message": "troca do servidor", "technical_group": g})
+            self.assertEqual(s, 200, r)
+            s, e, _ = http("GET", "/api/me", token=other)
+            self.assertEqual((s, e["error"]["code"]), (503, "MAINTENANCE"), e)
+            self.assertIn("troca do servidor", e["error"]["message"])
+            self.assertEqual(http("GET", "/api/me", token=tech)[0], 200)
+            self.assertEqual(http("GET", "/api/me", token=self.token)[0], 200)
+        finally:
+            self.act("mode.normal")
+            http("DELETE", f"/api/admin/groups/{g}", token=self.token)
+        self.assertEqual(http("GET", "/api/me", token=other)[0], 200)

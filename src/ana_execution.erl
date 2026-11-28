@@ -455,7 +455,8 @@ prepare_run(P, L, St) ->
     case ana_db:checkout(?POOL, 15000) of
         {ok, C} ->
             St2 = St1#st{conn = C, read_only = ana_license:restricted() orelse simulating(P, St1#st.params)
-                                                orelse indicator(P) orelse declared_read_only(P) orelse St1#st.force_read_only},
+                                                orelse indicator(P) orelse declared_read_only(P) orelse St1#st.force_read_only
+                                                orelse ana_mode:read_only()},
             %% RF-022-05: a part may read the snapshot exported by its main execution.
             Snap = case St1#st.snapshot_in of
                 undefined -> "BEGIN; ";
@@ -468,8 +469,9 @@ prepare_run(P, L, St) ->
             %% Spec 020 (RF-020-13): so does a simulation ("Simular" never saves, whatever the program does).
             %% Spec 048 (D1): so does an indicator — it only reads, whatever its code does.
             %% Spec 069 (D4): and a program that declares "# ana:read_only yes" (a projection never saves).
+            %% Spec 077 (D14): and the read-only mode of the installation (a crisis): every program, every origin.
             ReadOnly = case ana_license:restricted() orelse simulating(P, St1#st.params) orelse indicator(P)
-                            orelse declared_read_only(P) orelse St1#st.force_read_only of
+                            orelse declared_read_only(P) orelse St1#st.force_read_only orelse ana_mode:read_only() of
                 true -> "SET TRANSACTION READ ONLY; ";
                 false -> ""
             end,

@@ -56,7 +56,23 @@ handlers() ->
       <<"advice.run">> => fun(_, _) -> ok = ana_sql_stats:flush(), plain(ana_advisor:run()) end,
       <<"node.drain">> => fun(_, _) -> ana_ha:drain_soft(), {ok, #{node => ana_config:node_id(), draining => true}} end,
       <<"node.resume">> => fun(_, _) -> ana_ha:resume(), {ok, #{node => ana_config:node_id(), draining => false}} end,
-      <<"parameter.set">> => fun set_parameter/2}.
+      <<"parameter.set">> => fun set_parameter/2,
+      %% Spec 077 (T-077-07): operation modes.
+      <<"mode.read_only">> => fun(P, #{username := W}) -> mode(#{mode => <<"read_only">>, message => maps:get(<<"message">>, P),
+                                                                  minutes => maps:get(<<"minutes">>, P, null)}, W) end,
+      <<"mode.maintenance">> => fun(P, #{username := W}) ->
+          mode(#{mode => <<"maintenance">>, message => maps:get(<<"message">>, P), minutes => maps:get(<<"minutes">>, P, null),
+                 technical_group => maps:get(<<"technical_group">>, P, null)}, W) end,
+      <<"mode.normal">> => fun(_, #{username := W}) -> {ok, _} = ana_mode:normal(W), {ok, ana_mode:current()} end,
+      <<"integrations.pause_inbound">> => fun(_, #{username := W}) -> mode(#{inbound_paused => true}, W) end,
+      <<"integrations.resume_inbound">> => fun(_, #{username := W}) ->
+          R = mode(#{inbound_paused => false}, W), _ = (catch ana_integration:poke()), R end,
+      <<"scheduler.suspend">> => fun(_, #{username := W}) -> mode(#{routines_suspended => true}, W) end,
+      <<"scheduler.resume">> => fun(_, #{username := W}) -> mode(#{routines_suspended => false}, W) end}.
+
+mode(Changes, Who) ->
+    {ok, S} = ana_mode:set(Changes, Who, #{}),
+    {ok, S#{message_shown => ana_mode:message()}}.
 
 %% Spec 077 (T-077-04): a parameter changes with its reason, at a scope, possibly for a while.
 set_parameter(P = #{<<"key">> := Key, <<"reason">> := Reason}, U) when byte_size(Reason) >= 3 ->

@@ -532,12 +532,15 @@ as_maps(#{columns := Cols, rows := Rows}) ->
     [maps:from_list(lists:zip(Names, R)) || R <- Rows].
 
 sql_error(#error{code = <<"25006">>}) ->
-    case ana_license:restricted() of
-        true ->
+    case {catch ana_mode:read_only(), ana_license:restricted()} of
+        {true, _} ->
+            %% Spec 077 (D14): the installation's read-only mode — the message says why and until when.
+            #{code => <<"READ_ONLY_MODE">>, sqlstate => <<"25006">>, message => ana_mode:message()};
+        {_, true} ->
             %% Spec 009 (RF-009-05): the license's restricted mode opens read-only execution transactions.
             #{code => <<"LICENSE_RESTRICTED">>, sqlstate => <<"25006">>,
               message => <<"licença vencida ou inválida: o ERP está somente para consulta (peça ao administrador para instalar a licença)"/utf8>>};
-        false ->
+        _ ->
             %% Spec 020 (RF-020-13): so does a simulation.
             #{code => <<"SIMULATION_READ_ONLY">>, sqlstate => <<"25006">>,
               message => <<"simulação não grava nada: o programa tentou gravar durante a simulação"/utf8>>}
