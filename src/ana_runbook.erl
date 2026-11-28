@@ -75,7 +75,9 @@ checks() ->
 
 %% The node's own file system (os_mon's disksup, when running); otherwise the person checks (never a guess).
 disk_free() ->
-    case catch disksup:get_disk_data() of
+    %% os_mon may not run on this node: called by name, never a hard dependency of the release.
+    Disksup = disksup,
+    case catch Disksup:get_disk_data() of
         [_ | _] = Disks ->
             Dir = ana_config:text("ANA_FILES_DIR", "/"),
             Best = lists:foldl(fun({Mount, _, _} = D, Acc) ->

@@ -134,6 +134,15 @@ route(<<"POST">>, [<<"parameters">>, <<"import">>], U, Req) ->
             end
         end)
     end);
+%% The technical center's tabs (T-077-03): now, routine, capacity, changes, security, log.
+route(<<"GET">>, [<<"central">>, Tab], U, Req) ->
+    team(U, Req, fun() ->
+        case ana_central:tab(Tab, U) of
+            {ok, R} -> ana_http:json(200, R, Req);
+            {error, M} -> ana_http:reply_error(404, <<"NOT_FOUND">>, M, Req)
+        end
+    end);
+
 %% Guided runbooks (T-077-06): the technical team (administrators and the groups of the policies); each action inside
 %% keeps its own permission and ceremony.
 route(<<"GET">>, [<<"runbooks">>], U, Req) ->

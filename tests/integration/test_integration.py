@@ -11696,3 +11696,61 @@ class TestRunbooks(Base):
         self.assertEqual((r["status"], r["log"][0]["ok"]), ("stopped", False), r)
         _, user = new_user("user")
         self.assertEqual(self.post("crash_loop/start", token=user)[0], 403)            # only the technical team
+
+
+class TestTechnicalCenter(Base):
+    """Spec 077 (T-077-03, RF-077-01, RF-077-02, D1–D3, RNF-077-03, CA-077-01): the technical work in tabs, from the
+    sources that exist; every item says what, why, what effect and what to do; "is everything fine?" first."""
+
+    def tab(self, name, token=None):
+        return http("GET", f"/api/tech/central/{name}", token=token or self.token)[:2]
+
+    def test_rf_077_01_six_tabs_and_items_that_say_what_to_do(self):
+        for name in ("now", "routine", "capacity", "changes", "security", "log"):
+            s, r = self.tab(name)
+            self.assertEqual(s, 200, (name, r))
+            for it in r["items"]:
+                for k in ("severity", "what", "why", "effect", "action", "runbook", "detail"):
+                    self.assertIn(k, it, (name, it))
+        s, r = self.tab("now")
+        self.assertIsInstance(r["ok"], bool)
+        self.assertTrue(r["headline"])
+        order = {"critical": 0, "serious": 1, "warning": 2, "info": 3, "ok": 4}
+        sev = [order[i["severity"]] for i in r["items"]]
+        self.assertEqual(sev, sorted(sev))                                             # the most serious first
+        self.assertEqual(self.tab("nada")[0], 404)
+        _, user = new_user("user")
+        self.assertEqual(self.tab("now", token=user)[0], 403)
+
+    def test_d2_a_crisis_mode_is_the_first_item_with_its_way_back(self):
+        s, r = http("POST", "/api/tech/actions/mode.read_only", {"params": {"message": "teste da central"}, "confirmed": True},
+                    self.token)[:2]
+        self.assertEqual(s, 200, r)
+        try:
+            s, r = self.tab("now")
+            self.assertFalse(r["ok"])
+            item = next(i for i in r["items"] if i["action"] and i["action"]["code"] == "mode.normal")
+            self.assertEqual(item["severity"], "serious", item)
+            self.assertIn("somente leitura", item["what"])
+            self.assertLessEqual(r["items"].index(item), len([i for i in r["items"] if i["severity"] == "critical"]))
+        finally:
+            http("POST", "/api/tech/actions/mode.normal", {"params": {}, "confirmed": True}, self.token)
+        s, r = self.tab("log")
+        self.assertIn("Voltar ao funcionamento normal", [i["what"] for i in r["items"]])
+
+    def test_rnf_077_03_now_opens_within_a_second_with_ten_thousand_events(self):
+        psql("INSERT INTO ana_system.health_event (component, state, message, node, at) "
+             "SELECT 'teste_077', CASE WHEN g % 3 = 0 THEN 'red' ELSE 'yellow' END, 'massa da central', 'teste', "
+             "now() - make_interval(secs => g) FROM generate_series(1, 10000) g")
+        try:
+            times = []
+            for _ in range(10):
+                t0 = time.time()
+                s, r = self.tab("now")
+                times.append(time.time() - t0)
+                self.assertEqual(s, 200, r)
+            p95 = sorted(times)[int(len(times) * 0.95) - 1]
+            print(f"\n[RNF-077-03] aba Agora: p95 {p95 * 1000:.0f} ms", file=sys.stderr)
+            self.assertLessEqual(p95, 1.0)
+        finally:
+            psql("DELETE FROM ana_system.health_event WHERE component = 'teste_077'")
