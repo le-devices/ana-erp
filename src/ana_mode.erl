@@ -13,23 +13,30 @@
 -define(NORMAL, #{mode => <<"normal">>, inbound_paused => false, routines_suspended => false, message => null,
                   until => null, until_label => null, technical_group => null, set_by => null}).
 
+-define(COLUMNS, "mode, inbound_paused, routines_suspended, message, technical_group, set_by, "
+                 "to_char(until, 'YYYY-MM-DD\"T\"HH24:MI:SSOF') AS until, "
+                 "to_char(until AT TIME ZONE $1::text, 'HH24\"h\"MI') AS until_label").
+
 -spec load() -> ok.
 load() ->
-    S = case catch ana_db:one("SELECT mode, inbound_paused, routines_suspended, message, technical_group, set_by, "
-                              "  to_char(until, 'YYYY-MM-DD\"T\"HH24:MI:SSOF') AS until, "
-                              "  to_char(until AT TIME ZONE $1, 'HH24\"h\"MI') AS until_label "
-                              "FROM technical.operation_mode WHERE id = 1", [ana_config:timezone()]) of
-        {ok, #{<<"mode">> := M} = R} ->
-            #{mode => M, inbound_paused => maps:get(<<"inbound_paused">>, R), routines_suspended => maps:get(<<"routines_suspended">>, R),
-              message => maps:get(<<"message">>, R), until => maps:get(<<"until">>, R),
-              until_label => maps:get(<<"until_label">>, R),
-              technical_group => maps:get(<<"technical_group">>, R), set_by => maps:get(<<"set_by">>, R)};
-        _ -> persistent_term:get(?KEY, ?NORMAL)          % the database is out: keep what was known
+    S = case catch ana_db:one("SELECT " ?COLUMNS " FROM technical.operation_mode WHERE id = 1", [tz()]) of
+        {ok, #{<<"mode">> := _} = R} -> state(R);
+        Other ->
+            logger:warning("operation mode not reloaded (kept the last known): ~0p", [Other]),
+            persistent_term:get(?KEY, ?NORMAL)            % the database is out: keep what was known
     end,
     persistent_term:put(?KEY, S),
     ok.
 
 on_notify(_Channel, _Payload) -> load().
+
+tz() -> list_to_binary(ana_config:timezone()).
+
+state(R) ->
+    #{mode => maps:get(<<"mode">>, R), inbound_paused => maps:get(<<"inbound_paused">>, R),
+      routines_suspended => maps:get(<<"routines_suspended">>, R), message => maps:get(<<"message">>, R),
+      until => maps:get(<<"until">>, R), until_label => maps:get(<<"until_label">>, R),
+      technical_group => maps:get(<<"technical_group">>, R), set_by => maps:get(<<"set_by">>, R)}.
 
 -spec current() -> map().
 current() -> persistent_term:get(?KEY, ?NORMAL).
@@ -86,17 +93,18 @@ set(Changes, Who, _Opts) ->
     Msg = maps:get(message, Changes, keep),
     Min = maps:get(minutes, Changes, null),
     Group = maps:get(technical_group, Changes, keep),
-    {ok, _} = ana_db:exec(
-        "UPDATE technical.operation_mode SET mode = COALESCE($1, mode), inbound_paused = COALESCE($2, inbound_paused), "
-        "  routines_suspended = COALESCE($3, routines_suspended), "
-        "  message = CASE WHEN $4::boolean THEN $5 ELSE message END, "
-        "  until = CASE WHEN $1::text IS NULL THEN until WHEN $6::int IS NULL THEN NULL "
-        "               ELSE now() + make_interval(mins => $6::int) END, "
-        "  technical_group = CASE WHEN $7::boolean THEN $8 ELSE technical_group END, "
-        "  set_by = $9, set_at = now() WHERE id = 1",
-        [Mode, In, Rt, Msg =/= keep, case Msg of keep -> null; _ -> Msg end, Min, Group =/= keep,
+    %% The row as it is now comes back from the update itself: this node knows it at once (the others by NOTIFY).
+    {ok, R} = ana_db:one(
+        "UPDATE technical.operation_mode SET mode = COALESCE($2::text, mode), inbound_paused = COALESCE($3::boolean, inbound_paused), "
+        "  routines_suspended = COALESCE($4::boolean, routines_suspended), "
+        "  message = CASE WHEN $5::boolean THEN $6::text ELSE message END, "
+        "  until = CASE WHEN $2::text IS NULL THEN until WHEN $7::int IS NULL THEN NULL "
+        "               ELSE now() + make_interval(mins => $7::int) END, "
+        "  technical_group = CASE WHEN $8::boolean THEN $9::text ELSE technical_group END, "
+        "  set_by = $10, set_at = now() WHERE id = 1 RETURNING " ?COLUMNS,
+        [tz(), Mode, In, Rt, Msg =/= keep, case Msg of keep -> null; _ -> Msg end, Min, Group =/= keep,
          case Group of keep -> null; _ -> Group end, Who]),
-    load(),
+    persistent_term:put(?KEY, state(R)),
     {ok, current()}.
 
 %% Back to normal, in order: writes first, then the entry of integrations, then the scheduled routines (D14).
