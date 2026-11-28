@@ -29,9 +29,9 @@ cerimônia do risco também pela API:
 | Encerrar uma execução | `POST executions/:id/stop` | médio |
 | Encerrar as sessões de um usuário | `POST users/:n/sessions/revoke` | médio |
 | Desbloquear usuário / endereço | `POST users/:n/unlock`, `security/unlock-ip` | baixo |
-| Reprocessar / descartar mensagem de integração | `POST integrations/:k/:id/reprocess`, `discard` | baixo / alto (perde a mensagem) |
+| Reprocessar / descartar mensagem de integração | `POST integrations/:k/:id/reprocess`, `discard` | baixo / médio (descartar se desfaz reprocessando) |
 | Liberar o disjuntor de um cliente da API | `POST api-clients/:id/release-breaker` | baixo |
-| Girar segredo de cliente da API / chaves da API | `rotate-secret`, `api-keys/rotate` | alto |
+| Girar segredo de cliente da API / chaves da API | `rotate-secret`, `api-keys/rotate` | médio (o segredo anterior vale até ser retirado; a empresa pode tornar alto) |
 | Liberar espaço pela retenção | `POST retention/purge` | médio |
 | Conferir a saúde agora / medir o disco agora | `observability/health/check`, `disk/sample` | baixo |
 | Rodar as verificações / a análise de desempenho | `checks/run`, `observability/advice/run` | baixo |
@@ -67,7 +67,13 @@ manutenção** e **sair do modo**; **analisar uma tabela**.
     deixa a revisão pendente nas Verificações, avisando os aprovadores.
 - **Registro** `technical.action_run`: quem, quando, de onde, parâmetros, antes, depois, resultado, aprovador,
   motivo. É a aba Registro e entra na auditoria (024).
-- As rotas atuais da tabela 1.2 passam pelo executor: a cerimônia vale pela API também (RNF-077-02).
+- As rotas atuais da tabela 1.2 passam pelo executor: a cerimônia vale pela API também (RNF-077-02). A tela de cada
+  rota já confirma com a consequência, então a rota conta como confirmada (risco médio); se a empresa tornar a ação
+  alta, a rota responde 202 e o pedido espera a segunda pessoa.
+- Um resultado com segredo (o segredo novo de um cliente da API) volta inteiro a quem pediu, mas fica mascarado no
+  registro.
+- Ações liberadas a grupos (o plantão) usam `/api/tech/…`, que qualquer pessoa conectada alcança; cada ação decide
+  quem pode.
 
 ### 2.2 Parâmetros (T-077-04)
 - **Catálogo** `technical.parameter`, gerado das definições de `ana_settings` mais os só do servidor: nome em

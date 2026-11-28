@@ -11316,3 +11316,97 @@ class TestChangeWatchOutbound(Base):
         self.assertEqual((r["status"], r["json"].get("duplicate")), (200, True), r)
         self.assertEqual(psql(f"SELECT count(*) FROM integration.inbox WHERE connector = '{inn}'"), "1")
         self.assertEqual(psql(f"SELECT count(*) FROM integration.outbox WHERE connector = '{out}'"), "1")
+
+
+class TestTechnicalActions(Base):
+    """Spec 077 (T-077-01, T-077-02, RF-077-04, RF-077-05, RNF-077-02, CA-077-04): technical actions are a catalog run
+    by the core; the risk decides the ceremony — through the API too —, a company only makes an action stricter, and
+    who may run each action is chosen by group."""
+
+    def act(self, code, params=None, token=None, **body):
+        return http("POST", f"/api/tech/actions/{code}", {"params": params or {}, **body}, token or self.token)[:2]
+
+    def policy(self, code, **body):
+        return http("PUT", f"/api/tech/policies/{code}", body, self.token)[:2]
+
+    def test_t_077_01_the_catalog_says_effect_risk_and_who_may(self):
+        s, rows = http("GET", "/api/tech/actions", token=self.token)[:2]
+        self.assertEqual(s, 200, rows)
+        by = {r["code"]: r for r in rows}
+        for code in ("execution.stop", "retention.purge", "health.check", "node.drain", "node.resume"):
+            self.assertIn(code, by)
+        stop = by["execution.stop"]
+        self.assertEqual((stop["risk"], stop["allowed"]), ("medium", True))
+        for key in ("effect", "impact", "success", "params", "preconditions"):
+            self.assertTrue(stop[key] is not None, key)
+        self.assertEqual(by["node.drain"]["undo"], "node.resume")
+        _, user = new_user("user")
+        s, rows = http("GET", "/api/tech/actions", token=user)[:2]
+        self.assertFalse(any(r["allowed"] for r in rows))                 # nobody but administrators, by default
+        self.assertEqual(self.act("health.check", token=user)[0], 403)
+
+    def test_rf_077_05_risk_decides_the_ceremony(self):
+        # Low: just done, and recorded.
+        s, r = self.act("health.check")
+        self.assertEqual((s, r["status"]), (200, "done"), r)
+        s, runs = http("GET", "/api/tech/runs?limit=5", token=self.token)[:2]
+        self.assertEqual(runs[0]["id"], r["id"])
+        # Medium: only when confirmed (the screen showed the consequence).
+        s, e = self.act("retention.purge")
+        self.assertEqual((s, e["error"]["code"]), (409, "CONFIRMATION_REQUIRED"), e)
+        self.assertIn("prazo", e["error"]["message"])
+        s, r = self.act("retention.purge", confirmed=True, reason="teste da central técnica")
+        self.assertEqual((s, r["status"]), (200, "done"), r)
+        self.assertIn("counts", r["result"])
+        # What the action does not take is refused; a precondition that fails says why.
+        self.assertEqual(self.act("health.check", {"x": 1})[0], 400)
+        s, e = self.act("node.drain")
+        self.assertEqual((s, e["error"]["code"]), (409, "PRECONDITION"), e)       # a single node: drained = down
+        self.assertIn("outro nó", e["error"]["message"])
+
+    def test_ca_077_04_high_risk_waits_for_a_second_person_also_through_the_api(self):
+        target, _ = new_user("user")
+        _, other_admin = new_user("admin")
+        s, e = self.policy("user.unlock", risk="medium")
+        self.assertEqual(s, 200, e)
+        s, e = self.policy("user.revoke_sessions", risk="low")        # never below the product's minimum
+        self.assertEqual(s, 400, e)
+        try:
+            s, p = self.policy("user.unlock", risk="high")
+            self.assertEqual(s, 200, p)
+            s, r = self.act("user.unlock", {"username": target})
+            self.assertEqual((s, r["pending_approval"]), (202, True), r)
+            req = r["request"]["id"]
+            # The old admin route follows the same rule: no second person, no action.
+            s, r2 = http("POST", f"/api/admin/users/{target}/unlock", {}, self.token)[:2]
+            self.assertEqual((s, r2.get("pending_approval")), (202, True), r2)
+            s, e = http("POST", f"/api/tech/requests/{req}/approve", {}, self.token)[:2]
+            self.assertEqual((s, e["error"]["code"]), (409, "FOUR_EYES"), e)
+            s, done = http("POST", f"/api/tech/requests/{req}/approve", {}, other_admin)[:2]
+            self.assertEqual((s, done["status"], done["approved_by"]), (200, "done", done["approved_by"]), done)
+            self.assertNotEqual(done["approved_by"], "admin")
+            s, e = http("POST", f"/api/tech/requests/{req}/approve", {}, other_admin)[:2]
+            self.assertEqual((s, e["error"]["code"]), (409, "ACTION_DECIDED"), e)
+            s, e = http("POST", f"/api/tech/requests/{r2['request']['id']}/reject", {"reason": "pedido repetido"}, other_admin)[:2]
+            self.assertEqual((s, e["status"]), (200, "rejected"), e)
+        finally:
+            self.policy("user.unlock", risk="low", groups=[])
+
+    def test_rf_077_05_who_may_is_chosen_by_group(self):
+        g = f"plantao{SUFFIX}".lower()
+        s, c, _ = http("PUT", f"/api/admin/groups/{g}", {"description": "plantão (teste 077)", "program_patterns": []}, self.token)
+        self.assertEqual(s, 200, c)
+        _, on_call = new_user("user", groups=(g,))
+        _, other = new_user("user")
+        try:
+            s, p = self.policy("user.unlock", groups=[g])
+            self.assertEqual(s, 200, p)
+            target, _ = new_user("user")
+            s, r = self.act("user.unlock", {"username": target}, token=on_call)
+            self.assertEqual((s, r["status"]), (200, "done"), r)
+            self.assertEqual(self.act("user.unlock", {"username": target}, token=other)[0], 403)
+            s, r = self.act("user.unlock", {"username": target})                # administrators still may
+            self.assertEqual(s, 200, r)
+        finally:
+            self.policy("user.unlock", risk="low", groups=[])
+            http("DELETE", f"/api/admin/groups/{g}", token=self.token)
