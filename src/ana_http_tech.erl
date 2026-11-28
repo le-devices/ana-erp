@@ -134,6 +134,33 @@ route(<<"POST">>, [<<"parameters">>, <<"import">>], U, Req) ->
             end
         end)
     end);
+%% Guided runbooks (T-077-06): the technical team (administrators and the groups of the policies); each action inside
+%% keeps its own permission and ceremony.
+route(<<"GET">>, [<<"runbooks">>], U, Req) ->
+    team(U, Req, fun() -> {ok, L} = ana_runbook:list(), ana_http:json(200, L, Req) end);
+route(<<"GET">>, [<<"runbooks">>, <<"runs">>], U, Req) ->
+    team(U, Req, fun() -> {ok, L} = ana_runbook:open_runs(), ana_http:json(200, L, Req) end);
+route(<<"GET">>, [<<"runbooks">>, <<"runs">>, Id], U, Req) ->
+    team(U, Req, fun() -> with_int(Id, Req, fun(N) -> runbook_reply(ana_runbook:run(N), Req) end) end);
+route(<<"POST">>, [<<"runbooks">>, Code, <<"start">>], U, Req) ->
+    team(U, Req, fun() -> runbook_reply(ana_runbook:start(Code, U, #{}), Req) end);
+route(<<"POST">>, [<<"runbooks">>, <<"runs">>, Id, What], U, Req) ->
+    team(U, Req, fun() ->
+        with_int(Id, Req, fun(N) ->
+            body(Req, fun(B, R) ->
+                Result = case What of
+                    <<"advance">> -> ana_runbook:advance(N, U, #{confirm => maps:get(<<"confirm">>, B, false) =:= true,
+                                                                 step => maps:get(<<"step">>, B, false) =:= true});
+                    <<"pause">> -> ana_runbook:pause(N, U);
+                    <<"resume">> -> ana_runbook:resume(N, U);
+                    <<"hand-over">> -> ana_runbook:hand_over(N, maps:get(<<"to">>, B, <<>>), U);
+                    _ -> {error, <<"operação desconhecida"/utf8>>}
+                end,
+                runbook_reply(Result, R)
+            end)
+        end)
+    end);
+
 %% Diagnostic console (T-077-05, administrators).
 route(<<"GET">>, [<<"console">>, <<"queries">>], U, Req) ->
     admin(U, Req, fun() -> {ok, Q} = ana_console:queries(), ana_http:json(200, Q, Req) end);
@@ -178,6 +205,16 @@ route(<<"GET">>, [<<"console">>, <<"logs">>], U, Req) ->
     end);
 route(_, _, _, Req) ->
     ana_http:reply_error(404, <<"NOT_FOUND">>, <<"rota inexistente"/utf8>>, Req).
+
+runbook_reply({ok, R}, Req) -> ana_http:json(200, R, Req);
+runbook_reply({error, not_found}, Req) -> ana_http:reply_error(404, <<"NOT_FOUND">>, <<"não encontrado"/utf8>>, Req);
+runbook_reply({error, M}, Req) -> ana_http:reply_error(409, <<"RUNBOOK">>, M, Req).
+
+team(U, Req, Fun) ->
+    case ana_tech:technical(U) of
+        true -> Fun();
+        false -> ana_http:reply_error(403, <<"FORBIDDEN">>, <<"só a equipe técnica"/utf8>>, Req)
+    end.
 
 console_reply({ok, R}, Req) -> ana_http:json(200, R, Req);
 console_reply({error, M}, Req) -> ana_http:reply_error(400, <<"CONSOLE">>, M, Req).

@@ -13,7 +13,7 @@
 %% administrators). Everything is recorded in technical.action_run and in the audit (spec 024), through the API too.
 -module(ana_tech).
 
--export([catalog/1, run/4, approve/3, reject/3, runs/1, pending/1, save_policy/3, handlers/0, risk_of/1]).
+-export([catalog/1, run/4, approve/3, reject/3, runs/1, pending/1, save_policy/3, handlers/0, risk_of/1, technical/1]).
 
 -define(REQUEST_TTL_MIN, 30).
 -define(RISKS, [<<"low">>, <<"medium">>, <<"high">>]).
@@ -130,6 +130,22 @@ risk_of(Code) ->
         {ok, A} -> effective(A);
         _ -> undefined
     end.
+
+%% The technical team: administrators, and the people of a group some action or the maintenance mode names.
+-spec technical(map()) -> boolean().
+technical(#{role := <<"admin">>}) -> true;
+technical(#{username := U}) ->
+    case ana_access:groups(U) of
+        [] -> false;
+        Mine ->
+            case catch ana_db:one("SELECT EXISTS (SELECT 1 FROM technical.action_policy WHERE groups && $1::text[]) "
+                                  "OR EXISTS (SELECT 1 FROM technical.operation_mode WHERE technical_group = ANY ($1::text[])) AS ok",
+                                  [Mine]) of
+                {ok, #{<<"ok">> := true}} -> true;
+                _ -> false
+            end
+    end;
+technical(_) -> false.
 
 allowed(#{role := <<"admin">>}, #{<<"groups">> := []}) -> true;
 allowed(_, #{<<"groups">> := []}) -> false;

@@ -33,3 +33,12 @@ t_077_04_every_parameter_has_its_metadata_test() ->
     Meta = lists:sort([K || [K] <- Rows]),
     Known = lists:sort([atom_to_binary(K) || {K, _, _, _, _, _, _} <- ana_settings:definitions()]),
     ?assertEqual(Known, Meta).
+
+%% Spec 077 (T-077-06): every check and every action a runbook of the product names exists in the core.
+t_077_06_runbooks_name_only_known_checks_and_actions_test() ->
+    {ok, Bin} = file:read_file("priv/migrations/093_runbooks.sql"),
+    {match, Checks} = re:run(Bin, "\"check\":\"([a-z_]+)\"", [global, {capture, all_but_first, binary}]),
+    {match, Actions} = re:run(Bin, "\"action\":\"([a-z_]+\\.[a-z_]+)\"", [global, {capture, all_but_first, binary}]),
+    Known = maps:keys(ana_runbook:checks()),
+    ?assertEqual([], lists:usort([C || [C] <- Checks]) -- Known),
+    ?assertEqual([], lists:usort([A || [A] <- Actions]) -- maps:keys(ana_tech:handlers())).

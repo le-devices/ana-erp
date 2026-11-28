@@ -11649,3 +11649,50 @@ class TestOperationModes(Base):
             self.act("mode.normal")
             http("DELETE", f"/api/admin/groups/{g}", token=self.token)
         self.assertEqual(http("GET", "/api/me", token=other)[0], 200)
+
+
+class TestRunbooks(Base):
+    """Spec 077 (T-077-06, RF-077-07, D8): runbooks as data — the checks run by themselves, the person decides the
+    actions and instructions; step by step or until the next decision; paused, resumed and handed over."""
+
+    def post(self, path, body=None, token=None):
+        return http("POST", f"/api/tech/runbooks/{path}", body or {}, token or self.token)[:2]
+
+    def test_rf_077_07_a_runbook_runs_until_each_decision_and_can_change_hands(self):
+        s, books = http("GET", "/api/tech/runbooks", token=self.token)[:2]
+        self.assertEqual(s, 200, books)
+        self.assertTrue({"disk_full", "database_down", "replica_lagging", "node_down", "crash_loop", "expiring_credentials",
+                         "stuck_queue"} <= {b["code"] for b in books})
+        # The license check runs by itself; the next step is an action: it stops there for the person.
+        s, r = self.post("expiring_credentials/start")
+        self.assertEqual(s, 200, r)
+        run = r["id"]
+        self.assertEqual((r["status"], r["step"], r["waiting_for"]), ("running", 2, "action"), r)
+        self.assertEqual((len(r["log"]), r["log"][0]["kind"], r["log"][0]["ok"]), (1, "check", True), r["log"])
+        self.assertIn("ms", r["log"][0])
+        s, e = self.post(f"runs/{run}/pause")
+        self.assertEqual((s, e["status"]), (200, "paused"), e)
+        s, e = self.post(f"runs/{run}/advance", {"confirm": True})
+        self.assertEqual(s, 409, e)                                                     # paused: resume first
+        self.assertEqual(self.post(f"runs/{run}/resume")[0], 200)
+        s, r = self.post(f"runs/{run}/advance", {"confirm": True})                    # runs the action, then waits
+        self.assertEqual((s, r["step"], r["waiting_for"]), (200, 3, "instruction"), r)
+        self.assertEqual(r["log"][1]["result"], "ação executada")
+        # Handed over: only the new owner goes on.
+        other, other_token = new_user("admin")
+        s, r = self.post(f"runs/{run}/hand-over", {"to": other})
+        self.assertEqual((s, r["owner"]), (200, other), r)
+        s, e = self.post(f"runs/{run}/advance", {"confirm": True})
+        self.assertEqual(s, 409, e)
+        s, r = self.post(f"runs/{run}/advance", {"confirm": True}, token=other_token)
+        self.assertEqual((s, r["status"], len(r["log"])), (200, "done", 3), r)
+        s, opened = http("GET", "/api/tech/runbooks/runs", token=self.token)[:2]
+        self.assertNotIn(run, [x["id"] for x in opened])
+
+    def test_d8_a_failing_check_follows_if_it_fails(self):
+        # "Laço de quedas" starts by counting the falls of the last hour: none here, so it stops (nothing to do).
+        s, r = self.post("crash_loop/start")
+        self.assertEqual(s, 200, r)
+        self.assertEqual((r["status"], r["log"][0]["ok"]), ("stopped", False), r)
+        _, user = new_user("user")
+        self.assertEqual(self.post("crash_loop/start", token=user)[0], 403)            # only the technical team
