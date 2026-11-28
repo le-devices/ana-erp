@@ -21,10 +21,23 @@ tab(<<"security">>, U) -> answer(<<"security">>, sources([fun reviews/1, fun act
 tab(<<"log">>, U) -> answer(<<"log">>, sources([fun record/1], U));
 tab(_, _) -> {error, <<"aba inexistente"/utf8>>}.
 
+%% A source that fails says so in plain words; the technical detail goes to the node's log (the console shows it).
 sources(Fs, U) ->
-    lists:append([try F(U) catch C:R -> [item(<<"warning">>, <<"Uma fonte da Central não respondeu"/utf8>>,
-                                              unicode:characters_to_binary(io_lib:format("~0p", [{C, R}])), <<>>, #{}, null)] end
-                   || F <- Fs]).
+    lists:append([try F(U)
+                  catch C:R:St ->
+                      {name, Name} = erlang:fun_info(F, name),
+                      logger:warning("technical center: source ~p failed: ~0p:~0p ~0p", [Name, C, R, St]),
+                      [item(<<"warning">>, <<"Uma parte da Central não pôde ser conferida agora"/utf8>>,
+                            <<"a fonte "/utf8, (source_label(Name))/binary, " não respondeu (detalhe nos registros do nó, no Console)"/utf8>>,
+                            <<"confira de novo em instantes"/utf8>>, #{}, null)]
+                  end || F <- Fs]).
+
+source_label(Name) ->
+    Labels = #{mode => <<"modo de operação"/utf8>>, health => <<"saúde"/utf8>>, incidents => <<"alertas"/utf8>>,
+               requests => <<"pedidos"/utf8>>, runbooks => <<"roteiros"/utf8>>, findings => <<"verificações"/utf8>>,
+               license => <<"licença"/utf8>>, queues => <<"filas de integração"/utf8>>, restarts => <<"quedas"/utf8>>,
+               node => <<"nó"/utf8>>, disk => <<"disco"/utf8>>, core => <<"núcleo"/utf8>>},
+    maps:get(Name, Labels, atom_to_binary(Name)).
 
 answer(Tab, Items) ->
     Sorted = lists:sort(fun(A, B) -> {sev(A), maps:get(what, A)} =< {sev(B), maps:get(what, B)} end, Items),
@@ -123,15 +136,18 @@ license(_) ->
     end.
 
 queues(_) ->
-    {ok, N, Text} = (maps:get(<<"queue_stuck">>, ana_runbook:checks()))(),
-    case N of
-        0 -> [];
-        _ -> [item(<<"warning">>, <<"Fila de integração parada"/utf8>>, Text, <<"outros sistemas não recebem ou não mandam dados"/utf8>>,
+    case (maps:get(<<"queue_stuck">>, ana_runbook:checks()))() of
+        {ok, 0, _} -> [];
+        {unknown, _} -> [];
+        {ok, _N, Text} -> [item(<<"warning">>, <<"Fila de integração parada"/utf8>>, Text, <<"outros sistemas não recebem ou não mandam dados"/utf8>>,
                    #{runbook => <<"stuck_queue">>}, <<"#/admin/integrations">>)]
     end.
 
 restarts(_) ->
-    {ok, N, Text} = (maps:get(<<"restarts_last_hour">>, ana_runbook:checks()))(),
+    {ok, N, Text} = case (maps:get(<<"restarts_last_hour">>, ana_runbook:checks()))() of
+        {ok, _, _} = Ok -> Ok;
+        {unknown, T} -> {ok, 0, T}
+    end,
     case N > 3 of
         true -> [item(<<"serious">>, <<"Subsistemas caindo e voltando"/utf8>>, Text, <<"falhas intermitentes para as pessoas"/utf8>>,
                       #{runbook => <<"crash_loop">>}, <<"#/admin/core">>)];
